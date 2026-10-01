@@ -37,9 +37,23 @@ internal sealed partial class ExecutionManager
         // hits the tile in front when the click is farther), so walking is the
         // player-equivalent behaviour, not a Mod convenience. The tool and target
         // are validated above (position-independent), the world is re-validated
-        // after the approach settles, and the walk uses the arrival predicate.
+        // after the approach settles (inside the closure), and the walk uses the
+        // arrival predicate.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, PendingToolApproachKind.ChopTreeSource, location, targetX, targetY, expectedTargetId, slot, nowMs, requestedDeadlineMs);
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "chop_tree_source",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChopTreeSource(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
         return this.ExecuteChopTreeSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
@@ -51,7 +65,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -86,7 +100,37 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
+        // checks above; the target is re-validated after the walk inside the closure.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "break_rock_source",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteBreakRockSource(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteBreakRockSource(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes break_rock_source against the current world, re-validating the tool
+    /// and the target because an approach leg may have taken several ticks. Shared by
+    /// the in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -120,8 +164,42 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || hoe.UpgradeLevel != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.isTileOnMap(tile)
+            || !location.objects.TryGetValue(tile, out StardewValley.Object? probeSpot)
+            || !NativeItemPredicates.IsArtifactSpot(probeSpot)
+            || !string.Equals(BuildArtifactSpotTargetId(location, targetX, targetY, probeSpot.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
+        // Position-independent checks are done; the target is re-validated after the
+        // walk inside the closure, because the world can change while walking.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "dig_artifact_spot",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteDigArtifactSpot(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteDigArtifactSpot(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes dig_artifact_spot against the current world, re-validating the tool and
+    /// the target because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteDigArtifactSpot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || hoe.UpgradeLevel != 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
@@ -171,7 +249,36 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe probePickaxe || !ReferenceEquals(Game1.player.CurrentTool, probePickaxe) || probePickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
+        // Position-independent checks are done; the target is re-validated after the walk.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "clear_hoedirt",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearHoeDirt(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteClearHoeDirt(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes clear_hoedirt against the current world, re-validating the tool and the
+    /// target because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteClearHoeDirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -217,22 +324,46 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
-            // Distinguish "wrong tile" from "right tile, too far to act on". The
-            // distinction is actionable for the Agent: an out-of-reach diggable
-            // tile means walk there first, whereas a non-diggable tile means pick
-            // a different target. Both stay rejected before any native ingress.
+            // Distinguish "wrong tile" from "right tile, too far to act on". A
+            // non-diggable tile means pick a different target and stays refused at any
+            // distance; a diggable one means walk there first, which is exactly what the
+            // native click path requires the player to do (Game1.cs:11509 gates
+            // checkAction on tileWithinRadiusOfPlayer(grabTile, 1)).
             string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            bool diggableFromHere = IsDiggableSoilTile(Game1.player.currentLocation, targetX, targetY);
-            return this.RememberTerminal(
+            StardewValley.GameLocation distantLocation = Game1.player.currentLocation;
+            if (!IsDiggableSoilTile(distantLocation, targetX, targetY))
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "target_out_of_range",
+                    $"target={targetX},{targetY};distance={distance}");
+            }
+
+            return this.TryBeginToolApproach(
                 requestId,
                 executionId,
-                ExecutionState.Rejected,
-                diggableFromHere ? "target_out_of_reach" : "target_out_of_range",
-                diggableFromHere
-                    ? $"target={targetX},{targetY};distance={distance};reach=1"
-                    : $"target={targetX},{targetY};distance={distance}");
+                "till_soil",
+                distantLocation,
+                targetX,
+                targetY,
+                $"till_soil_{targetX}_{targetY}",
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteTillSoil(arrivalExecutionId, arrivalRequestId, targetX, targetY, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
         }
 
+        return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Executes till_soil against the current world, re-validating the tool and the
+    /// tile because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteTillSoil(string executionId, string requestId, int targetX, int targetY, long requestedDeadlineMs)
+    {
         Vector2 tile = new(targetX, targetY);
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (location.GetHoeDirtAtTile(tile) is not null)
@@ -374,8 +505,41 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+            || !tree.stump.Value
+            || !string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
+        // checks above; the target is re-validated after the walk inside the closure.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "chop_stump",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteChopStump(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteChopStump(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes chop_stump against the current world, re-validating the tool and the
+    /// target because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteChopStump(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
@@ -444,8 +608,40 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon probeWeapon || !probeWeapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, probeWeapon))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? probeWeed) || !probeWeed.IsWeeds()
+            || !string.Equals(BuildWeedTargetId(location, targetX, targetY, probeWeed), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. Position-independent
+        // checks above; the target is re-validated after the walk inside the closure.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "cut_weeds",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCutWeeds(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteCutWeeds(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes cut_weeds against the current world, re-validating the tool and the
+    /// target because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCutWeeds(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
@@ -505,23 +701,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
     }
 
-    /// <summary>
-    /// The wire action id an in-flight tool approach belongs to. The snapshot
-    /// publishes the real action so an observer does not see the internal
-    /// approach as a separate operation.
-    /// </summary>
-    private static string ToolApproachActionId(PendingToolApproachKind kind) => kind switch
-    {
-        PendingToolApproachKind.ChopTreeSource => "chop_tree_source",
-        PendingToolApproachKind.BreakRockSource => "break_rock_source",
-        PendingToolApproachKind.DigArtifactSpot => "dig_artifact_spot",
-        PendingToolApproachKind.ClearHoeDirt => "clear_hoedirt",
-        PendingToolApproachKind.TillSoil => "till_soil",
-        PendingToolApproachKind.ChopStump => "chop_stump",
-        PendingToolApproachKind.CutWeeds => "cut_weeds",
-        _ => "tool_approach",
-    };
-
     private static int ItemRankForWeapon(Tool item)
     {
         if (item is MeleeWeapon melee)
@@ -550,15 +729,29 @@ internal sealed partial class ExecutionManager
     /// the unchanged <c>target_out_of_reach</c> refusal when the walk cannot be
     /// planned at all.
     /// </summary>
+    /// <summary>
+    /// Begins an approach leg for an action that found itself outside the native
+    /// interaction radius, and returns the honest `Accepted` receipt.
+    ///
+    /// The action has already validated everything that does not depend on position
+    /// (its tool, its target identity), so this only owns the geometry and the
+    /// ownership bookkeeping. `onArrival` runs later, from the completion pass, and
+    /// mints the action's terminal.
+    /// </summary>
+    /// <param name="actionId">The wire action id, republished in snapshots.</param>
+    /// <param name="onArrival">
+    /// Receives (executionId, requestId) and runs the action's terminal step. It must
+    /// re-validate the tool and the target, because the walk can take several ticks.
+    /// </param>
     private LocalExecutionReceipt TryBeginToolApproach(
         string requestId,
         string executionId,
-        PendingToolApproachKind kind,
+        string actionId,
         GameLocation location,
         int targetX,
         int targetY,
         string expectedTargetId,
-        int slot,
+        Func<string, string, LocalExecutionReceipt> onArrival,
         long nowMs,
         long requestedDeadlineMs)
     {
@@ -571,15 +764,15 @@ internal sealed partial class ExecutionManager
             this.revision,
             this.tick + deadlineTicks,
             requestedDeadlineMs);
-        this.activeToolApproach = new LocalToolApproachSpec(
+        this.activeToolApproach = new LocalApproachSpec(
             executionId,
             requestId,
-            kind,
+            actionId,
             location.NameOrUniqueName,
             targetX,
             targetY,
             expectedTargetId,
-            slot,
+            onArrival,
             this.revision,
             requestedDeadlineMs);
         this.active = approach;
@@ -625,7 +818,7 @@ internal sealed partial class ExecutionManager
     /// longer matches settles as the kind's own `*_target_changed` refusal rather
     /// than silently doing nothing.
     /// </summary>
-    private void CompleteToolApproach(LocalToolApproachSpec specification)
+    private void CompleteToolApproach(LocalApproachSpec specification)
     {
         this.activeToolApproach = null;
 
@@ -654,12 +847,10 @@ internal sealed partial class ExecutionManager
             return;
         }
 
-        LocalExecutionReceipt terminal = specification.Kind switch
-        {
-            PendingToolApproachKind.ChopTreeSource => this.ExecuteChopTreeSource(specification.ExecutionId, specification.RequestId, specification.Slot, specification.TargetX, specification.TargetY, specification.ExpectedTargetId),
-            _ => this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "tool_approach_kind_unavailable", $"kind={specification.Kind}"),
-        };
-        _ = terminal;
+        // The action's own terminal step. It re-validates its tool and target and
+        // mints the receipt, so the post-approach path and the in-range path share
+        // one execution body per action.
+        _ = specification.Execute(specification.ExecutionId, specification.RequestId);
     }
 
 }

@@ -133,8 +133,13 @@ public sealed class ToolApproachContractTests
 
         body.Should().Contain("tool_approach_location_changed");
         body.Should().Contain("target_out_of_reach");
-        // The kind dispatch must reach the same execution body the in-range path uses.
-        body.Should().Contain("ExecuteChopTreeSource(");
+        // The action's own terminal step must run through the delegate the action
+        // supplied -- not through an action-specific switch the shared mechanism would
+        // have to keep in sync. `ExecuteChopTreeSource` is deliberately NOT pinned here:
+        // the mechanism must stay family-agnostic, and each action's execution body is
+        // pinned by the case below.
+        body.Should().Contain("specification.Execute(",
+            "the completion pass must invoke the action's own terminal step");
         // A walk that ends outside the native radius must refuse rather than call the
         // tool from an invalid distance: pin the gate AND its exact radius, because an
         // order-only assertion still passes if the radius is widened to something the
@@ -142,9 +147,53 @@ public sealed class ToolApproachContractTests
         body.Should().Contain("IsTileWithinChebyshevRadius(Game1.player, specification.TargetX, specification.TargetY, 1)",
             "the post-approach range re-check must use the native Chebyshev-1 radius");
         int rangeGate = body.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
-        int execute = body.IndexOf("ExecuteChopTreeSource(", StringComparison.Ordinal);
+        int execute = body.IndexOf("specification.Execute(", StringComparison.Ordinal);
         rangeGate.Should().BeGreaterThanOrEqualTo(0);
+        execute.Should().BeGreaterThanOrEqualTo(0);
         rangeGate.Should().BeLessThan(execute, "range must be re-checked before executing");
+    }
+
+    // ---- 3b. the closure the mechanism carries must re-validate -------------
+
+    [Fact]
+    public void ApproachClosure_ReValidatesTheToolAndTarget_BeforeActing()
+    {
+        // The shared mechanism validates location and radius, but it cannot validate the
+        // action's own tool and target: those are the action's vocabulary. Because the
+        // walk can take several ticks, the action's closure must re-check them, or an
+        // approach could act on a world that changed while walking. Every migrated action
+        // therefore has an `Execute*` body that re-validates before the native call.
+        string source = Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs");
+        (string Action, string Signature)[] migrated =
+        {
+            ("chop_tree_source", "private LocalExecutionReceipt ExecuteChopTreeSource("),
+            ("break_rock_source", "private LocalExecutionReceipt ExecuteBreakRockSource("),
+        };
+
+        foreach ((string action, string signature) in migrated)
+        {
+            string body = MethodBody(source, signature);
+            body.Should().Contain("ExecutionState.Rejected", $"{action} must be able to refuse after re-validating");
+            body.Should().Contain("RememberTerminal(", $"{action} must mint its own terminal");
+            int reject = body.IndexOf("ExecutionState.Rejected", StringComparison.Ordinal);
+            int native = body.IndexOf("UseNativeToolOnTile(", StringComparison.Ordinal);
+            native.Should().BeGreaterThanOrEqualTo(0, $"{action} must drive the native tool");
+            reject.Should().BeLessThan(native, $"{action} must re-validate the world before the native call");
+            // The post-approach path must not be a copy of the in-range path.
+            CountOccurrences(source, $"private LocalExecutionReceipt Execute{action.Split('_')[0]}").Should().BeLessThanOrEqualTo(1);
+        }
+
+        // The request path must hand the mechanism a closure into that body, so the
+        // post-approach execution reuses the in-range execution instead of duplicating it.
+        int start = source.IndexOf("public LocalExecutionReceipt RequestLocalChopTreeSource(", StringComparison.Ordinal);
+        int end = source.IndexOf("private LocalExecutionReceipt ExecuteChopTreeSource(", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0);
+        end.Should().BeGreaterThan(start);
+        string request = source.Substring(start, end - start);
+        request.Should().Contain("this.ExecuteChopTreeSource(arrivalExecutionId, arrivalRequestId",
+            "the approach closure must call the same execution body the in-range path uses");
+        request.Should().Contain("return this.ExecuteChopTreeSource(executionId, requestId",
+            "the in-range path must use that same body");
     }
 
     // ---- 4. every ownership path can release it ------------------------------
@@ -217,39 +266,42 @@ public sealed class ToolApproachContractTests
     [Fact]
     public void Snapshot_NamesTheRealAction_NotTheInternalApproach()
     {
-        string source = Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs");
-        string map = MethodBody(source, "private static string ToolApproachActionId(");
-
-        // Every kind the enum declares must map to a real action id, or the snapshot
-        // would publish an id no consumer recognises.
+        // The action id is now carried on the spec as a plain string the action itself
+        // supplies, so the invariant changed shape: it is no longer "every enum member
+        // maps to a real id" (one place to check) but "every action that begins an
+        // approach passes its OWN real id" (many places, each independently checkable).
+        // That is strictly more informative, because a wrong id at one call site is no
+        // longer masked by a correct mapping entry elsewhere.
         string models = Read("integrations/stardew/ExecutionModels.cs");
-        string enumBody = BalancedBody(models, models.IndexOf("internal enum PendingToolApproachKind", StringComparison.Ordinal));
-        string[] kinds = enumBody
-            .Split('\n')
-            .Select(line => line.Trim().TrimEnd(','))
-            .Where(line => line.Length > 0 && !line.StartsWith("internal", StringComparison.Ordinal) && !line.StartsWith("{", StringComparison.Ordinal) && line != "}")
-            .ToArray();
-        kinds.Should().NotBeEmpty();
-        string[] mappedValues = new string[kinds.Length];
-        for (int index = 0; index < kinds.Length; index++)
-        {
-            string kind = kinds[index];
-            string needle = $"PendingToolApproachKind.{kind} =>";
-            int at = map.IndexOf(needle, StringComparison.Ordinal);
-            at.Should().BeGreaterThanOrEqualTo(0, $"{kind} must map to a wire action id");
-            int valueStart = map.IndexOf('"', at + needle.Length);
-            valueStart.Should().BeGreaterThanOrEqualTo(0);
-            int valueEnd = map.IndexOf('"', valueStart + 1);
-            valueEnd.Should().BeGreaterThan(valueStart);
-            mappedValues[index] = map.Substring(valueStart + 1, valueEnd - valueStart - 1);
-            mappedValues[index].Should().NotBe("tool_approach",
-                $"{kind} must name its real action; the placeholder is only the unknown-kind fallback");
-        }
+        string spec = models.Substring(
+            models.IndexOf("internal sealed record LocalApproachSpec(", StringComparison.Ordinal),
+            models.IndexOf("internal sealed record LocalCropWateringSpec(", StringComparison.Ordinal)
+                - models.IndexOf("internal sealed record LocalApproachSpec(", StringComparison.Ordinal));
+        // string ActionId must exist: the snapshot needs a name to publish.
+        spec.Should().Contain("string ActionId",
+            "the approach must carry the real action id so the snapshot does not expose an internal phase");
+        // And the mechanism must publish that field, not a derived placeholder. The
+        // active-execution projection lives in CreateBridgeSnapshot, which builds the
+        // whole snapshot including the `activeExecution` entry.
+        MethodBody(Read("integrations/stardew/farmhandexecutioncontroller.cs"), "public BridgeSnapshot CreateBridgeSnapshot(")
+            .Should().Contain("this.activeToolApproach.ActionId",
+                "the snapshot must publish the action's own id");
 
-        mappedValues.Distinct().Count().Should().Be(mappedValues.Length,
-            "two kinds sharing one wire id would publish an ambiguous action");
-        CountOccurrences(map, "\"tool_approach\"").Should().Be(1,
-            "exactly one branch may be the unknown-kind fallback");
+        // Every call site must pass its real action id as a string literal. Scanning the
+        // call sites is what makes this meaningful: a site that passed a placeholder
+        // would be invisible to a single-table check.
+        string source = Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs");
+        System.Text.RegularExpressions.MatchCollection sites = System.Text.RegularExpressions.Regex.Matches(
+            source,
+            "TryBeginToolApproach\\(\\s*\\n?\\s*requestId,\\s*\\n?\\s*executionId,\\s*\\n?\\s*\"([a-z0-9_]+)\"");
+        sites.Count.Should().BeGreaterThanOrEqualTo(2, "the migrated actions each begin an approach");
+        int placeholderSites = sites.Count(match => match.Groups[1].Value == "tool_approach");
+        placeholderSites.Should().Be(0, "a placeholder id would publish an operation no consumer recognises");
+        int duplicateIds = sites
+            .Select(match => match.Groups[1].Value)
+            .GroupBy(id => id)
+            .Count(group => group.Count() > 1);
+        duplicateIds.Should().Be(0, "two actions sharing one id would be indistinguishable to the caller");
     }
 
     /// <summary>
