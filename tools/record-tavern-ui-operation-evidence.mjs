@@ -45,6 +45,17 @@ function assertProfile(profile) {
  * sessionStorage key `gamebuddy.tavern.ui.operation-observations`. Only
  * outcome === "passed" is mapped. The caller must obtain it from the real
  * same-origin UI/API execution, not from static declarations.
+ *
+ * The recorder also writes the COMPOSED PROFILE it measured, next to the mapping
+ * (`<outputPath>.profile.json`). This is not a convenience: the mapping's
+ * `profile_hash` is derived from the profile the LIVE session mounted, so the
+ * gate must be given that same profile, not a hand-maintained transcription of
+ * the composition source. A transcription drifted three times (voice settings,
+ * connection settings, and again when this file was written), each time making
+ * the gate reject the real production profile with `..._profile_mismatch` - which
+ * is indistinguishable from a genuine regression. Emitting the pair together
+ * makes the evidence and the identity it is checked against come from one
+ * observed session, so they cannot disagree.
  */
 export async function recordTavernUiOperationEvidence({ inputPath, outputPath }) {
   const input = JSON.parse(await readFile(inputPath, "utf8"));
@@ -73,6 +84,24 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
   if (!HASH.test(result.profile_hash) || !Object.values(result.operations).every((ids) => ids.every((id) => OPAQUE_ID.test(id))))
     throw new Error("ui_operation_evidence_internal_invalid");
   await writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  // The measured profile travels with its evidence. Only the fields the gate's
+  // composed-profile contract declares are written; nothing else from the live
+  // session is copied.
+  await writeFile(
+    `${outputPath}.profile.json`,
+    `${JSON.stringify(
+      {
+        profileId: input.profile.profileId,
+        releaseTier: input.profile.releaseTier,
+        routeIds: input.profile.routeIds,
+        operationIds: input.profile.operationIds,
+        navigationItemIds: input.profile.navigationItemIds,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   return result;
 }
 

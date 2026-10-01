@@ -1,0 +1,108 @@
+{
+  "gate": "tavern_release_live_orchestrator/v1",
+  "profile": "chat-tavern-live",
+  "plannedRunKinds": [
+    "main",
+    "failure",
+    "recovery"
+  ],
+  "runKindSemantics": "attempt_labels_not_exercised_distinctions",
+  "prerequisite": {
+    "verdict": "passed",
+    "checks": [
+      {
+        "id": "windows_arbitrary_reparse_enforcement",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_filesystem_threat_model",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_ordinary_link_reparse_containment",
+        "status": "not_applicable"
+      },
+      {
+        "id": "magic_context_stable_source",
+        "status": "passed"
+      },
+      {
+        "id": "semantic_reference_attestation",
+        "status": "passed"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "role": "main",
+      "state": "passed",
+      "runnerRunId": "9805be875b217f83b4913ac8",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {}
+    },
+    {
+      "role": "failure",
+      "state": "passed",
+      "runnerRunId": "b074fdde2d853d82f5c02411",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {}
+    },
+    {
+      "role": "recovery",
+      "state": "passed",
+      "runnerRunId": "1294d78d8cf957e6c94017bc",
+      "artifact": {
+        "generation": "g-muo2q1oh-41008-62e5b50d18ce484db3b92ab7c6edad8b",
+        "inventoryDigest": "aeac90df4bfd3460048a6574c8d0a10c4860f330b9dc1bee706691ad3eac2a47"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {}
+    }
+  ],
+  "operationEvidence": {
+    "profileId": "gamebuddy.tavern-management.chat-list-title",
+    "releaseTier": "tavern_management",
+    "profileHash": "df3a9720fefc7a0baf598f72f76a704f0fc0ac71077c74c3f1e87f770990c29d",
+    "mappingSchemaVersion": 1,
+    "mappingDigest": "545a5fee7a812ff63dc3fec6a10756ec87a4540a16f744804ea8f874ba0e8e18"
+  },
+  "mappedOperationIds": [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "memory.mutate",
+    "world-info.bind"
+  ],
+  "verdict": "passed",
+  "blockerIds": [],
+  "claims": {
+    "requiredMustFlowsExecuted": false,
+    "fullReleaseClaim": false
+  }
+}

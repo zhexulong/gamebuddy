@@ -158,6 +158,29 @@ function canonicalProfileHash(profile) {
     .digest("hex");
 }
 
+/**
+ * Fingerprint the operation-evidence mapping so a verdict can name the exact input
+ * it was decided on.
+ *
+ * The audit of run-01..run-04 found the `passed` verdict could not be re-derived
+ * from the artifact set: the mapping file is a caller-supplied input and was NOT in
+ * the recorded data, so a reader could only take `mappedOperationIds` on trust. The
+ * digest binds the report to the input without copying it, and it is recorded for
+ * every verdict (not only `passed`) so a later re-run can be compared against the
+ * exact bytes that produced the earlier decision.
+ *
+ * Key order is normalised: JSON.stringify preserves insertion order, and a mapping
+ * that differs only in key order is the same mapping. Array order is preserved - it
+ * is part of the caller's declaration.
+ */
+function canonicalMappingDigest(mapping) {
+  if (!plainRecord(mapping)) return undefined;
+  const sortedEntries = Reflect.ownKeys(mapping)
+    .sort()
+    .map((key) => [key, mapping[key]]);
+  return createHash("sha256").update(JSON.stringify(sortedEntries), "utf8").digest("hex");
+}
+
 function validateMountedProfile(mountedProfile, checks) {
   check(
     exactKeys(mountedProfile, COMPOSED_TAVERN_PROFILE_KEYS),
@@ -342,6 +365,23 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
     // key could smuggle arbitrary text into the evidence file. Project them only
     // once the mapping is valid; otherwise report none.
     mappedOperationIds: profileValid && checks.length === 0 ? mappedOperationIds : [],
+    // The mapping's identity and fingerprint, so a verdict names the exact input it
+    // was decided on. The audit of run-01..run-04 found the `passed` verdict could not
+    // be re-derived from the recorded artifacts, because the mapping is a
+    // caller-supplied file that was not among them - a reader could only take
+    // `mappedOperationIds` on trust. `profileHash` is recomputed from the mounted
+    // profile (checkable without the mapping file); `mappingDigest` binds the whole
+    // mapping without copying it. Both are content-free.
+    identity:
+      profileValid && checks.length === 0
+        ? Object.freeze({
+            profileId: mountedProfile?.profileId,
+            releaseTier: mountedProfile?.releaseTier,
+            profileHash: canonicalProfileHash(mountedProfile),
+            mappingSchemaVersion: mapping.schema_version,
+            mappingDigest: canonicalMappingDigest(operationEvidenceMapping),
+          })
+        : undefined,
   };
 }
 
@@ -533,6 +573,10 @@ export async function runTavernReleaseLiveGate({
     claims: RELEASE_SCOPE_CLAIMS,
     checks,
     prerequisite: prerequisiteReport?.verdict ?? "unavailable",
+    // Recorded for EVERY verdict, not only `passed`: a reader must be able to bind any
+    // decision to the exact inputs behind it. `undefined` means the mapping never
+    // reached a valid state, which is itself information.
+    ...(mapping.identity === undefined ? {} : { operationEvidence: mapping.identity }),
     mappedOperationIds: mapping.mappedOperationIds,
     runEvidence,
     blockerIds: [...new Set(checks.map((check) => check.id))],
@@ -634,6 +678,10 @@ export async function runTavernReleaseLiveOrchestrator({
     runKindSemantics: "attempt_labels_not_exercised_distinctions",
     prerequisite,
     runs,
+    // The exact mapping this decision rests on, carried through from the gate so the
+    // artifact alone can name it. Without this the recorded `passed` verdict could not
+    // be tied to any input (audit finding on run-04).
+    ...(gate.operationEvidence === undefined ? {} : { operationEvidence: gate.operationEvidence }),
     mappedOperationIds: gate.mappedOperationIds,
     verdict: gate.verdict,
     blockerIds: gate.blockerIds,
