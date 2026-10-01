@@ -92,3 +92,4 @@ neutral rows).
   the tool guarantees it. A cross-generation pair is now *made visible* (an
   `artifact.generation` / `artifact.inventoryDigest` neutral row appears) but
   still allowed — the tool's purpose is comparing across a system change.
+
