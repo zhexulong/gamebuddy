@@ -162,8 +162,12 @@
     "report:stardew-remaining-actions": "node integrations/stardew/action-development/src/analysis/stardew-remaining-actions-report.mjs",
     "test:stardew-remaining-actions": "node --test integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
     "derive:stardew-tile-action-selectors": "node integrations/stardew/action-development/src/analysis/stardew-tile-action-selectors.mjs",
-    "test:stardew-tile-action-selectors": "node --test integrations/stardew/action-development/tests/stardew-tile-action-selectors.test.mjs"
-  },
+    "test:stardew-tile-action-selectors": "node --test integrations/stardew/action-development/tests/stardew-tile-action-selectors.test.mjs",
+    "audit:stardew-fixture-scenario-wiring": "node tools/check-stardew-fixture-scenario-wiring.mjs",
+    "test:stardew-fixture-scenario-wiring": "node --test tools/check-stardew-fixture-scenario-wiring.test.mjs",
+    "audit:stardew-execution-receipt-field-parity": "node tools/check-stardew-execution-receipt-field-parity.mjs",
+    "test:stardew-execution-receipt-field-parity": "node --test tools/check-stardew-execution-receipt-field-parity.test.mjs"
+},
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
     "@vscode/tree-sitter-wasm": "0.3.1",
