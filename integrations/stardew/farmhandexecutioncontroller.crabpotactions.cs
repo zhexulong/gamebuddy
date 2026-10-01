@@ -94,8 +94,6 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         Farmer player = Game1.player;
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         // GameLocation.checkAction reaches Object.checkForAction only while the
         // farmer has no active object; with a held item the same entry would
         // instead run the drop-in probe against this pot.
@@ -113,6 +111,51 @@ internal sealed partial class ExecutionManager
         // Admission hard gate (source-corrected): only the mature 714 branch may
         // settle. Any other state is rejected without invoking checkForAction, so
         // the unbaited non-714 removal branch (CrabPot.cs:302-321) is unreachable.
+        if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null || crabPot.bait.Value is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_ready", $"target={targetX},{targetY};ready={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index={crabPot.tileIndexToShow};held={(crabPot.heldObject.Value is null ? "none" : crabPot.heldObject.Value.QualifiedItemId)};bait={(crabPot.bait.Value?.QualifiedItemId ?? "none")}");
+        // 5.2: out of the native radius, walk in rather than refuse. The pot and its
+        // maturity are validated above; both are re-checked after the walk inside the
+        // closure, because `checkAction` is a real player input path whose outcome
+        // depends on the world at the moment it runs.
+        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "collect_crab_pot_output",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectCrabPotOutput(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteCollectCrabPotOutput(executionId, requestId, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes collect_crab_pot_output against the current world, re-validating the
+    /// pot and its maturity because an approach leg may have taken several ticks. Shared
+    /// by the in-range path and the post-approach path. Restores the same required
+    /// order the in-range path had: advancement gate, then the ActionableObject check,
+    /// then the native checkAction.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCollectCrabPotOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    {
+        Farmer player = Game1.player;
+        if (player.ActiveObject is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", "active_object_held");
+
+        GameLocation location = player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed)
+            || placed is not StardewValley.Objects.CrabPot crabPot
+            || crabPot.QualifiedItemId != "(O)710"
+            || crabPot.owner.Value != player.UniqueMultiplayerID
+            || !string.Equals(BuildCollectCrabPotTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_changed", $"target={targetX},{targetY}");
         if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null || crabPot.bait.Value is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_ready", $"target={targetX},{targetY};ready={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index={crabPot.tileIndexToShow};held={(crabPot.heldObject.Value is null ? "none" : crabPot.heldObject.Value.QualifiedItemId)};bait={(crabPot.bait.Value?.QualifiedItemId ?? "none")}");
 

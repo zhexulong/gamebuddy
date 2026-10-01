@@ -23,8 +23,42 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
+        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
+        // 5.2: out of the native radius, walk in rather than refuse. The can and the
+        // water tile are validated above; both are re-resolved after the walk inside
+        // the closure, because another actor or the player can take the spot while
+        // walking.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "refill_watering_can",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteRefillWateringCan(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteRefillWateringCan(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes refill_watering_can against the current world, re-validating the can
+    /// and the water tile because an approach leg may have taken several ticks. Shared
+    /// by the in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteRefillWateringCan(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
         if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
@@ -356,20 +390,54 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId ?? this.activeItemPickup?.ExecutionId);
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (expectedQualifiedItemId != "(O)322")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || !IsQualifiedWoodFenceSource(source) || source.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"slot={slot}");
+        // 5.2: out of the native radius, walk in rather than refuse. The item checks
+        // above are position-independent; the placement checks (including
+        // Utility.playerCanPlaceItemHere's own native radius requirement) live in
+        // the shared execution body and are re-run after the walk.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "place_wood_fence",
+                farm,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlaceWoodFence(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
 
+        return this.ExecutePlaceWoodFence(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Executes place_wood_fence against the current world, re-validating the slot,
+    /// the source and the placement geometry because an approach leg may have taken
+    /// several ticks. Shared by the in-range path and the post-approach path so the
+    /// two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecutePlaceWoodFence(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (expectedQualifiedItemId != "(O)322")
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object executeSource || !IsQualifiedWoodFenceSource(executeSource) || executeSource.Stack <= 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"slot={slot}");
+        StardewValley.Object source = executeSource;
+        GameLocation fenceLocation = Game1.player.currentLocation;
+        if (fenceLocation is not Farm farm)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
         Vector2 tile = new(targetX, targetY);
         if (!string.Equals(BuildWoodFenceTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
             || farm.objects.ContainsKey(tile)
             || !Utility.playerCanPlaceItemHere(farm, source, targetX * 64 + 32, targetY * 64 + 32, Game1.player)
             || !source.canBePlacedHere(farm, tile))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_target_unavailable", $"target={targetX},{targetY}");
-
         int beforeCount = CountQualifiedItem(Game1.player, "(O)322");
         bool sourceEmptyBefore = !farm.objects.ContainsKey(tile);
         int previousSlot = Game1.player.CurrentToolIndex;
@@ -438,13 +506,47 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId ?? this.activeItemPickup?.ExecutionId);
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (expectedQualifiedItemId != "(O)710")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"slot={slot}");
+        // 5.2: out of the native radius, walk in rather than refuse. The item checks
+        // above are position-independent; the placement checks live in the shared
+        // execution body and are re-run after the walk.
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "place_crab_pot",
+                farm,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlaceCrabPot(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
 
+        return this.ExecutePlaceCrabPot(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Executes place_crab_pot against the current world, re-validating the slot, the
+    /// source and the placement geometry because an approach leg may have taken several
+    /// ticks. Shared by the in-range path and the post-approach path so the two cannot
+    /// drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecutePlaceCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (expectedQualifiedItemId != "(O)710")
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object executeSource || executeSource.QualifiedItemId != "(O)710" || executeSource.Stack <= 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"slot={slot}");
+        StardewValley.Object source = executeSource;
+        GameLocation crabPotLocation = Game1.player.currentLocation;
+        if (crabPotLocation is not Farm farm)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
         Vector2 tile = new(targetX, targetY);
         if (!string.Equals(BuildCrabPotTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
             || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, targetX, targetY)
@@ -513,7 +615,39 @@ internal sealed partial class ExecutionManager
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
         Farmer player = Game1.player;
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (expectedQualifiedItemId != "(O)685") return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_bait_item", $"item={expectedQualifiedItemId}");
+        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.QualifiedItemId != "(O)685" || bait.Stack <= 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot}");
+        GameLocation location = player.currentLocation;
+        // 5.2: out of the native radius, walk in rather than refuse. The bait item is
+        // validated above; the pot and its state are re-checked after the walk inside
+        // the closure, because `checkAction` is a real player input path whose outcome
+        // depends on the world at the moment it runs.
+        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "bait_crab_pot",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteBaitCrabPot(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteBaitCrabPot(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes bait_crab_pot against the current world, re-validating the bait item
+    /// and the pot because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
+        Farmer player = Game1.player;
         if (expectedQualifiedItemId != "(O)685") return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_bait_item", $"item={expectedQualifiedItemId}");
         if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.QualifiedItemId != "(O)685" || bait.Stack <= 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot}");
         GameLocation location = player.currentLocation;
