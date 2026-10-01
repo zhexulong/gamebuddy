@@ -50,6 +50,9 @@ const fakeFacade = Object.freeze({
       eventStream: null,
     }),
   readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: "Saved draft" }),
+  // The real facade owns its store and releases it on close; the composition
+  // owner's close chain calls this, so the fixture must model it.
+  close: async () => undefined,
 });
 
 function inspector() {
