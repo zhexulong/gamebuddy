@@ -153,8 +153,10 @@ async function prepare(
 
 test("cancel authority prerequisite: claim_cancel rejects an accepted_queued turn with zero mutation and no later-activation poisoning", async () => {
   const root = await canonicalTestRoot("gamebuddy-cancel-auth-accepted-");
+  let closeStore: (() => void) | undefined;
   try {
     const { store } = await prepare(root, "accepted_queued");
+    closeStore = () => store.close?.();
     const before = await store.resumeThread("thread_01", "surface_01");
     // A queued turn has no attempt claim, so the exact-attempt P5 port refuses
     // it before any cancel CAS can be evaluated.
@@ -201,14 +203,17 @@ test("cancel authority prerequisite: claim_cancel rejects an accepted_queued tur
     );
     assert.equal(committed.status, "presentation_committed");
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("cancel authority prerequisite: claim_cancel rejects attempt_starting sources until durable running, with zero mutation at each rejection", async () => {
   const root = await canonicalTestRoot("gamebuddy-cancel-auth-starting-");
+  let closeStore: (() => void) | undefined;
   try {
     const { store, attemptId } = await prepare(root, "attempt_starting");
+    closeStore = () => store.close?.();
     const unarmed = await store.resumeThread("thread_01", "surface_01");
     assert.equal(unarmed.turnLedger?.status, "attempt_starting");
     assert.equal(unarmed.turnLedger?.observation, undefined);
@@ -261,14 +266,17 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
     );
     assert.equal(cancelled.status, "cancelled");
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("cancel authority prerequisite: claim_cancel rejects a not_started attempt with zero mutation", async () => {
   const root = await canonicalTestRoot("gamebuddy-cancel-auth-not-started-");
+  let closeStore: (() => void) | undefined;
   try {
     const { store, attemptId } = await prepare(root, "not_started");
+    closeStore = () => store.close?.();
     const before = await store.resumeThread("thread_01", "surface_01");
     assert.equal(before.turnLedger?.status, "attempt_starting");
     assert.equal(before.turnLedger?.observation?.phase, "not_started");
@@ -282,14 +290,17 @@ test("cancel authority prerequisite: claim_cancel rejects a not_started attempt 
     );
     assert.deepEqual(await store.resumeThread("thread_01", "surface_01"), before);
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("cancel authority prerequisite: active P5 cancel and completion-first arbitration are unchanged", async () => {
   const root = await canonicalTestRoot("gamebuddy-cancel-auth-active-");
+  let closeStore: (() => void) | undefined;
   try {
     const { store, attemptId } = await prepare(root, "running");
+    closeStore = () => store.close?.();
     const base = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
 
     // Active cancel: claim → repeat claim (stable) → late presentation
@@ -333,8 +344,10 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
     // Completion-first: cancel loses the arbitration at the store CAS and the
     // terminal completion stays stable.
     const secondRoot = await canonicalTestRoot("gamebuddy-cancel-auth-complete-");
+    let closeSecond: (() => void) | undefined;
     try {
       const second = await prepare(secondRoot, "running");
+      closeSecond = () => second.store.close?.();
       const secondBase = (await second.store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
       await transitionMountedPresentation(
         { ...bindingFor(secondRoot), attemptId: second.attemptId },
@@ -372,9 +385,11 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
         /p5_presentation_cancel_source_required/,
       );
     } finally {
+      closeSecond?.();
       await rm(secondRoot, { recursive: true, force: true });
     }
   } finally {
+    closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
 });

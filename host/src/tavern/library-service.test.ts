@@ -42,7 +42,7 @@ async function setup() {
   const artifacts = new TavernArtifactStore(root);
   const threads = createChatThreadStore(root, "b".repeat(64), () => 10);
   const service = createTavernLibraryService(paths, artifacts, threads, profileReader);
-  return { root, paths, artifacts, service };
+  return { root, paths, artifacts, service, threads };
 }
 async function writeSelections(root: string, paths: ReturnType<typeof resolveTavernPaths>) {
   const artifacts = new TavernArtifactStore(root);
@@ -120,7 +120,7 @@ async function writeSelections(root: string, paths: ReturnType<typeof resolveTav
 }
 
 test("Companion Library persists inert selected companion metadata and Manage Chats opens exact threads", async () => {
-  const { root, paths, artifacts, service } = await setup();
+  const { root, paths, artifacts, service, threads } = await setup();
   try {
     const companion = await service.createNewCompanion({
       companionId: "companion",
@@ -194,6 +194,7 @@ test("Companion Library persists inert selected companion metadata and Manage Ch
     assert.deepEqual(await service.activeChatSelection(), null);
     await assert.rejects(service.openChat("thread", "other"), /chat_thread_surface_mismatch/);
   } finally {
+    threads.close?.();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -276,7 +277,7 @@ test("New Chat rejects corrupt, mismatched, and junk revisions on each Library s
   for (const selection of selections) {
     for (const invalid of ["corrupt-highest", "mismatched-highest", "junk-filename"] as const) {
       await test(`${selection.kind} selection rejects ${invalid}`, async () => {
-        const { root, paths, service } = await setup();
+        const { root, paths, service, threads } = await setup();
         try {
           await service.createNewCompanion({
             companionId: "companion",
@@ -300,6 +301,7 @@ test("New Chat rejects corrupt, mismatched, and junk revisions on each Library s
           if (invalid === "junk-filename") await writeFile(join(revisions, "notes.txt"), "junk", "utf8");
           await assert.rejects(service.createNewChat(selection.request()), selection.error);
         } finally {
+          threads.close?.();
           await rm(root, { recursive: true, force: true });
         }
       });
@@ -308,7 +310,7 @@ test("New Chat rejects corrupt, mismatched, and junk revisions on each Library s
 });
 
 test("Library companion enumeration and current companion fail closed for corrupt companion records", async () => {
-  const { root, paths, service } = await setup();
+  const { root, paths, service, threads } = await setup();
   try {
     await service.createNewCompanion({
       companionId: "companion",
@@ -326,12 +328,13 @@ test("Library companion enumeration and current companion fail closed for corrup
       /tavern_artifact_unreadable/,
     );
   } finally {
+    threads.close?.();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("New Chat fails closed for absent companion and unverified greeting selections", async () => {
-  const { root, paths, service } = await setup();
+  const { root, paths, service, threads } = await setup();
   try {
     await assert.rejects(
       service.createNewChat({ chatThreadId: "thread", chatSurfaceSessionId: "surface", opening: { kind: "blank" } }),
@@ -355,12 +358,13 @@ test("New Chat fails closed for absent companion and unverified greeting selecti
       /tavern_greeting_variant_not_found/,
     );
   } finally {
+    threads.close?.();
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("createNewChat consumes provisioned scenario and first greeting opening with M0 binding", async () => {
-  const { root, paths, artifacts, service } = await setup();
+  const { root, paths, artifacts, service, threads } = await setup();
   try {
     await service.createNewCompanion({
       companionId: "companion",
@@ -408,6 +412,7 @@ test("createNewChat consumes provisioned scenario and first greeting opening wit
     assert.equal(scenarioBinding.sourceId, scenarioId);
     assert.equal(scenarioBinding.revision, 1);
   } finally {
+    threads.close?.();
     await rm(root, { recursive: true, force: true });
   }
 });

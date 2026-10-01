@@ -54,6 +54,8 @@ export type ReferencePipelineState = Readonly<{
 export type ReferencePipelineStateFacade = Readonly<{
   read(): Promise<ReferencePipelineState>;
   readDraft(): Promise<BrowserDraftV1>;
+  /** Releases the facade's own store. The mounted lease stays its own owner's. */
+  close(): Promise<void>;
 }>;
 
 /**
@@ -101,9 +103,10 @@ export async function createReferencePipelineStateFacade(
   const companionDisplayName = identityProfile.identity.name;
   if (companionDisplayName.length === 0) throw unavailable();
 
+  let closed = false;
   return Object.freeze({
     async read(): Promise<ReferencePipelineState> {
-      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (closed || !isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
       try {
         const state = await threads.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
         validateStateBinding(state, binding);
@@ -116,7 +119,7 @@ export async function createReferencePipelineStateFacade(
       }
     },
     async readDraft(): Promise<BrowserDraftV1> {
-      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (closed || !isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
       try {
         const state = await threads.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
         validateStateBinding(state, binding);
@@ -131,6 +134,11 @@ export async function createReferencePipelineStateFacade(
       } catch {
         throw unavailable();
       }
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      threads.close?.();
     },
   });
 }

@@ -48,6 +48,8 @@ export type TavernManagementState = Readonly<{
 /** Read-only management capability: no roots, stores, selector, lease, or mutation authority escapes. */
 export type TavernManagementStateFacade = Readonly<{
   read(): Promise<TavernManagementState>;
+  /** Releases the facade's own store. The mounted lease stays its own owner's. */
+  close(): Promise<void>;
 }>;
 
 /**
@@ -101,9 +103,10 @@ export async function createTavernManagementStateFacade(
   }
   const resolvedWorldInfoService = worldInfoService;
 
+  let closed = false;
   return Object.freeze({
     async read(): Promise<TavernManagementState> {
-      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (closed || !isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
       try {
         const state = await threads.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
         validateStateBinding(state, binding);
@@ -114,6 +117,11 @@ export async function createTavernManagementStateFacade(
       } catch {
         throw unavailable();
       }
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      threads.close?.();
     },
   });
 }
