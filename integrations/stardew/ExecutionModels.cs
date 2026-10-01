@@ -83,26 +83,37 @@ internal sealed record LocalItemPickupSpec(
 /// once it settles, the completion pass re-validates the world (the target may
 /// have changed while walking) and then executes the kind-specific native call.
 /// </summary>
-internal enum PendingToolApproachKind
-{
-    ChopTreeSource,
-    BreakRockSource,
-    DigArtifactSpot,
-    ClearHoeDirt,
-    TillSoil,
-    ChopStump,
-    CutWeeds,
-}
-
-internal sealed record LocalToolApproachSpec(
+/// <summary>
+/// One action that was accepted while the actor stood outside the native
+/// interaction radius (Chebyshev-1) and is therefore waiting for an approach leg
+/// to finish before its native call runs.
+///
+/// The action-specific work is carried as a delegate rather than as a kind enum:
+/// the geometry, the ownership rules and the progress/terminal split are identical
+/// for every family that needs an approach, but what each action DOES on arrival is
+/// not, and a closed enum would force every new family to edit this shared seam.
+/// The delegate is a closure the action itself builds, so the shared mechanism
+/// never has to know the action's vocabulary.
+/// </summary>
+/// <param name="Execute">
+/// Runs the action's terminal step against the current world, re-validating the
+/// tool and the target first. Called only after the approach settled and the
+/// shared checks (location, radius) passed, and it mints the action's own
+/// terminal receipt.
+/// </param>
+/// <param name="ActionId">
+/// The wire action id, published in snapshots so an observer sees the real action
+/// rather than an internal approach phase.
+/// </param>
+internal sealed record LocalApproachSpec(
     string ExecutionId,
     string RequestId,
-    PendingToolApproachKind Kind,
+    string ActionId,
     string Location,
     int TargetX,
     int TargetY,
     string ExpectedTargetId,
-    int Slot,
+    Func<string, string, LocalExecutionReceipt> Execute,
     long RouteRevision,
     long DeadlineMs);
 

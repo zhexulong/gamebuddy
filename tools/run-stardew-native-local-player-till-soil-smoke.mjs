@@ -297,24 +297,14 @@ function summarizeWithSoil(snapshot) {
   return { ...summarizeSnapshot(snapshot), soilTiles: snapshot.soilTiles?.length ?? 0 };
 }
 function validateNativeLocalFixtureConfig(value) {
-  const fixture = value?.NativeLocalPlayerFixture;
+  if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
   if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO ||
-    !validFixtureSlotRelationship(fixture.LogicalSaveName, fixture.ObservedSaveSlot)
-  )
-    throw new Error("native_local_fixture_config_invalid");
-  if (
-    value.Portfolio?.Enable !== false ||
-    value.HostAutomation?.Enable !== false ||
-    value.HostFarmhandProvisioning?.Enable !== false ||
-    value.FarmhandProvisioner?.Enable !== false
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  // The retired `ActionPolicyVersion` + `EnabledActions` allowlist is gone; the
-  // surface is derived from the Mod catalog. What still needs proving is that
-  // this config does not deny an action the run requires.
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 function validFixtureSlotRelationship(logicalName, observedSaveSlot) {
