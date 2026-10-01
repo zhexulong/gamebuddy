@@ -6191,9 +6191,12 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             // 148/622/672/752/754/756/758 pickaxe). A boulder or log that no
             // registered action can clear must not become an Agent-visible affordance
             // with no way to act on it.
+            // Clearable exactly when the native performToolAction switch would
+            // make progress on it: 600/602 axe, 148/622/672/752/754/756/758 pickaxe,
+            // plus the 44/46 green-rain clumps its default arm clears. The sheet
+            // value stays a local read for the identity string below.
             int sheet = clump.parentSheetIndex.Value;
-            bool clearable = sheet is 600 or 602 or 148 or 622 or 672 or 752 or 754 or 756 or 758;
-            if (!clearable)
+            if (!SceneAffordanceKindWire.IsClearableResourceClump(clump))
                 continue;
             candidates.Add(new SceneAffordanceSource(
                 SceneAffordanceKind.Debris,
