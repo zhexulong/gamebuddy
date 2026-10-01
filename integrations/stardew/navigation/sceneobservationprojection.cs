@@ -166,27 +166,71 @@ internal sealed class SceneObservationProjection
         // Byte overflow drops ground detail before it drops affordances: an
         // affordance names an action the Agent can take, a ground exception only
         // refines where it is standing.
-        while (ground is not null && ground.Exceptions.Count > 0)
+        //
+        // Budget first, verify once. Each removable element is measured a single
+        // time (element-only, no joining comma) and the cuts are taken from the
+        // tail; a 16-byte error allowance covers the joining commas, the summary
+        // digit and the omitted-tile-count digit, so the single verification
+        // below cannot overflow. Worst case is three serializations total
+        // (initial full payload, budgeted verification, one defensive re-cut).
+        int need = result.PayloadUtf8Bytes - SceneObservationProjection.MaximumPayloadUtf8Bytes;
+        const int errorAllowance = 16;
+        int target = need + errorAllowance;
+        int freed = 0;
+        int removedGround = 0;
+        int removedAffordances = 0;
+
+        if (ground is not null)
         {
-            ground = ground with
+            List<int> groundSizes = GroundExceptionSizes(ground);
+            for (int i = groundSizes.Count - 1; i >= 0 && freed < target; i--)
             {
-                Exceptions = ground.Exceptions.Take(ground.Exceptions.Count - 1).ToArray(),
-                OmittedExceptionTileCount = ground.OmittedExceptionTileCount + 1,
-            };
-            result = BuildResult(context, affordances, partial: true, truncatedReason: "payload_limit", ground);
-            if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
-                return result;
+                freed += groundSizes[i];
+                removedGround++;
+            }
         }
-
-        while (affordances.Count > 0)
+        if (freed < target)
         {
-            affordances.RemoveAt(affordances.Count - 1);
-            result = BuildResult(context, affordances, partial: true, truncatedReason: "payload_limit", ground);
+            List<int> affordanceSizes = AffordanceSizes(affordances);
+            for (int i = affordanceSizes.Count - 1; i >= 0 && freed < target; i--)
+            {
+                freed += affordanceSizes[i];
+                removedAffordances++;
+            }
+        }
+
+        SceneGroundProjection? truncatedGround = ground;
+        if (truncatedGround is not null && removedGround > 0)
+        {
+            int kept = truncatedGround.Exceptions.Count - removedGround;
+            truncatedGround = truncatedGround with
+            {
+                Exceptions = kept > 0
+                    ? truncatedGround.Exceptions.Take(kept).ToArray()
+                    : Array.Empty<SceneGroundProjectionTile>(),
+                OmittedExceptionTileCount = truncatedGround.OmittedExceptionTileCount + removedGround,
+            };
+        }
+        IReadOnlyList<SceneAffordanceProjection> truncatedAffordances = removedAffordances == 0
+            ? affordances
+            : affordances.Take(affordances.Count - removedAffordances).ToList();
+
+        result = BuildResult(context, truncatedAffordances, partial: true, truncatedReason: "payload_limit", truncatedGround);
+        if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
+            return result;
+
+        // Defensive correction, bounded to one step: the allowance covers every
+        // accounting difference, so this exists only as a fail-safe; it is never
+        // a per-element reserialization loop.
+        if (truncatedAffordances.Count > 0)
+        {
+            truncatedAffordances = truncatedAffordances.Take(truncatedAffordances.Count - 1).ToList();
+            result = BuildResult(context, truncatedAffordances, partial: true, truncatedReason: "payload_limit", truncatedGround);
             if (result.PayloadUtf8Bytes <= SceneObservationProjection.MaximumPayloadUtf8Bytes)
                 return result;
         }
 
-        return BuildResult(context, Array.Empty<SceneAffordanceProjection>(), partial: true, truncatedReason: "payload_limit", ground);
+        return BuildResult(context, Array.Empty<SceneAffordanceProjection>(), partial: true, truncatedReason: "payload_limit", truncatedGround);
     }
 
     /// <summary>
@@ -294,9 +338,49 @@ internal sealed class SceneObservationProjection
             0,
             null);
 
-    private static int MeasurePayload(SceneObservationProjectionResult result)
+    /// <summary>
+    /// One-time serialized size of every ground exception tile, in order. The
+    /// element's standalone JSON is byte-identical to its appearance inside the
+    /// full payload (no indentation, no context-dependent escaping), so summing
+    /// these under-approximates the freed prefix by at most one comma per cut.
+    /// </summary>
+    private static List<int> GroundExceptionSizes(SceneGroundProjection ground)
     {
-        ObserveSceneResultPayload payload = new(
+        var sizes = new List<int>(ground.Exceptions.Count);
+        foreach (SceneGroundProjectionTile tile in ground.Exceptions)
+        {
+            sizes.Add(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(
+                new ObserveSceneGroundTilePayload(tile.TileX, tile.TileY, tile.Kind),
+                BridgeProtocol.JsonOptions)));
+        }
+        return sizes;
+    }
+
+    /// <summary>
+    /// One-time serialized size of every affordance, in order. See
+    /// <see cref="GroundExceptionSizes"/> for why a standalone measurement is a
+    /// safe under-approximation of the element's in-array cost.
+    /// </summary>
+    private static List<int> AffordanceSizes(IReadOnlyList<SceneAffordanceProjection> affordances)
+    {
+        var sizes = new List<int>(affordances.Count);
+        foreach (SceneAffordanceProjection affordance in affordances)
+        {
+            sizes.Add(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(
+                new ObserveSceneAffordancePayload(
+                    affordance.Ref,
+                    affordance.Kind,
+                    affordance.Name,
+                    affordance.Distance,
+                    affordance.Direction,
+                    affordance.ActionHint),
+                BridgeProtocol.JsonOptions)));
+        }
+        return sizes;
+    }
+
+    private static int MeasurePayload(SceneObservationProjectionResult result)
+    {        ObserveSceneResultPayload payload = new(
             result.ObservationId,
             result.CurrentLocation,
             result.CurrentRegion,
