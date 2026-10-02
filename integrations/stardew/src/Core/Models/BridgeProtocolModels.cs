@@ -308,6 +308,13 @@ public sealed record BridgeShippingBinTarget(string TargetId, int X, int Y, int 
 public sealed record BridgeTreeStumpTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health);
 public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health);
+
+/// <summary>
+/// One live grass tuft discoverable on the current map (the TerrainFeature
+/// `Grass`, distinct from the Object-layer weeds `cut_weeds` targets).
+/// Carries the tuft identity so admission can re-validate before swinging.
+/// </summary>
+public sealed record BridgeGrassTarget(string TargetId, string Location, int X, int Y, int GrassType, int NumberOfWeeds);
 public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
 public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
@@ -384,6 +391,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeTreeStumpTarget>? TreeStumpTargets,
     IReadOnlyList<BridgeTreeSaplingTarget>? TreeSaplingTargets,
     IReadOnlyList<BridgeWeedTarget>? WeedTargets,
+    IReadOnlyList<BridgeGrassTarget>? GrassTargets,
     IReadOnlyList<BridgeScytheCropTarget>? ScytheCropTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgeVillagerWhereabouts>? VillagerWhereabouts,

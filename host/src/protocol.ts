@@ -373,6 +373,8 @@ activeExecution?: ActiveExecution | null;
   treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string; displayName: string }>[];
   /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). */
   weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
+  /** Nearby Grass tufts (TerrainFeature) cuttable by an equipped scythe (cut_grass); grassType 1/7 drops Hay into a silo, 6 drops rare items. */
+  grassTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; grassType: number; numberOfWeeds: number }>[];
   /** Nearby ready Scythe-method crops harvestable by an equipped scythe (scythe_crop). */
   scytheCropTargets?: readonly Readonly<{
     targetId: string;
@@ -539,6 +541,7 @@ export type ExecutionRequest = Readonly<{
     | "chop_stump"
     | "plant_sapling"
     | "cut_weeds"
+    | "cut_grass"
     | "scythe_crop"
     | "interact_npc_with_item"
     | "craft_item"
@@ -1598,6 +1601,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chop_stump" &&
     value.action !== "plant_sapling" &&
     value.action !== "cut_weeds" &&
+    value.action !== "cut_grass" &&
     value.action !== "scythe_crop" &&
     value.action !== "interact_npc_with_item" &&
     value.action !== "craft_item" &&
@@ -1953,7 +1957,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_chest_target";
-  } else if (value.action === "chop_stump" || value.action === "cut_weeds" || value.action === "scythe_crop") {
+  } else if (value.action === "chop_stump" || value.action === "cut_weeds" || value.action === "cut_grass" || value.action === "scythe_crop") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
@@ -2230,6 +2234,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:weedTargets";
   if (
+    value.grassTargets !== undefined &&
+    (!Array.isArray(value.grassTargets) ||
+      value.grassTargets.length > 16 ||
+      !value.grassTargets.every(isGrassTargetFact))
+  )
+    return "invalid_snapshot:grassTargets";
+  if (
     value.scytheCropTargets !== undefined &&
     (!Array.isArray(value.scytheCropTargets) ||
       value.scytheCropTargets.length > 16 ||
@@ -2489,6 +2500,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.weedTargets) &&
         value.weedTargets.length <= 16 &&
         value.weedTargets.every(isWeedTargetFact))) &&
+    (value.grassTargets === undefined ||
+      (Array.isArray(value.grassTargets) &&
+        value.grassTargets.length <= 16 &&
+        value.grassTargets.every(isGrassTargetFact))) &&
     (value.scytheCropTargets === undefined ||
       (Array.isArray(value.scytheCropTargets) &&
         value.scytheCropTargets.length <= 16 &&
@@ -2600,6 +2615,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_stump" ||
       value.action === "plant_sapling" ||
       value.action === "cut_weeds" ||
+      value.action === "cut_grass" ||
       value.action === "scythe_crop" ||
       value.action === "interact_npc_with_item" ||
       value.action === "craft_item" ||
@@ -3583,6 +3599,27 @@ function isWeedTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.health) &&
     value.health >= 0 &&
     value.health <= 1000
+  );
+}
+
+function isGrassTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "grassType", "numberOfWeeds"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.grassType === "number" &&
+    Number.isSafeInteger(value.grassType) &&
+    value.grassType >= 1 &&
+    value.grassType <= 8 &&
+    typeof value.numberOfWeeds === "number" &&
+    Number.isSafeInteger(value.numberOfWeeds) &&
+    value.numberOfWeeds >= 1 &&
+    value.numberOfWeeds <= 1000
   );
 }
 

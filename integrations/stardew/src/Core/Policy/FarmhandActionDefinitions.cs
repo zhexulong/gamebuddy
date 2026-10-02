@@ -1,4 +1,4 @@
-﻿namespace GameBuddy.Stardew.Core.Policy;
+namespace GameBuddy.Stardew.Core.Policy;
 
 public enum FarmhandActionLifecycle { Published, LiveVerified, Experimental }
 public static class FarmhandActionLifecycleWire { public static string ToWireValue(this FarmhandActionLifecycle lifecycle) => lifecycle switch { FarmhandActionLifecycle.Published => "published", FarmhandActionLifecycle.LiveVerified => "live_verified", FarmhandActionLifecycle.Experimental => "experimental", _ => throw new ArgumentOutOfRangeException(nameof(lifecycle)) }; }
@@ -123,6 +123,7 @@ public static class FarmhandActionCatalog
         E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
+        E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         // Loop-closure W0a pre-registration. W0a owns registration and routing;
         // the native bodies are lane-owned partials

@@ -1781,6 +1781,7 @@
         "treeStumpTargets": { "type": "array", "items": { "$ref": "#/$defs/treeStumpTarget" }, "maxItems": 16 },
         "treeSaplingTargets": { "type": "array", "items": { "$ref": "#/$defs/treeSaplingTarget" }, "maxItems": 64 },
         "weedTargets": { "type": "array", "items": { "$ref": "#/$defs/weedTarget" }, "maxItems": 16 },
+        "grassTargets": { "type": "array", "items": { "$ref": "#/$defs/grassTarget" }, "maxItems": 16 },
         "scytheCropTargets": { "type": "array", "items": { "$ref": "#/$defs/scytheCropTarget" }, "maxItems": 16 },
         "chestStoreTargets": { "type": "array", "items": { "$ref": "#/$defs/chestStoreTarget" }, "maxItems": 16 },
         "chestRetrieveTargets": { "type": "array", "items": { "$ref": "#/$defs/chestRetrieveTarget" }, "maxItems": 16 },
@@ -1931,6 +1932,19 @@
         "x": {"$ref":"#/$defs/tile"},
         "y": {"$ref":"#/$defs/tile"},
         "health": {"type":"integer","minimum":0,"maximum":1000}
+      }
+    },
+    "grassTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "grassType", "numberOfWeeds"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/opaqueId" },
+        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "x": { "$ref": "#/$defs/tile" },
+        "y": { "$ref": "#/$defs/tile" },
+        "grassType": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "numberOfWeeds": { "type": "integer", "minimum": 1, "maximum": 1000 }
       }
     },
     "scytheCropTarget": {
@@ -2164,7 +2178,7 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "express_emote" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/expressEmoteArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "face_direction" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/faceDirectionArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["chest_store", "chest_retrieve", "plant_sapling", "interact_npc_with_item"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chop_stump", "cut_weeds", "scythe_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chop_stump", "cut_weeds", "cut_grass", "scythe_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "enum": ["craft_item", "cook_recipe"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/recipeTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "collect_crab_pot_output" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
     { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
@@ -2219,6 +2233,7 @@
             "chop_stump",
             "plant_sapling",
             "cut_weeds",
+            "cut_grass",
             "scythe_crop",
             "interact_npc_with_item",
             "craft_item",
