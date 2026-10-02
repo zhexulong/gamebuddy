@@ -67,6 +67,14 @@ export type WorldInfoBindingManagementServiceOptions = Readonly<{
   /** The composed tavern_management capability slice that gates both World Info routes. */
   profile: ComposedTavernProfile;
   repository: WorldInfoManagementRepository;
+  /**
+   * Optional immediate convergence for pristine (message-less) threads. When
+   * present, a successful bind on an idle chat asks the coordinator to mint
+   * the applied state right away instead of stranding the chat in pending
+   * until the next player turn. Absent, the desired-state model is unchanged
+   * and bindings stay pending exactly as before.
+   */
+  settleAuthoredContext?: () => Promise<void>;
 }>;
 
 type SourceMapping = Readonly<{ publicTitle: string; revision: number }>;
@@ -93,7 +101,7 @@ type ProjectionMapping = Readonly<{
 export function createWorldInfoBindingManagementService(
   options: WorldInfoBindingManagementServiceOptions,
 ): WorldInfoBindingManagementService {
-  const { manifest, lease, profile, repository } = options;
+  const { manifest, lease, profile, repository, settleAuthoredContext } = options;
   if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
   assertComposedProfile(profile);
   if (
@@ -194,6 +202,32 @@ export function createWorldInfoBindingManagementService(
         ...(binding === undefined ? {} : { binding }),
       });
       assertLeaseAfterDurableRead();
+      // Pristine chat: apply the desired binding immediately through the
+      // coordinator's settle path so the management browser sees the bound
+      // state right away instead of a pending shadow. The settle entry itself
+      // refuses when a turn is live or the lease changed, and throws
+      // context_unavailable; on an idle mounted runtime it refreshes the
+      // authored context and mints applied. A chat that already carries
+      // messages keeps the desired-state model: applied only after the next
+      // turn's settlement, never mid-conversation.
+      if (settleAuthoredContext !== undefined && updated.messages.length === 0) {
+        try {
+          await settleAuthoredContext();
+        } catch {
+          // The desired binding is already durable; immediate convergence is
+          // best-effort. A live turn, a torn-down lease or a provider hiccup
+          // on the settle path must not turn a succeeded bind into an error:
+          // the chat simply stays pending and converges on the next turn, the
+          // same outcome as if settle had never been wired.
+        }
+        assertLeaseAfterDurableRead();
+        // The settle path may have minted applied behind the scenes; re-read so
+        // the projection shows the converged state rather than the pre-settle
+        // pending snapshot. A failed settle re-reads the same pending state.
+        const converged = await store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+        assertLeaseAfterDurableRead();
+        return await projectFrom(converged);
+      }
       return await projectFrom(updated);
     } catch (error) {
       throw rethrowMutationError(error);

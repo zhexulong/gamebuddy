@@ -76,11 +76,12 @@ type WorldInfoItemV1 = Readonly<{
   title: string;
   summary: string | null;
   selected: boolean;
+  pending: boolean;
 }>;
 
 /** Safe opaque projection for binding World Info to the exact mounted Chat. */
 export type WorldInfoStateV1 = Readonly<{
-  state: "none" | "selected" | "locked" | "unavailable";
+  state: "none" | "selected" | "pending" | "unavailable";
   revision: string;
   items: readonly WorldInfoItemV1[];
 }>;
@@ -360,6 +361,9 @@ const OPERATION_IDS = [
   "world-info.bind",
   "settings.voice.read",
   "settings.voice.consent",
+  "settings.voice.devices",
+  "settings.language.read",
+  "settings.language.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -379,6 +383,9 @@ const LABEL_KEYS = [
   "tavern.operation.world-info.bind",
   "tavern.operation.settings.voice.read",
   "tavern.operation.settings.voice.consent",
+  "tavern.operation.settings.voice.devices",
+  "tavern.operation.settings.language.read",
+  "tavern.operation.settings.language.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
@@ -389,7 +396,7 @@ const LABEL_KEYS = [
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
-const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
+const WORLD_INFO_STATES = ["none", "selected", "pending", "unavailable"] as const;
 const VOICE_DISCLOSURE_VERSIONS = ["mimo-cloud-tts-v1"] as const;
 const VOICE_CONSENTS = ["undecided", "accepted", "revoked"] as const;
 const PROBLEM_CODES = [
@@ -428,7 +435,7 @@ const TURN_KEYS_WITH_PROBLEM_CODE = ["handle", "state", "projectionRevision", "c
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
 const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
-const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected"] as const;
+const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected", "pending"] as const;
 const SET_WORLD_INFO_BINDING_COMMAND_KEYS = [
   "apiVersion",
   "selectionGeneration",
@@ -445,6 +452,26 @@ const SNAPSHOT_KEYS = [
   "selection",
   "chat",
   "memory",
+  "eventStream",
+] as const;
+// `voice` is `Type.Optional` in the Host contract (host/src/tavern/browser-contract).
+// This mirror is strict - hasExactKeys compares lengths - so "optional" has to be
+// written as "exactly one of these two shapes", not left out of the list. Leaving
+// it out made the client reject any snapshot that carried the field, and the time
+// between the Host adding a key and this mirror learning it is exactly when the
+// whole management surface goes dark (the `pending` World Info key did that: no
+// panel was reachable at all).
+const SNAPSHOT_KEYS_WITH_VOICE = [
+  "apiVersion",
+  "build",
+  "csrfToken",
+  "browserSession",
+  "operations",
+  "navigation",
+  "selection",
+  "chat",
+  "memory",
+  "voice",
   "eventStream",
 ] as const;
 const SNAPSHOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
@@ -673,7 +700,8 @@ function isWorldInfoItem(value: unknown): value is WorldInfoItemV1 {
     isOpaqueHandle(value.handle) &&
     isLengthBoundedString(value.title, 1, 256) &&
     (value.summary === null || isLengthBoundedString(value.summary, 0, 512)) &&
-    typeof value.selected === "boolean"
+    typeof value.selected === "boolean" &&
+    typeof value.pending === "boolean"
   );
 }
 
@@ -742,7 +770,8 @@ function isMemoryState(value: unknown): boolean {
 }
 
 function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
-  if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
+  if (!isRecord(value)) return false;
+  if (!hasExactKeys(value, SNAPSHOT_KEYS) && !hasExactKeys(value, SNAPSHOT_KEYS_WITH_VOICE)) return false;
   if (value.apiVersion !== TAVERN_BROWSER_API_VERSION) return false;
   if (
     !isRecord(value.build) ||

@@ -4,6 +4,7 @@ import { resolveRuntimePaths } from "../runtime-identity.js";
 
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import { settleMountedAuthoredContext } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { VoicePreferenceStore } from "../settings/voice-preference-store.js";
@@ -192,6 +193,9 @@ export async function startTavernManagementPresentationAdmission(
       lease: input.lease,
       profile: tavernProfile,
       repository: worldInfoRepository,
+      // Pristine bindings settle immediately; message-bearing chats keep the
+      // desired-state model and converge on the next turn's admission.
+      settleAuthoredContext: () => settleMountedAuthoredContext(input.manifest, input.lease),
     });
     createdServices.push(worldInfoService);
     const managementStateFacade = await createTavernManagementStateFacade(

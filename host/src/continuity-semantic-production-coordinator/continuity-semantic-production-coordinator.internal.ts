@@ -392,6 +392,36 @@ const mountedAttemptInvocationAdmissions = new WeakMap<object, MountedAttemptInv
  * manifest/lease binding, begins close-drained work, and delegates the opaque
  * admission directly to Tavern's private internal seam.
  */
+/**
+ * Refreshes desired authored context without starting a turn. This is the
+ * management-surface settle path: while a turn runs it must wait for exact
+ * settlement (and therefore throws context_unavailable, matching
+ * ensureCurrentAuthoredContext), but on an idle mounted runtime it applies a
+ * pending World Info binding immediately instead of stranding it until the
+ * next player turn. The applied state is still minted only through the
+ * transition authority; this function merely asks for the same convergence the
+ * turn path uses, without creating a turn or a durable admission.
+ */
+export async function settleMountedAuthoredContext(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+): Promise<void> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId
+  )
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
+  return record.begin(async () => {
+    if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
+    await ensureCurrentAuthoredContext(manifest, record);
+  });
+}
+
 export async function acceptMountedDurableTurn(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,

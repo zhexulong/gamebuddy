@@ -18,6 +18,7 @@ export {
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
   createSharedSemanticProductionAuthorityFromDeploymentManifest,
   isCurrentMountedChatRuntimeLease,
+  settleMountedAuthoredContext,
   stopMountedChatPresentationEpoch,
   SemanticProductionCoordinatorError,
 } from "./continuity-semantic-production-coordinator.internal.js";

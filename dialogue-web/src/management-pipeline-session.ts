@@ -76,10 +76,11 @@ type WorldInfoItemV1 = Readonly<{
   title: string;
   summary: string | null;
   selected: boolean;
+  pending: boolean;
 }>;
 
 type WorldInfoStateV1 = Readonly<{
-  state: "none" | "selected" | "locked" | "unavailable";
+  state: "none" | "selected" | "pending" | "unavailable";
   revision: string;
   items: readonly WorldInfoItemV1[];
 }>;

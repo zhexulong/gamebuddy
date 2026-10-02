@@ -397,10 +397,10 @@ export function ManagementApp() {
       csrfToken: string,
     ) => Promise<TavernConnectionStateV1>,
     activation: boolean,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const current = viewRef.current;
     const connection = connectionView;
-    if (current.kind !== "ready" || connection.kind !== "ready" || connection.pending) return;
+    if (current.kind !== "ready" || connection.kind !== "ready" || connection.pending) return false;
     setConnectionView({ ...connection, pending: true, notice: null });
     try {
       const state = await action(apiRef.current, current.session.snapshot.csrfToken);
@@ -411,6 +411,7 @@ export function ManagementApp() {
           ? { kind: "success", text: labels().connectionActivationNotice }
           : { kind: "success", text: labels().success },
       });
+      return true;
     } catch (error) {
       // A rejection can still hide a committed change or a busy turn, so re-read
       // the authoritative projection before showing the failure and never keep a
@@ -425,6 +426,7 @@ export function ManagementApp() {
         setConnectionView({ kind: "unavailable" });
       }
       commit({ ...current, notice: { kind: "failure", text: connectionProblemText(error, labels()) } });
+      return false;
     }
   };
 
@@ -434,8 +436,8 @@ export function ManagementApp() {
    * write-only field stays write-only. Creation deliberately does not activate:
    * activation needs a ready record, which requires the player's own test step.
    */
-  const handleCreateConnection = async (form: ConnectionForm): Promise<void> => {
-    await handleConnectionMutation(async (api, csrfToken) => {
+  const handleCreateConnection = async (form: ConnectionForm): Promise<boolean> => {
+    return await handleConnectionMutation(async (api, csrfToken) => {
       const connection = connectionView.kind === "ready" ? connectionView.state : null;
       const provider: TavernConnectionProviderV1 | undefined = connection?.providers.find(
         (entry) => entry.providerId === form.providerId,
@@ -615,7 +617,7 @@ export function ManagementApp() {
               <ConnectionSettingsPanel
                 connectionView={connectionView}
                 labels={labels()}
-                onCreate={(form) => void handleCreateConnection(form)}
+                onCreate={(form) => handleCreateConnection(form)}
                 onTest={(connectionId) => void handleTestConnection(connectionId)}
                 onActivate={(connectionId) => void handleActivateConnection(connectionId)}
                 onSelectModel={(connectionId, modelId, thinkingLevel) =>
@@ -759,7 +761,7 @@ function ConnectionSettingsPanel({
 }: Readonly<{
   connectionView: Extract<ConnectionView, { kind: "ready" }>;
   labels: ReturnType<typeof messages>;
-  onCreate: (form: ConnectionForm) => void;
+  onCreate: (form: ConnectionForm) => Promise<boolean>;
   onTest: (connectionId: string) => void;
   onActivate: (connectionId: string) => void;
   onSelectModel: (connectionId: string, modelId: string, thinkingLevel: TavernConnectionThinkingLevelV1) => void;
@@ -804,13 +806,20 @@ function ConnectionSettingsPanel({
             onSubmit={(event) => {
               event.preventDefault();
               if (selected === undefined) return;
-              onCreate({
+              void onCreate({
                 providerId: selected.providerId,
                 apiKey,
                 baseUrl,
                 modelId,
                 catalogModelId: chosenModel?.modelId ?? catalogModelId,
                 thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
+              }).then((saved) => {
+                // The credential is write-only: a saved connection is never
+                // readable back, so once it is stored the field must not keep
+                // the secret in the document (the test's outerHTML scan finds
+                // it there). Only a durable save clears it; a rejected save
+                // keeps the typed value so the player can retry.
+                if (saved) setApiKey("");
               });
             }}
           >
@@ -1112,7 +1121,7 @@ function WorldInfoBindingPanel({
   onBind: (sourceHandle: string | null) => void;
 }>): ReactElement | null {
   if (worldInfo === null) return null;
-  const controlsLocked = worldInfo.state === "locked" || worldInfo.state === "unavailable";
+  const controlsLocked = worldInfo.state === "unavailable";
   const hasItems = worldInfo.items.length > 0;
   return (
     <section className="reference-draft-section" aria-label={labels.worldInfoBindingTitle} data-world-info-binding>
@@ -1128,7 +1137,7 @@ function WorldInfoBindingPanel({
               <strong>{item.title}</strong>
               {item.summary !== null && <p>{item.summary}</p>}
               <div className="composer-actions">
-                {item.selected ? (
+                {item.selected || item.pending ? (
                   <button
                     type="button"
                     className="small-button"
@@ -1154,7 +1163,7 @@ function WorldInfoBindingPanel({
           ))}
         </div>
       )}
-      {worldInfo.state === "locked" && <p>{labels.worldInfoLocked}</p>}
+      {worldInfo.state === "pending" && <p>{labels.worldInfoPending}</p>}
     </section>
   );
 }
