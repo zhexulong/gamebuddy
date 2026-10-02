@@ -1214,3 +1214,44 @@ This is a `native_local_player_fixture` single-player read-only measurement of
 one target-version collision field at one actor tile. It is not Farmhand,
 Publication, Portfolio, release, or save/reopen evidence, and it does not itself
 change the arrival test or the pathing target - it only measures them.
+## 27. Move-stall probe: Pet and Horse both block move_to_tile; retry does not help (2026-10-02)
+
+Two live gates (`move_stall_probe_pet` then `move_stall_probe_npc`) measure what
+happens when a NATIVE character stands on the middle tile of a three-collinear
+walkable line (actor → blocker → target), with the fixture verified by the same
+findPath the action uses. Both drive the PUBLISHED move_to_tile action twice:
+once as an action would issue it, then (only on a blocker terminal) the
+re-observe + re-issue an agent would perform from its failure receipt. The
+probe MEASURES; it does not pass or fail the action.
+
+**Pet (native_move_stall_probe_pet_v1):**
+
+- phase1 accepted → controller_started → tile_advanced → deadline_expired (25s),
+  finalTile (40,5) = the blocker tile; the Pet was pushed to (41,5) but walked
+  back onto the route during the attempt.
+- phase2 (re-observe + re-issue) accepted → controller_started →
+  native_path_ended (~22s): the Pet was back on (40,5), same A* → same path →
+  same collision.
+- conclusion: blocker_survived, retryResolved=false, moved=true.
+
+**Horse (native_move_stall_probe_npc_v1):**
+
+- phase1 accepted → controller_started → native_path_ended (5.2s), finalTile
+  (40,4) = START tile: the actor never moved at all. A Horse is a Character, not
+  an NPC: it overrides no behaviorOnFarmerPushing and no Farmer-push pass-through
+  (only rider Halt/mount transitions ever touch farmerPassesThrough, and only to
+  false), so pushing does nothing and pass-through never engages.
+- phase2 identical: native_path_ended, still on (40,4).
+- conclusion: blocker_survived, retryResolved=false, moved=false.
+
+**Reading:** native A* plans with pathfinding:true, which skips the whole
+character-collision loop, so the straight line is always planned; execution then
+collides. Neither target-version mechanism (Pet push-away, NPC pass-through)
+clears the block for these two kinds, and re-issuing the same move does not
+either — the same A* is character-blind and produces the same route. Design
+5.3's "stall → re-plan" therefore cannot be a simple same-target retry; the
+evidence says the re-plan must take the observed blocker into account (different
+arrival neighborhood, wait for the character to wander, or a path around it).
+
+Both runs restored profile, removed backup/lock and working save, and left no
+Stardew/SMAPI process.

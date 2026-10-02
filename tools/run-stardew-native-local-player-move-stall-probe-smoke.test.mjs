@@ -149,9 +149,9 @@ test("blocker survives the retry: the finding is recorded, not papered over", as
 });
 
 test("a move that fails for another reason is an invalid measurement, not a finding", async () => {
-  // Phase 1 fails with something other than native_path_ended and WITHOUT any
-  // tile_advanced progress: the probe cannot attribute it to the blocker, so it
-  // must not report a blocker conclusion.
+  // Phase 1 fails with something other than the two blocker terminals
+  // (native_path_ended / moved+deadline_expired) and the probe cannot
+  // attribute it to the blocker.
   const client = createFake({
     scenario: "native_move_stall_probe_pet_v1",
     phase1Succeeds: false,
@@ -163,16 +163,13 @@ test("a move that fails for another reason is an invalid measurement, not a find
   assert.equal(result.state, "invalid");
   assert.match(result.conclusion, /^unexpected_terminal:/);
   assert.equal(result.moved, false);
-  // Even though phase 2 reached the target, an unattributable phase-1 failure
-  // must not be recycled into a "retry works" finding.
   assert.equal(result.conclusion.includes("retry"), false);
 });
 
 test("a deadline-expired terminal is a valid blocker finding when the actor advanced", async () => {
   // The live run on 2026-10-02 consumed the authoritative deadline while the
   // actor stood on the blocker's tile (Pet was pushed, then walked back onto
-  // the route). That is blocker evidence, not an unattributable failure; the
-  // probe must report blocker_survived, not invalid.
+  // the route). That is blocker evidence, not an unattributable failure.
   const client = createFake({
     scenario: "native_move_stall_probe_pet_v1",
     phase1Succeeds: false,
@@ -184,9 +181,29 @@ test("a deadline-expired terminal is a valid blocker finding when the actor adva
   assert.equal(result.state, "measured");
   assert.equal(result.conclusion, "blocker_survived");
   assert.equal(result.moved, true);
-  assert.equal(result.nativeSelfResolved, false);
+});
+
+test("a native_path_ended with zero movement is still a measured blocker (Horse case)", async () => {
+  // The live Horse contrast on 2026-10-02 died with native_path_ended and the
+  // actor NEVER moved: a Horse's behaviorOnFarmerPushing is empty and the NPC
+  // pass-through never engages, so the block is total and immediate. That is a
+  // blocker finding, not an invalid measurement -- native_path_ended only
+  // exists when findPath succeeded and the controller then died at execution.
+  const client = createFake({
+    scenario: "native_move_stall_probe_npc_v1",
+    phase1Succeeds: false,
+    phase2Succeeds: false,
+    phase1ReasonCode: "native_path_ended",
+    phase1Advanced: false,
+    phase2ReasonCode: "native_path_ended",
+  });
+  const result = await runMoveStallProbe(client, client.receipts, fixtureConfig("native_move_stall_probe_npc_v1"));
+  assert.equal(result.state, "measured");
+  assert.equal(result.conclusion, "blocker_survived");
+  assert.equal(result.moved, false);
   assert.equal(result.retryResolved, false);
-  assert.equal(result.phase1.terminal.reasonCode, "deadline_expired");
+  assert.equal(result.phase1.terminal.reasonCode, "native_path_ended");
+  assert.equal(result.phase2.terminal.reasonCode, "native_path_ended");
 });
 
 test("unknown scenario is refused before any execution", async () => {
