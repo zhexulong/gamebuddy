@@ -178,6 +178,15 @@ public sealed class NativeLocalPlayerFixtureConfig
         // .faceDirection need no world object, inventory slot or prior action,
         // so this scenario provisions no fixture fact at all.
         "native_express_emote_v1",
+        // The move-stall probe stands a NATIVE挡路实体 (Pet, or a parked Horse as
+        // the generic NPC-class case) on the middle tile of a three-collinear
+        // walkable line (actor → blocker → target). A* plans straight through the
+        // middle because pathfinding skips character collision; execution then
+        // collides. The probe measures whether the native pushing/pass-through
+        // mechanisms resolve the block (Pet:~1.7s push-away, NPC:1.5s pass-through)
+        // before the 5000ms path-cancel, or whether the controller dies early with
+        // native_path_ended. Two scenarios: pet vs horse.
+        "native_move_stall_probe_pet_v1", "native_move_stall_probe_npc_v1",
     };
 
     internal bool IsValid => Enable
