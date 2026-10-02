@@ -87,11 +87,30 @@ const COSMETIC =
 /**
  * 赋值运算符区分终态与代价：
  *   `field = value` → 终态（水壶装满、锄点清空、土壤浇水）
- *   `field -= x`    → 代价（体力、水量）
+ *   `field -= x`    → **看字段**，不能一律当代价
  * 同一字段在不同分支角色可相反：`waterLeft.Value = waterCanMax`（refill）vs
  * `waterLeft.Value -= power + 1`（apply）。
  */
 const DIMINISHING = /-=$|--$/;
+
+/**
+ * 复合赋值里「消耗的是**执行者自己的资源**」的字段 —— 这些才是代价。
+ *
+ * 为什么必须区分：把 `-=` 一律当代价会把**世界实体的终态削减**一起排掉。
+ * `Grass.performToolAction` 的 `numberOfWeeds.Value -= num` 与 `Bush` /
+ * `GiantCrop` / `ResourceClump` 的 `health -= ...` 都是实体自身的状态：减到 0
+ * 就是销毁，是动作的**终态**，不是动作的代价。旧规则把它们从 `writes` 排进
+ * `cost`（而 `cost` 桶无任何消费者），于是 P4 判它们「无终态写入」，
+ * `Grass` 被九谓词拒掉、`Bush` 掉进「只写视觉/计时器」的 C 档，
+ * 两处遗漏同一个根因。
+ *
+ * 名单刻意**不含 `health`**：`health` 既是 actor 资源（`Farmer.health`）又是
+ * 世界实体生命（`Bush.health` / `GiantCrop.health` / `ResourceClump.health`），
+ * 无法单靠字段名区分；而这里列出的字段（水量/弹药/耐久/燃料）在任何世界实体
+ * 类里都不存在，所以 `-=` 只可能含义一种 —— 消耗。
+ */
+const ACTOR_RESOURCE_FIELD =
+  /^(stamina|waterLeft|waterCanMax|money|durability|ammo|magazine|usesLeft|fuel)$/i;
 
 /**
  * 委托接收者静态类型 → 该类型是否有多个子类实现。
@@ -335,6 +354,8 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
       const target = left ? text(left) : "?";
       const op = a.children.find((c) => /^[-+]?=$/.test(c.type))?.type ?? "=";
       const tail = stripValue(target).split(".").pop();
+      // `-=` 只有作用在**执行者资源**上才是代价；作用在世界实体上是终态削减。
+      const diminishing = DIMINISHING.test(op);
       return {
         s: a.startIndex,
         e: a.endIndex,
@@ -343,7 +364,8 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
         op,
         internal: isInternalWrite(target, locals, params),
         cosmetic: COSMETIC.test(tail),
-        cost: DIMINISHING.test(op),
+        cost: diminishing && ACTOR_RESOURCE_FIELD.test(tail),
+        diminishing,
         deferred: DEFERRED_FIELD.test(tail),
         phaseFlag: PHASE_FLAG_FIELD.test(tail),
         menu: MENU_TARGET.test(target),
