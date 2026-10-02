@@ -506,6 +506,7 @@ public sealed class BridgeProtocolSerializationTests
             TreeStumpTargets: null,
             TreeSaplingTargets: null,
             WeedTargets: null,
+            GrassTargets: null,
             ScytheCropTargets: null,
             NpcRelationshipTargets: null,
             VillagerWhereabouts: null,

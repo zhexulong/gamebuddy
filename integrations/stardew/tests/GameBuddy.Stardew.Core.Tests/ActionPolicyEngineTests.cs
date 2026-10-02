@@ -78,17 +78,20 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         // Opting a name in is only meaningful for an action that is NOT already
-        // default-consent. All registrations are published/live_verified now that
-        // ride_minecart cleared its live gate, so there is no experimental subject
-        // left: the opt-in set is empty and an unknown name stays inert.
+        // default-consent. cut_grass is the one experimental subject again (it
+        // awaits its live gate); every other registration is published or
+        // live_verified.
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
-            .Should().BeEmpty();
+            .Select(registration => registration.ActionId)
+            .Should().Equal("cut_grass");
         var options = new ActionPolicyOptions(
-            ExperimentalActions: new[] { "ride_minecart", "non_existent_action" }
+            ExperimentalActions: new[] { "cut_grass", "ride_minecart", "non_existent_action" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
 
+        // An opted-in experimental action is enabled.
+        enabled.Should().Contain("cut_grass");
         // A former experimental action that is now live_verified is already
         // default-consent; naming it changes nothing.
         enabled.Should().Contain("ride_minecart");

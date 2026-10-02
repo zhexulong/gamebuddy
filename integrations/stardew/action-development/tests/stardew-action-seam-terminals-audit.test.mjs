@@ -10,13 +10,21 @@ import { promisify } from "node:util";
  * seam 终态审计的测试。
  *
  * 核心事实：`native-multiplayer-sensitivity.v1.json` 的 seam 表是人工编写的
- * （generator 里是硬编码映射），实测 12 个「已注册但九谓词全拒」的 action 中
+ * （generator 里是硬编码映射），实测 11 个「已注册但九谓词全拒」的 action 中
  * 有 5 个的 seam 引用指向非终态位置：
  *   harvest_crop       → HoeDirt.performUseAction（路由；真终态是 destroyCrop 的 crop = null）
  *   scythe_crop        → HoeDirt.performToolAction（同上）
  *   ship_item          → Farm.getShippingBin（取句柄；真终态是 shipItem 的 lastItemShipped）
- *   pet_animal         → Pet.checkAction（写的是 hat/Items，不是抚摸结果）
- *   cut_weeds          → Object.performToolAction（写 fragility 等，非割草终态）
+ *   chest_store        → Chest.addItem（终态是 itemsForPlayer.Add 这类 mutator，纯赋值提取看不到）
+ *   advance_day        → GameLocation.startSleep（写 who.timeWentToBed 等状态，终态由 doSleep/新一天驱动）
+ *
+ * 2026-09-30 注：`advance_day` 是新登记到 register 的第十二个 seam（旧测试写 11 条），
+ * 它在 switch_section 作用域修正之前就是「无候选」——它不是本修正引入的回归，
+ * 而是 register 漂移（审计工具正确地把它列为 suspect）。
+ *
+ * 2026-10-02 注：`f8b408c` 把复合赋值按字段语义分类后，`cut_weeds` 的 seam
+ * （`Object.performToolAction`）的 weeds 写入被识别为候选终态，从「九谓词全拒」
+ * 集合退出；原 12 个 audited / 6 个 suspect 因此修正为 11 / 5。
  *
  * 第 6 条 `place_wood_fence` 已修复：原先引用纯判断的 `Object.canBePlacedHere`
  * （0 写入 → gate 误判 mp-insensitive 并放行），现改为引用真实变异点
@@ -100,10 +108,14 @@ test("5 个 seam 引用指向非终态位置（可疑）", async () => {
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
   /**
    * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
+   * `cut_weeds` 已不在此列：`f8b408c` 把复合赋值按字段语义分类后，
+   * `Object.performToolAction` 的 weeds 写入被识别为候选终态。
    * `chest_store` 取而代之：`Chest.addItem` 的终态是 `itemsForPlayer.Add(item)`
    * 这种 mutator 调用，纯赋值提取看不到，故被归为 seam_not_terminal。
+   * `advance_day` 是 register 新增的第十二个 seam（GameLocation.startSleep），
+   * 与 switch_section 作用域修正无关，见文件头注记。
    */
-  assert.deepEqual(ids, ["chest_store", "cut_weeds", "harvest_crop", "scythe_crop", "ship_item"]);
+  assert.deepEqual(ids, ["advance_day", "chest_store", "harvest_crop", "scythe_crop", "ship_item"]);
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {

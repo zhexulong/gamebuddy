@@ -1755,6 +1755,35 @@ export function createStardewActionTools(
   { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.cut_grass,
+        label: "Cut Grass",
+        description:
+          "Cut one live adjacent Grass tuft (a TerrainFeature, distinct from weeds) with the equipped scythe. slot, x, y and expectedTargetId must be copied exactly from the grassTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native scythe until the tuft is removed; grassType 1/7 feeds Hay into a silo (hay_unstored 0 = all stored) and grassType 6 drops rare items. Returns grass_cut.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+          idempotencyKey: Type.Optional(
+            Type.String({ minLength: 1, maxLength: 128 }),
+          ),
+        }),
+        action: "cut_grass",
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
+  }
+  { // constant mount; per-action admission at execution
+    tools.push(
+      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
         label: "Scythe Crop",
         description:

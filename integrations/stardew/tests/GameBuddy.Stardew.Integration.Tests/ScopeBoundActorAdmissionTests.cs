@@ -69,6 +69,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("cook_recipe")]
     [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("cut_grass")]
     [InlineData("dig_artifact_spot")]
     [InlineData("machine_collect_output")]
     [InlineData("machine_load")]
@@ -133,6 +134,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("cook_recipe")]
     [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("cut_grass")]
     [InlineData("dig_artifact_spot")]
     [InlineData("equip_tool")]
     [InlineData("feed_animal")]
@@ -179,6 +181,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("cook_recipe")]
     [InlineData("craft_item")]
     [InlineData("cut_weeds")]
+    [InlineData("cut_grass")]
     [InlineData("dig_artifact_spot")]
     [InlineData("equip_tool")]
     [InlineData("feed_animal")]
@@ -360,6 +363,7 @@ public sealed class ScopeBoundActorAdmissionTests
         "clear_hoedirt" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "hoedirt_target_1" },
         "chop_stump" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "stump_target_1" },
         "cut_weeds" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "weed_target_1" },
+        "cut_grass" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "grass_target_1" },
         // slot, x, y, expectedQualifiedItemId, expectedTargetId.
         "plant_sapling" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)309", ExpectedTargetId = "sapling_target_1" },
         "machine_load" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)433", ExpectedTargetId = "machine_target_1" },

@@ -266,6 +266,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["weed", "tool"],
   ),
   actionAdapter(
+    "cut_grass",
+    "Cut grass",
+    "Use the equipped scythe on a live adjacent Grass tuft (a TerrainFeature, distinct from weeds) through its native tool action until the tuft is removed; grassType 1/7 feeds Hay into a silo, grassType 6 drops rare items.",
+    ["grass", "tool"],
+  ),
+  actionAdapter(
     "scythe_crop",
     "Scythe a crop",
     "Use the equipped scythe on a live ready Scythe-method crop; the native harvest leaves the crop removed and the produce on the ground.",
@@ -366,6 +372,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   chop_stump: "stardew_chop_stump",
   plant_sapling: "stardew_plant_sapling",
   cut_weeds: "stardew_cut_weeds",
+  cut_grass: "stardew_cut_grass",
   scythe_crop: "stardew_scythe_crop",
   craft_item: "stardew_craft_item",
   cook_recipe: "stardew_cook_recipe",

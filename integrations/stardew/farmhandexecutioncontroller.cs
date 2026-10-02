@@ -1476,6 +1476,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
             advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
             advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? DiscoverWeedTargets(player) : null,
+            advertisedCapabilities.Contains("cut_grass", StringComparer.Ordinal) ? DiscoverGrassTargets(player) : null,
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
             DiscoverVillagerWhereabouts(),
@@ -1515,7 +1516,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
@@ -1898,6 +1899,41 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
                 location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.MinutesUntilReady))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Live grass tufts on the current map (the TerrainFeature `Grass`, not the
+    /// Object-layer weeds `cut_weeds` targets). Swinging a scythe at one deducts
+    /// its <c>numberOfWeeds</c> to zero and, when it dies, feeds Hay into a silo
+    /// (grassType 1/7) or drops rare items (grassType 6) via the native
+    /// <c>Grass.performToolAction</c> → <c>TryDropItemsOnCut</c> chain.
+    /// </summary>
+    private static IReadOnlyList<BridgeGrassTarget> DiscoverGrassTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeGrassTarget>();
+        List<BridgeGrassTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
+        {
+            if (pair.Value is not StardewValley.TerrainFeatures.Grass grass
+                || grass.numberOfWeeds.Value <= 0
+                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000
+                || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
+                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                continue;
+            result.Add(new BridgeGrassTarget(
+                BuildGrassTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, grass),
+                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
+                grass.grassType.Value, grass.numberOfWeeds.Value));
+            if (result.Count >= 16) break;
+        }
+        return result;
+    }
+
+    private static string BuildGrassTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Grass grass)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}:{grass.numberOfWeeds.Value}";
+        return $"grass_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static IReadOnlyList<BridgeScytheCropTarget> DiscoverScytheCropTargets(Farmer player)

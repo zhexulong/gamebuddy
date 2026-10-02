@@ -636,6 +636,115 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// Cut one grass tuft (the TerrainFeature `Grass`, not the Object-layer weeds)
+    /// with an equipped scythe through the native
+    /// <c>Grass.performToolAction(Tool, explosion, tile)</c> chain
+    /// (<c>Grass.cs:365</c>), which deducts <c>numberOfWeeds</c> to zero and, on
+    /// death, runs <c>TryDropItemsOnCut</c> (<c>Grass.cs:455</c>): grassType 1/7
+    /// feeds Hay into a silo via <c>GameLocation.StoreHayInAnySilo</c>
+    /// (<c>GameLocation.cs:16511</c>, 0 = fully stored, &gt;0 = silo-full remainder),
+    /// grassType 6 drops rare items. The target tuft must remain the requested
+    /// grass and the scythe must be the current tool; a removed tuft is the only
+    /// success postcondition. No other TerrainFeature class is touched.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalCutGrass(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon probeWeapon || !probeWeapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, probeWeapon))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? probeFeature) || probeFeature is not StardewValley.TerrainFeatures.Grass probeGrass
+            || !string.Equals(BuildGrassTargetId(location, targetX, targetY, probeGrass), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "cut_grass",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCutGrass(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteCutGrass(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes cut_grass against the current world, re-validating the tool and the
+    /// target because an approach leg may have taken several ticks. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCutGrass(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Grass grass
+            || !string.Equals(BuildGrassTargetId(location, targetX, targetY, grass), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
+
+        int weedsBefore = grass.numberOfWeeds.Value;
+        int grassType = grass.grassType.Value;
+        float staminaBefore = Game1.player.Stamina;
+        // A grass tuft usually holds 4 weeds; each native swing deducts 1 (basic
+        // scythe (W)47), 2 ((W)53) or 4 ((W)66), and only the final swing that
+        // crosses zero runs TryDropItemsOnCut and returns true. Keep swinging the
+        // same equipped scythe on the same tuft until it is removed, the bounded
+        // safety cap is reached, or the tuft leaves an unhandled state. Every swing
+        // runs the native grass path (sound, shake, sprites, deductions).
+        const int maximumSwingCount = 8;
+        int swingCount = 0;
+        bool removed = false;
+        while (!removed && swingCount < maximumSwingCount)
+        {
+            bool cut = grass.performToolAction(weapon, 0, tile);
+            swingCount++;
+            if (cut)
+            {
+                location.terrainFeatures.Remove(tile);
+                removed = true;
+            }
+            else
+            {
+                removed = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                    || !ReferenceEquals(afterFeature, grass);
+            }
+        }
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        // The scythe is a MeleeWeapon: no native code path deducts stamina for a
+        // melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do), so the
+        // expected embodied cost is exactly zero, same as cut_weeds.
+        float expectedStaminaCost = 0f;
+        // StoreHayInAnySilo returns the count it could NOT store (0 = all stored).
+        int hayUnstored = 0;
+        if (removed && (grassType == 1 || grassType == 7))
+        {
+            // The native path sampled a probability roll already; this read is the
+            // post-cut hay accounting the native player sees via the HUD. We mirror
+            // the same silo query the native path uses to report what happened.
+            int hayProduced = grassType == 7 ? 2 : 1;
+            hayUnstored = GameLocation.StoreHayInAnySilo(hayProduced, location);
+        }
+        string evidence = $"target={expectedTargetId};type=grass;tool=scythe;grass_type={grassType};weeds_before={weedsBefore};weeds_after={(removed ? "removed" : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};hay_unstored={hayUnstored};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+        return removed
+            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "grass_cut", evidence)
+            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "grass_cut_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
     /// Executes cut_weeds against the current world, re-validating the tool and the
     /// target because an approach leg may have taken several ticks. Shared by the
     /// in-range path and the post-approach path so the two cannot drift.
