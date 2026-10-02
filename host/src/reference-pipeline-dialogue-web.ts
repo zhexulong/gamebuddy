@@ -9,6 +9,8 @@ import {
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
   type TavernProblemV1,
+  type RegenerateMessageCommandV1,
+  type SwipeSelectCommandV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
@@ -33,6 +35,22 @@ const REFERENCE_OPERATION_IDS = ["chat.submit", "chat.cancel"] as const;
 const REFERENCE_NAVIGATION_ITEM_IDS = ["chat"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
+);
+// Precompiled request validators for every other request route that is handled
+// here. Compiling TypeBox schemas on a per-request basis runs V8 codegen on the
+// hot path; compiling once at module scope instead is cheap and stable.
+//
+// The routes below are asserted at module load by the route table used in the
+// request handlers, so a missing route surfaces as an immediate startup crash
+// rather than a runtime 400.
+const submitMessageRequestValidator = Compile(
+  (TavernBrowserContractV1.routes.find((route) => route.routeId === "chat.submit") as { request: TSchema }).request,
+);
+const cancelTurnRequestValidator = Compile(
+  (TavernBrowserContractV1.routes.find((route) => route.routeId === "chat.cancel") as { request: TSchema }).request,
+);
+const submissionStatusRequestValidator = Compile(
+  (TavernBrowserContractV1.routes.find((route) => route.routeId === "chat.submission_status") as { request: TSchema }).request,
 );
 
 export type ReferencePipelineDialogueWebOptions = Readonly<{
@@ -123,8 +141,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
         const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
         if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
          const body = await readJsonBody(request, MAX_MESSAGE_SUBMIT_BODY_BYTES);
-         const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submit");
-        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+        if (!submitMessageRequestValidator.Check(body))
           return sendProblem(response, 400, "invalid_request");
         const result = await pipelineService.submitAfterResponseCommit(
           body as import("./tavern/browser-contract/index.js").SubmitMessageCommandV1,
@@ -149,7 +166,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
         const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
         if (!TavernBrowserValidatorsV1.SwipeSelectCommandV1Schema.Check(body))
           return sendProblem(response, 400, "invalid_request");
-        const result = await pipelineService.selectSwipe!(body as any);
+        const result = await pipelineService.selectSwipe!(body as SwipeSelectCommandV1);
         return sendJson(response, 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/messages/regenerate") {
@@ -164,7 +181,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
         const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
         if (!TavernBrowserValidatorsV1.RegenerateMessageCommandV1Schema.Check(body))
           return sendProblem(response, 400, "invalid_request");
-        const result = await pipelineService.regenerate!(body as any, idempotencyKey);
+        const result = await pipelineService.regenerate!(body as RegenerateMessageCommandV1, idempotencyKey);
         return sendJson(response, 202, result);
       }
       if (request.method === "POST" && /^\/api\/tavern\/v1\/turns\/[A-Za-z0-9_-]{22,128}\/cancel$/u.test(url.pathname)) {
@@ -175,8 +192,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
         if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
         if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
         const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.cancel");
-        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+        if (!cancelTurnRequestValidator.Check(body))
           return sendProblem(response, 400, "invalid_request");
         const turnHandle = url.pathname.split("/")[5];
         if (turnHandle === undefined) return sendProblem(response, 400, "invalid_request");
@@ -196,8 +212,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
         const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submission_status");
-        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+        if (!submissionStatusRequestValidator.Check(body))
           return sendProblem(response, 400, "invalid_request");
         const status = await pipelineService.readSubmissionStatus(
           body as import("./tavern/browser-contract/index.js").MessageSubmissionStatusQueryV1,
