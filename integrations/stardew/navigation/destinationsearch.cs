@@ -134,16 +134,8 @@ internal sealed class DestinationSearch
         return IsWithinResultByteLimit(result) ? result : DestinationSearchResult.Unavailable();
     }
 
-    private static bool IsWithinResultByteLimit(DestinationSearchResult result)
-    {
-        object payload = result.Status switch
-        {
-            "resolved" => new { status = result.Status, reason = result.Reason, destination = result.Destination },
-            "candidates" => new { status = result.Status, reason = result.Reason, candidates = result.Candidates },
-            _ => new { status = result.Status, reason = result.Reason },
-        };
-        return Encoding.UTF8.GetByteCount(System.Text.Json.JsonSerializer.Serialize(payload)) <= MaximumResultUtf8Bytes;
-    }
+    private static bool IsWithinResultByteLimit(DestinationSearchResult result) =>
+        DestinationSearchBudget.MeasureUtf8Bytes(result) <= MaximumResultUtf8Bytes;
 
     private double[] Score(IReadOnlyList<NavigationDestination> destinations, string normalizedQuery) =>
         this.scorer is null
@@ -190,4 +182,90 @@ internal sealed class DestinationSearch
         normalized = DestinationSearchText.Normalize(value);
         return normalized.Length > 0;
     }
+}
+
+/// <summary>
+/// Byte-exact measurement of the serialized JSON size of a
+/// <see cref="DestinationSearchResult"/>, computed field-by-field so no
+/// whole-payload string is ever materialized on the managed heap.
+///
+/// <para>
+/// Every leaf is serialized individually with the default encoder (so escaping
+/// — quotes, backslashes, non-ASCII — is byte-identical to a whole-payload
+/// serialization), and the fixed structural overhead of the JSON document is
+/// added as constants. The result is therefore byte-identical to the payload
+/// the previous implementation serialized, as pinned by
+/// DestinationSearchByteBudgetEquivalenceTests.
+/// </para>
+/// </summary>
+internal static class DestinationSearchBudget
+{
+    internal static int MeasureUtf8Bytes(DestinationSearchResult result)
+    {
+        int size = 0;
+        if (result.Candidates is not null)
+        {
+            size += 1; // {
+            size += StructuralKey("status") + LeafBytes(result.Status);
+            size += 1; // ,
+            size += StructuralKey("reason") + LeafBytes(result.Reason);
+            size += 1; // ,
+            size += StructuralKey("candidates");
+            size += 1; // [
+            for (int index = 0; index < result.Candidates.Count; index++)
+            {
+                if (index > 0) size += 1; // ,
+                DestinationSearchCandidate candidate = result.Candidates[index];
+                size += 1; // {
+                size += StructuralKey("Label") + LeafBytes(candidate.Label);
+                size += 1; // ,
+                size += StructuralKey("ContextLabel") + LeafBytes(candidate.ContextLabel);
+                size += 1; // ,
+                size += StructuralKey("Selector") + SelectorBytes(candidate.Selector);
+                size += 1; // ,
+                size += StructuralKey("UnlockState") + LeafBytes(candidate.UnlockState);
+                size += 1; // }
+            }
+            size += 1; // ]
+            size += 1; // }
+        }
+        else if (result.Destination is not null)
+        {
+            size += 1; // {
+            size += StructuralKey("status") + LeafBytes(result.Status);
+            size += 1; // ,
+            size += StructuralKey("reason") + LeafBytes(result.Reason);
+            size += 1; // ,
+            size += StructuralKey("destination") + SelectorBytes(result.Destination);
+            size += 1; // }
+        }
+        else
+        {
+            size += 1; // {
+            size += StructuralKey("status") + LeafBytes(result.Status);
+            size += 1; // ,
+            size += StructuralKey("reason") + LeafBytes(result.Reason);
+            size += 1; // }
+        }
+        return size;
+    }
+
+    /// <summary>The serialized size of a <c>"name":</c> property prefix (quotes, name, colon).</summary>
+    private static int StructuralKey(string name) => name.Length + 3;
+
+    /// <summary>The serialized size of one string leaf: quotes, the value, and its escapes.</summary>
+    private static int LeafBytes(string? value) =>
+        value is null
+            ? 4 // null
+            : Encoding.UTF8.GetByteCount(System.Text.Json.JsonSerializer.Serialize(value));
+
+    /// <summary>The serialized size of a <c>NavigationDestinationSelector</c> record.</summary>
+    private static int SelectorBytes(NavigationDestinationSelector selector) =>
+        1 // {
+        + StructuralKey("Kind") + LeafBytes(selector.Kind)
+        + 1 // ,
+        + StructuralKey("Label") + LeafBytes(selector.Label)
+        + 1 // ,
+        + StructuralKey("Ref") + LeafBytes(selector.Ref)
+        + 1; // }
 }
