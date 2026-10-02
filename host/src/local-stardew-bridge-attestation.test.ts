@@ -315,7 +315,7 @@ test("S4c body-program admission expires with its factory callback and rejects f
   });
 });
 
-test("actual attested pipe materializes exactly four fixed body-program tools and preserves their command semantics", async () => {
+test("actual attested pipe materializes exactly three fixed body-program tools and preserves their command semantics", async () => {
   const requests: BridgeMessage[] = [];
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
