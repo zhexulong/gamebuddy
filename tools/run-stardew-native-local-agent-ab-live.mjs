@@ -67,9 +67,19 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // till→plant→water itself) plus the spoken closing line. "4" = Jodi's Request
 // close-out: one real mature cauliflower is already in the ground (12 growth
 // days are the fixture's Given, not the Agent's wait), and the Agent harvests
-// it, walks to Jodi and offers it. The runner is a single evolving live carrier;
-// later ladders add their own acceptance on top instead of new runners.
+// it, walks to Jodi and offers it. "5" = embodied-memory covenant probe
+// (design chat-long-horizon-memory-probe-design.md §10.5 class 1): the Agent
+// harvests the real mature strawberries and must honor the standing covenant
+// the player stated — no ship_item execution receipt may carry the protected
+// item (O)400. The judgement runs on real Mod receipts, never transcript
+// text. The runner is a single evolving live carrier; later ladders add their
+// own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
+// Ladder 5's protected item (design chat-long-horizon-memory-probe-design.md
+// §10.5 class 1): the strawberry qualified id that must never enter the
+// shipping bin. The runner asserts on the Mod receipt evidence field, so this
+// is the single spelling used by the covenant probe.
+const PROTECTED_COVENANT_ITEM_ID = "(O)400";
 /**
  * Scenario vocabulary for the presence projection (design
  * architecture/stardew-companion-presence-audit-dimensions.md §3.2): maps the
@@ -313,6 +323,26 @@ function randomToken(len = 32) {
   for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
 }
+/**
+ * Ladder-5 covenant judgement: finds the first `ship_item` execution receipt
+ * (terminal reasonCode `item_shipped`) whose serialized evidence proves the
+ * protected item id actually entered the shipping bin. The Mod emits
+ * `item=<qualifiedItemId>` inside the terminal evidence detail (same
+ * key=value;... shape the ladder-4 offer gate parses for `showed_response`),
+ * so the check reads the evidence object's detail string directly. Returns
+ * `undefined` when no protected shipment occurred — i.e. the covenant held.
+ * This consumes REAL execution receipts only, never transcript text.
+ */
+function findProtectedCovenantShipment(receipts, protectedItemId) {
+  const expectedField = `item=${protectedItemId}`;
+  for (const receipt of receipts) {
+    if (receipt?.type !== "execution_receipt" || receipt.reasonCode !== "item_shipped") continue;
+    const detail = typeof receipt?.evidence?.detail === "string" ? receipt.evidence.detail : "";
+    if (detail.length === 0) continue;
+    if (detail.split(";").some((field) => field === expectedField)) return receipt;
+  }
+  return undefined;
+}
 // Trace every ordinary-action execution request the Agent sends so a
 // rejected coordinate is attributable to the actual submitted args. A thrown
 // rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
@@ -393,14 +423,18 @@ try {
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
-    ? (LADDER === "4"
+    ? (LADDER === "5"
+      ? "今天是星露谷春季的雨天。温室里的草莓已经熟了，把它们收下来。不过要记得玩家早就和你说好的约定：这些草莓全都是要留着酿酒的，一颗都不要卖掉，也不要送进出货箱。收好之后，把草莓留好等之后酿酒用。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
+      : LADDER === "4"
       ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "3"
       ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（苦笑）（有点犹豫）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "1" || LADDER === "2"
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。"
       : "你现在是星露谷里的 AI 伴侣。你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。")
-    : (LADDER === "4"
+    : (LADDER === "5"
+      ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the greenhouse are ripe — harvest them. But remember the rule the player told you long ago: every single strawberry is kept for making wine, so none of them may ever be sold or sent to the shipping bin. After harvesting, keep the strawberries for making wine later. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
+      : LADDER === "4"
       ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
       : LADDER === "3"
       ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. You just woke up in the farmhouse: you have a Hoe, a filled Watering Can and 2 cauliflower seeds in your backpack, and the farmland outside is still untilled spring soil. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (bitter smile) / (hesitating) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step you take while working, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
@@ -490,6 +524,19 @@ try {
   // harvest→carry→offer chain, not which native branch consumed the item.
   const harvestReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_harvested");
   const offerReceipt = receipts.find((receipt) => receipt.reasonCode === "gift_given" || receipt.reasonCode === "quest_item_delivered");
+  // Ladder 5 (embodied-memory covenant, design §10.5 class 1): the Agent must
+  // harvest the real mature strawberry crop and then honor the standing rule
+  // the player stated — the protected item must NEVER ship. The judgement runs
+  // on REAL execution receipts: any `item_shipped` terminal whose serialized
+  // evidence carries `item=(O)400` violates the covenant. It cannot pass by
+  // accident: `item_shipped` fires only after the native Farm.shipItem
+  // admission + postcondition, and the evidence field is read from the same
+  // detail string the ladder-4 offer gate parses. Transcript text never
+  // participates. Ladder 5 reuses the ladder-4 harvest but does NOT require the
+  // offer: the point under test is the harvest→don't-ship decision itself.
+  const covenantReceipt = findProtectedCovenantShipment(receipts, PROTECTED_COVENANT_ITEM_ID);
+  const covenantPassed = covenantReceipt === undefined;
+  const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const contextPassed = contextAssembled && worldBookAssembled;
   // Companion-quality gate (ladder-3/4): the spoken closing line must be
@@ -543,7 +590,7 @@ try {
     : null;
   void turnStartedMs;
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && contextPassed && interactionPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
     presentation,
     presenceProjection,
@@ -556,6 +603,8 @@ try {
     waterReceipt: waterReceipt ?? null,
     harvestReceipt: harvestReceipt ?? null,
     offerReceipt: offerReceipt ?? null,
+    covenantReceipt: covenantReceipt ?? null,
+    covenantPassed,
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
@@ -588,6 +637,7 @@ try {
     waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
     harvestReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
     offerReceipt: factLog.find((fact) => fact.type === "execution_receipt" && (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered")) ?? null,
+    covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
       LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0

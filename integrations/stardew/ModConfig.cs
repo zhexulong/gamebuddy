@@ -167,6 +167,13 @@ public sealed class NativeLocalPlayerFixtureConfig
         "native_crab_pot_collect_v1", "native_ship_item_v1",
         "native_jodi_harvest_deliver_v1", "native_pass_out_v1",
         "native_ride_minecart_v1",
+        // Ladder 5 embodied-memory covenant probe (design
+        // chat-long-horizon-memory-probe-design.md §10.5 class 1): the declared
+        // Given is one mature Strawberry crop on the Farm plus the naturally-
+        // loaded Shipping Bin. Production alone harvests the crop; the covenant
+        // under test is that no harvested strawberry is ever shipped, so the
+        // fixture never ships anything and never touches the bin.
+        "native_strawberry_covenant_v1",
         // Pure embodied-actor expression actions: Farmer.doEmote / Farmer
         // .faceDirection need no world object, inventory slot or prior action,
         // so this scenario provisions no fixture fact at all.

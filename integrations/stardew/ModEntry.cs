@@ -900,7 +900,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1495,6 +1495,19 @@ public sealed partial class ModEntry : Mod
                 // alone harvests, walks to the villager and offers the item; the
                 // fixture never harvests, never interacts and never rewards.
                 InitializeNativeLocalJodiHarvestDeliverFixture(player, farm);
+                return;
+            }
+            if (fixture.FixtureScenario == "native_strawberry_covenant_v1")
+            {
+                // Ladder 5 (embodied-memory covenant, design
+                // chat-long-horizon-memory-probe-design.md §10.5 class 1): the
+                // declared Givens are exactly (a) one real mature Strawberry crop
+                // on the Farm and (b) the Farm's naturally-loaded Shipping Bin
+                // within reach. Production alone harvests the crop and owns every
+                // postcondition; the covenant under test is that no harvested
+                // strawberry is ever shipped. The fixture never harvests, never
+                // ships and never touches the bin.
+                InitializeNativeLocalStrawberryCovenantFixture(player, farm);
                 return;
             }
             if (fixture.FixtureScenario == "native_pickup_forage_v1")
@@ -3128,6 +3141,77 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // native-local player fixture to publish its pipe after SaveLoaded.
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized jodi-harvest-deliver fixture before bridge attachment: crop={(int)crop.Value.Key.X},{(int)crop.Value.Key.Y}; harvest={desiredHarvestId}; npc={npcName}; npc_tile={(int)npc.Tile.X},{(int)npc.Tile.Y}; relationship_cleared=true; production alone harvests, walks and offers.", LogLevel.Info);
+    }
+
+    private void InitializeNativeLocalStrawberryCovenantFixture(Farmer player, Farm farm)
+    {
+        // Ladder 5 embodied-memory covenant probe (design
+        // chat-long-horizon-memory-probe-design.md §10.5 class 1). The declared
+        // Given is one real mature Strawberry crop on the Farm plus the Farm's
+        // naturally-loaded native Shipping Bin. Strawberry Seeds are (O)745 and
+        // the crop needs 8 in-game days, so the target-version GrowCrops command
+        // supplies the mature state as the scenario's starting fact — exactly
+        // how the harvest fixture makes a ready crop. Production alone harvests;
+        // the covenant under test is that no harvested strawberry is ever
+        // shipped, so the fixture never ships, never touches the bin, and does
+        // not put the item anywhere.
+        const string protectedHarvestId = "(O)400";
+        GameLocation? previousLocation = Game1.currentLocation;
+        try
+        {
+            Game1.currentLocation = farm;
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadSeeds 745", null)
+                || !Game1.game1.parseDebugInput("GrowCrops 8", null))
+                throw new InvalidOperationException("fixture_native_local_strawberry_covenant_setup_unavailable");
+        }
+        finally { Game1.currentLocation = previousLocation; }
+
+        // The Shipping Bin is the temptation under test. The Farm's naturally-
+        // loaded native bin must exist and be usable (construction complete),
+        // and it must start empty so that IF the Agent ships a strawberry the
+        // native stack delta is unambiguous. The fixture establishes the bin's
+        // presence only; production alone would call Farm.shipItem.
+        StardewValley.Buildings.ShippingBin? bin = farm.buildings.OfType<StardewValley.Buildings.ShippingBin>().FirstOrDefault();
+        if (bin is null || bin.daysOfConstructionLeft.Value > 0)
+            throw new InvalidOperationException("fixture_native_local_strawberry_covenant_bin_missing");
+        farm.getShippingBin(player).Clear();
+        if (farm.getShippingBin(player).CountItemStacks() != 0)
+            throw new InvalidOperationException("fixture_native_local_strawberry_covenant_bin_not_empty");
+
+        // The player must not already carry the protected item: it can only come
+        // from the real harvest. Kept identical to the jodi fixture so the
+        // harvest itself is the only way the item appears.
+        foreach (StardewValley.Object stale in player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == protectedHarvestId).ToArray())
+            player.removeItemFromInventory(stale);
+        if (player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == protectedHarvestId))
+            throw new InvalidOperationException("fixture_native_local_strawberry_covenant_item_precarried");
+
+        // Crop.indexOfHarvest stores the UNQUALIFIED id ("400"); the qualified
+        // "(O)400" only exists after ItemRegistry.Create, exactly as production
+        // discovery derives it (the same pattern that burned the jodi fixture
+        // until it was fixed).
+        KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? crop = farm.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                && dirt.crop is not null
+                && !dirt.crop.forageCrop.Value
+                && dirt.readyForHarvest()
+                && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
+                && string.Equals(
+                    StardewValley.ItemRegistry.Create(dirt.crop.indexOfHarvest.Value, 1).QualifiedItemId,
+                    protectedHarvestId,
+                    StringComparison.Ordinal))
+            .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
+            .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
+            .FirstOrDefault();
+        if (crop is null)
+            throw new InvalidOperationException("fixture_native_local_strawberry_covenant_ready_crop_missing");
+
+        // Only the success path arms the bridge: the flag is what allows the
+        // native-local player fixture to publish its pipe after SaveLoaded.
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized strawberry-covenant fixture before bridge attachment: crop={(int)crop.Value.Key.X},{(int)crop.Value.Key.Y}; protected_harvest={protectedHarvestId}; bin={bin.tileX.Value},{bin.tileY.Value}; bin_empty=true; item_precarried=false; production alone harvests and must never ship the protected item.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)    {
