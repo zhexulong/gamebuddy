@@ -43,6 +43,7 @@
  * 无论从哪个名字进来，值都必须是 remaining report，形状检查一视同仁。
  */
 
+import { REJECTED_LAYER_VERDICTS } from "./stardew-rejected-layer-verdicts.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -344,40 +345,114 @@ const GROUP_NAMES = Object.freeze([
  * 被拒层的分组。
  *
  * 输入是 `stardew-method-resolution --rejected` 的产物（每个被九谓词拒掉的单元，
- * 带上它的委托链解析）。分档完全机械：
+ * 带上它的委托链解析）。分档完全机械，且**先做 seam join**：
  *
- *   chain_reaches_gameplay  入口自身无 gameplay 效果，链上有 → 需裁定
- *   own_terminal_write      入口自身有效果（P4 看到了）→ 无需在这里重提
- *   no_gameplay_effect      两侧都没有 → 内容/表现，不构成入口
+ *   already_registered   该单元或其解析链命中已注册 native seam
+ *                        （`HoeDirt.performUseAction` → `harvest_crop`）
+ *   needs_adjudication   入口自身无 gameplay 效果、链上有，且**表里没有裁定**
+ *   merge_into_existing / new_primitive_needed / content_operation
+ *                        / explicit_exclusion  —— 表里的逐条裁定
+ *   already_implemented  入口自身有效果（P4 看到了）
+ *   explicit_exclusion   两侧都没有 → 内容/表现，不构成入口
  *
- * 只有第一类进 `needs_adjudication`，因为它正是 P4 结构性看不见的那一类。
+ * seam join 必须在前面：不做的话已覆盖的单元会虚报成缺口。
+ * 链命中**只按 (文件, 成员)**，不得回退到成员名：成员名跨类碰撞正是这层要区分的
+ * 东西 —— `cut_weeds` 的 seam 是 `Object.performToolAction`（`Object.cs`），
+ * `Grass.performToolAction` 在 `Grass.cs`，两者是不同类上的不同实现（前者掉 Fiber，
+ * 后者把 Hay 送进筒仓）。按成员名回退会把 Grass 报成已覆盖，正好把缺口藏掉。
+ *
+ * 剩下的 `needs_adjudication` 必须由 `REJECTED_LAYER_VERDICTS` 全部接住，
+ * 否则抛 `rejected_unit_without_verdict`。
  */
-export function groupRejectedUnits({ methodResolution }) {
+export function groupRejectedUnits({ methodResolution, seamMembers, verdicts = REJECTED_LAYER_VERDICTS }) {
   const units = methodResolution?.units ?? [];
-  return units.map((u) => ({
-    key: `${u.className}.${u.member}@${u.line}`,
-    kind: "rejected_unit",
-    className: u.className,
-    member: u.member,
-    file: u.file,
-    line: u.line,
-    rejectedBy: u.rejectedBy ?? [],
-    ownEffects: u.ownEffects ?? [],
-    chainGameplayEffects: u.chainGameplayEffects ?? [],
-    resolveChain: u.resolveChain ?? [],
-    group: u.chainReachesGameplay
-      ? "needs_adjudication"
-      : u.ownTerminalWrite
-        ? "already_implemented"
-        : "explicit_exclusion",
-    actionIds: [],
-    reason: u.chainReachesGameplay
-      ? "entry body writes no gameplay state but its delegation chain does; the nine predicates reject it on the entry alone"
-      : u.ownTerminalWrite
-        ? "entry body itself writes gameplay state"
-        : "neither the entry nor its chain reaches a gameplay effect",
-    anchor: (u.resolveChain ?? []).slice(0, 4).join(" -> ") || null,
-  }));
+  const used = new Set();
+
+  const rows = units.map((u) => {
+    const ownHit = seamMembers ? ownersForUnit(seamMembers, u.file, u.member) : [];
+    const chainHits = [];
+    if (seamMembers) {
+      for (const step of u.resolveChain ?? []) {
+        const member = String(step).split("@")[0];
+        for (const id of ownersForUnit(seamMembers, u.file, member)) {
+          if (!chainHits.includes(id)) chainHits.push(id);
+        }
+      }
+    }
+    const seamActionIds = [...new Set([...ownHit, ...chainHits])].sort();
+
+    let group;
+    let reason;
+    let actionIds = seamActionIds;
+    let boundary = null;
+    let anchor = (u.resolveChain ?? []).slice(0, 4).join(" -> ") || null;
+
+    if (seamActionIds.length) {
+      group = "already_registered";
+      reason = ownHit.length
+        ? "this unit is the registered seam itself"
+        : "a member of this unit's resolution chain is a registered seam";
+    } else if (u.chainReachesGameplay) {
+      const key = `${u.className}.${u.member}@${u.line}`;
+      const verdict = verdicts[key];
+      if (!verdict) throw new Error(`rejected_unit_without_verdict:${key}`);
+      used.add(key);
+      group = verdict.group;
+      reason = verdict.reason ?? verdict.question ?? null;
+      actionIds = verdict.actionIds ?? (verdict.actionId ? [verdict.actionId] : []);
+      boundary = verdict.boundary ?? null;
+      anchor = verdict.anchor ?? anchor;
+    } else if (u.ownTerminalWrite) {
+      group = "already_implemented";
+      reason = "entry body itself writes gameplay state";
+    } else {
+      group = "explicit_exclusion";
+      reason = "neither the entry nor its chain reaches a gameplay effect";
+    }
+
+    return {
+      key: `${u.className}.${u.member}@${u.line}`,
+      kind: "rejected_unit",
+      className: u.className,
+      member: u.member,
+      file: u.file,
+      line: u.line,
+      rejectedBy: u.rejectedBy ?? [],
+      ownEffects: u.ownEffects ?? [],
+      chainGameplayEffects: u.chainGameplayEffects ?? [],
+      resolveChain: u.resolveChain ?? [],
+      group,
+      actionIds,
+      boundary,
+      reason,
+      anchor,
+    };
+  });
+
+  // 完备性①：表里每条裁定都必须被用到（捕捉类名/行号漂移或已消失的单元）
+  const unused = Object.keys(verdicts).filter((k) => !used.has(k));
+  if (unused.length) throw new Error(`rejected_layer_verdict_not_matched_to_any_unit:${unused.sort().join(",")}`);
+
+  return rows;
+}
+
+/**
+ * 先把单元解析到 owning action，**只按 (文件, 成员)**。
+ *
+ * 不得回退到成员名：rejected 层的解析链只在同文件展开，而且成员名跨类碰撞
+ * 正是这一层要区分的东西 —— `cut_weeds` 的 seam 是 `Object.performToolAction`
+ * （`Object.cs`），而 `Grass.performToolAction` 在 `Grass.cs` 里，两者是不同类上
+ * 的**不同实现**（前者掉 Fiber，后者把 Hay 送进筒仓）。按成员名回退会把
+ * `Grass` 报成已覆盖，正好把本次要发现的缺口藏掉。
+ *
+ * 真正的跨文件等价由 `STARDEW_SEMANTIC_EQUIVALENT_EXITS` 显式声明，
+ * 不靠名字巧合。
+ */
+function ownersForUnit(seamMembers, file, member) {
+  if (!member) return [];
+  const base = String(file ?? "").split(/[\\/]/).pop().toLowerCase();
+  const owners = seamMembers.byFileMember.get(`${base}\u0000${member}`);
+  return owners ? [...owners] : [];
 }
 
 const memberOf = (signature) => {
@@ -631,7 +706,9 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
   //
   // 这层**不产出 action identity**：它只把「入口自身无效果但链上有效果」的
   // 单元筛出来，交给人裁定。是否算新 action、是否并入现有 action，都不在这里定。
-  const rejectedRows = methodResolution ? groupRejectedUnits({ methodResolution }) : [];
+  const rejectedRows = methodResolution
+    ? groupRejectedUnits({ methodResolution, seamMembers })
+    : [];
   const rejectedGroups = groupRows(rejectedRows);
 
   // 参照列：A / C 档不参与计数（A 有 catalog intent，C 只有视觉/计时器写入）
@@ -643,11 +720,28 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
   const intentIds = (groups, kind) =>
     [...new Set(groups[kind].flatMap((r) => r.actionIds.filter((id) => !registeredActionIds.has(id))))].sort();
 
-  const newPrimitiveIntents = [...new Set([...intentIds(selectorGroups, "new_primitive_needed"), ...intentIds(methodGroups, "new_primitive_needed")])].sort();
-  const pendingItems = [...selectorGroups.needs_adjudication, ...methodGroups.needs_adjudication];
+  // 三层合并：selector / method / rejected。
+  // rejected 层必须参与：它是唯一能看到「入口体纯转发」的那层，不合并就会
+  // 把 cut_grass / harvest_fruit_tree 这类真实缺口排除在最终数字之外。
+  const newPrimitiveIntents = [
+    ...new Set([
+      ...intentIds(selectorGroups, "new_primitive_needed"),
+      ...intentIds(methodGroups, "new_primitive_needed"),
+      ...intentIds(rejectedGroups, "new_primitive_needed"),
+    ]),
+  ].sort();
+  const pendingItems = [
+    ...selectorGroups.needs_adjudication,
+    ...methodGroups.needs_adjudication,
+    ...rejectedGroups.needs_adjudication,
+  ];
 
   /** 归并行的门禁标注：`merge_into_existing` 只说意图相同，不说门禁等价。 */
-  const gatingAnnotations = [...selectorGroups.merge_into_existing, ...methodGroups.merge_into_existing]
+  const gatingAnnotations = [
+    ...selectorGroups.merge_into_existing,
+    ...methodGroups.merge_into_existing,
+    ...rejectedGroups.merge_into_existing,
+  ]
     .filter((r) => r.gating)
     .map((r) => ({
       key: r.key,
@@ -696,8 +790,13 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
       methodPendingUnits: methodGroups.needs_adjudication.length,
       rejectedLayerUnits: rejectedRows.length,
       rejectedLayerChainReachesGameplay: rejectedGroups.needs_adjudication.length,
+      rejectedLayerAlreadyRegistered: rejectedGroups.already_registered.length,
+      rejectedLayerNewPrimitive: rejectedGroups.new_primitive_needed.length,
+      rejectedLayerMergeIntoExisting: rejectedGroups.merge_into_existing.length,
+      rejectedLayerContentOperation: rejectedGroups.content_operation.length,
+      rejectedLayerExplicitExclusion: rejectedGroups.explicit_exclusion.length,
       rejectedLayerNote:
-        "units the nine predicates rejected; only the method-resolution layer can see the ones whose entry body is pure delegation",
+        "units the nine predicates rejected; this is the only layer that can see an entry whose body is pure delegation",
       newPrimitiveIntents: newPrimitiveIntents.length,
       pendingAdjudicationItems: pendingItems.length,
       upperBoundIfAllPendingBecomePrimitives: newPrimitiveIntents.length + pendingItems.length,
