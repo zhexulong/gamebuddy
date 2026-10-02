@@ -80,11 +80,13 @@ payloads remain private. The browser cannot select identity, model, tools, or
 runtime paths. This is an implementation slice for real conversation testing;
 The current vertical slice now persists explicit user-visible surface sessions
 under a Host-owned continuity ledger and supports an operator-bound WorldBook.
-GameBuddy loads its narrow MIT-licensed Magic Context fork
-`0.41.0-gamebuddy.1`, based on upstream `v0.41.0` commit
-`bcd2f705af70bfd055e974a47c958640e2484b7f`. The Host selects its
-`ongoing-interaction` domain and enables only its first read-only Semantic
-Memory injection gate. `auto_search` remains limited to the current Pi session,
+GameBuddy loads its narrow MIT-licensed Magic Context fork, whose package
+identity is `@cortexkit/pi-magic-context@0.42.3-airp.1`. The fork branched from
+upstream `v0.41.0` (commit `bcd2f7051e501478110660c3ce52a1a486756da3`) and later
+merged upstream `dc952bf3` (itself `v0.42.3+6`) into the GameBuddy line; see
+`vendor/magic-context/README-GAMEBUDDY-FORK.md` for the full lineage. The Host
+selects its `ongoing-interaction` domain and enables only its first read-only
+Semantic Memory injection gate. `auto_search` remains limited to the current Pi session,
 while its cross-session project-memory path is outside the approved product
 scope. Browser-side thread
 selection, ST PNG/V3 file import UX, profile editing/migration, and desktop
@@ -97,7 +99,7 @@ experience ledger.
 | Component | Version | Source | Integrity / license |
 |---|---:|---|---|
 | Pi coding-agent SDK | `0.84.4` | `https://github.com/earendil-works/pi` (`packages/coding-agent`) | npm lockfile integrity; MIT |
-| Magic Context Pi extension | `0.41.0-gamebuddy.1` | GameBuddy-maintained fork of `https://github.com/cortexkit/magic-context` `v0.41.0` commit `bcd2f705af70bfd055e974a47c958640e2484b7f` (`vendor/magic-context/packages/pi-plugin`) | local file dependency; upstream MIT |
+| Magic Context Pi extension | `0.42.3-airp.1` | GameBuddy-maintained fork of `https://github.com/cortexkit/magic-context`, branched from `v0.41.0` (`bcd2f7051e501478110660c3ce52a1a486756da3`) and synced with upstream `dc952bf3` (`v0.42.3+6`) (`vendor/magic-context/packages/pi-plugin`) | local file dependency; upstream MIT |
 
 The exact local fork resolution and all transitive packages are in the committed root `pnpm-lock.yaml`; fork source and its build instructions live at `vendor/magic-context/README-GAMEBUDDY-FORK.md`. Initial installation deliberately denies optional build scripts for `onnxruntime-node`, `sharp`, `protobufjs`, and `@google/genai`; Phase 0B configures embeddings **off**, so those binaries are neither required nor implicitly approved.
 
