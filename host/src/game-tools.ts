@@ -327,7 +327,7 @@ export function createStardewObservationTools(
     catalog,
     search,
   ];
-  if (sceneCapabilityReady()) {
+  { // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         name: "stardew_observe_scene",
@@ -345,7 +345,7 @@ export function createStardewObservationTools(
       }),
     );
   }
-  if (navigationCapabilityReady("inspect_world_map")) {
+  { // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         name: "stardew_inspect_world_map",
@@ -390,7 +390,7 @@ export function createStardewObservationTools(
       }),
     );
   }
-  if (navigationCapabilityReady("find_destination")) {
+  { // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         name: "stardew_find_destination",
@@ -525,9 +525,15 @@ export function buildCandidateToolSchema(
 }
 
 /**
- * Mount Game Actions only when the Mod's live snapshot declares the player-
- * configured capability. The Host never mints per-turn permission or treats
- * model prose as an authorization source.
+ * Mounts the complete Game Action tool surface for the life of a connected
+ * session. The mounted tool NAME set is constant: per-action eligibility is
+ * decided at execution time by executeGameAction against the Mod's live
+ * capability snapshot and restrictive policy, which returns a structured
+ * rejected receipt (capability_not_declared / action_policy_denied) instead
+ * of withdrawing the tool. A constant name set preserves the provider prefix
+ * cache, which a per-snapshot tool add/remove would otherwise bust. The Host
+ * never mints per-turn permission or treats model prose as an authorization
+ * source.
  */
 export function createStardewActionTools(
   integration: StardewBridgeConnection,
@@ -538,26 +544,17 @@ export function createStardewActionTools(
     return [] as const;
   const state = integration.state;
   if (!state.connected || state.snapshot === null) return [] as const;
-  const currentCapabilities = state.capabilities.filter((capability) =>
-    state.snapshot!.capabilities.includes(capability),
-  );
+  // Frozen Manifest content only: descriptor-complete blocks (express_emote,
+  // face_direction) mount from published registrations, never from live
+  // capability snapshots or per-turn permission.
   const modRegistrations = state.catalogRegistrations ?? [];
-  const visibleActionIds = new Set(
-    visibleActionsFromModCatalog(
-      modRegistrations,
-      currentCapabilities,
-      policy,
-    ).map((entry) => entry.actionId),
-  );
-  const isVisible = (actionId: StardewActionId) =>
-    visibleActionIds.has(actionId);
   const tools: Array<ReturnType<typeof defineTool>> = [];
   const makeGameActionTool = gameActionToolFactory(
     integration,
     policy,
     dispatchAdmissionFactory,
   );
-  if (isVisible("navigate_to_destination")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.navigate_to_destination,
@@ -596,7 +593,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("move_to_tile")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.move_to_tile,
@@ -618,7 +615,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("travel")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.travel,
@@ -651,7 +648,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("enter_exit")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
@@ -673,7 +670,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("till_soil")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.till_soil,
@@ -695,7 +692,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("pickup_forage")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
@@ -735,7 +732,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("pickup_item")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.pickup_item,
@@ -767,7 +764,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("refill_watering_can")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.refill_watering_can,
@@ -796,7 +793,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("water_crop")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_crop,
@@ -823,7 +820,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("plant_seed")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.plant_seed,
@@ -857,7 +854,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("place_wood_fence")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.place_wood_fence,
@@ -888,7 +885,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("place_crab_pot")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.place_crab_pot,
@@ -919,7 +916,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("bait_crab_pot")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.bait_crab_pot,
@@ -950,7 +947,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("fertilize_tile")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.fertilize_tile,
@@ -984,7 +981,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("machine_inspect")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_inspect,
@@ -1011,7 +1008,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("machine_load")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
@@ -1042,7 +1039,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("machine_collect_output")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_collect_output,
@@ -1069,7 +1066,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("collect_animal_product")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.collect_animal_product,
@@ -1098,7 +1095,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("feed_animal")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.feed_animal,
@@ -1127,7 +1124,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("use_item")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.use_item,
@@ -1155,7 +1152,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("harvest_crop")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.harvest_crop,
@@ -1187,7 +1184,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("chop_tree_source")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chop_tree_source,
@@ -1216,7 +1213,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("dig_artifact_spot")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.dig_artifact_spot,
@@ -1245,7 +1242,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("clear_hoedirt")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.clear_hoedirt,
@@ -1274,7 +1271,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("break_rock_source")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.break_rock_source,
@@ -1303,7 +1300,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("equip_tool")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.equip_tool,
@@ -1327,7 +1324,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("express_emote")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "express_emote",
     );
@@ -1352,7 +1349,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("face_direction")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "face_direction",
     );
@@ -1377,7 +1374,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("interact_npc_with_item")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "interact_npc_with_item",
     );
@@ -1411,7 +1408,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("pet_animal")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "pet_animal",
     );
@@ -1437,7 +1434,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("advance_day")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "advance_day",
     );
@@ -1459,7 +1456,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("ride_minecart")) {
+  { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "ride_minecart",
     );
@@ -1485,7 +1482,7 @@ export function createStardewActionTools(
       );
     }
   }
-  if (isVisible("clear_debris")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.clear_debris,
@@ -1514,7 +1511,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("npc_relationship")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.npc_relationship,
@@ -1541,7 +1538,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("water_pet_bowl")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_pet_bowl,
@@ -1568,7 +1565,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("water_slime_hutch_trough")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_slime_hutch_trough,
@@ -1595,7 +1592,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("chest_store")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chest_store,
@@ -1629,7 +1626,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("chest_retrieve")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
@@ -1663,7 +1660,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("chop_stump")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chop_stump,
@@ -1692,7 +1689,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("plant_sapling")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.plant_sapling,
@@ -1726,7 +1723,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("cut_weeds")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.cut_weeds,
@@ -1755,7 +1752,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("scythe_crop")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
@@ -1784,7 +1781,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("craft_item")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.craft_item,
@@ -1807,7 +1804,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("cook_recipe")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.cook_recipe,
@@ -1830,7 +1827,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("collect_crab_pot_output")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.collect_crab_pot_output,
@@ -1857,7 +1854,7 @@ export function createStardewActionTools(
       }),
     );
   }
-  if (isVisible("ship_item")) {
+  { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.ship_item,

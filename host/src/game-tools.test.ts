@@ -189,7 +189,9 @@ catalogRevision: 1,
       throw new Error("must_not_cancel");
     },
   };
-  const [move] = createStardewActionTools(integration, undefined, () => testAdmission(integration));
+  const move = createStardewActionTools(integration, undefined, () => testAdmission(integration)).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  )!;
   assert.ok(move);
   enabled = false;
   const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
@@ -246,7 +248,9 @@ catalogRevision: 1,
       throw new Error("must_not_cancel");
     },
   };
-  const [move] = createStardewActionTools(integration, mutablePolicy, () => testAdmission(integration));
+  const move = createStardewActionTools(integration, mutablePolicy, () => testAdmission(integration)).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  )!;
   assert.ok(move);
   mutablePolicy.deniedActions.push("move_to_tile");
   const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
@@ -297,13 +301,13 @@ catalogRevision: 1,
       throw new Error("must_not_cancel");
     },
   };
-  const [move] = createStardewActionTools(integration, undefined, () => ({
+  const move = createStardewActionTools(integration, undefined, () => ({
     owner: { ownerId: "test_owner", epoch: 1 },
     observer: { beforeWrite: () => undefined, bindReceipt: () => undefined, markUncertain: () => undefined, markAuthoritativelyRejected: () => undefined },
     cancelExact: async () => {
       throw new Error("unused");
     },
-  }));
+  })).find((candidate) => candidate.name === "stardew_move_to_tile")!;
   assert.ok(move);
   const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
   assert.equal(executeCalls, 1);
@@ -369,9 +373,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_equip_tool");
-  const result = await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_equip_tool");
+  assert.ok(mountedTool);
+  const result = await mountedTool!.execute(
     "test",
     { tool: "axe", requestId: "request_tool_01", idempotencyKey: "idempotency_tool_01" },
     new AbortController().signal,
@@ -436,9 +440,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_enter_exit");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_enter_exit");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     { x: 10, y: 11, requestId: "request_door_01", idempotencyKey: "idempotency_door_01" },
     new AbortController().signal,
@@ -503,9 +507,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_pickup_item");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_pickup_item");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       x: 21,
@@ -582,9 +586,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_refill_watering_can");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_refill_watering_can");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 4,
@@ -613,12 +617,11 @@ catalogRevision: 1,
       return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
     },
   };
-  assert.equal(
-    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-      (tool) => tool.name === "stardew_refill_watering_can",
-    ),
-    false,
+  const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+    (tool) => tool.name === "stardew_refill_watering_can",
   );
+  // Constant mount: the tool stays declared; execution-time admission rejects it.
+  assert.equal(stillMounted, true);
 });
 
 test("published plant_seed mounts only from a live capability and forwards the opaque live target", async () => {
@@ -672,9 +675,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_plant_seed");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_plant_seed");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 5,
@@ -754,9 +757,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_clear_hoedirt");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_clear_hoedirt");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 4,
@@ -831,9 +834,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_use_item");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_use_item");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     { slot: 5, expectedQualifiedItemId: "(O)216", requestId: "request_food_01", idempotencyKey: "idempotency_food_01" },
     new AbortController().signal,
@@ -901,9 +904,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_harvest_crop");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_harvest_crop");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       x: 39,
@@ -981,9 +984,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_chop_tree_source");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_chop_tree_source");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 4,
@@ -1012,12 +1015,11 @@ catalogRevision: 1,
       return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
     },
   };
-  assert.equal(
-    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-      (tool) => tool.name === "stardew_chop_tree_source",
-    ),
-    false,
+  const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+    (tool) => tool.name === "stardew_chop_tree_source",
   );
+  // Constant mount: the tool stays declared; execution-time admission rejects it.
+  assert.equal(stillMounted, true);
 });
 
 test("published break_rock_source mounts only from a live Mod capability and forwards the exact source target", async () => {
@@ -1074,9 +1076,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_break_rock_source");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_break_rock_source");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 4,
@@ -1105,12 +1107,11 @@ catalogRevision: 1,
       return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
     },
   };
-  assert.equal(
-    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-      (tool) => tool.name === "stardew_break_rock_source",
-    ),
-    false,
+  const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+    (tool) => tool.name === "stardew_break_rock_source",
   );
+  // Constant mount: the tool stays declared; execution-time admission rejects it.
+  assert.equal(stillMounted, true);
 });
 
 test("published machine_inspect mounts only from a live capability and forwards the opaque target", async () => {
@@ -1164,9 +1165,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_machine_inspect");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_machine_inspect");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       x: 14,
@@ -1240,9 +1241,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_machine_load");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_machine_load");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 5,
@@ -1318,9 +1319,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_machine_collect_output");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_machine_collect_output");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       x: 14,
@@ -1348,12 +1349,11 @@ catalogRevision: 1,
       return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
     },
   };
-  assert.equal(
-    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-      (tool) => tool.name === "stardew_machine_collect_output",
-    ),
-    false,
+  const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+    (tool) => tool.name === "stardew_machine_collect_output",
   );
+  // Constant mount: the tool stays declared; execution-time admission rejects it.
+  assert.equal(stillMounted, true);
 });
 
 test("published bait_crab_pot mounts only from a live capability and forwards the fixed Bait contract", async () => {
@@ -1407,9 +1407,9 @@ catalogRevision: 1,
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.equal(tools.length, 1);
-  assert.equal(tools[0]?.name, "stardew_bait_crab_pot");
-  await tools[0]!.execute(
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_bait_crab_pot");
+  assert.ok(mountedTool);
+  await mountedTool!.execute(
     "test",
     {
       slot: 5,
@@ -1438,12 +1438,11 @@ catalogRevision: 1,
       return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
     },
   };
-  assert.equal(
-    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-      (tool) => tool.name === "stardew_bait_crab_pot",
-    ),
-    false,
+  const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+    (tool) => tool.name === "stardew_bait_crab_pot",
   );
+  // Constant mount: the tool stays declared; execution-time admission rejects it.
+  assert.equal(stillMounted, true);
 });
 
 test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {
@@ -1498,7 +1497,9 @@ catalogRevision: 1,
     },
   };
   const admission = testAdmission(integration);
-  const [move] = createStardewActionTools(integration, undefined, () => admission);
+  const move = createStardewActionTools(integration, undefined, () => admission).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  )!;
   assert.ok(move);
   const result = await move.execute(
     "test",
@@ -1577,8 +1578,10 @@ catalogRevision: 1,
       },
     };
   });
-  await tools[0]!.execute("one", { x: 1, y: 1 }, new AbortController().signal, () => undefined, {} as never);
-  await tools[0]!.execute("two", { x: 2, y: 2 }, new AbortController().signal, () => undefined, {} as never);
+  const moveTool = tools.find((candidate) => candidate.name === "stardew_move_to_tile");
+  assert.ok(moveTool);
+  await moveTool!.execute("one", { x: 1, y: 1 }, new AbortController().signal, () => undefined, {} as never);
+  await moveTool!.execute("two", { x: 2, y: 2 }, new AbortController().signal, () => undefined, {} as never);
   assert.deepEqual(admittedOwners, ["owner_1", "owner_2"]);
 });
 
@@ -1597,7 +1600,7 @@ test("game action awaits admission beforeWrite before calling the bridge", async
       evidence: null,
     };
   });
-  const [move] = createStardewActionTools(integration, undefined, () => ({
+  const move = createStardewActionTools(integration, undefined, () => ({
     owner: { ownerId: "test_owner", epoch: 1 },
     observer: {
       beforeWrite: () => beforeWrite.promise,
@@ -1608,7 +1611,7 @@ test("game action awaits admission beforeWrite before calling the bridge", async
     cancelExact: async () => {
       throw new Error("unused");
     },
-  }));
+  })).find((candidate) => candidate.name === "stardew_move_to_tile")!;
   assert.ok(move);
 
   const invocation = move.execute(
@@ -1640,7 +1643,7 @@ test("game action awaits markUncertain after a bridge execute failure", async ()
     executeCalls++;
     throw new Error("bridge_disconnected:pipe_closed");
   });
-  const [move] = createStardewActionTools(integration, undefined, () => ({
+  const move = createStardewActionTools(integration, undefined, () => ({
     owner: { ownerId: "test_owner", epoch: 1 },
     observer: {
       beforeWrite: () => undefined,
@@ -1655,7 +1658,7 @@ test("game action awaits markUncertain after a bridge execute failure", async ()
     cancelExact: async () => {
       throw new Error("unused");
     },
-  }));
+  })).find((candidate) => candidate.name === "stardew_move_to_tile")!;
   assert.ok(move);
 
   const invocation = move
