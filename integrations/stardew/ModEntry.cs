@@ -116,8 +116,6 @@ public sealed partial class ModEntry : Mod
     private NativeLocalDigArtifactSpotFixturePending? nativeLocalDigArtifactSpotFixturePending;
     private NativeLocalPlaceCrabPotFixturePending? nativeLocalPlaceCrabPotFixturePending;
     private NativeLocalBaitCrabPotFixturePending? nativeLocalBaitCrabPotFixturePending;
-    private sealed record NativeLocalMoveStallProbePending(string FarmName, Vector2 PlannedAnchor, bool UseHorseBlock);
-    private NativeLocalMoveStallProbePending? nativeLocalMoveStallProbePending;
     private bool nativeChatObservationInstalled;
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
@@ -825,8 +823,7 @@ public sealed partial class ModEntry : Mod
             || this.nativeLocalClearHoeDirtFixturePending is not null
             || this.nativeLocalDigArtifactSpotFixturePending is not null
             || this.nativeLocalPlaceCrabPotFixturePending is not null
-            || this.nativeLocalBaitCrabPotFixturePending is not null
-            || this.nativeLocalMoveStallProbePending is not null)
+            || this.nativeLocalBaitCrabPotFixturePending is not null)
             return;
         if (fixture.FixtureScenario.Length == 0)
         {
@@ -903,7 +900,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -935,16 +932,6 @@ public sealed partial class ModEntry : Mod
                 // Pet.checkAction, records the daily interaction, applies
                 // friendship, and emits a matching terminal receipt.
                 InitializeNativeLocalPetFixture(player, farm);
-                return;
-            }
-            if (fixture.FixtureScenario is "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1")
-            {
-                // The probe's only declared Given is a NATIVE blocker standing on
-                // the middle tile of a three-collinear walkable line. Exercising
-                // the block is the production move_to_tile's own business: the
-                // fixture establishes the blocker and the standing tile, then
-                // steps away; production alone plans, walks, and collides.
-                InitializeNativeLocalMoveStallProbeFixture(player, farm, useHorseBlock: fixture.FixtureScenario == "native_move_stall_probe_npc_v1");
                 return;
             }
             if (fixture.FixtureScenario == "native_pass_out_v1")
@@ -3205,36 +3192,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // "(O)400" only exists after ItemRegistry.Create, exactly as production
         // discovery derives it (the same pattern that burned the jodi fixture
         // until it was fixed).
-        //
-        // Then keep EXACTLY ONE ripe strawberry and remove the rest. SpreadSeeds
-        // fills the whole farm (~1700 crops); a live ladder-5 run measured the
-        // consequence: the Agent harvested 12 crops across 6 tiles and burned its
-        // entire turn budget, so it never reached the shipping decision the probe
-        // exists to test and `covenantPassed` was vacuously true. The same
-        // single-target narrowing the water_crop_empty_can fixture already uses
-        // applies here: this is fixture-only world setup, never an action call.
-        Vector2? keptCrop = null;
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
-        {
-            if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt)
-                continue;
-            if (!dirt.readyForHarvest()
-                || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab
-                || !string.Equals(
-                    StardewValley.ItemRegistry.Create(dirt.crop.indexOfHarvest.Value, 1).QualifiedItemId,
-                    protectedHarvestId,
-                    StringComparison.Ordinal))
-                continue;
-            if (keptCrop is null)
-            {
-                keptCrop = pair.Key;
-                continue;
-            }
-            farm.terrainFeatures.Remove(pair.Key);
-        }
-        if (keptCrop is null)
-            throw new InvalidOperationException("fixture_native_local_strawberry_covenant_ready_crop_missing");
-
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? crop = farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
@@ -3327,110 +3284,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             throw new InvalidOperationException("fixture_native_local_pet_placement_validation_failed");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized pet-animal precondition before bridge attachment: pet_type={pet.petType.Value}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; friendship=0; petted_today=false; friendship_callback=false; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
-    }
-
-    /// <summary>
-    /// The move-stall probe's only fixture fact is a native blocker (Pet or
-    /// Horse) on a three-collinear walkable line: the actor stands at A, the
-    /// blocker stands at A+(0,1), and the probe's move target is A+(0,2). The
-    /// anchor is found synchronously, but the warp completes through the native
-    /// lifecycle, so the blocker is placed and the geometry re-verified in
-    /// OnWarped against the ACTUAL post-warp tile. Nothing here invokes a
-    /// movement, interaction or action; the block is exercised by production's
-    /// move_to_tile.
-    /// </summary>
-    private void InitializeNativeLocalMoveStallProbeFixture(Farmer player, Farm farm, bool useHorseBlock)
-    {
-        Vector2? anchor = FindNativeLocalMoveStallAnchor(farm);
-        if (anchor is null)
-            throw new InvalidOperationException("fixture_native_move_stall_anchor_missing");
-        Vector2 anchorA = anchor.Value;
-        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)anchorA.X, (int)anchorA.Y, false));
-        this.nativeLocalMoveStallProbePending = new NativeLocalMoveStallProbePending(farm.NameOrUniqueName, anchorA, useHorseBlock);
-        this.Monitor.Log($"GameBuddy native-local-player queued move-stall probe precondition: planned_anchor={anchorA.X},{anchorA.Y}; blocker_kind={(useHorseBlock ? "horse" : "pet")}; final arrangement is completed after the warp settles.", LogLevel.Info);
-    }
-
-    private static Vector2? FindNativeLocalMoveStallAnchor(GameLocation location)
-    {
-        // The probe's declared Given is "a ROUTE EXISTS from A straight through
-        // blocker B to target C". That has to be true for the PLANNER, not just
-        // for `isTilePassable`: A* uses `isCollidingPosition(..., pathfinding: true)`
-        // (PathFindController.findPath), which additionally rejects Buildings-layer
-        // tiles, building footprints, resource clumps and standing animals. A cheap
-        // passability scan alone selected a Farm column that the planner refused
-        // outright, and the probe then reported `no_native_path` without ever
-        // exercising the blocker. So verify with the same planner the action uses,
-        // from the actual start tile, and require the path to CROSS B.
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        for (int y = 4; y < height - 4; y++)
-        {
-            for (int x = 4; x < width - 4; x++)
-            {
-                Vector2 a = new(x, y);
-                Vector2 b = new(x, y + 1);
-                Vector2 c = new(x, y + 2);
-                if (!IsMoveStallLineWalkable(location, a, b, c))
-                    continue;
-                if (!PlannerRoutesThrough(location, a, b, c))
-                    continue;
-                return a;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// True when the exact-tile planner path from <paramref name="a"/> to
-    /// <paramref name="c"/> exists and steps on the blocker tile
-    /// <paramref name="b"/>. Uses the static native `findPath` with the same
-    /// predicate shape `move_to_tile` builds (exact tile), so the fixture proves
-    /// the arrangement the probe depends on before the action ever runs.
-    /// </summary>
-    private static bool PlannerRoutesThrough(GameLocation location, Vector2 a, Vector2 b, Vector2 c)
-    {
-        Character? walker = Game1.player is { } player ? player : location.farmers.FirstOrDefault();
-        if (walker is null)
-            return false;
-        Point target = new((int)c.X, (int)c.Y);
-        Point blocker = new((int)b.X, (int)b.Y);
-        Stack<Point>? path;
-        try
-        {
-            path = StardewValley.Pathfinding.PathFindController.findPath(
-                new Point((int)a.X, (int)a.Y),
-                target,
-                (node, endPoint, _location, _character) => node.x == endPoint.X && node.y == endPoint.Y,
-                location,
-                walker,
-                10000);
-        }
-        catch (Exception)
-        {
-            // findPath guards against reentrancy with a static counter and throws
-            // when another search is running. That is "not verified here", not a
-            // fixture failure, so the scan simply moves on to the next candidate.
-            return false;
-        }
-        return path is not null && path.Count > 0 && path.Any(tile => tile.X == blocker.X && tile.Y == blocker.Y);
-    }
-
-    private static bool IsMoveStallLineWalkable(GameLocation location, Vector2 a, Vector2 b, Vector2 c)
-    {
-        foreach (Vector2 tile in new[] { a, b, c })
-        {
-            // Farmers is excluded from the occupancy mask because the just-warped
-            // actor is STANDING on tile A; its own body must not fail the very
-            // arrangement it anchors. Every other class still counts, so objects,
-            // terrain features, buildings and characters (NPCs, pets) still
-            // disqualify a candidate.
-            if (!location.isTileOnMap(tile) || !location.isTilePassable(tile)
-                || location.objects.ContainsKey(tile)
-                || location.terrainFeatures.ContainsKey(tile)
-                || location.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
-                return false;
-        }
-        return true;
     }
 
     private static Vector2? FindNativeLocalArtifactSpotStandingTile(GameLocation farm, Vector2 artifactTile)
@@ -5506,71 +5359,6 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.nativeLocalDigArtifactSpotFixturePending = null;
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_dig_artifact_spot_v1; error=fixture_native_local_artifact_spot_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
-            return;
-        }
-        if (this.nativeLocalMoveStallProbePending is NativeLocalMoveStallProbePending stallPending && e.Player == Game1.player)
-        {
-            // The warp has settled; e.Player.Tile is now the ACTUAL post-warp
-            // standing tile. Rebuild the three-collinear arrangement from it so
-            // the runner's A+(0,2) target really crosses the blocker.
-            if (e.NewLocation is not Farm location
-                || !string.Equals(location.NameOrUniqueName, stallPending.FarmName, StringComparison.Ordinal))
-            {
-                this.nativeLocalMoveStallProbePending = null;
-                this.nativeLocalPlayerFixtureTerminal = true;
-                this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_move_stall_probe; error=fixture_native_move_stall_warp_wrong_location; exception_type=InvalidOperationException.", LogLevel.Error);
-                return;
-            }
-
-            Vector2 actualA = e.Player.Tile;
-            Vector2 blockB = new(actualA.X, actualA.Y + 1f);
-            Vector2 targetC = new(actualA.X, actualA.Y + 2f);
-            if (!IsMoveStallLineWalkable(location, actualA, blockB, targetC) || !PlannerRoutesThrough(location, actualA, blockB, targetC))
-            {
-                this.nativeLocalMoveStallProbePending = null;
-                this.nativeLocalPlayerFixtureTerminal = true;
-                this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario=native_move_stall_probe; error=fixture_native_move_stall_post_warp_geometry_failed; actor_tile={actualA.X},{actualA.Y}; blocker_tile={blockB.X},{blockB.Y}; target_tile={targetC.X},{targetC.Y}; exception_type=InvalidOperationException.", LogLevel.Error);
-                return;
-            }
-
-            if (stallPending.UseHorseBlock)
-            {
-                // A parked Horse is the generic NPC-class blocker: no schedule,
-                // base empty behaviorOnFarmerPushing (Horse.cs does not override
-                // it), farmerPassesThrough=false while idle.
-                StardewValley.Characters.Horse horse = new(Guid.NewGuid(), (int)blockB.X, (int)blockB.Y);
-                horse.Name = "ProbeHorse";
-                location.addCharacter(horse);
-                horse.currentLocation = location;
-                if (!location.characters.Contains(horse) || horse.currentLocation != location)
-                {
-                    this.nativeLocalMoveStallProbePending = null;
-                    this.nativeLocalPlayerFixtureTerminal = true;
-                    this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_move_stall_probe; error=fixture_native_move_stall_horse_placement_failed; exception_type=InvalidOperationException.", LogLevel.Error);
-                    return;
-                }
-            }
-            else
-            {
-                StardewValley.Characters.Pet pet = new((int)blockB.X, (int)blockB.Y, "0", "Dog");
-                pet.Name = "Dog";
-                pet.homeLocationName.Value = location.NameOrUniqueName;
-                pet.grantedFriendshipForPet.Value = false;
-                pet.friendshipTowardFarmer.Value = 0;
-                location.addCharacter(pet);
-                pet.currentLocation = location;
-                if (!location.characters.Contains(pet) || pet.currentLocation != location || pet.petId.Value == Guid.Empty || pet.grantedFriendshipForPet.Value || pet.friendshipTowardFarmer.Value != 0)
-                {
-                    this.nativeLocalMoveStallProbePending = null;
-                    this.nativeLocalPlayerFixtureTerminal = true;
-                    this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_move_stall_probe; error=fixture_native_move_stall_pet_placement_failed; exception_type=InvalidOperationException.", LogLevel.Error);
-                    return;
-                }
-            }
-
-            this.nativeLocalMoveStallProbePending = null;
-            this.nativeLocalPlayerFixtureInitialized = true;
-            this.Monitor.Log($"GameBuddy native-local-player initialized move-stall probe precondition before bridge attachment: blocker={(stallPending.UseHorseBlock ? "horse" : "pet")}; actor_tile={actualA.X},{actualA.Y}; blocker_tile={blockB.X},{blockB.Y}; target_tile={targetC.X},{targetC.Y}; production alone plans, walks, collides and emits the receipt.", LogLevel.Info);
             return;
         }
         if (this.nativeLocalClearHoeDirtFixturePending is NativeLocalClearHoeDirtFixturePending hoeDirtPending && e.Player == Game1.player)

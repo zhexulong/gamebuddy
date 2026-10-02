@@ -93,7 +93,12 @@ function projectGameBrowserState(
       selectedWorld: null,
       selectedSave: null,
       capabilitySummary: Object.freeze({ available: false, count: 0 }),
-      latestOutcome: "none",
+      // The coordinator's launch terminality is the only honest source of a
+      // failed Game outcome this provider can attest: it is set once the owned
+      // Player Host launch or attestation correlation failed and the owner was
+      // quarantined. The browser refreshes recover this fact from the root
+      // state instead of trusting volatile client memory.
+      latestOutcome: launchFailed ? "failed" : "none",
     }),
   });
 }
