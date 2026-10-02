@@ -275,13 +275,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // the fixture scenario are both unchanged; the runner drives the published
   // action from farther away. Not a new action; it grants no capability.
   chop_tree_approach: "run-stardew-native-local-player-chop-tree-approach-smoke.mjs",
-  // Move-stall probe: drives the SAME published move_to_tile action over a fixture
-  // that stands a native blocker (Pet or parked Horse) on the route, measuring
-  // whether the native pushing/pass-through mechanisms resolve the block before
-  // the 5000ms path-cancel (design 5.3 observation). Not a new action; it grants
-  // no capability. Two harness labels select the blocker kind.
-  move_stall_probe_pet: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
-  move_stall_probe_npc: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

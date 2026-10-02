@@ -129,6 +129,7 @@ export function ComposedReferenceGameApp() {
   const [gameLaunchFailed, setGameLaunchFailed] = useState(false);
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
+  const [disconnectActive, setDisconnectActive] = useState(false);
   const [disconnectFailed, setDisconnectFailed] = useState(false);
   const gameResumeActiveRef = useRef(false);
   const gameResumeKeysRef = useRef(new Map<number, string>());
@@ -630,6 +631,7 @@ export function ComposedReferenceGameApp() {
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     disconnectKeysRef.current.set(generation, idempotencyKey);
     disconnectActiveRef.current = true;
+    setDisconnectActive(true);
     setDisconnectFailed(false);
     try {
       await composedApiRef.current.disconnectGame({
@@ -655,6 +657,7 @@ export function ComposedReferenceGameApp() {
       setDisconnectFailed(true);
     } finally {
       disconnectActiveRef.current = false;
+    setDisconnectActive(false);
     }
   };
 
@@ -1101,22 +1104,22 @@ export function ComposedReferenceGameApp() {
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
-  const gameResumeInFlight = gameResumeActiveRef.current || gameResumeActive;
+  const gameResumeInFlight = gameResumeActive;
   const gameReopenAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.actionAuthority === "paused" &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     view.root.game.game.connectionStatus === "connected_idle";
-  const gameReopenInFlight = gameReopenActiveRef.current || gameReopenActive;
-  const gameResumeCancelInFlight = gameResumeCancelActiveRef.current || gameResumeCancelActive;
-  const gameCreateInFlight = gameCreateActiveRef.current || gameCreateActive;
+  const gameReopenInFlight = gameReopenActive;
+  const gameResumeCancelInFlight = gameResumeCancelActive;
+  const gameCreateInFlight = gameCreateActive;
   const resumeFailureSurface = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus) &&
-    (gameResumeFailed || gameResumeUnavailable);
+    (gameResumeFailed || gameResumeUnavailable || view.root.game.game.latestOutcome === "failed");
   const gameSyncing = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.connectionStatus === "syncing";
@@ -1172,7 +1175,7 @@ export function ComposedReferenceGameApp() {
                  )}
                  {gameStopFailed && <p role="status">{labels().gameStopFailed}</p>}
                  {disconnectAvailable && (
-                  <button type="button" disabled={disconnectActiveRef.current} onClick={() => void handleDisconnect()}>
+                  <button type="button" disabled={disconnectActive} onClick={() => void handleDisconnect()}>
                     {labels().gameDisconnect}
                   </button>
                 )}

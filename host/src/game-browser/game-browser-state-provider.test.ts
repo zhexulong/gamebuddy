@@ -101,6 +101,18 @@ test("spawned Player Host projects only met prerequisite and truthful launching 
   assert.equal(JSON.stringify(state).includes("C:\\\\"), false);
 });
 
+test("provider projects a failed launch terminality as latestOutcome failed", async () => {
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(notStartedView()),
+    attachment(),
+    launchReadiness(Object.freeze({ generation: 0, status: "failed" })),
+  ).readState(context);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+  assert.equal(state.game.instance.status, "crashed");
+  assert.equal(state.game.latestOutcome, "failed");
+});
+
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);

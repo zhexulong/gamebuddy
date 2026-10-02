@@ -338,13 +338,6 @@ function assertBackupName(value) {
 }
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
-  // The move-stall probe (design 5.3 observation) drives the published
-  // move_to_tile action over a fixture that stands a native blocker on the
-  // route. `pet_animal` is listed ONLY so the Pet projection is published and
-  // the blocker's position is observable; the runner never invokes it. That is
-  // why the npc scenario omits it: a parked Horse has no projection anyway.
-  if (action === "move_stall_probe_pet") return ["move_to_tile", "pet_animal"];
-  if (action === "move_stall_probe_npc") return ["move_to_tile"];
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
@@ -635,11 +628,6 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("craft_item")) return "native_craft_item_v1";
   if (actions.includes("cook_recipe")) return "native_cook_recipe_v1";
   if (actions.includes("collect_crab_pot_output")) return "native_crab_pot_collect_v1";
-  // The move-stall probe runs the same action set (move_to_tile) over a distinct
-  // blocker scenario, selected by the harness action name because the action set
-  // alone cannot distinguish pet from npc blocking.
-  if (action === "move_stall_probe_pet") return "native_move_stall_probe_pet_v1";
-  if (action === "move_stall_probe_npc") return "native_move_stall_probe_npc_v1";
   return "";
 }
 // The Mod catalog is the authority for which registrations are still
