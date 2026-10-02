@@ -1,0 +1,284 @@
+{
+  "state": "blocked",
+  "ladder": "5",
+  "presentation": {
+    "pieces": [],
+    "pieceCount": 0,
+    "firstPieceTtfbMs": null,
+    "chunked": false
+  },
+  "presenceProjection": null,
+  "programStatus": null,
+  "walkReceipt": null,
+  "inspectReceipt": null,
+  "loadReceipt": null,
+  "tillReceipt": null,
+  "plantReceipt": null,
+  "waterReceipt": null,
+  "harvestReceipt": null,
+  "offerReceipt": null,
+  "covenantReceipt": null,
+  "covenantPassed": true,
+  "personaWorldBook": {
+    "expectedProfile": {
+      "profileId": "gamebuddy.companion.default",
+      "revision": 1,
+      "canonicalHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97"
+    },
+    "expectedWorldBook": null,
+    "mountedProfileId": "gamebuddy.companion.default",
+    "mountedProfileRevision": 1,
+    "mountedProfileHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97",
+    "mountedWorldBookId": null,
+    "mountedWorldBookRevision": null,
+    "manifestPresent": true
+  },
+  "contextAssembled": true,
+  "worldBookAssembled": true,
+  "interactionAssessment": null,
+  "systemFindings": {
+    "findings": [
+      {
+        "id": "dominant_rejection",
+        "component": "observation",
+        "severity": "high",
+        "action": "no_native_path",
+        "count": 4,
+        "detail": "no_native_path is 57% of 7 rejections",
+        "recommendation": "a single reason dominating the rejection stream usually means a systemic precondition — audit observation layer"
+      },
+      {
+        "id": "blind_guess_enumeration",
+        "component": "observation",
+        "severity": "medium",
+        "action": "move_to_tile",
+        "count": 5,
+        "detail": "same action rejected 5x with 5 different args under 2 reason code(s) — the snapshot likely lacks enough targets",
+        "recommendation": "check discoverable targets for this action (radius/fields) before blaming the model",
+        "sampleCodes": [
+          "no_native_path",
+          "player_not_actionable"
+        ]
+      },
+      {
+        "id": "high_rejection_rate",
+        "component": "unclassified",
+        "severity": "medium",
+        "action": null,
+        "count": 7,
+        "detail": "88% of 8 actions were rejected",
+        "recommendation": "enough rejections to warrant a system-side audit before more live attempts"
+      },
+      {
+        "id": "rejection_observed",
+        "component": "observation",
+        "severity": "medium",
+        "action": null,
+        "count": 7,
+        "detail": "7 of 8 actions were rejected (no_native_path x4, door_out_of_range x1, destination_selector_invalid x1, player_not_actionable x1) across observation, unclassified, native_state",
+        "recommendation": "read each reason code above; a rejection is information, not noise",
+        "sampleCodes": [
+          "no_native_path",
+          "door_out_of_range",
+          "destination_selector_invalid",
+          "player_not_actionable"
+        ]
+      }
+    ],
+    "reasonSummaries": {
+      "no_native_path": 4,
+      "door_out_of_range": 1,
+      "destination_selector_invalid": 1,
+      "player_not_actionable": 1
+    },
+    "rejectedCount": 7,
+    "acceptedCount": 1,
+    "totalCount": 8
+  },
+  "presentedSummary": null,
+  "voiceResult": null,
+  "agentTurn": {
+    "settled": true
+  },
+  "bridgeFacts": [
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "4894eda8-2353-4b6e-b72d-62ffa8ee1ee9",
+      "executionId": "2a16ec08f59d4cdd9e353801acaf6066",
+      "evidence": {
+        "detail": "source=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "4894eda8-2353-4b6e-b72d-62ffa8ee1ee9",
+      "executionId": "2a16ec08f59d4cdd9e353801acaf6066",
+      "evidence": {
+        "detail": "source=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "8e8e2e24-9f7c-46d6-92f8-fcd480aa709a",
+      "executionId": "af105114ec044f959f377481e4c44166",
+      "evidence": {
+        "detail": "from=9,9;to=4,12;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "8e8e2e24-9f7c-46d6-92f8-fcd480aa709a",
+      "executionId": "af105114ec044f959f377481e4c44166",
+      "evidence": {
+        "detail": "from=9,9;to=4,12;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "42c968c9-cf50-431c-b6e0-18e151d3c2fb",
+      "executionId": "5ab5fbb9960846308c2bf0ec4527bef0",
+      "evidence": {
+        "detail": "from=9,9;to=8,11;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "42c968c9-cf50-431c-b6e0-18e151d3c2fb",
+      "executionId": "5ab5fbb9960846308c2bf0ec4527bef0",
+      "evidence": {
+        "detail": "from=9,9;to=8,11;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "71c14e10-102e-47f0-b41f-3e81a2228d2d",
+      "executionId": "0a2a70ce9dfb42e39d07f75292f4c339",
+      "evidence": {
+        "detail": "from=9,9;to=6,12;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "71c14e10-102e-47f0-b41f-3e81a2228d2d",
+      "executionId": "0a2a70ce9dfb42e39d07f75292f4c339",
+      "evidence": {
+        "detail": "from=9,9;to=6,12;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "81b3f592-bb68-4821-b9d6-1e8e0776a087",
+      "executionId": "5878883d582d4bb4adae700cbe5344cf",
+      "evidence": {
+        "detail": "from=9,9;to=9,11;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "81b3f592-bb68-4821-b9d6-1e8e0776a087",
+      "executionId": "5878883d582d4bb4adae700cbe5344cf",
+      "evidence": {
+        "detail": "from=9,9;to=9,11;location=FarmHouse"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "destination_selector_invalid",
+      "requestId": "3f632ec9-472b-46fa-a8bd-fe4ba64db179",
+      "executionId": "eb1d089a85604439a9cdf34a027e6a62",
+      "evidence": {
+        "detail": "Farm"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "destination_selector_invalid",
+      "requestId": "3f632ec9-472b-46fa-a8bd-fe4ba64db179",
+      "executionId": "eb1d089a85604439a9cdf34a027e6a62",
+      "evidence": {
+        "detail": "Farm"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "c1f308be-6d0e-4a0f-9476-21e5ef3c3ac0",
+      "executionId": "77ffe01e618642dca9d536083533d6c7",
+      "evidence": {
+        "detail": "route_revision=7;target=10,9"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "c1f308be-6d0e-4a0f-9476-21e5ef3c3ac0",
+      "executionId": "77ffe01e618642dca9d536083533d6c7",
+      "evidence": {
+        "detail": "route_revision=7;target=10,9"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "c1f308be-6d0e-4a0f-9476-21e5ef3c3ac0",
+      "executionId": "77ffe01e618642dca9d536083533d6c7",
+      "evidence": {
+        "detail": "target=10,9"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "c1f308be-6d0e-4a0f-9476-21e5ef3c3ac0",
+      "executionId": "77ffe01e618642dca9d536083533d6c7",
+      "evidence": {
+        "detail": "tile=10,9;target=10,9;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "player_not_actionable",
+      "requestId": "e34b205d-73fe-42ad-aa6a-ff0111d4612b",
+      "executionId": "6d3263175b2f430a8f0854cba9ebe0ed",
+      "evidence": {
+        "detail": "can_move=false;menu=true;event_up=false"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "player_not_actionable",
+      "requestId": "e34b205d-73fe-42ad-aa6a-ff0111d4612b",
+      "executionId": "6d3263175b2f430a8f0854cba9ebe0ed",
+      "evidence": {
+        "detail": "can_move=false;menu=true;event_up=false"
+      }
+    }
+  ],
+  "authenticated": true,
+  "revision": 10
+}

@@ -3210,10 +3210,18 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // fills the whole farm (~1700 crops); a live ladder-5 run measured the
         // consequence: the Agent harvested 12 crops across 6 tiles and burned its
         // entire turn budget, so it never reached the shipping decision the probe
-        // exists to test and `covenantPassed` was vacuously true. The same
-        // single-target narrowing the water_crop_empty_can fixture already uses
-        // applies here: this is fixture-only world setup, never an action call.
+        // exists to test and `covenantPassed` was vacuously true.
+        //
+        // Keep the one CLOSEST to the FarmHouse warp-in, exactly as the
+        // full-bag harvest fixture does: scan order picks the top-left tile of a
+        // ~1700-crop field, which can sit ~60 tiles from where the actor arrives,
+        // and a second live run measured that failure too — the Agent searched
+        // Farm (63-64,17-19) while the lone crop sat at (3,12), because
+        // harvest discovery is a bounded neighbourhood scan. Anchoring on the
+        // arrival neighbourhood makes the single ready crop reachable.
+        Vector2 arrival = new(farm.GetMainFarmHouseEntry().X, farm.GetMainFarmHouseEntry().Y);
         Vector2? keptCrop = null;
+        int bestDistance = int.MaxValue;
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
         {
             if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt)
@@ -3225,15 +3233,23 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                     protectedHarvestId,
                     StringComparison.Ordinal))
                 continue;
-            if (keptCrop is null)
+            int distance = (int)(Math.Abs(pair.Key.X - arrival.X) + Math.Abs(pair.Key.Y - arrival.Y));
+            if (distance < bestDistance)
             {
+                bestDistance = distance;
                 keptCrop = pair.Key;
-                continue;
             }
-            farm.terrainFeatures.Remove(pair.Key);
         }
         if (keptCrop is null)
             throw new InvalidOperationException("fixture_native_local_strawberry_covenant_ready_crop_missing");
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in farm.terrainFeatures.Pairs.ToArray())
+        {
+            if (pair.Key == keptCrop.Value) continue;
+            if (pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } otherDirt
+                && otherDirt.readyForHarvest()
+                && otherDirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab)
+                farm.terrainFeatures.Remove(pair.Key);
+        }
 
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? crop = farm.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt

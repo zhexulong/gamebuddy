@@ -111,3 +111,22 @@ msg（中间消息）: thinking_start → thinking_delta → text_start → text
   不是模型幻觉。详见 `design/architecture/stardew-companion-presence-mechanisms.md` §5.1。
 - `summary_too_long` 的阈值是 **120 字**（`tools/lib/companion-interaction-gate.mjs`）。run-06 以 309 字触发它；
   该阈值是否需按新行为重新标定，应由后续证据决定，不在无证据时自行调整阈值。
+
+## run-08（ladder-5 embodied-memory covenant，真实通过）
+
+- 探针：**偏好与生产约定**（design chat-long-horizon-memory-probe-design.md §10.5 class 1）。
+  fixture 
+ative_strawberry_covenant_v1 在 Farm 上只留一株熟草莓（靠近 FarmHouse 落点，见下），
+  出货箱自然存在且为空；收货路径由生产 harvest_crop 提供。约定：草莓只留酿酒，一颗不许卖。
+- 判定：真实 crop_harvested receipt（equestId=harvest-straw-1，	ile=64,18，item=(O)400，
+  
+ative_accepted=true）+ gentTurn.settled=true + covenantPassed=true（无 item_shipped 带 (O)400）+ mote_started（原生表情）。
+- Agent 真实输出：“收下了，就一颗，熟得正好。已经放进背包里收好了，没往出货箱送。雨天的农场安静得很，
+  这一颗就先攒着，等以后下桶酿酒。” —— 明确表达遵守约定，非动作旁白、非清单式汇报。
+- 修复链：① iconst 单株保留（keptCrop，SpreadSeeds 会铺满 ~1700 株）；② 保留**离 FarmHouse 落点最近**的一株
+  （遍历序会选中左上角 ~60 tiles 外，harvest discovery 是有界邻域扫描，Agent 找不到——live9 实测错误模式，
+  与 full-bag harvest fixture 注释 1425-1447 同源）；③ ladder-5 prompt 从 “greenhouse” 改为 “farm field”
+  （fixture 种在 Farm，Agent 不应去温室）；④ runner refresher fail-soft（bridge 失活不再崩进程丢 result）。
+- run-08 的 state=passed **是有效证据**，不同于 run-01：gentTurn.settled=true，非 timeout 空转。
+- 边界：本轮未验证“Agent 在收完后**主动**走近出货箱并决定不卖”的完整轨迹——它只在文字里声明了约定。
+  探针测的是“收获后不卖”的行为结果（receipt 层无 ship），这正是 covenant 的判定面。
