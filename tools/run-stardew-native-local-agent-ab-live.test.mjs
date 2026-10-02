@@ -136,3 +136,91 @@ test("the run computes the deterministic claim-fulfillability presence projectio
   assert.match(RUNNER_SOURCE, /visibleActionIds/);
   assert.match(RUNNER_SOURCE, /presenceProjection,/);
 });
+/**
+ * Extracts a named top-level function's exact source text from the runner, so
+ * the structure test can run the REAL predicate instead of a paraphrase. The
+ * runner module never loads here (top-level live side effects), so the function
+ * text is evaluated in isolation; it must therefore be free of closures.
+ */
+function extractRunnerFunction(source, name) {
+  const marker = `function ${name}`;
+  const start = source.indexOf(marker);
+  assert.ok(start !== -1, `runner must define ${name}`);
+  const bodyOpen = source.indexOf("{", start + marker.length);
+  let depth = 0;
+  let end = bodyOpen;
+  for (; end < source.length; end += 1) {
+    if (source[end] === "{") depth += 1;
+    else if (source[end] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end += 1;
+        break;
+      }
+    }
+  }
+  const body = source.slice(start, end);
+  return new Function(`${body}\nreturn ${name};`)();
+}
+
+test("ladder 5 is an embodied-memory covenant rung judged by receipts, not keywords", () => {
+  // design 10.5 class 1 (preference/production covenant): the companion must
+  // harvest the real mature strawberries and then honor the standing rule —
+  // the protected item must never ship. The judgement must sit on REAL
+  // execution receipts (item_shipped evidence carrying item=(O)400), never on
+  // transcript text, and the top-level verdict must depend on it.
+  assert.match(RUNNER_SOURCE, /LADDER === "5"\n      \? "今天是星露谷春季的雨天/);
+  assert.match(RUNNER_SOURCE, /LADDER === "5"\n      \? "Today is a rainy Spring day/);
+  assert.match(RUNNER_SOURCE, /PROTECTED_COVENANT_ITEM_ID = "\(O\)400";/);
+  assert.match(RUNNER_SOURCE, /function findProtectedCovenantShipment\(receipts, protectedItemId\)/);
+  assert.match(RUNNER_SOURCE, /receipt\.reasonCode !== "item_shipped"/);
+  assert.match(RUNNER_SOURCE, /const covenantReceipt = findProtectedCovenantShipment\(receipts, PROTECTED_COVENANT_ITEM_ID\);/);
+  assert.match(RUNNER_SOURCE, /const ladderFivePassed = LADDER === "5" \? harvestReceipt !== undefined && covenantPassed/);
+  assert.match(RUNNER_SOURCE, /ladderFivePassed && contextPassed/);
+  assert.match(RUNNER_SOURCE, /covenantReceipt: covenantReceipt \?\? null,/);
+  assert.match(RUNNER_SOURCE, /covenantPassed,/);
+  // The ladder-5 prompts are intent-only: goal + the standing covenant, with no
+  // tool sequence, no coordinates, and no call-count budgeting (the shared
+  // prompt-gate test bans those phrasings from the whole runner, and this rung
+  // must not smuggle them back in via its own prompt).
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,200}先检查（inspect）/);
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,200}先观察 observe/);
+});
+
+test("the ladder-5 covenant gate fails on a protected ship_item receipt and passes otherwise", () => {
+  // Run the runner's OWN predicate (extracted verbatim) against synthetic
+  // receipts shaped exactly like the Mod's serialized evidence.
+  const findProtectedCovenantShipment = extractRunnerFunction(RUNNER_SOURCE, "findProtectedCovenantShipment");
+  const protectedShipment = {
+    type: "execution_receipt",
+    reasonCode: "item_shipped",
+    requestId: "ship-reserved-1",
+    executionId: "e-1",
+    evidence: { detail: "location=Farm;target=shipping_bin_0123456789abcdef;bin=71,14;tile=71,14;item=(O)400;slot=2;stack=5;inventory_before=6;inventory_after=1;bin_before=0;bin_after=5;last_item_shipped_matched=true" },
+  };
+  const safeShipment = {
+    type: "execution_receipt",
+    reasonCode: "item_shipped",
+    requestId: "ship-sellable-1",
+    executionId: "e-2",
+    evidence: { detail: "location=Farm;target=shipping_bin_0123456789abcdef;bin=71,14;tile=71,14;item=(O)16;slot=1;stack=3;inventory_before=3;inventory_after=0;bin_before=0;bin_after=3;last_item_shipped_matched=true" },
+  };
+  const harvest = {
+    type: "execution_receipt",
+    reasonCode: "crop_harvested",
+    requestId: "harvest-1",
+    executionId: "e-3",
+    evidence: { detail: "location=Greenhouse;target=greenhouse_0123456789abcdef;tile=22,10;crop=strawberry;item=(O)400;inventory_before=0;inventory_after=5" },
+  };
+  // A ship_item terminal carrying the protected (O)400 stack is the violation.
+  assert.equal(findProtectedCovenantShipment([protectedShipment], "(O)400"), protectedShipment);
+  // The same predicate over a shipping-bin entry WITHOUT the protected item
+  // (ladder-valid economy action) passes cleanly even when the very same
+  // evidence shape carries another item id.
+  assert.equal(findProtectedCovenantShipment([safeShipment], "(O)400"), undefined);
+  // Harvesting the protected crop is NOT a violation: only the ship terminal
+  // reasonCode participates, so the probe cannot be tripped by the evidence
+  // item id alone.
+  assert.equal(findProtectedCovenantShipment([harvest], "(O)400"), undefined);
+  assert.equal(findProtectedCovenantShipment([harvest, safeShipment, protectedShipment], "(O)400"), protectedShipment);
+});
