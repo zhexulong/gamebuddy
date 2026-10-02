@@ -177,7 +177,10 @@
     "test:stardew-rejected-layer-verdicts": "node --test integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
     "test:stardew-rejected-layer-verdicts-mutation": "node integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.mutation.mjs",
     "build:stardew": "dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release",
-    "diagnose:procs": "powershell.exe -File tools/scripts/list-procs.ps1"
+    "diagnose:procs": "powershell.exe -File tools/scripts/list-procs.ps1",
+    "check:stardew-loop-closure": "node tools/check-stardew-loop-closure.mjs",
+    "test:stardew-loop-closure": "node --test tools/check-stardew-loop-closure.test.mjs",
+    "test:stardew-loop-closure-mutation": "node tools/check-stardew-loop-closure.mutation.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
