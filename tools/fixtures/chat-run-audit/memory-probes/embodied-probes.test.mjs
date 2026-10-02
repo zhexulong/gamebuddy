@@ -41,6 +41,12 @@ const EXPECTED_REPLIES = Object.freeze({
     // The both-answers fudge: the superseded fact survived into the reply.
     wrong: "Honestly you always liked parsnips, and amethyst is the new one, so both.",
   },
+  "p-restart": {
+    // Names the player's OWN cat, which only the stored fact carries.
+    correct: "That is Sesame, your calico - she is the one who loves grilled saury.",
+    // Confused the player's cat with the other cat in the same world.
+    wrong: "You mean the innkeeper's ginger cat, the one on the porch.",
+  },
   "p-turn-short": {
     // The historical fixture, kept here so the rule is enforced on it too. A correct
     // reply states the real job; its `needle_only` reason (not the code) is what marks

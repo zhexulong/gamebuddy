@@ -150,6 +150,7 @@ async function resolveScenario({ manifestPath, seed, question }) {
       probeId: undefined,
       manifestDigest: undefined,
       dimension: "retention",
+      distance: "turn",
       requiredKeywords: ["postman", "mail", "delivering"],
       forbiddenKeywords: ["mine", "haul"],
       minHitRate: 0.5,
@@ -205,6 +206,12 @@ async function resolveScenario({ manifestPath, seed, question }) {
     probeId: probe.probeId,
     manifestDigest: manifest.manifestDigest,
     dimension: probe.dimension,
+    // The fixture's declared distance decides which funnel stages are even applicable.
+    // `session` (design 3.4, P-restart) is the distance this loop is structurally
+    // ALREADY running: phase 1 seeds through one Host child, that child's teardown
+    // commits, and phase 2 mounts as its terminal successor on the same root. Declaring
+    // it here is what lets L3 report on the restart instead of staying not_applicable.
+    distance: probe.distance,
     requiredKeywords: probeStep.requiredKeywords,
     forbiddenKeywords: probeStep.forbiddenKeywords ?? [],
     // The fixture's own threshold must survive into scoring (audit finding: the
@@ -655,9 +662,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     const seededMemoryId = seeded.durable ? resolveSeededMemoryId(root, scenario.seed) : undefined;
 
     const observation = {
-      distance: "turn",
+      distance: scenario.distance,
       seedRequired: true,
       seedPresentInReadback: seeded.durable,
+      // Restart evidence for a `session`-distance probe. The successor mount is the
+      // product's OWN statement that the predecessor committed terminal teardown: the
+      // child refuses a `known` mount otherwise (`chat_runtime_reentry_selection_invalid`,
+      // handled below). Reaching phase 2 therefore means the persistence partition was
+      // reopened, not that an in-process cache survived.
+      ...(scenario.distance === "session" ? { foldObserved: true } : {}),
     };
 
     // Causal gate: a seed we could not confirm durable means L1 is unproven, so the
@@ -741,6 +754,13 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       ...observation,
       renderedMemoryIdsObserved: renderedIds !== undefined && seededMemoryId !== undefined,
       ...(seededMemoryId === undefined ? {} : { seedIdRendered: renderedIds?.has(seededMemoryId) === true }),
+      // L3 for a session-distance probe: the fact must still be rendered in the NEW
+      // process. Same marker, post-restart phase - which is exactly the difference the
+      // stage is asking about. An unresolved seed id leaves this undefined so L3 reports
+      // a gap ("we could not compare") instead of claiming the fact was dropped.
+      ...(scenario.distance === "session" && seededMemoryId !== undefined && renderedIds !== undefined
+        ? { postFoldAssembly: renderedIds.has(seededMemoryId) ? "present" : "absent" }
+        : {}),
       probeEvent: verdict.event,
       ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
     });

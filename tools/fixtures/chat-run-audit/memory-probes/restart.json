@@ -1,0 +1,47 @@
+{
+  "schema": "chat_memory_probe_manifest/v1",
+  "manifestId": "man-restart-01",
+  "manifestDigest": "42fd195503e7340c2a1c48a7078214ee7c0165d1060e1491359c2ddfb0c42a94",
+  "continuityTopology": "single",
+  "probes": [
+    {
+      "probeId": "p-restart",
+      "distance": "session",
+      "dimension": "retention",
+      "seedClass": "explicit",
+      "steps": [
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "I have a calico cat called Sesame who adores grilled saury. She is mine, she lives at my place.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The innkeeper's ginger cat keeps sleeping on the porch.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The river is running high after the storm.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "probe",
+          "role": "player",
+          "text": "By the way - do you remember the cat I keep at home?",
+          "requiredKeywords": [
+            "sesame"
+          ],
+          "forbiddenKeywords": [
+            "ginger",
+            "innkeeper"
+          ],
+          "minHitRate": 1
+        }
+      ]
+    }
+  ]
+}
