@@ -338,6 +338,13 @@ function assertBackupName(value) {
 }
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
+  // The move-stall probe (design 5.3 observation) drives the published
+  // move_to_tile action over a fixture that stands a native blocker on the
+  // route. `pet_animal` is listed ONLY so the Pet projection is published and
+  // the blocker's position is observable; the runner never invokes it. That is
+  // why the npc scenario omits it: a parked Horse has no projection anyway.
+  if (action === "move_stall_probe_pet") return ["move_to_tile", "pet_animal"];
+  if (action === "move_stall_probe_npc") return ["move_to_tile"];
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
@@ -536,6 +543,12 @@ export function fixtureScenario(actions, action) {
   // action set: the built-in kitchen fridge is the chest store/take intent over a
   // different container, so both publish chest_store/chest_retrieve yet must
   // provision a kitchen instead of a placed chest.
+  // The move-stall probe also runs the SAME action set (move_to_tile, plus
+  // pet_animal only to publish the Pet projection), so its scenario MUST be
+  // selected here, before the `pet_animal` action branch below would hijack it
+  // into native_pet_animal_v1.
+  if (action === "move_stall_probe_pet") return "native_move_stall_probe_pet_v1";
+  if (action === "move_stall_probe_npc") return "native_move_stall_probe_npc_v1";
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   if (action === "ride_minecart") return "native_ride_minecart_v1";
