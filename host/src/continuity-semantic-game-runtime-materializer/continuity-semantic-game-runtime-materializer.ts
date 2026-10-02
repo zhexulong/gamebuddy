@@ -494,7 +494,6 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           liveSourceAttester,
-          runtime.refreshIntegrationTools,
         );
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined

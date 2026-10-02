@@ -366,7 +366,6 @@ test("runtime mounts a fake integration through the module port", async () => {
     // snapshot churn. Admission moves to execution time, which rejects the
     // call with a structured receipt instead of hiding the tool.
     integrationState.capabilities = [];
-    await runtime.refreshIntegrationTools?.();
     assert.deepEqual(
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
       ["arcade_activate_console", "companion_status", "todowrite"],
@@ -391,124 +390,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     runtime.session.dispose();
   }
 });
-
-test("runtime refresh waits for Pi idle and coalesces to the current adapter projection", async () => {
-  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-runtime-refresh-idle-"));
-  const registrations = [
-    {
-      actionId: "activate_console",
-      familyId: "arcade_interaction",
-      identityVersion: 1,
-      lifecycle: "published" as const,
-      kind: "execution" as const,
-    },
-  ];
-  let capabilities: string[] = ["activate_console"];
-  let refreshMaterializations = 0;
-  let releaseIdle: (() => void) | undefined;
-  const idle = new Promise<void>((resolvePromise) => {
-    releaseIdle = resolvePromise;
-  });
-  const module: GameIntegrationAdapter = {
-    descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
-    actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
-    defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
-    parsePolicy: (value) => value as never,
-    actorId: () => "fixture_actor",
-    assertIdentityBinding: () => undefined,
-    worldScope: () => null,
-    createToolSet: () => {
-      const materialization = ++refreshMaterializations;
-      return {
-        observation: [],
-        actions: [
-          defineTool({
-            name: "arcade_activate_console",
-            label: "Activate arcade console",
-            description: "Fixture action.",
-            parameters: Type.Object({}),
-            execute: async () => ({
-              content: [
-                { type: "text", text: `materialization=${materialization}` },
-              ],
-              details: {},
-            }),
-          }),
-        ],
-        knowledge: [],
-      };
-    },
-    knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
-    status: () => ({
-      connected: true,
-      capabilities,
-      capabilityRevision: 1,
-      snapshotRevision: 1,
-      latestReceiptState: null,
-      latestReasonCode: null,
-    }),
-    readState: () => ({
-      connected: true,
-      sessionId: "arcade_session_01",
-      capabilities,
-      registrations,
-      capabilityRevision: 1,
-      snapshotRevision: 1,
-      activeExecution: null,
-      latestReceipt: null,
-      latestReasonCode: null,
-    }),
-    cancelExecution: () => "not_supported",
-    parseReceipt: () => null,
-    actionIdForToolName: (toolName) => toolName === "arcade_activate_console" ? "activate_console" : null,
-    isCancellationTool: () => false,
-  };
-  const integration = {
-    scope: { integrationId: "test-arcade" },
-    executionGate: { executable: true },
-    module,
-    get state() {
-      return { capabilities, registrations };
-    },
-  } as never;
-  const runtime = await createCompanionRuntime(identity, root, integration);
-  const originalWaitForIdle = runtime.session.agent.waitForIdle.bind(runtime.session.agent);
-  runtime.session.agent.waitForIdle = () => idle;
-  try {
-    capabilities = [];
-    const withdrawal = runtime.refreshIntegrationTools?.();
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status", "todowrite"],
-    );
-    // Two updates during the same in-flight idle barrier must not install a
-    // stale projection transiently: the current Mod projection wins.
-    capabilities = ["activate_console"];
-    const reenablement = runtime.refreshIntegrationTools?.();
-    releaseIdle?.();
-    await Promise.all([withdrawal, reenablement]);
-    assert.ok(refreshMaterializations > 1);
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status", "todowrite"],
-    );
-    const reenabled = runtime.session.agent.state.tools.find(
-      (tool) => tool.name === "arcade_activate_console",
-    );
-    assert.ok(reenabled);
-    const result = await reenabled.execute(
-      "refresh_reenabled_call",
-      {},
-      new AbortController().signal,
-    );
-    assert.deepEqual(result, {
-      content: [{ type: "text", text: `materialization=${refreshMaterializations}` }],
-      details: {},
-    });
-  } finally {
-    runtime.session.agent.waitForIdle = originalWaitForIdle;
-    runtime.session.dispose();
-  }
+test("runtime rejects a mounted integration whose save identity does not match", async () => {
 });
 
 test("runtime rejects a mounted integration whose save identity does not match", async () => {

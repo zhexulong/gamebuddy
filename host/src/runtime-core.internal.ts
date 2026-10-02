@@ -75,7 +75,7 @@ export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   // resolved from `vendor/magic-context/packages/pi-plugin`. Keep this equal to
   // that package's `version`; a run manifest must never record an identity no
   // artifact carries.
-  magicContext: "0.42.3-airp.1",
+  magicContext: "0.44.4-airp.1",
 });
 
 /** The selected fork domain; activation gates remain independently fail-closed. */
@@ -277,12 +277,6 @@ export type RuntimeSession = Readonly<{
   ) => () => void;
   /** Removes the source-owned generic operational marker before Pi disposal. */
   clearGameOperationalGateMarker?: () => void;
-  /**
-   * Rebuilds only this connection's adapter tools from current authenticated
-   * state after Pi is idle. This is private composition plumbing, not action
-   * publication or a public runtime command.
-   */
-  refreshIntegrationTools?: () => Promise<void>;
 }>;
 
 /** Stable, non-display-name partition for one logical Companion continuity. */
@@ -324,84 +318,6 @@ function gateIntegrationTool(
         throw new Error("integration_not_ready");
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
-  };
-}
-
-type RuntimeAgentTool = AgentSession["agent"]["state"]["tools"][number];
-
-function toRuntimeTool(tool: ToolDefinition): RuntimeAgentTool {
-  return {
-    name: tool.name,
-    label: tool.label,
-    description: tool.description,
-    parameters: tool.parameters,
-    ...(tool.constrainedSampling === undefined
-      ? {}
-      : { constrainedSampling: tool.constrainedSampling }),
-    ...(tool.prepareArguments === undefined
-      ? {}
-      : { prepareArguments: tool.prepareArguments }),
-    ...(tool.executionMode === undefined
-      ? {}
-      : { executionMode: tool.executionMode }),
-    execute: (toolCallId, params, signal, onUpdate) =>
-      tool.execute(toolCallId, params, signal, onUpdate, undefined as never),
-  };
-}
-
-function createIntegrationToolRefresher(input: Readonly<{
-  session: AgentSession;
-  connection: GameConnection;
-  module: GameIntegrationAdapter;
-  knowledge: unknown;
-  gameVersion: string | undefined;
-  policy: IntegrationActionPolicy;
-  dispatchAdmissionFactory: (() => ReturnType<ActionExecutionCoordinator["createAdmission"]>) | undefined;
-  retainedTools: readonly RuntimeAgentTool[];
-}>): () => Promise<void> {
-  let requested = false;
-  let running: Promise<void> | undefined;
-  return async (): Promise<void> => {
-    requested = true;
-    if (running !== undefined) return await running;
-    running = (async () => {
-      do {
-        requested = false;
-        // This agent-core barrier includes the provider call, tool batch,
-        // retries, and continuations. The next turn sees one whole projection.
-        await input.session.agent.waitForIdle();
-        const toolSet = input.module.createToolSet({
-          connection: input.connection,
-          knowledge: input.knowledge,
-          ...(input.gameVersion === undefined ? {} : { gameVersion: input.gameVersion }),
-          policy: input.policy,
-          ...(input.dispatchAdmissionFactory === undefined
-            ? {}
-            : { dispatchAdmissionFactory: input.dispatchAdmissionFactory }),
-        });
-        const adapterTools = [
-          ...toolSet.observation,
-          ...toolSet.actions,
-          ...toolSet.knowledge,
-        ]
-          .map((tool) => gateIntegrationTool(tool, input.connection))
-          .map(toRuntimeTool);
-        const next = [...input.retainedTools, ...adapterTools].sort((left, right) =>
-          left.name.localeCompare(right.name),
-        );
-        // AgentState is the public core Agent surface; assigning its array is
-        // how an embedder changes the next provider request. Do not call
-        // AgentSession.setActiveToolsByName here: it can only select from the
-        // construction-time private registry and would drop a newly projected
-        // adapter definition before the next turn.
-        input.session.agent.state.tools = next;
-      } while (requested);
-    })();
-    try {
-      await running;
-    } finally {
-      running = undefined;
-    }
   };
 }
 
@@ -1047,35 +963,6 @@ export async function createRuntimeWithFixedToolsCore(
       .map((tool) => tool.name)
       .sort();
     const expectedTools = allowedToolNames;
-    const refreshIntegrationTools =
-      integration === undefined || integrationModule === undefined
-        ? undefined
-        : createIntegrationToolRefresher({
-            session,
-            connection: integration,
-            module: integrationModule,
-            knowledge: integration.knowledge,
-            gameVersion: integration.gameVersion,
-            policy: mountedPolicy,
-            dispatchAdmissionFactory:
-              dispatchController === undefined
-                ? undefined
-                : () => dispatchController.createAdmission(),
-            // The session is constructed with an explicit allowlist. Retain
-            // only its non-adapter wrappers so refresh cannot reintroduce a
-            // Pi builtin, an extension, or an old action closure.
-            retainedTools: [
-              ...session.agent.state.tools.filter(
-                (tool) =>
-                  !fixedToolNames.includes(tool.name) &&
-                  !tool.name.startsWith(integrationModule.descriptor.toolNamePrefix),
-              ),
-              // Pi wraps initial custom tools with the session's extension
-              // context. A refresh cannot retain those wrappers: their context
-              // may already be stale. Re-project fixed Host-owned definitions.
-              ...fixedTools.map(toRuntimeTool),
-            ],
-          });
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(
         `Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`,
@@ -1248,7 +1135,6 @@ export async function createRuntimeWithFixedToolsCore(
       ...(clearGameOperationalGateMarker === undefined
         ? {}
         : { clearGameOperationalGateMarker }),
-      ...(refreshIntegrationTools === undefined ? {} : { refreshIntegrationTools }),
       ...(installTavernProviderStartObserver === undefined
         ? {}
         : { installTavernProviderStartObserver }),
