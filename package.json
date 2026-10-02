@@ -164,7 +164,9 @@
     "audit:stardew-fixture-scenario-wiring": "node tools/check-stardew-fixture-scenario-wiring.mjs",
     "test:stardew-fixture-scenario-wiring": "node --test tools/check-stardew-fixture-scenario-wiring.test.mjs",
     "audit:stardew-execution-receipt-field-parity": "node tools/check-stardew-execution-receipt-field-parity.mjs",
-    "test:stardew-execution-receipt-field-parity": "node --test tools/check-stardew-execution-receipt-field-parity.test.mjs"
+    "test:stardew-execution-receipt-field-parity": "node --test tools/check-stardew-execution-receipt-field-parity.test.mjs",
+    "test:stardew-rejected-layer-verdicts": "node --test integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",
+    "test:stardew-rejected-layer-verdicts-mutation": "node integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.mutation.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
