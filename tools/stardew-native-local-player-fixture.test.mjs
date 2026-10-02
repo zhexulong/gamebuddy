@@ -545,6 +545,27 @@ test("the fridge reuses the chest container runner and its second fixture scenar
   assert.equal(resolveStardewActionGateRunner("fridge_retrieve"), "run-stardew-native-local-player-chest-retrieve-smoke.mjs");
 });
 
+test("the move-stall probe reuses the move_to_tile action and its own blocker scenarios", async () => {
+  const { fixtureActions, fixtureScenario } = await import("./lib/stardew-native-local-player-fixture.mjs");
+  // The pet scenario advertises pet_animal ONLY so the Pet projection publishes
+  // the blocker position; the runner never invokes it. The scenario selection
+  // must therefore override the plain action->scenario mapping, or the pet
+  // scenario would be hijacked into native_pet_animal_v1 (a live run already
+  // hit that: fixture prepare wrote native_pet_animal_v1 and the runner refused
+  // it as an invalid scenario).
+  assert.deepEqual(fixtureActions("move_stall_probe_pet"), ["move_to_tile", "pet_animal"]);
+  assert.equal(fixtureScenario(fixtureActions("move_stall_probe_pet"), "move_stall_probe_pet"), "native_move_stall_probe_pet_v1");
+  // The npc scenario has no Pet projection, so it does not advertise pet_animal.
+  assert.deepEqual(fixtureActions("move_stall_probe_npc"), ["move_to_tile"]);
+  assert.equal(fixtureScenario(fixtureActions("move_stall_probe_npc"), "move_stall_probe_npc"), "native_move_stall_probe_npc_v1");
+  // The plain pet_animal harness keeps its own scenario.
+  assert.deepEqual(fixtureActions("pet_animal"), ["pet_animal"]);
+  assert.equal(fixtureScenario(fixtureActions("pet_animal"), "pet_animal"), "native_pet_animal_v1");
+  const { resolveStardewActionGateRunner } = await import("./resolve-stardew-action-gate-runner.mjs");
+  assert.equal(resolveStardewActionGateRunner("move_stall_probe_pet"), "run-stardew-native-local-player-move-stall-probe-smoke.mjs");
+  assert.equal(resolveStardewActionGateRunner("move_stall_probe_npc"), "run-stardew-native-local-player-move-stall-probe-smoke.mjs");
+});
+
 test("the island shipping bin reuses the ship_item runner and its own fixture scenario", async () => {
   const { fixtureActions, fixtureScenario } = await import("./lib/stardew-native-local-player-fixture.mjs");
   assert.deepEqual(fixtureActions("ship_item_island"), ["ship_item"]);
