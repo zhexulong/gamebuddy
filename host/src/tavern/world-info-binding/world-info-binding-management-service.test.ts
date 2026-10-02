@@ -114,6 +114,10 @@ const mountPreamble = `
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
   const { acknowledgeMountedWorldInfoBinding } = await import(storeUrl);
   const { createMountedTurnTransitionAuthority } = await import(new URL("./chat-thread-store.mounted-turn-transition.internal.js", storeUrl).href);
+  const settleMounted = async () => {
+    const settledState = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await applyMounted(settledState.thread.worldBookBinding, settledState.thread.appliedWorldBookBinding);
+  };
   const applyMounted = async (binding, expectedOldAppliedBinding) => {
     const transition = createMountedTurnTransitionAuthority();
     const operation = transition.mintOperation();
@@ -130,7 +134,14 @@ const mountPreamble = `
   const profile = composeTavernProfile({ profileId: "gamebuddy.tavern-management.world-info-binding", releaseTier: "tavern_management", routeIds: ["bootstrap", "state.read", "chat.list", "chat.rename", "world-info.read", "world-info.bind"], operationIds: ["chat.rename", "world-info.bind"], navigationItemIds: ["chat"] });
   const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const lease = await authority.startMountedChatRuntime();
-  const service = createWorldInfoBindingManagementService({ manifest, lease, profile, repository });
+  const mountSettle = process.env.GAMEBUDDY_MOUNT_SETTLE === "1";
+  const service = createWorldInfoBindingManagementService({
+    manifest,
+    lease,
+    profile,
+    repository,
+    ...(mountSettle ? { settleAuthoredContext: settleMounted } : {}),
+  });
   const store = () => createChatThreadStore(root, identityKey(principal));
   const code = async (fn) => { try { return { ok: true, value: await fn() }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; } };
   const generation = lease.browserProjection.selectionGeneration;
@@ -162,7 +173,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       repoUrl,
       root,
     ],
-    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, GAMEBUDDY_MOUNT_SETTLE: process.env.GAMEBUDDY_MOUNT_SETTLE ?? "0" } },
   );
   const output: Buffer[] = [];
   const errors: Buffer[] = [];
@@ -510,3 +521,29 @@ test("binding service command DTO rejects raw title, numeric timestamp and unkno
   };
   assert.equal(TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check(command), false);
 });
+
+test("mounted binding service settles a pristine bind immediately when the coordinator settle entry is wired", async () => {
+  const previous = process.env.GAMEBUDDY_MOUNT_SETTLE;
+  process.env.GAMEBUDDY_MOUNT_SETTLE = "1";
+  try {
+    const results = await mounted(`
+      const first = await service.read();
+      const item = first.items[0];
+      const bind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: item.handle });
+      const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+      process.stdout.write(JSON.stringify({ bindState: bind.state, bindSelected: bind.items[0].selected, bindPending: bind.items[0].pending, applied: durable.thread.appliedWorldBookBinding }));
+      await service.close();
+      await lease.close();
+      await authority.close();
+    `);
+    assert.equal(results.bindState, "selected");
+    assert.equal(results.bindSelected, true);
+    assert.equal(results.bindPending, false);
+    assert.ok(results.applied);
+    assert.equal((results.applied as { source: string }).source, "managed_world_info");
+  } finally {
+    if (previous === undefined) delete process.env.GAMEBUDDY_MOUNT_SETTLE;
+    else process.env.GAMEBUDDY_MOUNT_SETTLE = previous;
+  }
+});
+

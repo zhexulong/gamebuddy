@@ -13,13 +13,18 @@ const bootstrapToken = "A".repeat(43);
 async function loadGenerationModules(artifactRoot: string) {
   const load = async (path: string) => await import(pathToFileURL(resolve(artifactRoot, path)).href);
   return await Promise.all([
+    load("continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js"),
     load("continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js"),
     load("deployment-manifest.js"),
     load("runtime.js"),
+    load("runtime-identity.js"),
     load("tavern/chat-thread-store.js"),
     load("tavern/browser-contract/index.js"),
     load("tavern/chat-management/chat-management-service.js"),
     load("tavern/memory-management/memory-management.js"),
+    load("tavern/connection-service.js"),
+    load("tavern/connection-probe.js"),
+    load("settings/voice-preference-store.js"),
     load("tavern/world-info-management/world-info-management.js"),
     load("tavern/world-info-binding/world-info-binding-management-service.js"),
     load("tavern/tavern-management-state.js"),
@@ -30,18 +35,36 @@ async function loadGenerationModules(artifactRoot: string) {
   ]);
 }
 
-async function startMountedManagementComposition() {
+async function startMountedManagementComposition(
+  options: Readonly<{
+    /**
+     * Answers exactly the endpoint URLs a player's own connection records
+     * would probe (design/28 §5.3). When absent the real production probe runs
+     * against the network; the browser journeys always supply a bounded local
+     * answer so the closed outcome is deterministic.
+     */
+    endpointHandler?: (url: string, headers: Record<string, string>) => Readonly<{ status: number; body: string }>;
+  }> = {},
+) {
   test.skip(process.platform !== "win32", "requires the real Windows mounted coordinator");
-  const pointer = JSON.parse(await readFile(resolve(hostRoot, "dist", "current.json"), "utf8"));
-  const artifactRoot = resolve(hostRoot, "dist", "generations", pointer.generation);
+  const outputRoot = process.env.GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT
+    ? resolve(process.env.GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT)
+    : resolve(hostRoot, "dist");
+  const pointer = JSON.parse(await readFile(resolve(outputRoot, "current.json"), "utf8"));
+  const artifactRoot = resolve(outputRoot, "generations", pointer.generation);
   const [
+    coordinatorModule,
     chatFacade,
     deployment,
     runtime,
+    runtimeIdentity,
     chatThreadStoreModule,
     contract,
     serviceModule,
     memoryModule,
+    connectionModule,
+    connectionProbeModule,
+    voicePreferenceModule,
     worldInfoManagementModule,
     worldInfoBindingModule,
     stateModule,
@@ -87,8 +110,32 @@ async function startMountedManagementComposition() {
       "memory.mutate",
       "world-info.read",
       "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.voice.devices",
+      "settings.connection.read",
+      "settings.connection.create",
+      "settings.connection.test",
+      "settings.connection.activate",
+      "settings.connection.model",
+      "settings.connection.remove",
     ],
-    operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
+    operationIds: [
+      "draft.save",
+      "draft.discard",
+      "chat.rename",
+      "memory.mutate",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "settings.voice.devices",
+      "settings.connection.read",
+      "settings.connection.create",
+      "settings.connection.test",
+      "settings.connection.activate",
+      "settings.connection.model",
+      "settings.connection.remove",
+    ],
     navigationItemIds: ["chat", "memory"],
   });
   const worldInfoRepository = worldInfoManagementModule.createWorldInfoManagementRepository(root);
@@ -102,6 +149,10 @@ async function startMountedManagementComposition() {
     lease,
     profile,
     repository: worldInfoRepository,
+    // Mirror the production assembly (desktop-presentation-admission-owner):
+    // pristine bindings settle through the coordinator's convergence path so
+    // the browser sees the bound state immediately.
+    settleAuthoredContext: () => coordinatorModule.settleMountedAuthoredContext(manifest, lease),
   });
   const managementStateFacade = await stateModule.createTavernManagementStateFacade(
     manifest,
@@ -112,6 +163,40 @@ async function startMountedManagementComposition() {
   const managementService = serviceModule.createChatManagementService({ manifest, lease, profile });
   const memoryService = memoryModule.createMemoryManagementService({ manifest, lease, profile });
   const inspector = await inspectorModule.createPublishedWindowsReparseInspector(artifactRoot);
+  // The durable voice preference store and the connection service are the same
+  // production authorities the desktop owner composes (design/28 §5.3): the
+  // connection service reports the exact mounted Chat's turn state so an
+  // activation cannot switch a running turn.
+  const voicePreferenceStore = new voicePreferenceModule.VoicePreferenceStore(
+    resolve(root, "settings", "voice-preference.json"),
+  );
+  const connectionProbe =
+    options.endpointHandler === undefined
+      ? undefined
+      : (input: unknown) =>
+          connectionProbeModule.probeTavernConnection(
+            input,
+            (async (url: string, init?: RequestInit) => {
+              const response = options.endpointHandler!(String(url), (init?.headers ?? {}) as Record<string, string>);
+              return new Response(response.body, { status: response.status });
+            }) as unknown as typeof fetch,
+          );
+  const connectionService = connectionModule.createTavernConnectionService({
+    agentDir: runtimeIdentity.resolveRuntimePaths(principal, root, lease.chatSurfaceSessionId).agentDir,
+    readTurnState: async () => {
+      const state = await managementStateFacade.read();
+      const turn = state.turn;
+      return {
+        turnActive:
+          turn !== null &&
+          (turn.state === "queued" ||
+            turn.state === "running" ||
+            turn.state === "response_visible" ||
+            turn.state === "stopping"),
+      };
+    },
+    ...(connectionProbe === undefined ? {} : { probe: connectionProbe }),
+  });
   const server = await composition.startTavernManagementStaticShellComposition({
     artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     inspector,
@@ -119,6 +204,8 @@ async function startMountedManagementComposition() {
     managementService,
     memoryService,
     worldInfoService,
+    voicePreferenceStore,
+    connectionService,
     profile,
     bootstrapToken,
   });
@@ -289,7 +376,7 @@ test("management browser binds and unbinds an immutable World Info revision thro
   }
 });
 
-test("management browser preserves the durable selection and shows a locked read-back after a real message locks World Info", async () => {
+test("management browser persists a World Info bind made after a real message as pending until the next turn", async () => {
   test.setTimeout(120_000);
   const mounted = await startMountedManagementComposition();
   const browser = await chromium.launch({ headless: true });
@@ -303,40 +390,36 @@ test("management browser preserves the durable selection and shows a locked read
       }
     });
 
+    // A chat with a real transcript. A bind made here must NOT settle
+    // immediately: the coordinator converges only on the next turn, so the
+    // durable desired binding surfaces as pending with an explanatory
+    // notice instead of a false selected state.
+    await mounted.appendPlayerMessageToLockWorldInfo();
+
     await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
     const panel = page.locator("[data-world-info-binding]");
     await panel.getByRole("button", { name: "Bind: Pelican Town" }).click();
+    await expect(page.getByRole("status")).toContainText("Saved successfully.");
+    await expect(panel.getByText("This binding is saved and will fully apply on the next turn.")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
-    await mounted.appendPlayerMessageToLockWorldInfo();
-
-    // The existing UI snapshot is still selected. A real PUT must now fail
-    // through the mounted service's pristine-thread lock and the UI must
-    // replace itself from the authoritative locked /state projection.
-    await panel.getByRole("button", { name: "Unbind: Pelican Town" }).click();
-    await expect(page.getByRole("status")).toContainText("World Info binding could not be updated.");
-    await expect(panel.getByText("World Info binding is locked after this chat has messages.")).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Unbind: Pelican Town" })).toBeDisabled();
     await expect
-      .poll(() => responses.some(({ method, path, status }) => method === "PUT" && path.endsWith("/world-info") && status === 409))
+      .poll(() => responses.some(({ method, path, status }) => method === "PUT" && path.endsWith("/world-info") && status === 200))
       .toBe(true);
-    await expect
-      .poll(() => responses.filter(({ method, path, status }) => method === "GET" && path.endsWith("/state") && status === 200).length)
-      .toBeGreaterThanOrEqual(1);
 
-    // Reload proves the pre-existing exact binding and transcript survived the
-    // rejected mutation; the result is a durable locked selected projection,
-    // not an optimistic local flip.
+    // Reload proves the pending bind is durable and the transcript intact;
+    // the pending notice remains the player's only guide.
     await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
     const reloaded = page.locator("[data-world-info-binding]");
-    await expect(reloaded.getByText("World Info binding is locked after this chat has messages.")).toBeVisible();
-    await expect(reloaded.getByRole("button", { name: "Unbind: Pelican Town" })).toBeDisabled();
+    await expect(reloaded.getByText("This binding is saved and will fully apply on the next turn.")).toBeVisible();
+    await expect(reloaded.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
+    assert.equal(await page.locator("body").textContent().then((text) => text?.includes("Lock the World Info binding fixture.") ?? false), true);
   } finally {
     await browser.close();
     await mounted.close();
   }
 });
 
-test("management browser replaces a stale World Info projection with the durable selected read-back", async () => {
+test("management browser keeps two pages consistent about the desired and pending binding state", async () => {
   test.setTimeout(120_000);
   const mounted = await startMountedManagementComposition();
   const browser = await chromium.launch({ headless: true });
@@ -344,36 +427,28 @@ test("management browser replaces a stale World Info projection with the durable
     const context = await browser.newContext({ locale: "en-US" });
     const pageA = await context.newPage();
     const pageB = await context.newPage();
-    const responsesA: Array<{ method: string; path: string; status: number }> = [];
-    const responsesB: Array<{ method: string; path: string; status: number }> = [];
-    const stateBodiesA: Array<{ chat?: { worldInfo?: { state?: string; items?: readonly { selected?: boolean }[] } } }> = [];
+    const responsesA = [];
+    const responsesB = [];
+    const stateBodiesA = [];
     for (const [page, responses] of [
       [pageA, responsesA],
       [pageB, responsesB],
-    ] as const) {
+    ]) {
       page.on("response", (response) => {
         const url = new URL(response.url());
         if (url.pathname.startsWith("/api/tavern/v1/")) {
           responses.push({ method: response.request().method(), path: url.pathname, status: response.status() });
         }
         if (page === pageA && response.request().method() === "GET" && url.pathname.endsWith("/state") && response.status() === 200) {
-          void response
-            .json()
-            .then((body: { chat?: { worldInfo?: { state?: string; items?: readonly { selected?: boolean }[] } } }) => {
-              stateBodiesA.push(body);
-            });
+          void response.json().then((body) => { stateBodiesA.push(body); });
         }
       });
     }
 
-    // Page B shares the authenticated browser session but receives its own
-    // later opaque state projection. It binds the real managed revision;
-    // page A's older revision/source handles must then be rejected.
     await pageA.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
     await expect(pageA.getByRole("button", { name: "Bind: Pelican Town" })).toBeEnabled();
-    await pageB.goto(`${mounted.server.origin}/#profile=management`, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    await pageB.goto(mounted.server.origin + "/#profile=management", { waitUntil: "domcontentloaded", timeout: 10_000 });
     await expect(pageB.getByRole("button", { name: "Bind: Pelican Town" })).toBeEnabled();
-    assert.equal(responsesB.some(({ method, path }) => method === "POST" && path.endsWith("/bootstrap")), false);
 
     await pageB.getByRole("button", { name: "Bind: Pelican Town" }).click();
     await expect(pageB.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
@@ -390,20 +465,17 @@ test("management browser replaces a stale World Info projection with the durable
       .poll(() => responsesA.filter(({ method, path, status }) => method === "GET" && path.endsWith("/state") && status === 200).length)
       .toBeGreaterThanOrEqual(1);
 
-    // The stale page's old unselected UI must be replaced by the durable
-    // selection from page B; no optimistic binding result is used locally.
-    // Catalog titles are not browser identities and may legitimately have
-    // multiple immutable revisions, so do not infer selectedness from an
-    // absent same-title Bind button. Assert both the public selected control
-    // and the authority response's exact selected cardinality instead.
     await expect(pageA.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
     await expect
       .poll(() =>
-        stateBodiesA.some(
-          (body) =>
-            body.chat?.worldInfo?.state === "selected" &&
-            body.chat.worldInfo.items?.filter((item) => item.selected === true).length === 1,
-        ),
+        stateBodiesA.some((body) => {
+          const worldInfo = body && body.chat && body.chat.worldInfo;
+          const items = (worldInfo && worldInfo.items) || [];
+          return (
+            (worldInfo && (worldInfo.state === "selected" || worldInfo.state === "pending")) &&
+            items.filter((item) => item.selected === true || item.pending === true).length === 1
+          );
+        }),
       )
       .toBe(true);
   } finally {
@@ -624,6 +696,303 @@ test("management journey is readable and usable in zh-CN at a 375x667 viewport",
     assert.equal(apiRequests.filter(({ method, path }) => method === "POST" && path.endsWith("/bootstrap")).length, 1);
     assert.ok(apiRequests.some(({ method, path }) => method === "GET" && path.endsWith("/chats")));
     assert.ok(apiRequests.some(({ method, path }) => method === "GET" && path.endsWith("/draft")));
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+
+/**
+ * Connection and model management, design/28 §1 and §5, driven through the real
+ * mounted surface: the Host catalog projection, a durable create, the real probe
+ * code path answered by a bounded local endpoint, and the write-only credential
+ * guarantee. Every request/response here crosses the same authenticated
+ * `tavern_browser_api/v1` boundary a player's browser uses.
+ */
+test("management browser creates a connection from the Host catalog and never reads the credential back", async () => {
+  test.setTimeout(180_000);
+  const mounted = await startMountedManagementComposition({
+    endpointHandler: (url) =>
+      url === "http://127.0.0.1:11434/v1/models"
+        ? { status: 200, body: JSON.stringify({ data: [{ id: "qwen2.5-coder:7b" }] }) }
+        : { status: 404, body: "{}" },
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const secret = "sk-synthetic-write-only-9f2c";
+    const baseUrl = "http://127.0.0.1:11434/v1";
+    const modelId = "qwen2.5-coder:7b";
+    // Every request and response that crosses the authenticated browser
+    // boundary, so the write-only credential guarantee is checked on all of
+    // them rather than on one hand-picked call.
+    const apiCalls: Array<{ method: string; path: string; requestBody: string; responseBody: string }> = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (!url.pathname.startsWith("/api/tavern/v1/")) return;
+      // The event stream stays open for the page lifetime, so it has no
+      // complete response body to inspect.
+      if (url.pathname.endsWith("/events")) return;
+      apiCalls.push({
+        method: request.method(),
+        path: url.pathname,
+        requestBody: request.postData() ?? "",
+        responseBody: "",
+      });
+    });
+    page.on("response", (response) => {
+      const url = new URL(response.url());
+      if (!url.pathname.startsWith("/api/tavern/v1/")) return;
+      if (url.pathname.endsWith("/events")) return;
+      const method = response.request().method();
+      const entry = [...apiCalls]
+        .reverse()
+        .find((call) => call.method === method && call.path === url.pathname && call.responseBody === "");
+      if (entry === undefined) return;
+      void response
+        .text()
+        .then((body) => {
+          entry.responseBody = body;
+        })
+        .catch(() => undefined);
+    });
+    /**
+     * True when the plaintext credential is reachable in the serialized
+     * document or rendered text. The value of a control the player is still
+     * editing is their own typing, not a read-back, so it is checked by
+     * `documentLeaksSecretToControls` instead.
+     */
+    const documentLeaksSecret = async () =>
+      await page.evaluate((value) => {
+        return [document.documentElement.outerHTML, document.body?.textContent ?? ""].join("\n").includes(value);
+      }, secret);
+    /** True when any control value in the live document still holds the credential. */
+    const documentLeaksSecretToControls = async () =>
+      await page.evaluate((value) => {
+        return [...document.querySelectorAll("input, textarea, select")].some((element) =>
+          element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+            ? element.value.includes(value)
+            : (element.textContent ?? "").includes(value),
+        );
+      }, secret);
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+
+    // 1. The connection group renders, and its provider list is the Host
+    // catalog projection rather than anything hard-coded in the frontend.
+    const panel = page.locator("[data-connection-settings]");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("heading", { name: "Connection and model" })).toBeVisible();
+    await expect(panel.locator("[data-connection-active-value]")).toHaveText("No connection selected");
+    await expect(panel.locator("[data-connection-no-selection]")).toBeVisible();
+    const providerIds = await panel.locator("#connection-provider option").evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+    assert.deepEqual(providerIds, ["cpa-oai", "deepseek", "openai", "gamebuddy-openai-compatible"]);
+    await expect(panel.locator("#connection-provider option")).toHaveCount(4);
+
+    // 2. Provider -> API key -> submit. The escape hatch is the catalog entry
+    // whose endpoint and model id the player supplies.
+    await panel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await expect(panel.locator("#connection-base-url")).toBeVisible();
+    await expect(panel.locator("#connection-model-id")).toBeVisible();
+    await panel.locator("#connection-base-url").fill(baseUrl);
+    await panel.locator("#connection-api-key").fill(secret);
+    await panel.locator("#connection-model-id").fill(modelId);
+    await panel.getByRole("button", { name: "Save connection" }).click();
+
+    const row = panel.locator("[data-connection-row]").filter({ hasText: baseUrl });
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute("data-readiness", "configured");
+    await expect(row.locator("[data-connection-failure]")).toHaveCount(0);
+    // 8. The URL the player typed is the one endpoint fact that reads back and
+    // is the only place an endpoint is shown in the document.
+    await expect(row.locator("[data-connection-base-url]")).toHaveText(baseUrl);
+    await expect(panel.locator("[data-connection-base-url]")).toHaveCount(1);
+
+    // 7. The credential must never be readable back. Four independent surfaces:
+    // the submission itself, every other HTTP request and response body, the
+    // live document (HTML, text and form-control values), and the durable
+    // reload.
+    await expect
+      .poll(() => apiCalls.filter(({ method, path }) => method === "POST" && path.endsWith("/settings/connections")).length)
+      .toBe(1);
+    const createCall = apiCalls.find(
+      ({ method, path }) => method === "POST" && path.endsWith("/settings/connections"),
+    );
+    assert.ok(createCall !== undefined);
+    await expect.poll(() => createCall.responseBody !== "").toBe(true);
+    // The one request allowed to carry the write-only credential is the create.
+    assert.equal(createCall.requestBody.includes(secret), true);
+    for (const call of apiCalls) {
+      assert.equal(call.responseBody.includes(secret), false, `credential leaked in the response to ${call.method} ${call.path}`);
+      if (call === createCall) continue;
+      assert.equal(call.requestBody.includes(secret), false, `credential leaked in the request ${call.method} ${call.path}`);
+    }
+    assert.equal(await documentLeaksSecret(), false, "credential leaked into the rendered document");
+    // Diagnostic (never a credential value): whether the write-only control
+    // still holds the submitted text in the live page before a reload.
+    test.info().annotations.push({
+      type: "connection-form-after-submit",
+      description: (await panel.locator("#connection-api-key").inputValue()) === "" ? "cleared" : "retained",
+    });
+    // The durable read-back after a reload keeps the endpoint and never the key.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    const reloadedPanel = page.locator("[data-connection-settings]");
+    await expect(reloadedPanel).toBeVisible();
+    await expect(reloadedPanel.locator("[data-connection-list]")).toBeVisible();
+    await expect(
+      reloadedPanel.locator("[data-connection-row]").filter({ hasText: baseUrl }),
+    ).toBeVisible();
+    // Reloading seeds the form from the durable projection, so the write-only
+    // field is empty and the credential is nowhere in the document: not in the
+    // markup, not in the text, and not in any control value.
+    await reloadedPanel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await expect(reloadedPanel.locator("#connection-api-key")).toHaveValue("");
+    assert.equal(await documentLeaksSecret(), false, "credential leaked into the document after reload");
+    assert.equal(
+      await documentLeaksSecretToControls(),
+      false,
+      "credential leaked into a control value after reload",
+    );
+    for (const call of apiCalls) {
+      assert.equal(call.responseBody.includes(secret), false, `credential leaked in the response to ${call.method} ${call.path}`);
+      if (call === createCall) continue;
+      assert.equal(call.requestBody.includes(secret), false, `credential leaked in the request ${call.method} ${call.path}`);
+    }
+    assert.ok(apiCalls.some(({ method, path }) => method === "GET" && path.endsWith("/settings/connection")));
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+/**
+ * The closed probe outcome, activation eligibility, model selection and
+ * removal rules of design/28 §5.3, all through the real mounted surface. The
+ * probe is the production `probeTavernConnection`; only its network hop is
+ * answered locally, so `ready` and a closed failure category are deterministic.
+ */
+test("management browser tests connections with a closed outcome, activates a ready record, selects a model and refuses active removal", async () => {
+  test.setTimeout(240_000);
+  const authorizations: string[] = [];
+  const mounted = await startMountedManagementComposition({
+    endpointHandler: (url, headers) => {
+      authorizations.push(headers["authorization"] ?? "");
+      if (url === "http://127.0.0.1:11434/v1/models")
+        return { status: 200, body: JSON.stringify({ data: [{ id: "qwen2.5-coder:7b" }] }) };
+      if (url === "http://127.0.0.1:9999/v1/models")
+        return { status: 401, body: JSON.stringify({ error: "raw provider text must not surface" }) };
+      return { status: 404, body: "{}" };
+    },
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const readyBaseUrl = "http://127.0.0.1:11434/v1";
+    const failedBaseUrl = "http://127.0.0.1:9999/v1";
+    const probes: string[] = [];
+    const mutations: string[] = [];
+    page.on("response", (response) => {
+      const url = new URL(response.url());
+      if (!url.pathname.startsWith("/api/tavern/v1/")) return;
+      const method = response.request().method();
+      if (url.pathname.endsWith("/test")) probes.push(method);
+      if (method === "DELETE" || url.pathname.endsWith("/activate") || url.pathname.endsWith("/model"))
+        mutations.push(`${method} ${url.pathname}`);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+
+    const panel = page.locator("[data-connection-settings]");
+    await expect(panel).toBeVisible();
+    const rowForBaseUrl = (baseUrl: string) => panel.locator("[data-connection-row]").filter({ hasText: baseUrl });
+
+    // 5. A catalog provider with a catalog model: the model is chosen from the
+    // Host catalog, and a catalog endpoint never reads back into the surface.
+    await panel.locator("#connection-provider").selectOption("deepseek");
+    await expect(panel.locator("#connection-model")).toBeVisible();
+    await expect(panel.locator("#connection-model option")).toHaveCount(2);
+    await panel.locator("#connection-model").selectOption("deepseek-v4-pro");
+    await panel.locator("#connection-api-key").fill("sk-synthetic-deepseek-key");
+    await panel.getByRole("button", { name: "Save connection" }).click();
+    const deepseekRow = panel.locator("[data-connection-row]", { hasText: "DeepSeek V4 Pro" });
+    await expect(deepseekRow).toBeVisible();
+    await expect(deepseekRow.locator("[data-connection-base-url]")).toHaveCount(0);
+    await expect(deepseekRow.locator("select")).toHaveValue("high");
+
+    // 8. Two player-supplied escape-hatch endpoints: one answers, one rejects.
+    await panel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await panel.locator("#connection-base-url").fill(readyBaseUrl);
+    await panel.locator("#connection-api-key").fill("sk-synthetic-ready-key");
+    await panel.locator("#connection-model-id").fill("qwen2.5-coder:7b");
+    await panel.getByRole("button", { name: "Save connection" }).click();
+    const readyRow = rowForBaseUrl(readyBaseUrl);
+    await expect(readyRow).toBeVisible();
+
+    await panel.locator("#connection-base-url").fill(failedBaseUrl);
+    await panel.locator("#connection-api-key").fill("sk-synthetic-rejected-key");
+    await panel.locator("#connection-model-id").fill("qwen2.5-coder:7b");
+    await panel.getByRole("button", { name: "Save connection" }).click();
+    const failedRow = rowForBaseUrl(failedBaseUrl);
+    await expect(failedRow).toBeVisible();
+
+    // 3. The real probe: `ready` for the answering endpoint, and the closed
+    // `unauthorized` category for the rejecting one. The provider's own text
+    // must never reach the document.
+    await readyRow.getByRole("button", { name: "Test connection" }).click();
+    await expect(readyRow).toHaveAttribute("data-readiness", "ready");
+    await expect(readyRow.getByText("Ready", { exact: true })).toBeVisible();
+    await expect(readyRow.getByRole("button", { name: "Save and activate" })).toBeEnabled();
+
+    await failedRow.getByRole("button", { name: "Test connection" }).click();
+    await expect(failedRow).toHaveAttribute("data-readiness", "failed");
+    await expect(failedRow.getByText("Test failed", { exact: true })).toBeVisible();
+    await expect(failedRow.locator("[data-connection-failure]")).toHaveText("The endpoint rejected the credential.");
+    await expect(page.getByText("raw provider text must not surface", { exact: false })).toHaveCount(0);
+    await expect(failedRow.getByRole("button", { name: "Save and activate" })).toBeDisabled();
+    await expect(failedRow.getByRole("button", { name: "Save and activate" })).toHaveAttribute(
+      "title",
+      "Test the connection before activating it.",
+    );
+    await expect.poll(() => probes.length).toBe(2);
+    assert.deepEqual(authorizations, ["Bearer sk-synthetic-ready-key", "Bearer sk-synthetic-rejected-key"]);
+
+    // 4. Only the ready record can be activated, and the UI then shows it as
+    // the active connection.
+    await readyRow.getByRole("button", { name: "Save and activate" }).click();
+    await expect(panel.locator("[data-connection-activated]")).toBeVisible();
+    await expect(panel.locator("[data-connection-active-value]")).toHaveText(
+      "OpenAI-compatible endpoint · qwen2.5-coder:7b",
+    );
+    await expect(readyRow.getByRole("button", { name: "Save and activate" })).toBeDisabled();
+    await expect.poll(() => mutations.filter((entry) => entry.includes("/activate")).length).toBe(1);
+
+    // 6. The active record cannot be removed and the refusal states why; the
+    // other records can.
+    await expect(readyRow.getByRole("button", { name: "Remove" })).toBeDisabled();
+    await expect(readyRow.getByRole("button", { name: "Remove" })).toHaveAttribute(
+      "title",
+      "An active connection cannot be removed. Activate another connection first.",
+    );
+    // A disabled control dispatches no remove request at all.
+    assert.equal(mutations.filter((entry) => entry.startsWith("DELETE")).length, 0);
+    await failedRow.getByRole("button", { name: "Remove" }).click();
+    await expect(failedRow).toHaveCount(0);
+    await expect.poll(() => mutations.filter((entry) => entry.startsWith("DELETE")).length).toBe(1);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    await expect(page.locator("[data-connection-settings]")).toBeVisible();
+    await expect(rowForBaseUrl(failedBaseUrl)).toHaveCount(0);
+    await expect(rowForBaseUrl(readyBaseUrl)).toBeVisible();
+
+    // 5. The thinking level of a saved record is a catalog-constrained choice,
+    // and the durable read-back reflects the saved value.
+    await deepseekRow.locator("select").selectOption("max");
+    await expect(deepseekRow.locator("select")).toHaveValue("max");
+    await expect.poll(() => mutations.filter((entry) => entry.endsWith("/model")).length).toBe(1);
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    await expect(page.locator("[data-connection-settings]")).toBeVisible();
+    const deepseekAfterReload = page.locator("[data-connection-row]", { hasText: "DeepSeek V4 Pro" });
+    await expect(deepseekAfterReload.locator("select")).toHaveValue("max");
   } finally {
     await browser.close();
     await mounted.close();

@@ -97,6 +97,7 @@ const en = {
   worldInfoUnbind: "Unbind",
   worldInfoEmpty: "No World Info revisions are available to bind.",
   worldInfoLocked: "World Info binding is locked after this chat has messages.",
+  worldInfoPending: "This binding is saved and will fully apply on the next turn.",
   worldInfoUnavailable: "World Info binding is temporarily unavailable.",
   worldInfoBindingFailure: "World Info binding could not be updated.",
 
@@ -154,6 +155,7 @@ const en = {
   voiceRevoke: "Revoke",
   voiceOutputDevice: "Output device",
   voiceDefaultOutput: "System default",
+  voicePinnedOutputUnlisted: "Selected endpoint (not currently listed)",
   voiceSettingsUnavailable: "Voice settings are unavailable.",
 
   connectionSettings: "Connection and model",
@@ -308,6 +310,7 @@ const zh: Messages = {
   worldInfoUnbind: "解除绑定",
   worldInfoEmpty: "没有可绑定的世界书版本。",
   worldInfoLocked: "当前对话已有消息，世界书绑定已锁定。",
+  worldInfoPending: "绑定已保存，将在下一次对话回合完全生效。",
   worldInfoUnavailable: "世界书绑定暂时不可用。",
   worldInfoBindingFailure: "无法更新世界书绑定。",
 
@@ -365,6 +368,7 @@ const zh: Messages = {
   voiceRevoke: "撤销",
   voiceOutputDevice: "输出设备",
   voiceDefaultOutput: "系统默认",
+  voicePinnedOutputUnlisted: "已选端点（当前未列出）",
   voiceSettingsUnavailable: "语音设置不可用。",
 
   connectionSettings: "连接与模型",
