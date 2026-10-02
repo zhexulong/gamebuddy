@@ -23,13 +23,13 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => { reads++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(discovery) }); });
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery/confirm", async route => { confirms++; expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, candidateId }); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "registered" }) }); });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    const panel = page.getByRole("region", { name: "Game state" });
+    const setup = page.locator('section[aria-label="Game installation setup"]');
     await expect(page.getByText("Stardew Valley", { exact: true })).toBeVisible();
-    await panel.getByRole("button", { name: "Confirm" }).click();
+    await setup.getByRole("button", { name: "Confirm" }).click();
     await expect.poll(() => reads).toBe(2);
     expect(confirms).toBe(1);
-    await expect(panel).not.toContainText(candidateId);
-    await expect(panel).toContainText("steam");
+    await expect(setup).not.toContainText(candidateId);
+    await expect(setup).toContainText("steam");
   });
 
   test("renders source-unavailable as a typed problem", async ({ page }) => {
@@ -37,8 +37,8 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/tavern/v1/draft", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, revision: 4, text: "A durable delegated draft." }) }));
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "game_unavailable" }) }));
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    const setup = page.getByRole("region", { name: "Game state" });
-    await expect(setup.locator('section[aria-label="Game installation setup"]')).toHaveAttribute("data-state", "source-unavailable");
+    const setup = page.locator('section[aria-label="Game installation setup"]');
+    await expect(setup).toHaveAttribute("data-state", "source-unavailable");
   });
 
   test("surfaces malformed and unauthorized responses without candidates", async ({ page }) => {
@@ -47,13 +47,13 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/tavern/v1/draft", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, revision: 4, text: "A durable delegated draft." }) }));
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, candidates: [{ candidateId: "bad", source: "steam" }] }) }));
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    const setup = page.getByRole("region", { name: "Game state" });
-    await expect(setup.locator('section[aria-label="Game installation setup"]')).toHaveAttribute("data-state", "error");
+    const setup = page.locator('section[aria-label="Game installation setup"]');
+    await expect(setup).toHaveAttribute("data-state", "error");
 
     await page.unroute("**/api/composed-reference-game/v1/game/installation/discovery");
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: "unauthorized" }) }));
     await page.reload();
-    await expect(page.getByRole("region", { name: "Game state" }).locator('section[aria-label="Game installation setup"]')).toHaveAttribute("data-state", "error");
+    await expect(page.locator('section[aria-label="Game installation setup"]')).toHaveAttribute("data-state", "error");
   });
 });
 

@@ -1,0 +1,59 @@
+{
+  "schema": "memory_live_loop/v1",
+  "identity": {
+    "continuityId": "memory_loop_continuity_239040075717"
+  },
+  "runtimeRootKey": "c5af0815bee0685e",
+  "scenario": {
+    "probeId": "p-restart",
+    "manifestDigest": "42fd195503e7340c2a1c48a7078214ee7c0165d1060e1491359c2ddfb0c42a94",
+    "dimension": "retention"
+  },
+  "seed": {
+    "durable": true,
+    "rowCount": 1,
+    "projectionChanged": true
+  },
+  "assembly": {
+    "seededIdResolved": true,
+    "markerObserved": true,
+    "renderedIdCount": 1,
+    "seedIdRendered": true
+  },
+  "chat": {
+    "attempted": true,
+    "turnState": "completed",
+    "committedCompanionDelta": 1,
+    "committed": true,
+    "verdict": "needle.hit"
+  },
+  "funnel": {
+    "stages": [
+      {
+        "stage": "L1_write",
+        "component": "persistence",
+        "status": "passed",
+        "detail": "seed present in the management durable readback"
+      },
+      {
+        "stage": "L2_assembly",
+        "component": "context_materialization",
+        "status": "passed",
+        "detail": "seed id present in the rendered m[0] manifest"
+      },
+      {
+        "stage": "L3_decay",
+        "component": "consolidation",
+        "status": "passed",
+        "detail": "seed id still rendered after the fold"
+      },
+      {
+        "stage": "L4_expression",
+        "component": "presentation_admission",
+        "status": "passed",
+        "detail": "needle.hit"
+      }
+    ],
+    "findings": []
+  }
+}
