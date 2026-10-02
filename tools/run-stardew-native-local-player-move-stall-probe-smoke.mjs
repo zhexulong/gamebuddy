@@ -147,16 +147,22 @@ export async function runMoveStallProbe(client, receipts, config) {
   const nativeSelfResolved = phase1.reached;
   const retryResolved = phase2?.reached === true;
   const elapsedMs = Date.now() - startedAt;
-  // A move that ACTUALLY MOVED (the actor's final tile differs from its start
-  // tile) but did not reach the target is measured as a blocker finding whatever
-  // terminal it took: if the native controller died with native_path_ended OR
-  // the authoritative deadline was consumed while the actor stood on the
-  // blocker's tile, both mean "the block outlasted the attempt". Only a failure
-  // with the actor still on the start tile is not attributable to the blocker.
+  // A move that DID NOT reach the target after the native controller was
+  // constructed is measured as a blocker finding when the terminal is
+  // native_path_ended: that reason only exists when findPath SUCCEEDED (else
+  // it would be no_native_path) and the controller then died -- i.e. the
+  // execution phase collided. Whether the actor physically moved does not
+  // matter: a Pet pushes forward one tile before dying, a Horse blocks
+  // outright with zero movement (its behaviorOnFarmerPushing is empty and the
+  // NPC pass-through never engages on Horse), and both are the same measured
+  // blocker. deadline_expired IS different: it can also mean the caller's
+  // deadline was simply too short, so it needs the actor to have moved to be
+  // attributable to the block.
   const moved = phase1.finalTile !== null && (phase1.finalTile.x !== before.tile.x || phase1.finalTile.y !== before.tile.y);
   const measurementValid =
     nativeSelfResolved ||
-    ((phase1.terminal?.reasonCode === "native_path_ended" || phase1.terminal?.reasonCode === "deadline_expired") && moved);
+    phase1.terminal?.reasonCode === "native_path_ended" ||
+    (phase1.terminal?.reasonCode === "deadline_expired" && moved);
 
   const conclusion = nativeSelfResolved
     ? "native_self_resolved"
