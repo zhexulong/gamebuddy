@@ -1,0 +1,3 @@
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ForEach-Object { "NODE $($_.ProcessId) | $($_.CommandLine)" }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" | ForEach-Object { "PS $($_.ProcessId) | $($_.CommandLine)" }
+Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'Stardew|GameBuddy' } | ForEach-Object { "GAME $($_.ProcessId) | $($_.Name) | $($_.CommandLine)" }
