@@ -253,7 +253,6 @@ export class CompanionHostService {
   /** Voice-local note consumed by the next prompt assembly; never Chat/Game state. */
   #voiceInterruptionNote: Readonly<{ atMs: number; speechJobId: string | undefined }> | undefined;
   #flushScheduled = false;
-  #integrationToolRefresh: Promise<void> | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelayMs = 50;
   #closed = false;
@@ -281,7 +280,6 @@ export class CompanionHostService {
     private readonly turnTracker = new GameTurnLineageTracker(),
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
-    private readonly refreshIntegrationTools?: () => Promise<void>,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -697,27 +695,6 @@ export class CompanionHostService {
       this.#containIntegrationOverflow();
       return;
     }
-    if (fact.kind === "snapshot" && this.refreshIntegrationTools !== undefined) {
-      // The runtime callback owns idle-barrier coalescing. Retain only its
-      // latest shared completion so a burst stays bounded and Pi cannot receive
-      // any admitted snapshot before the corresponding projection is installed.
-      try {
-        const previousRefresh = this.#integrationToolRefresh;
-        const nextRefresh = this.refreshIntegrationTools();
-        // Each async invocation may return a distinct wrapper around the
-        // runtime's shared in-flight refresh. Observe an overwritten wrapper so
-        // its common rejection cannot escape while the latest one owns gating.
-        if (previousRefresh !== undefined) void previousRefresh.catch(() => undefined);
-        this.#integrationToolRefresh = nextRefresh;
-      } catch {
-        try {
-          this.#containIntegrationFailure("integration_tool_refresh_failed");
-        } catch {
-          // The stable refresh failure owns containment even if revocation rejects.
-        }
-        return;
-      }
-    }
     void this.flushSoon().catch(() => undefined);
   }
 
@@ -828,7 +805,6 @@ export class CompanionHostService {
   #containIntegrationFailure(reasonCode: string, revocationAlreadyRequested = false): void {
     if (!this.#integrationAdmissionOpen) return;
     this.#integrationAdmissionOpen = false;
-    this.#integrationToolRefresh = undefined;
     this.turnTracker.revoke();
     if (this.#retryTimer !== undefined) {
       clearTimeout(this.#retryTimer);
@@ -859,23 +835,7 @@ export class CompanionHostService {
       // An overflow can occur after this work was scheduled. Admission is the
       // Host-owned cancellation fence for scheduled and retry flushes.
       if (!this.#closed && this.#integrationAdmissionOpen) {
-        while (this.#integrationToolRefresh !== undefined) {
-          const refresh = this.#integrationToolRefresh;
-          try {
-            await refresh;
-          } catch {
-            try {
-              this.#containIntegrationFailure("integration_tool_refresh_failed");
-            } catch {
-              // The stable refresh failure remains the externally observable
-              // reason even if adapter revocation itself rejects.
-            }
-            throw new Error("integration_tool_refresh_failed");
-          } finally {
-            if (this.#integrationToolRefresh === refresh) this.#integrationToolRefresh = undefined;
-          }
-        }
-        if (!this.#closed && this.#integrationAdmissionOpen) await this.loop.flush();
+        await this.loop.flush();
       }
       this.#retryDelayMs = 50;
     } catch (error) {
