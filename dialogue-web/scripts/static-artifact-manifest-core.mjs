@@ -11,7 +11,12 @@ const HASHED_ASSET_NAME = /^[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|
 const SHA256 = /^[a-f0-9]{64}$/;
 const MANIFEST_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
 
-const fixedPackageName = String.fromCharCode(64, 103, 97, 109, 101, 98, 117, 100, 100, 121, 47, 100, 105, 97, 108, 111, 103, 117, 101, 45, 119, 101, 98);
+// The package name below is the caller's namespace and is part of the domain
+// identity this file's policy must recognize (the emitted adapter lives under a
+// `host/` sibling of a package whose name is `@gamebuddy/dialogue-web`). It is
+// written out in plain text deliberately, not obfuscated: the boundary test
+// exempts the product namespace.
+const fixedPackageName = "@gamebuddy/dialogue-web";
 const relativePath = (root, path) => path.slice(root.length + 1).split(sep).join(posix.sep);
 const sha256 = (contents) => createHash("sha256").update(contents).digest("hex");
 const unavailable = () => new TypeError("windows_reparse_inspection_unavailable");

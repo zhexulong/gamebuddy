@@ -1239,13 +1239,18 @@ export function ComposedReferenceGameApp() {
                 {gameReopenActive && <p role="status">{labels().gameReopenInProgress}</p>}
                 {gameReopenFailed && <p role="status">{labels().gameReopenFailed}</p>}
                 {gameReopenUnavailable && <p role="status">{labels().gameReopenUnavailable}</p>}
-                <StardewInstallationDiscovery api={composedApiRef.current} />
                 <StardewCabinHandoff
                  state={cabinView}
                  labels={labels()}
                  onConfirm={(choice) => void handleCabinConfirmation(choice)}
-               />
-             </section>
+                />
+              </section>
+              {/* The installation discovery panel is its own surface, not part of
+                  the Game state region. It must stay OUTSIDE the drawer's
+                  <section aria-label={gameState}>: its own status/Retry/Cancel
+                  controls would otherwise pollute the region's scope and make
+                  Playwright strict-mode region queries ambiguous. */}
+              <StardewInstallationDiscovery api={composedApiRef.current} />
             <Composer
               value={inputText}
               onChange={setInputText}

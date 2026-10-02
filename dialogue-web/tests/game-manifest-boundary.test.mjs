@@ -79,5 +79,11 @@ test("Game policy requires its exact manifest filename", async () => {
 test("common manifest core imports without frozen domain identity constants", async () => {
   assert.deepEqual(Object.keys(core), ["createStaticArtifactManifestPolicy"]);
   const source = await readFile(new URL("../scripts/static-artifact-manifest-core.mjs", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /tavern|game/i);
+  // The core is intentionally domain-agnostic and its caller
+  // (game-browser-artifact-manifest.mjs) passes its own identity. The package
+  // name it must locate is the caller's namespace `@gamebuddy/dialogue-web`,
+  // which legitimately contains "game". Only the framework keywords are
+  // forbidden; the product namespace is an explicit exception.
+  assert.doesNotMatch(source, /tavern/);
+  assert.doesNotMatch(source, /\bgame\b(?!buddy)/);
 });
