@@ -138,7 +138,22 @@ for (const u of units) {
     candidates.push({
       ...u,
       candidateBranchCount: cands.length,
-      writes: [...new Set(cands.flatMap((b) => b.writes))].sort(),
+      /**
+       * 单元级写入聚合**所有分支**（候选 + 被拒），不只候选分支。
+       *
+       * 为什么必须这样：一个动作分支可能被 P7 拒（结果随机，`Game1.random`），
+       * 但它的写入（`Bush` 的 `health -= ...`、`Grass` 的 `numberOfWeeds.Value -= num`）
+       * 是真实的终态。只聚候选分支会把 Bush 显示成 `writes=["base.NeedsUpdate"]`，
+       * remaining report 因此判它 C 档（只写视觉/计时器）并**永不裁定** —— 真实的
+       * 砍灌木/砍草动作从此消失。被拒分支的写入属于单元，属于该单元的判定。
+       * `candidateBranchCount` 仍只数候选分支，谓词语义不变。
+       *
+       * 注意：**不**把 `cost` 混进来 —— cost 是执行者资源消耗（体力/水/钱），
+       * 不证明该单元有世界 gameplay 写入；把它们算进来会把 `Chest.checkForAction`
+       * 这类单元错误浮出 C 档。`numbersOfWeeds -=` 已按字段语义归入 writes，
+       * 不需要 cost 兜底。
+       */
+      writes: [...new Set(branches.flatMap((b) => b.writes ?? []))].sort(),
       delegates: [...new Set(cands.flatMap((b) => b.delegates))].sort(),
     });
   else

@@ -6,6 +6,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { STARDEW_NON_GAMEPLAY_FIELDS } from "../src/stardew-source-analysis-vocabulary.mjs";
+
 /**
  * 「还需要哪些 action」报告的测试。
  *
@@ -73,19 +75,26 @@ test("三档计数之和等于未匹配候选总数", async () => {
   // Event.checkAction / MineShaft.checkAction 的 case 桶各恢复 1 个候选。
   // → 未匹配候选 64 → 67：+Event.checkAction（A 档 22→23，festivalScore 匹配
   //   select_event_choice_variant）+ performAction@GameLocation + MineShaft.checkAction（B 档 26→28）
-  assert.equal(counts.tierA_catalogIntentExists, 23);
+  //
+  // 2026-10-01 复合赋值字段语义修正（-= 不再一律当代价）：
+  // Bush/GiantCrop/ResourceClump 的 `health -= ...` 从 cost 移入 writes（实体自身的
+  // 终态削减，不是 actor 资源消耗）。三个单元的 `performToolAction` 因此从
+  // C 档（只写 NeedsUpdate）浮出，按 catalog intent 进 A 档（23→26）；
+  // frameCounter（Chest 箱盖动画计时器）加入非 gameplay 名单后
+  // Chest.checkForAction 回落 C 档，C 档净 16→13。
+  assert.equal(counts.tierA_catalogIntentExists, 26);
   // 字段分类修正:Shears.DoFunction 已登记为 collect_animal_product 的第二个 seam(handler 本就覆盖 MilkPail/Shears),
   // kickProgress/localKickStartTile(Chest 踢动画)、lastTentTouchedByPlayer(Tent 交互辅助静态)、
   // HitTimerInstance.Milliseconds(Chest 命中计时)、boulderKnockTimer/boulderKnocksLeft/
   // doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)从 gameplay 移至非 gameplay
   assert.equal(counts.tierB_noCatalogIntent, 28);
-  assert.equal(counts.tierC_nonGameplayWrites, 16);
+  assert.equal(counts.tierC_nonGameplayWrites, 13);
 });
 
 test("C 档只含视觉/计时器写入（不含 gameplay 字段）", async () => {
   const a = await report();
-  const nonGameplay =
-    /^(NeedsUpdate|invincTimer|HitTimerInstance|HitTimer|freezePause|CanMove|haltAfterCheck|pingPong|statueTimer|showWantBubbleTimer|frame|loop|lightRadius|lightcolor|kickProgress|localKickStartTile|lastTentTouchedByPlayer|boulderKnockTimer|boulderKnocksLeft|doneHittingBoulderWithToolTimer)$/i;
+  // 名单来自词汇表的单一权威 —— 这里是测试，不是第二份副本。
+  const nonGameplay = STARDEW_NON_GAMEPLAY_FIELDS;
   for (const r of a.tiers.C_non_gameplay_writes) {
     assert.equal(r.gameplayWrites.length, 0, `${r.class}.${r.member} 不应有 gameplay 写入`);
     for (const w of r.nonGameplayWrites) {
