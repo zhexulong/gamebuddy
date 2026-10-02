@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   access,
   mkdtemp,
@@ -11,12 +10,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { before } from "node:test";
 
 import {
   defineTool,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createDeterministicBridgePair } from "./bridge.js";
@@ -52,6 +50,7 @@ import {
   PHASE_0B_ALLOWED_TOOL_NAMES,
   resolveMagicContextExtensionEntry,
   resolveRuntimePaths,
+  RUNTIME_PACKAGE_VERSIONS,
 } from "./runtime.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
@@ -65,21 +64,6 @@ import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-recla
 before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 });
-
-function canonicalStableJson(value: unknown): string {
-  if (Array.isArray(value))
-    return `[${value.map(canonicalStableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map(
-        (key) => `${JSON.stringify(key)}:${canonicalStableJson(record[key])}`,
-      )
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 async function canonicalTemporaryRoot(): Promise<string> {
   const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
@@ -255,21 +239,43 @@ test("runtime mounts a fake integration through the module port", async () => {
     parameters: Type.Object({
       consoleId: Type.String({ minLength: 1, maxLength: 32 }),
     }),
-    execute: async (_toolCallId, params) => ({
-      content: [
-        { type: "text" as const, text: `activated:${params.consoleId}` },
-      ],
-      details: {
-        receiptJson: JSON.stringify({
-          requestId: "request_01",
-          executionId: "execution_01",
-          state: "succeeded",
-          reasonCode: "console_activated",
-          revision: 1,
-          evidence: { postcondition: "active" },
-        }),
-      },
-    }),
+    execute: async (_toolCallId, params) => {
+      // Model of execution-time admission (the real executeGameAction): the
+      // mounted tool stays mounted when the capability leaves, and the call
+      // returns a structured rejected receipt instead of the tool vanishing.
+      if (
+        !(
+          integrationState as { capabilities: readonly string[] }
+        ).capabilities.includes("activate_console")
+      )
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                outcome: "rejected",
+                reasonCode: "capability_not_declared",
+              }),
+            },
+          ],
+          details: { receiptJson: "" },
+        };
+      return {
+        content: [
+          { type: "text" as const, text: `activated:${params.consoleId}` },
+        ],
+        details: {
+          receiptJson: JSON.stringify({
+            requestId: "request_01",
+            executionId: "execution_01",
+            state: "succeeded",
+            reasonCode: "console_activated",
+            revision: 1,
+            evidence: { postcondition: "active" },
+          }),
+        },
+      };
+    },
   });
   const fake: GameIntegrationAdapter = {
     descriptor: Object.freeze({
@@ -292,20 +298,12 @@ test("runtime mounts a fake integration through the module port", async () => {
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
-    createToolSet: ({ connection, policy, dispatchAdmissionFactory }) => ({
+    createToolSet: ({ dispatchAdmissionFactory }) => ({
+      // Constant mount: the tool NAME set must not change with live
+      // capability snapshots (that would bust the provider prefix cache).
+      // Per-action admission is modeled inside execute above.
       observation: [],
-      actions:
-        dispatchAdmissionFactory !== undefined &&
-        catalog
-          .visibleActions(
-            registrations,
-            (connection.state as { capabilities: readonly string[] })
-              .capabilities,
-            policy,
-          )
-          .some((entry) => entry.actionId === "activate_console")
-          ? [activateConsole]
-          : [],
+      actions: dispatchAdmissionFactory !== undefined ? [activateConsole] : [],
       knowledge: [],
     }),
     knowledgeMetadata: () => ({
@@ -363,14 +361,31 @@ test("runtime mounts a fake integration through the module port", async () => {
     );
     assert.doesNotMatch(JSON.stringify(manifest.mountedTools), /stardew_/);
 
-    // A live capability loss is consumed only after the idle barrier by the
-    // private refresher. The session receives a new whole projection, not a
-    // stale action closure or a second registry.
+    // A live capability loss no longer withdraws the mounted surface: the
+    // tool NAME set stays constant so the provider prefix cache survives
+    // snapshot churn. Admission moves to execution time, which rejects the
+    // call with a structured receipt instead of hiding the tool.
     integrationState.capabilities = [];
     await runtime.refreshIntegrationTools?.();
     assert.deepEqual(
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["companion_status", "todowrite"],
+      ["arcade_activate_console", "companion_status", "todowrite"],
+    );
+    const withdrawn = runtime.session.agent.state.tools.find(
+      (tool) => tool.name === "arcade_activate_console",
+    );
+    assert.ok(withdrawn);
+    const withdrawnResult = await withdrawn.execute(
+      "withdrawal_check",
+      { consoleId: "console_02" },
+      new AbortController().signal,
+      () => undefined,
+    );
+    assert.match(
+      withdrawnResult.content[0]?.type === "text"
+        ? withdrawnResult.content[0].text
+        : "",
+      /capability_not_declared/,
     );
   } finally {
     runtime.session.dispose();
@@ -402,25 +417,24 @@ test("runtime refresh waits for Pi idle and coalesces to the current adapter pro
     actorId: () => "fixture_actor",
     assertIdentityBinding: () => undefined,
     worldScope: () => null,
-    createToolSet: ({ connection }) => {
+    createToolSet: () => {
       const materialization = ++refreshMaterializations;
       return {
         observation: [],
-        actions:
-          (connection.state as { capabilities: readonly string[] }).capabilities.length === 0
-            ? []
-            : [
-                defineTool({
-                  name: "arcade_activate_console",
-                  label: "Activate arcade console",
-                  description: "Fixture action.",
-                  parameters: Type.Object({}),
-                  execute: async () => ({
-                    content: [{ type: "text", text: `materialization=${materialization}` }],
-                    details: {},
-                  }),
-                }),
+        actions: [
+          defineTool({
+            name: "arcade_activate_console",
+            label: "Activate arcade console",
+            description: "Fixture action.",
+            parameters: Type.Object({}),
+            execute: async () => ({
+              content: [
+                { type: "text", text: `materialization=${materialization}` },
               ],
+              details: {},
+            }),
+          }),
+        ],
         knowledge: [],
       };
     },
@@ -467,8 +481,8 @@ test("runtime refresh waits for Pi idle and coalesces to the current adapter pro
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
       ["arcade_activate_console", "companion_status", "todowrite"],
     );
-    // Two updates during the same in-flight idle barrier must not install the
-    // withdrawn surface transiently: the current Mod projection wins.
+    // Two updates during the same in-flight idle barrier must not install a
+    // stale projection transiently: the current Mod projection wins.
     capabilities = ["activate_console"];
     const reenablement = runtime.refreshIntegrationTools?.();
     releaseIdle?.();
@@ -1085,6 +1099,21 @@ test("runtime resolves Magic Context from the Host-declared package dependency",
     /@cortexkit[\\/]pi-magic-context[\\/]dist[\\/]index\.js$/,
   );
   assert.doesNotMatch(entry, /(?:^|[\\/])vendor(?:[\\/]|$)/);
+});
+
+test("the recorded Magic Context runtime identity is the loaded artifact's own version", async () => {
+  // The run manifest is provenance evidence, so it must never record an
+  // identity no artifact carries. The package declares no `package.json`
+  // subpath, so derive the package root from the exact entry the runtime loads
+  // (`.../pi-magic-context/dist/index.js`, workspace-real or pnpm-linked) and
+  // read its own version there.
+  const entry = resolveMagicContextExtensionEntry();
+  const packageRoot = join(dirname(entry), "..");
+  const artifact = JSON.parse(
+    await readFile(join(packageRoot, "package.json"), "utf8"),
+  ) as { name: string; version: string };
+  assert.equal(artifact.name, "@cortexkit/pi-magic-context");
+  assert.equal(RUNTIME_PACKAGE_VERSIONS.magicContext, artifact.version);
 });
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {

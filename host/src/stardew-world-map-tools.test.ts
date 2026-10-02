@@ -86,6 +86,9 @@ test("observe-scene tool mounts only from a fresh Mod read-only capability and r
         summary: "A chest is nearby.",
         partial: false,
         truncatedReason: null,
+        // The scene validator now requires the Mod-owned ground summary; a
+        // fixture that does not scan the ground declares it as null.
+        ground: null,
       };
     },
   };
@@ -117,14 +120,19 @@ test("world-map tool mounts only from a fresh Mod read-only capability and retur
   );
 });
 
-test("world-map tool is withheld for stale snapshot, withdrawn capability, or missing read-only registration", () => {
+test("world-map tool stays mounted but rejects at execution for stale snapshot, withdrawn capability, or missing registration", async () => {
   for (const state of [
     { snapshot: { ...integration().state.snapshot!, catalogRevision: 2 } },
     { capabilities: [], snapshot: { ...integration().state.snapshot!, capabilities: [] } },
     { catalogRegistrations: [] },
   ]) {
     const tools = createStardewObservationTools(integration(state));
-    assert.equal(tools.some((candidate) => candidate.name === "stardew_inspect_world_map"), false);
+    const tool = tools.find((candidate) => candidate.name === "stardew_inspect_world_map");
+    assert.ok(tool, "constant mount keeps the tool declared");
+    await assert.rejects(
+      tool.execute("reject_01", {}, new AbortController().signal, () => {}, {} as never),
+      /bridge_capability_not_ready/,
+    );
   }
 });
 
@@ -244,27 +252,49 @@ test("navigate-to-destination mounts only from its live Mod execution publicatio
       })),
     },
   };
-  assert.equal(
-    createStardewActionTools(readOnlyRegistration, undefined, () => admission).some(
-      (candidate) => candidate.name === "stardew_navigate_to_destination",
-    ),
-    false,
+  const readOnly = createStardewActionTools(readOnlyRegistration, undefined, () => admission).find(
+    (candidate) => candidate.name === "stardew_navigate_to_destination",
+  );
+  // Constant mount: the tool stays declared; the read-only registration makes
+  // the execution-time admission refuse it with a structured receipt.
+  assert.ok(readOnly);
+  const deniedByKind = await readOnly!.execute(
+    "navigate_denied_kind",
+    { destination: { kind: "label", label: "Mine" } },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
+  assert.match(
+    deniedByKind.content[0]?.type === "text" ? deniedByKind.content[0].text : "",
+    /action_policy_denied/,
   );
 
-  const denied = {
+  const deniedPolicy = {
     policyVersion: 1,
     deniedActions: ["navigate_to_destination"],
     deniedFamilies: [],
   } satisfies ActionPolicy;
-  assert.equal(
-    createStardewActionTools(executionIntegration, denied, () => admission).some(
-      (candidate) => candidate.name === "stardew_navigate_to_destination",
-    ),
-    false,
+  const deniedTool = createStardewActionTools(
+    executionIntegration,
+    deniedPolicy,
+    () => admission,
+  ).find((candidate) => candidate.name === "stardew_navigate_to_destination");
+  assert.ok(deniedTool);
+  const deniedByPolicy = await deniedTool!.execute(
+    "navigate_denied_policy",
+    { destination: { kind: "label", label: "Mine" } },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
+  assert.match(
+    deniedByPolicy.content[0]?.type === "text" ? deniedByPolicy.content[0].text : "",
+    /action_policy_denied/,
   );
 });
 
-test("navigation policy denied action and denied family each prevent tool mounting", () => {
+test("navigation policy denial keeps the tool mounted and refuses at execution", async () => {
   const deniedActionPolicy = {
     policyVersion: 1,
     deniedActions: ["find_destination"],
@@ -276,18 +306,15 @@ test("navigation policy denied action and denied family each prevent tool mounti
     deniedFamilies: ["world_navigation"],
   } satisfies ActionPolicy;
 
-  assert.equal(
-    createStardewObservationTools(integration(), deniedActionPolicy).some(
-      (tool) => tool.name === "stardew_find_destination",
-    ),
-    false,
-  );
-  assert.equal(
-    createStardewObservationTools(integration(), deniedFamilyPolicy).some(
-      (tool) => tool.name === "stardew_find_destination",
-    ),
-    false,
-  );
+  for (const policy of [deniedActionPolicy, deniedFamilyPolicy]) {
+    const tools = createStardewObservationTools(integration(), policy);
+    const tool = tools.find((candidate) => candidate.name === "stardew_find_destination");
+    assert.ok(tool, "constant mount keeps the tool declared");
+    await assert.rejects(
+      tool!.execute("denied_01", { query: "mine" }, new AbortController().signal, () => {}, {} as never),
+      /bridge_capability_not_ready/,
+    );
+  }
 });
 
 test("mounted find-destination tool rechecks mutable policy before bridge write", async () => {
@@ -394,7 +421,7 @@ test("mounted world-map tool rechecks the live publication before bridge write",
 });
 
 
-test("navigation tools reject missing bridge, revision drift, and every exact registration mismatch", () => {
+test("navigation tools stay mounted and reject missing bridge, revision drift, and every exact registration mismatch", async () => {
   const mismatches = [
     { lifecycle: "experimental" },
     { kind: "execution" },
@@ -411,23 +438,43 @@ test("navigation tools reject missing bridge, revision drift, and every exact re
     const tools = createStardewObservationTools(
       integration({ catalogRegistrations: registrations as never }),
     );
-    assert.equal(tools.some((tool) => tool.name === "stardew_find_destination"), false);
+    const tool = tools.find((candidate) => candidate.name === "stardew_find_destination");
+    assert.ok(tool, "constant mount keeps the tool declared");
+    await assert.rejects(
+      tool!.execute("mismatch_01", { query: "mine" }, new AbortController().signal, () => {}, {} as never),
+      /bridge_capability_not_ready/,
+    );
   }
 
   const missingRead = integration();
   delete (missingRead as { navigationRead?: unknown }).navigationRead;
+  for (const tool of createStardewObservationTools(missingRead)) {
+    if (tool.name.startsWith("stardew_inspect_world_map") || tool.name.startsWith("stardew_find_destination")) {
+      await assert.rejects(
+        tool.execute(
+          "missing_bridge_01",
+          tool.name === "stardew_find_destination" ? { query: "mine" } : {},
+          new AbortController().signal,
+          () => {},
+          {} as never,
+        ),
+        /bridge_capability_not_ready/,
+      );
+    }
+  }
   assert.equal(
     createStardewObservationTools(missingRead).some((tool) =>
       tool.name.startsWith("stardew_inspect_world_map") ||
       tool.name.startsWith("stardew_find_destination"),
     ),
-    false,
+    true,
   );
-  assert.equal(
-    createStardewObservationTools(
-      integration({ catalogRevision: 2 }),
-    ).some((tool) => tool.name === "stardew_find_destination"),
-    false,
+  const driftTools = createStardewObservationTools(integration({ catalogRevision: 2 }));
+  const driftTool = driftTools.find((candidate) => candidate.name === "stardew_find_destination");
+  assert.ok(driftTool);
+  await assert.rejects(
+    driftTool!.execute("drift_01", { query: "mine" }, new AbortController().signal, () => {}, {} as never),
+    /bridge_capability_not_ready/,
   );
 });
 
