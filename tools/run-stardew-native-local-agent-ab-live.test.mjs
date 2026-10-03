@@ -74,6 +74,13 @@ test("the runner emits system findings as a first-class health signal", () => {
   // presented text in the same result object.
   assert.match(RUNNER_SOURCE, /systemFindings,\n    observation,\n    presentedSummary/);
   assert.match(RUNNER_SOURCE, /buildRunObservation\(\{\n\s+prompt,/);
+  // Live-run evidence capture (tools/live-run/README.md): every run writes its
+  // own local directory with the runtime root's evidence and the result, and
+  // the result JSON surfaces the capture summary so a broken capture is never
+  // silent.
+  assert.match(RUNNER_SOURCE, /import \{ openLiveRunCapture, resolveLiveRunRoot \} from "\.\/live-run\/core\/capture\.mjs";/);
+  assert.match(RUNNER_SOURCE, /result\.capture = await closeCapture\(capture, runtimeRoot, result\);/);
+  assert.match(RUNNER_SOURCE, /partialResult\.capture = await closeCapture\(capture, runtimeRoot, partialResult\);/);
 });
 
 test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {

@@ -49,6 +49,12 @@ import { fileURLToPath } from "node:url";
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
 import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
+
+// Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
+// its own directory with the runtime root's evidence and the child stderr, so a
+// reviewer can see what actually reached the model instead of only digest facts.
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: new URL("../..", import.meta.url).pathname });
 
 /**
  * The Class B marker Magic Context emits with the ids it assembled into m[0]
@@ -458,7 +464,36 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
   }
 }
 
-async function withSurface({ surface, run, root, deploymentManifestPath, gameSessionMode = "fresh" }) {
+/**
+ * Close the run capture and return a bounded summary for the report JSON.
+ *
+ * The report itself is recorded inside the run directory before closing, so
+ * evidence and verdict travel together. Never throws: a broken capture becomes
+ * a `capture` field with `failures`, not a crashed loop.
+ */
+async function closeIntoReport(capture, root, report) {
+  if (capture === null || capture === undefined) return null;
+  try {
+    await capture.record("report.json", report);
+    await capture.captureRuntimeRoot(root);
+    const summary = await capture.close();
+    return Object.freeze({
+      schema: "gamebuddy_live_run_capture/v1",
+      dir: summary.dir,
+      filesWritten: summary.filesWritten,
+      skipped: summary.skipped,
+      failures: summary.failures,
+    });
+  } catch (error) {
+    return Object.freeze({
+      schema: "gamebuddy_live_run_capture/v1",
+      dir: capture.dir ?? null,
+      failures: [{ op: "capture_close", error: String(error instanceof Error ? error.message : error) }],
+    });
+  }
+}
+
+async function withSurface({ surface, run, root, deploymentManifestPath, gameSessionMode = "fresh", capture }) {
   if (typeof root !== "string" || root.length === 0) throw new Error("runtime_root_required");
   if (typeof deploymentManifestPath !== "string" || deploymentManifestPath.length === 0)
     throw new Error("deployment_manifest_path_required");
@@ -472,33 +507,38 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   // tail, because those markers are the ONLY observability the L2 (assembly) stage
   // has - the Host never sees m[0] bytes and the persistence row is not exposed.
  	const markers = [];
-	const launch = await launchDesktopCompositionGateChild({
-		outputRoot: OUTPUT_ROOT,
-		root,
-		surface,
-		nonceSha256,
-		manifestPath: deploymentManifestPath,
-		readyTimeoutMs: START_TIMEOUT_MS,
-		gameSessionMode,
-		spawnImpl: (command, args, options) => {
-			const child = spawn(command, args, options);
-			child.stderr?.setEncoding?.("utf8");
-			child.stderr?.on?.("data", (chunk) => {
-				if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
-				for (const line of String(chunk).split("\n")) {
-					// Strictly prefixed and parsed: an unrelated stderr line can never be
-					// mistaken for a materialization fact.
-					if (
-						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
-						line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
-						line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
-					)
-						markers.push(line.trim());
-				}
-			});
-			return child;
-		},
-	});
+ 	const launch = await launchDesktopCompositionGateChild({
+ 		outputRoot: OUTPUT_ROOT,
+ 		root,
+ 		surface,
+ 		nonceSha256,
+ 		manifestPath: deploymentManifestPath,
+ 		readyTimeoutMs: START_TIMEOUT_MS,
+ 		gameSessionMode,
+ 		spawnImpl: (command, args, options) => {
+ 			const child = spawn(command, args, options);
+ 			child.stderr?.setEncoding?.("utf8");
+ 			child.stderr?.on?.("data", (chunk) => {
+ 				if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+ 				// Harness-level capture: full child stderr lands in the run directory
+ 				// (git-ignored, local only), so a reviewer can see the real
+ 				// materialization narration instead of only the marker lines.
+ 				if (capture !== undefined && capture !== null)
+ 					capture.append(`child-${surface}.stderr.log`, String(chunk)).catch(() => {});
+ 				for (const line of String(chunk).split("\n")) {
+ 					// Strictly prefixed and parsed: an unrelated stderr line can never be
+ 					// mistaken for a materialization fact.
+ 					if (
+ 						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
+ 						line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+ 						line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+ 					)
+ 						markers.push(line.trim());
+ 				}
+ 			});
+ 			return child;
+ 		},
+ 	});
   try {
     const launchUrl = await launch.waitForReady();
     const url = new URL(launchUrl);
@@ -685,6 +725,10 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
   // lived in different SQLite files (runtimeCwd is identity-keyed UNDER the phase's
   // own root), so the loop could not measure cross-phase memory even in principle.
   return withMemoryLoopRoot(async (root) => {
+    // One local evidence directory for this run (git-ignored, harness-level):
+    // child stderr narration, the runtime root's own evidence, and the report
+    // travel together so a reviewer can see what actually reached the model.
+    const capture = await openLiveRunCapture({ kind: "memory-loop", label: scenario.probeId, root: LIVE_RUN_ROOT });
     // ONE deployment manifest and ONE bootstrap operation for the whole loop. The
     // authority marker records the bootstrap operation, and `known` open validates it
     // exactly - so writing a second manifest with a fresh bootstrapOperationId made
@@ -713,6 +757,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       surface: "management",
       root,
       deploymentManifestPath,
+      capture,
       run: async (origin, client) => seedMemory(origin, client, scenario.seeds, scenario.supersedes),
     });
     const seeded = seededResult.result;
@@ -747,8 +792,9 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         chat: Object.freeze({ attempted: false, reason: "seed_not_durable" }),
         funnel: attributed,
       });
-      await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-      return report;
+      const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
+      await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+      return finalReport;
     }
 
     // Phase 2 - chat-only surface, SAME root, SAME continuity: ask the question.
@@ -770,6 +816,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         root,
         deploymentManifestPath,
         gameSessionMode: "known",
+        capture,
         run: async (origin, client) => runChatTurn(origin, client, scenario.question),
       });
     } catch (error) {
@@ -798,8 +845,9 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         }),
         funnel: attributed,
       });
-      await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-      return report;
+      const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
+      await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+      return finalReport;
     }
 
     const chat = chatResult.result;
@@ -882,8 +930,9 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       }),
       funnel: attributed,
     });
-    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-    return report;
+    const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
+    await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+    return finalReport;
   });
 }
 

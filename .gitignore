@@ -185,3 +185,9 @@ voice-gateway/scripts/pipeline-voice-surface-rehearsal.json
 # L5 player-release gate artifacts + raw capture wav evidence (machine-local)
 voice-gateway/scripts/pipeline-player-release.json
 voice-gateway/scripts/player-turn-*.wav
+
+# Live-run evidence: one local directory per run (git-ignored). Reviewers read
+# these when auditing a run; they are never committed or shared. See
+# tools/live-run/README.md.
+/.live-runs/
+/.audit-runs/
