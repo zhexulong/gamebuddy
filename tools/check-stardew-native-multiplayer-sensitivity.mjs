@@ -69,7 +69,7 @@ function parseArgs(argv) {
  *                   the native call on later game updates (`pickup_item`)
  */
 const NATIVE_CALL_PATTERN =
-  /\b(?:[A-Za-z_]\w*\.)*(DoFunction|performToolAction|performUseAction|performObjectDropInAction|checkAction|checkForAction|placementAction|receiveGift|createItem|addItem|shipItem|warpFarmer|tryToCheckAt|collect|eatObject|getShippingBin|GetItemsForPlayer)\s*\(/g;
+  /\b(?:[A-Za-z_]\w*\.)*(DoFunction|performToolAction|performUseAction|performObjectDropInAction|checkAction|checkForAction|placementAction|receiveGift|createItem|addItem|shipItem|warpFarmer|tryToCheckAt|collect|eatObject|getShippingBin|GetItemsForPlayer|closeDialogue)\s*\(/g;
 
 /**
  * One-hop delegations observed in the Mod or in the game itself: the handler calls

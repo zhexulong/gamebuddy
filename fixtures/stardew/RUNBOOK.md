@@ -1319,3 +1319,26 @@ recovery must remain an Agent-level decision with fresh observation.
 
 Profile restored, backup/lock removed, working save cleaned, no residual
 Stardew/SMAPI process.
+
+## 30. WIA full modal-handling chain live: interrupt → dismiss → resume (2026-10-04)
+
+New action `dismiss_modal` (experimental, WIA §4.2 modal-handling family) plus the
+three-phase chain runner (`wia_modal_dismiss_chain`, scenario
+`native_wia_modal_dismiss_chain_v1`, fixture GameBuddyFixtureStable_445936768)
+prove the 全链路闭环 the single interruption receipts could not:
+
+- phase interrupt: move_to_tile accepted(r1) → invalidated/modal_interrupted(r3)
+  with the intent breakpoint (target 18,16; fixture drawObjectDialogue modal).
+- phase dismiss (admission half-loop): with the dialogue still on screen,
+  dismiss_modal is admitted by the Modal profile through the exact-shape empty
+  args and succeeds immediately (r4, modal_dismissed; bridge response IS the
+  terminal — the action is instantaneous), closing the menu.
+- phase resume (resumption leg): the same-intent move_to_tile re-issue
+  accepted(r5) → succeeded/target_reached(r11); fresh snapshot actionable with
+  activeExecution released.
+
+1.17 s total; teardown restored profile, removed backup/lock and working save,
+left no Stardew/SMAPI process. dismiss_modal verified against the real game
+three times in this session (once blocked at runner parity before the
+instantaneous-terminal shape was accepted; the product receipt was
+succeeded/modal_dismissed in every run).

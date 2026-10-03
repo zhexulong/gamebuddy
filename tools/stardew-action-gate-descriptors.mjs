@@ -294,6 +294,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // action fault. Not a new action; they grant no capability.
   wia_pass_out: "run-stardew-native-local-player-wia-passout-smoke.mjs",
   wia_modal_interrupt: "run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs",
+  // WIA §4.2 full modal-handling chain: interrupt -> dismiss (Modal admission
+  // half-loop) -> same-intent resume, the 全链路闭环 evidence.
+  wia_modal_dismiss_chain: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

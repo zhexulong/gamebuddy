@@ -53,6 +53,10 @@
     "equip_tool",
     "travel",
     "ride_minecart",
+    "use_raft",
+    "mount_transport",
+    "enter_mine",
+    "toggle_mine_lamp",
     "enter_exit",
     "till_soil",
     "pickup_forage",
@@ -93,11 +97,22 @@
     "plant_sapling",
     "cut_weeds",
     "cut_grass",
+    "clear_cask",
+    "dress_mannequin",
+    "set_sign_display",
+    "deposit_silo_hay",
+    "toggle_tool_light",
     "scythe_crop",
+    "harvest_bush",
+    "harvest_fruit_tree",
+    "shake_tree",
+    "take_pedestal_item",
+    "toggle_fence_gate",
     "craft_item",
     "cook_recipe",
     "collect_crab_pot_output",
     "ship_item",
+    "dismiss_modal",
     "advance_day"
   ],
   "actions": [
@@ -156,6 +171,74 @@
           "signature": "public void MinecartWarp(MinecartDestinationData destination)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "MinecartWarp only calls Game1.player.Halt(), sets freezePause, and calls Game1.warpFarmer(name, x, y, direction); the destination and its target tile come from the game's own Data/Minecarts and the warp machinery is the one enter_exit already classifies as mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "use_raft",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Raft.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "sets the local Farmer.isRafting flag; the flag is per-actor local state, no shared write"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "mount_transport",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Characters/Horse.cs",
+          "signature": "public override bool checkAction(Farmer who, GameLocation l)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "rides/dismounts one shared Horse under the horse mutex; the mutex serialises cross-player mounts on the same horse"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "enter_mine",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Game1.cs",
+          "signature": "public static void enterMine(int whatLevel, int? forceLayout = null)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "toggle_mine_lamp",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "flips the shared location lightLevel through the Lamp action; players on both sides see the light change"
         }
       ],
       "admission": {
@@ -825,6 +908,91 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "clear_cask",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Cask.cs",
+          "signature": "public override bool performToolAction(Tool t)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "splits heldObject into debris on the shared location; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "dress_mannequin",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Mannequin.cs",
+          "signature": "public override bool performObjectDropInAction(Item dropInItem, bool probe, Farmer who, bool returnFalseIfItemConsumed = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "swaps outfit items on the shared mannequin object; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "set_sign_display",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/Sign.cs",
+          "signature": "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "sets displayItem on the shared sign; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "deposit_silo_hay",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public int tryToAddHay(int num)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "writes piecesOfHay on the shared farm; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "toggle_tool_light",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Lantern.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "flips the local lantern light source and removes/readds it; on is a per-tool local bool and the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "scythe_crop",
       "lifecycle": "live_verified",
       "seams": [
@@ -834,6 +1002,91 @@
           "signature": "public override bool performToolAction",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "harvest_bush",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/Bush.cs",
+          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "shakes fruit into debris on the shared location and plays a sound; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "harvest_fruit_tree",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/FruitTree.cs",
+          "signature": "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "drops fruit debris on the shared location; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "shake_tree",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/Tree.cs",
+          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "take_pedestal_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Objects/ItemPedestal.cs",
+          "signature": "public bool DropObject(Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "toggle_fence_gate",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Fence.cs",
+          "signature": "public virtual void toggleGate(bool open, bool is_toggling_counterpart = false, Farmer who = null)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "flips gatePosition on the shared fence; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -914,6 +1167,23 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "dismiss_modal",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/DialogueBox.cs",
+          "signature": "public void closeDialogue()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "closeDialogue calls Game1.exitActiveMenu (menu = null) and Game1.dialogueUp = false; both are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net-field for the receipt"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     },
     {
       "actionId": "advance_day",
