@@ -1289,3 +1289,130 @@ test("CompanionLoop explicitly follows up an ordinary fact-only batch", async ()
   await loop.flush();
   assert.deepEqual(received, [{ deliverAs: "followUp" }]);
 });
+
+test("CompanionLoop downgrades a stale final presentation after the turn settled (tail delivery, not a turn failure)", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const lifecycle: string[] = [];
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_tail", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_tail", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: { ...trackedPartial, content: [{ type: "text", text: "收好" }] },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "收好", partial: trackedPartial },
+        });
+        // The reply arrives as one final text (no deltas before message_end).
+        emit({
+          type: "message_end",
+          message: { id: "assistant_tail", role: "assistant", content: [{ type: "text", text: "收好啦。" }], stopReason: "stop" },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {
+        lifecycle.push("begin");
+      },
+      endBatch() {
+        lifecycle.push("end");
+      },
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+        // The runtime epoch was revoked (STOP/teardown) after the turn settled;
+        // the pre-write epoch assert fails exactly like the real adapter does.
+        throw new Error("stale_interruption_admission");
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_tail",
+    eventId: "player_source_tail",
+    text: "把草莓收了吧",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  // flush must NOT reject: the presentation is a settled-turn tail delivery.
+  await loop.flush();
+  assert.deepEqual(lifecycle, ["begin", "end"]);
+  assert.equal(presented.length, 1);
+});
+
+test("CompanionLoop still propagates a non-presentation drain error", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_drain_err", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        const trackedPartial = { id: "assistant_drain_err", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        emit({
+          type: "message_update",
+          message: trackedPartial,
+          assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
+        });
+        emit({
+          type: "message_update",
+          message: { ...trackedPartial, content: [{ type: "text", text: "x" }] },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial: trackedPartial },
+        });
+        emit({
+          type: "message_end",
+          message: { id: "assistant_drain_err", role: "assistant", content: [{ type: "text", text: "x" }], stopReason: "stop" },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {
+        throw new Error("unexpected_drain_failure");
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_drain_err",
+    eventId: "player_source_drain_err",
+    text: "hi",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  await assert.rejects(() => loop.flush(), /unexpected_drain_failure/);
+});
