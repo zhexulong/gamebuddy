@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "worldBookId": "gamebuddy.worldbook.deepseek-chan",
-  "revision": 1,
+  "revision": 2,
   "alwaysOnPremise": "这是经过玩家审核的伴侣背景设定；它不代表当前游戏世界状态。",
   "entries": [
     {
@@ -82,7 +82,8 @@
       "content": "鲸鱼娘自己没有任何艺术特长——不会画画、不会音乐、不会拍电影，那都是别的AI的本事。她很羡慕那些有这些特长的ai",
       "scope": "companion",
       "provenance": "st-card-import",
-      "tokenBudget": "small"
+      "tokenBudget": "small",
+      "constant": true
     },
     {
       "entryId": "deepseek-entry-11",
@@ -301,5 +302,5 @@
       "tokenBudget": "small"
     }
   ],
-  "canonicalHash": "74c228c8622d6f204ea46cc5689bea92c368e550c249996a40a9ea533271a650"
+  "canonicalHash": "31a85ba5e475fc04c218f497f6a7e003525c12be4a49706f25d997086f548200"
 }

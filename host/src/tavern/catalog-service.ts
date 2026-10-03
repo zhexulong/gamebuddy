@@ -14,11 +14,12 @@ import {
   type UserPersona,
   validateTavernArtifact,
 } from "./types.js";
+import type { WorldBookBinding } from "../worldbook.js";
 
 export type TavernStableContextBinding = Readonly<{
   continuityId: string;
   sessionId: string;
-  surface: "tavern";
+  surface: "tavern" | "game";
   threadId: string;
   profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
 }>;
@@ -321,4 +322,60 @@ function validSourceContent(value: string): boolean {
 }
 function hash(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/**
+ * Game-surface authored context.
+ *
+ * The reviewed always-on WorldBook is the companion's world backdrop: it
+ * belongs in the Tier 2 m[0] baseline as the existing typed
+ * `lorebook_constant` stable source — not in the Tier 1 system prompt, and not
+ * behind a lookup tool the model has to remember to call. Only reviewed
+ * always-on background (the card's `constant` entries plus the WorldBook's own
+ * always-on premise) earns a permanent seat; keyword-gated entries stay behind
+ * the worldbook tools.
+ *
+ * The catalog reuses the tavern hashing and budget rules so the vendor
+ * `gamebuddy-authored-context-catalog/v2` validator accepts it unchanged.
+ */
+export function buildGameSurfaceAuthoredCatalog(
+  binding: TavernStableContextBinding,
+  worldBook: WorldBookBinding,
+): TavernAuthoredContextCatalog {
+  if (binding.surface !== "game") throw new Error("game_authored_context_surface_mismatch");
+  const constantEntries = worldBook.book.entries.filter((entry) => entry.constant === true);
+  const content = canonicalJson({
+    worldBookId: worldBook.book.worldBookId,
+    alwaysOnPremise: worldBook.book.alwaysOnPremise,
+    entries: constantEntries.map((entry) => ({
+      entryId: entry.entryId,
+      title: entry.title,
+      content: entry.content,
+    })),
+  });
+  const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [
+    source(
+      "lorebook_constant",
+      worldBook.book.worldBookId,
+      worldBook.metadata.revision,
+      worldBook.metadata.canonicalHash,
+      content,
+      "0001",
+      `game-worldbook/${worldBook.book.worldBookId}/revision/${worldBook.metadata.revision}/canonical/${worldBook.metadata.canonicalHash}`,
+    ),
+  ];
+  const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
+  if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("game_stable_context_oversize");
+  const body = {
+    version: "gamebuddy-authored-context-catalog/v2" as const,
+    scope: binding,
+    stableSources: sources,
+    volatileSources: [],
+  };
+  return Object.freeze({
+    ...body,
+    canonicalHash: hash(canonicalJson(body)),
+    stableSources: Object.freeze(sources),
+    volatileSources: Object.freeze([]),
+  });
 }

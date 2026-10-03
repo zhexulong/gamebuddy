@@ -53,6 +53,8 @@ export type RuntimeDisposal = Readonly<{
   closeRecoveryJournal?: () => Promise<void>;
   /** Construction-private fixed-tool revocation/drain, before Pi disposal. */
   closeFixedTools?: () => Promise<void>;
+  /** Clears the Game-surface authored m[0] materialization before Pi disposal. */
+  clearAuthoredContext?: () => Promise<void>;
   /** Test-only factories may omit this; production admission rejects it. */
   connected?: ConnectedGameRuntimeConstruction;
 }>;
@@ -294,6 +296,11 @@ async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promise<void>
   attempt(() => runtime.gameplaySubagent?.dispose());
   attempt(() => runtime.operationalGateEvidence?.close());
    attempt(() => runtime.clearGameOperationalGateMarker?.());
+   try {
+     await runtime.clearAuthoredContext?.();
+   } catch (error) {
+     errors.push(error);
+   }
    try {
      await runtime.closeFixedTools?.();
    } catch (error) {
