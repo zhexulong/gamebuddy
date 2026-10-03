@@ -17,6 +17,17 @@ internal sealed class StardewBodyController
     private Vector2 lastTile;
     private int lastProgressTick;
     private bool hasEmittedRunning;
+    private bool hasEmittedStalledWaiting;
+
+    /// <summary>Navigation L2 watchdog: native movement must show progress before
+    /// this many game ticks have elapsed. Stardew's native update loop is 60 FPS,
+    /// so the frozen 2 second blocker diagnostic window is 120 ticks
+    /// (blocker-and-navigation-diagnostics.md §5.3).</summary>
+    private const int StallDetectionTicks = 120;
+
+    /// <summary>Navigation L2 watchdog hard budget. The 5 second bound is 300
+    /// native 60 FPS ticks, measured from the last observed progress tick.</summary>
+    private const int StallTimeoutTicks = 300;
 
     /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
     /// (freezePause, tool animation) keeps the execution running while inside it
@@ -100,6 +111,7 @@ internal sealed class StardewBodyController
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
         this.hasEmittedRunning = false;
+        this.hasEmittedStalledWaiting = false;
         this.transientSinceMs = 0;
         reasonCode = "accepted";
         return true;
@@ -127,6 +139,7 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.hasEmittedRunning = false;
+        this.hasEmittedStalledWaiting = false;
         this.transientSinceMs = 0;
     }
 
@@ -155,9 +168,8 @@ internal sealed class StardewBodyController
         // below consumes that projection; no branch re-checks the menu/event/
         // movement trio itself. The projection is currently this class's local
         // equivalent of Lane A's WorldModel.ComputeDisposition (wia-contract
-        // frozen type), computed here until WorldModel.cs lands.
-        // TODO(WIA): 换用 WorldModel.ComputeDisposition(Game1.player)（Lane A 契约
-        // 类型已冻结；落地后删除本地等价判定并消费 ActorDisposition）。
+         // frozen type), computed here through the shared WorldModel.Classify
+         // authority; no local disposition precedence is maintained in this loop.
         LocalDispositionKind disposition = ClassifyLocalDisposition(
             Game1.eventUp,
             Game1.activeClickableMenu is not null,
@@ -215,25 +227,29 @@ internal sealed class StardewBodyController
                 break;
         }
 
+        Vector2 currentTile = localPlayer.Tile;
+        bool exactArrival = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
+        bool adjacentArrival = specification.AllowAdjacentArrival
+            && IsChebyshevAdjacent(Math.Abs((int)currentTile.X - (int)specification.TargetTile.X), Math.Abs((int)currentTile.Y - (int)specification.TargetTile.Y));
         if (!ReferenceEquals(localPlayer.controller, pathController))
         {
-            bool exactArrival = Vector2.DistanceSquared(localPlayer.Tile, specification.TargetTile) <= 0.04f;
-            bool adjacentArrival = specification.AllowAdjacentArrival
-                && IsChebyshevAdjacent(Math.Abs((int)localPlayer.Tile.X - (int)specification.TargetTile.X), Math.Abs((int)localPlayer.Tile.Y - (int)specification.TargetTile.Y));
             if (exactArrival || adjacentArrival)
             {
                 localPlayer.Halt();
-                this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
+                this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
                 this.active = null;
                 this.pathController = null;
             }
             else
             {
-                this.Fail("native_path_ended", $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)}");
+                int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
+                string evidence = $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)}";
+                if (stalledTicks >= StallTimeoutTicks)
+                    evidence += $";stalled_ticks={stalledTicks}";
+                this.Fail("native_path_ended", evidence);
             }
             return;
         }
-        Vector2 currentTile = localPlayer.Tile;
         if (!localPlayer.CanMove)
         {
             // Stardew briefly reports the Farmhand as non-actionable while a
@@ -246,15 +262,12 @@ internal sealed class StardewBodyController
                 return;
             }
         }
-        bool currentTileExact = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
-        bool currentTileAdjacent = specification.AllowAdjacentArrival
-            && IsChebyshevAdjacent(Math.Abs((int)currentTile.X - (int)specification.TargetTile.X), Math.Abs((int)currentTile.Y - (int)specification.TargetTile.Y));
-        if (currentTileExact || currentTileAdjacent)
+        if (exactArrival || adjacentArrival)
         {
             localPlayer.Halt();
             localPlayer.controller = null;
             this.pathController = null;
-            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(currentTileExact ? "exact" : "warp_adjacent")};path=stardew_native");
+            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
             this.active = null;
             return;
         }
@@ -263,8 +276,46 @@ internal sealed class StardewBodyController
         {
             this.lastTile = currentTile;
             this.lastProgressTick = tick;
+            this.hasEmittedStalledWaiting = false;
             this.transition(ExecutionState.MeaningfulProgress, "tile_advanced", $"tile={FormatTile(currentTile)};path=stardew_native");
+            return;
         }
+
+        StallWatchdogAction stallAction = AssessStall(tick, this.lastProgressTick, this.hasEmittedStalledWaiting);
+        if (stallAction == StallWatchdogAction.TimedOut)
+        {
+            int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
+            this.Fail("native_path_ended", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks}");
+            return;
+        }
+
+        if (stallAction == StallWatchdogAction.Waiting)
+        {
+            this.hasEmittedStalledWaiting = true;
+            int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
+            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks}");
+        }
+    }
+
+    internal enum StallWatchdogAction
+    {
+        None,
+        Waiting,
+        TimedOut,
+    }
+
+    /// <summary>Evaluates the L2 watchdog after disposition and arrival checks.
+    /// A tile change resets <paramref name="lastProgressTick"/> before this method
+    /// is called. The waiting notification is emitted once per no-progress window;
+    /// the timeout remains bounded at the frozen five-second native budget.</summary>
+    internal static StallWatchdogAction AssessStall(int tick, int lastProgressTick, bool waitingAlreadyEmitted)
+    {
+        int stalledTicks = Math.Max(0, tick - lastProgressTick);
+        if (stalledTicks >= StallTimeoutTicks)
+            return StallWatchdogAction.TimedOut;
+        if (stalledTicks >= StallDetectionTicks && !waitingAlreadyEmitted)
+            return StallWatchdogAction.Waiting;
+        return StallWatchdogAction.None;
     }
 
     private void Fail(string reasonCode, string evidence) => this.Stop(ExecutionState.Failed, reasonCode, evidence);
@@ -284,6 +335,7 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.hasEmittedRunning = false;
+        this.hasEmittedStalledWaiting = false;
         this.transientSinceMs = 0;
         this.transition(state, reasonCode, evidence);
     }

@@ -151,6 +151,42 @@ public sealed class WorldInterruptionTests
             .Should().Be("stamina=-15;time_of_day=2600;tile=4,5;revision=3");
     }
 
+    // ---- L2 movement stall watchdog (blocker diagnostics §5.3) ---------------
+
+    [Fact]
+    public void StallWatchdog_EmitsWaitingAtTheTwoSecondBoundary_BeforeTimeout()
+    {
+        StardewBodyController.AssessStall(119, 0, waitingAlreadyEmitted: false)
+            .Should().Be(StardewBodyController.StallWatchdogAction.None);
+        StardewBodyController.AssessStall(120, 0, waitingAlreadyEmitted: false)
+            .Should().Be(StardewBodyController.StallWatchdogAction.Waiting,
+                "the frozen two-second L2 window is 120 native 60 FPS ticks");
+        StardewBodyController.AssessStall(121, 0, waitingAlreadyEmitted: true)
+            .Should().Be(StardewBodyController.StallWatchdogAction.None,
+                "stalled_waiting is non-terminal progress, not a halt");
+    }
+
+    [Fact]
+    public void StallWatchdog_TerminatesAtTheBoundedFiveSecondBudget()
+    {
+        StardewBodyController.AssessStall(299, 0, waitingAlreadyEmitted: true)
+            .Should().Be(StardewBodyController.StallWatchdogAction.None);
+        StardewBodyController.AssessStall(300, 0, waitingAlreadyEmitted: true)
+            .Should().Be(StardewBodyController.StallWatchdogAction.TimedOut,
+                "the bounded budget is 300 native 60 FPS ticks");
+    }
+
+    [Fact]
+    public void StallWatchdog_ProgressResetsTheWindow()
+    {
+        // A tile advance at tick 150 writes lastProgressTick=150, so the old
+        // window cannot time out at tick 300.
+        StardewBodyController.AssessStall(269, 150, waitingAlreadyEmitted: false)
+            .Should().Be(StardewBodyController.StallWatchdogAction.None);
+        StardewBodyController.AssessStall(270, 150, waitingAlreadyEmitted: false)
+            .Should().Be(StardewBodyController.StallWatchdogAction.Waiting);
+    }
+
     // ---- Update wiring (source probe; the ruling needs a live game thread) ----
 
     [Fact]
@@ -166,10 +202,22 @@ public sealed class WorldInterruptionTests
             "the disposition-driven modal_interrupted ruling replaces the old menu_opened terminal outright");
         source.Should().Contain("ClassifyLocalDisposition(",
             "Update must consume the projected disposition instead of re-checking the menu/event/movement trio");
-        source.Should().Contain("TODO(WIA): 换用 WorldModel.ComputeDisposition",
-            "the local equivalent must be visibly scheduled for switch-over to Lane A's WorldModel once it lands");
+        source.Should().NotContain("TODO(WIA): 换用 WorldModel.ComputeDisposition",
+            "ClassifyLocalDisposition now delegates to the landed WorldModel authority");
+        source.Should().Contain("WorldModel.Classify(",
+            "the body disposition projection must consume the shared WorldModel authority");
         source.Should().Contain("private const int TransientWindowMs = 2000;",
             "the WIA §4.4 default window is 2000ms");
+
+        int dispositionSwitch = source.IndexOf("switch (disposition)", StringComparison.Ordinal);
+        int stallWatchdog = source.IndexOf("StallWatchdogAction stallAction = AssessStall", StringComparison.Ordinal);
+        dispositionSwitch.Should().BeGreaterThanOrEqualTo(0);
+        stallWatchdog.Should().BeGreaterThan(dispositionSwitch,
+            "disposition rulings must precede L2 stall handling");
+        source.Should().Contain("transition(ExecutionState.Running, \"stalled_waiting\",",
+            "the first stall is a non-terminal progress notification");
+        source.Should().Contain(";stalled_ticks={stalledTicks}",
+            "the timeout keeps tile/target evidence and adds elapsed stall ticks");
     }
 
     private static string RepositorySourcePath(string relative)
