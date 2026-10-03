@@ -111,10 +111,16 @@ test("a NEW runner that conforms is accepted", () => {
   const box = sandbox();
   const conforming = readFileSync(box.runnerPath(CONFORMING_RUNNER), "utf8");
   const newId = "brand-new-conforming-action";
-  writeFileSync(box.runnerPath(newId), conforming);
 
+  // The sandbox copies the current tools tree, which can already hold
+  // non-baseline runners (other lanes' pilots, e.g. cut-grass). What this test
+  // proves is that writing ONE more conforming runner increases the new-runner
+  // count by exactly one and stays finding-free. Audit must therefore run
+  // BEFORE the write to capture the pre-write count.
+  const before = box.audit();
+  writeFileSync(box.runnerPath(newId), conforming);
   const report = box.audit();
-  assert.equal(report.newRunnerCount, 1, "the new runner must be detected as new");
+  assert.equal(report.newRunnerCount, before.newRunnerCount + 1, 'the new runner must be detected as new');
   assert.deepEqual(report.findings, [], "a conforming new runner is not a finding");
 });
 

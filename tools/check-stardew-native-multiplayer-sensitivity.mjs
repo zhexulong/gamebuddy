@@ -121,6 +121,13 @@ const MOD_WRAPPER_TO_SEAM = Object.freeze([
   // that is the seam the register cites and the wrapper reaches it on the
   // handler's behalf.
   ["SleepAndAdvanceDayLifecycle.TryStart", "startSleep"],
+  // Every direct tool swing funnels into the shared `UseNativeToolOnTile` seam
+  // (`d8a422a`), which reproduces the native swing in its canonical order:
+  // `tool.DoFunction(...)`, `who.lastClick = Vector2.Zero`, then the native
+  // `checkForExhaustion(staminaBefore)` check. The register cites the tool's
+  // `DoFunction` as the native seam (gameplay-capability-expansion §6.3), so the
+  // wrapper reaches it on every tool-family handler's behalf.
+  ["UseNativeToolOnTile", "DoFunction"],
 ]);
 
 /**

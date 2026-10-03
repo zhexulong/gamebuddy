@@ -1074,6 +1074,7 @@ const SNAPSHOT_KEYS = [
   "treeStumpTargets",
   "treeSaplingTargets",
   "weedTargets",
+  "grassTargets",
   "scytheCropTargets",
   "npcRelationshipTargets",
   "villagerWhereabouts",

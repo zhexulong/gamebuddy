@@ -92,6 +92,7 @@
     "chop_stump",
     "plant_sapling",
     "cut_weeds",
+    "cut_grass",
     "scythe_crop",
     "craft_item",
     "cook_recipe",
@@ -799,6 +800,23 @@
           "signature": "public virtual bool performToolAction",
           "sensitivity": "mp-observational",
           "observedEffect": "Game1.multiplayer.broadcastSprites at performToolAction[40afa58aa44e0820] mirrors the twig sprite; Game1.netWorldState.Value.TreasureTotemsUsed belongs to the artifact-spot branch of the same method and only seeds Utility.CreateDaySaveRandom, which is populated in single-player too"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "cut_grass",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.TerrainFeatures/Grass.cs",
+          "signature": "public override bool performToolAction",
+          "sensitivity": "mp-observational",
+          "observedEffect": "Grass.performToolAction mirrors the same broadcast sprites as Object.performToolAction (both Swipe herb animation and cut sprites go through Game1.multiplayer.broadcastSprites, which needs no master credit for local effects); the hay/rare-drop outcome rides on GameLocation.StoreHayInAnySilo (hay into whichever silo, mode-neutral) and the debris scatter, so nothing here reads per-player shared state"
         }
       ],
       "admission": {

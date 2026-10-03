@@ -10,7 +10,7 @@ import { promisify } from "node:util";
  * seam 终态审计的测试。
  *
  * 核心事实：`native-multiplayer-sensitivity.v1.json` 的 seam 表是人工编写的
- * （generator 里是硬编码映射），实测 11 个「已注册但九谓词全拒」的 action 中
+ * （generator 里是硬编码映射），实测 12 个「已注册但九谓词全拒」的 action 中
  * 有 5 个的 seam 引用指向非终态位置：
  *   harvest_crop       → HoeDirt.performUseAction（路由；真终态是 destroyCrop 的 crop = null）
  *   scythe_crop        → HoeDirt.performToolAction（同上）
@@ -21,6 +21,11 @@ import { promisify } from "node:util";
  * 2026-09-30 注：`advance_day` 是新登记到 register 的第十二个 seam（旧测试写 11 条），
  * 它在 switch_section 作用域修正之前就是「无候选」——它不是本修正引入的回归，
  * 而是 register 漂移（审计工具正确地把它列为 suspect）。
+ *
+ * 2026-10-03 注：register 新增 `cut_grass`（Grass.performToolAction，TerrainFeature 层的
+ * 割草入口，与 Object 层的 cut_weeds 不同类）。它的 seam 方法体写 numberOfWeeds 但终态在
+ * 私有委托 TryDropItemsOnCut / createDestroySprites，故与 harvest_crop 同型归入
+ * seam_writes_but_no_terminal：12 audited / 6 suspect。
  *
  * 2026-10-02 注：`f8b408c` 把复合赋值按字段语义分类后，`cut_weeds` 的 seam
  * （`Object.performToolAction`）的 weeds 写入被识别为候选终态，从「九谓词全拒」
@@ -77,12 +82,12 @@ async function audit() {
 test("审计 11 个「已注册但九谓词全拒」的 seam", async () => {
   const a = await audit();
   assert.equal(a.artifactKind, "stardew_action_seam_terminal_audit");
-  assert.equal(a.counts.audited, 11);
+  assert.equal(a.counts.audited, 12);
   assert.equal(
     a.counts.byKind.terminal_in_delegate +
       a.counts.byKind.seam_not_terminal +
       a.counts.byKind.seam_writes_but_no_terminal,
-    11,
+    12,
   );
 });
 
@@ -102,9 +107,9 @@ test("6 个工具类 DoFunction 的 seam 引用正确（终态在委托目标）
   for (const x of deleg) assert.ok(x.evidence.delegates.length > 0, `${x.actionId} 必须有委托目标`);
 });
 
-test("5 个 seam 引用指向非终态位置（可疑）", async () => {
+test("6 个 seam 引用指向非终态位置（可疑）", async () => {
   const a = await audit();
-  assert.equal(a.counts.suspectSeamReferences, 5);
+  assert.equal(a.counts.suspectSeamReferences, 6);
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
   /**
    * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
@@ -115,7 +120,7 @@ test("5 个 seam 引用指向非终态位置（可疑）", async () => {
    * `advance_day` 是 register 新增的第十二个 seam（GameLocation.startSleep），
    * 与 switch_section 作用域修正无关，见文件头注记。
    */
-  assert.deepEqual(ids, ["advance_day", "chest_store", "harvest_crop", "scythe_crop", "ship_item"]);
+  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "scythe_crop", "ship_item"]);
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {

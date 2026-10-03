@@ -162,7 +162,7 @@ public sealed class NativeLocalPlayerFixtureConfig
         "native_chest_store_v1", "native_chest_retrieve_v1",
         "native_fridge_store_v1", "native_fridge_retrieve_v1",
         "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1",
-        "native_cut_weeds_v1", "native_scythe_crop_v1", "native_craft_item_v1",
+        "native_cut_weeds_v1", "native_cut_grass_v1", "native_scythe_crop_v1", "native_craft_item_v1",
         "native_cook_recipe_v1", "native_craft_item_partial_v1",
         "native_crab_pot_collect_v1", "native_ship_item_v1",
         "native_jodi_harvest_deliver_v1", "native_pass_out_v1",

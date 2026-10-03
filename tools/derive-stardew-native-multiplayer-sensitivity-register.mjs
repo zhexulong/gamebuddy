@@ -292,6 +292,12 @@ const TABLE = {
     "mp-insensitive",
     "team.RequestLimitedNutDrops is the IslandFarming limited-nut drop; FarmerTeam is populated in single-player too, so the read is mode-neutral",
   ],
+  cut_grass: [
+    "StardewValley.TerrainFeatures/Grass.cs",
+    "public override bool performToolAction",
+    "mp-observational",
+    `Grass.performToolAction mirrors the same broadcast sprites as Object.performToolAction (both Swipe herb animation and cut sprites go through Game1.multiplayer.broadcastSprites, which needs no master credit for local effects); the hay/rare-drop outcome rides on GameLocation.StoreHayInAnySilo (hay into whichever silo, mode-neutral) and the debris scatter, so nothing here reads per-player shared state`,
+  ],
   cut_weeds: [
     "StardewValley/Object.cs",
     "public virtual bool performToolAction",

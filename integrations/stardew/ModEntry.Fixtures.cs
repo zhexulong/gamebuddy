@@ -307,7 +307,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1730,6 +1730,33 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized plant-sapling precondition before bridge attachment: item={saplingId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes Object.placementAction and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_cut_grass_v1")
+            {
+                // Pre-attachment fixture only: one native Grass tuft
+                // (TerrainFeature, grassType 1 -> Hay into a silo) on an empty
+                // Farm tile with a standable neighbor and a Scythe in the
+                // backpack. Production alone invokes Grass.performToolAction
+                // and owns all receipt/postcondition evidence.
+                const string scytheId = "(W)47";
+                (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+                if (spot is null) throw new InvalidOperationException("fixture_native_local_cut_grass_target_missing");
+                if (farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_local_cut_grass_occupied");
+                StardewValley.TerrainFeatures.Grass grass = new(1, 4);
+                farm.terrainFeatures.Add(spot.Value.TargetTile, grass);
+                if (!farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? placedGrass) || !ReferenceEquals(placedGrass, grass))
+                    throw new InvalidOperationException("fixture_native_local_cut_grass_placement_failed");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId)
+                    && player.addItemToInventory(ItemRegistry.Create(scytheId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_cut_grass_scythe_inventory_full");
+                if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId))
+                    throw new InvalidOperationException("fixture_native_local_cut_grass_scythe_missing_after_add");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized cut-grass precondition before bridge attachment: grass=grassType1; scythe={scytheId}; standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y}; production alone invokes Grass.performToolAction and emits receipt.", LogLevel.Info);
                 return;
             }
 

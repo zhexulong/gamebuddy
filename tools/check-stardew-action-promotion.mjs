@@ -226,12 +226,17 @@ function parseEnvelopeValidators(source) {
   return [...new Set([...body.matchAll(/value\.action === "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
 }
 function parseExplicitRoutes(gameTools) {
-  const visibility = [...gameTools.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\)/g)].map((entry) => entry[1]);
+  // Constant mount (36608fa): every Game Action tool is mounted unconditionally
+  // and per-action authority is checked at execution time, so the visible set is
+  // exactly the defined tool set (name set == action id). A tool definition
+  // counts only when its `action` id is immediately followed by its `toArgs`
+  // projector, preserving the old per-tool shape checks.
   const tools = [
     ...gameTools.matchAll(
-      /if \(isVisible\("([a-z0-9_]+)"\)\) \{\s*tools\.push\(\s*makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
+      /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
     ),
-  ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[2] }));
+  ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[1] }));
+  const visibility = tools.map((entry) => entry.visibleAction);
   return { tools, visibility };
 }
 

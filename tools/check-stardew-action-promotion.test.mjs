@@ -58,8 +58,11 @@ test("promotion checker rejects a duplicate or missing source-owned projection",
   assert.ok(
     failuresFor({
       gameTools: sources.gameTools.replace(
-        'if (isVisible("move_to_tile")) {',
-        'if (isVisible("clear_debris")) {',
+        // Constant mount (36608fa): the tool is mounted unconditionally and its
+        // `action` id is the visible identity. Renaming it to another action
+        // leaves move_to_tile with no tool, which is the drift this asserts.
+        '        action: "move_to_tile",',
+        '        action: "clear_debris",',
       ),
     }).includes("host_tool_count:move_to_tile:0"),
   );
