@@ -49,6 +49,19 @@ module.exports = {
         pathNot: "^host/src/(?:containment/runtime/contract|bootstrap/roots/stardew-private-mod-profile-staging)",
       },
     },
+    {
+      name: "no-test-fixtures-in-production",
+      comment: "Production modules must never import test fixtures or test support: the fixture tree is compiled into the production artifact only if some production root reaches it.",
+      severity: "error",
+      from: {
+        path: "^host/src/",
+        pathNot: "(?:^|/)(?:test-fixtures|test-support)(?:/|$)|\\.test\\.(?:ts|tsx)$|\\.test-fixtures\\.ts$|fixture-worker\\.ts$",
+      },
+      to: {
+        path: "^host/src/(?:test-fixtures|test-support)/",
+        pathNot: "\\.test\\.(?:ts|tsx)$",
+      },
+    },
   ],
   options: {
     doNotFollow: {
