@@ -187,6 +187,8 @@ public sealed class NativeLocalPlayerFixtureConfig
         // before the 5000ms path-cancel, or whether the controller dies early with
         // native_path_ended. Two scenarios: pet vs horse.
         "native_move_stall_probe_pet_v1", "native_move_stall_probe_npc_v1",
+        "native_wia_modal_interrupt_v1", "native_wia_pass_out_v1", "native_wia_modal_admission_v1",
+
     };
 
     internal bool IsValid => Enable
