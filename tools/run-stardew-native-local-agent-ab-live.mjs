@@ -471,7 +471,7 @@ try {
   // admitted, so the first companion bubble's elapsed time is measured from the
   // real turn boundary, not from process start.
   turnStartedAtMs = Date.now();
-  const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error) }));
+  const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error), stack: error?.stack }));
   let status = null;
   let turn = null;
   for (let i = 0; i < Number(process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? 600); i++) {
