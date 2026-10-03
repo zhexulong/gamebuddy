@@ -12,14 +12,16 @@ import {
 } from "../identity-profile.js";
 import { withPathLock } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
+import { join } from "node:path";
 import { TavernArtifactStore } from "./artifact-store.js";
-import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
+import { type ChatThreadStore, createChatThreadStore, type TavernStableWorldBookBinding } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { renderMacros } from "./macro-engine.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
+import { validateWorldBook, worldBookMetadata, writeWorldBook, type WorldBook } from "../worldbook.js";
 
 /** Explicit review boundary: candidates cannot alter an existing companion. */
 export type NewCompanionReview = Readonly<{
@@ -144,6 +146,7 @@ export async function provisionNewCompanion(
     reviewedProfile(approved, companionId, continuityId, playerId),
     threads,
     approved,
+    candidate.worldBookCandidates,
   );
 }
 
@@ -153,6 +156,7 @@ async function provisionNewCompanionNamespace(
   profile: IdentityProfile,
   suppliedThreads?: ChatThreadStore,
   approved?: ReadonlyMap<string, string>,
+  worldBookCandidates?: CharacterCandidate["worldBookCandidates"],
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
   // The containment-aware lock creates and verifies each parent component
@@ -168,6 +172,43 @@ async function provisionNewCompanionNamespace(
         createIdentityProfileBinding(identityKey(identity), profile),
         { containmentRoot: paths.root },
       );
+      // S3: the reviewed card's world book lands as the companion's bound
+      // worldbook.json (WorldBookBinding) — constant entries become the Tier 2
+      // m[0] lorebook_constant source, keyword entries stay queryable/volatile.
+      // The thread carries only the metadata binding; the body stays at the
+      // independently-audited runtime path.
+      let worldBookBinding: TavernStableWorldBookBinding | undefined;
+      if (worldBookCandidates !== undefined && worldBookCandidates.length > 0) {
+        const book: WorldBook = validateWorldBook(
+          Object.freeze({
+            schemaVersion: 1,
+            worldBookId: `gamebuddy-worldbook-${identity.companionId}`,
+            revision: 1,
+            alwaysOnPremise: "",
+            entries: Object.freeze(
+              worldBookCandidates.map((entry) =>
+                Object.freeze({
+                  entryId: entry.entryId,
+                  title: entry.title,
+                  content: entry.content,
+                  scope: entry.scope,
+                  provenance: entry.provenance,
+                  tokenBudget: entry.tokenBudget,
+                  ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+                }),
+              ),
+            ),
+          }),
+        );
+        await writeWorldBook(join(paths.runtimeCwd, "worldbook.json"), book);
+        const metadata = worldBookMetadata(book);
+        worldBookBinding = Object.freeze({
+          worldBookId: metadata.worldBookId,
+          revision: metadata.revision,
+          canonicalHash: metadata.canonicalHash,
+          provenance: "reviewed-import" as const,
+        });
+      }
       const tavernPaths = resolveTavernPaths(paths, identity);
       const scenarioService = createScenarioManagementService(
         new TavernArtifactStore(paths.root),

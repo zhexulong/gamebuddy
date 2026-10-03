@@ -55,6 +55,10 @@ export type TavernAuthoredContextCatalog = Readonly<{
 type TavernAlwaysOnWorldBookSource = Readonly<{
   binding: TavernStableWorldBookBinding;
   alwaysOnPremise: string;
+  /** Reviewed always-on entries (card `constant: true`); ride the stable source. */
+  constantEntries?: readonly Readonly<{ entryId: string; title: string; content: string }>[];
+  /** Keyword-gated entries; stay out of the stable prefix, become volatile candidates. */
+  keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string }>[];
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
 type TavernManagedWorldInfoSource = Readonly<{ binding: TavernStableManagedWorldInfoBinding; content: string }>;
@@ -245,7 +249,25 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
   try {
     parsed = JSON.parse(rawContent);
   } catch {
-    return rawContent;
+    // Native WorldBook: a raw text premise, PLUS the reviewed constant entries
+    // the import folded in. Both are Tier 2 always-on: stable across the whole
+    // session, 100% prefix-cache eligible. Budget-bound so an extreme book
+    // degrades to the premise overview instead of blowing the stable ceiling.
+    if ("constantEntries" in sourceValue && sourceValue.constantEntries.length > 0) {
+      const constants = canonicalJson({
+        worldBookId: sourceValue.binding.worldBookId,
+        alwaysOnPremise: sourceValue.alwaysOnPremise,
+        entries: sourceValue.constantEntries.map((entry) => ({
+          entryId: entry.entryId,
+          title: entry.title,
+          content: entry.content,
+        })),
+      });
+      return Math.ceil(constants.length / 4) <= TAVERN_STABLE_CONTEXT_MAX_TOKENS
+        ? constants
+        : boundedWorldInfoOverview(sourceValue.alwaysOnPremise);
+    }
+    return boundedWorldInfoOverview(rawContent);
   }
   if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return boundedWorldInfoOverview(rawContent);
   const constantEntries = parsed.entries.filter((entry) => isRecord(entry) && entry.constant === true);
@@ -272,7 +294,38 @@ function isRecord(value: unknown): value is Record<string, any> {
 }
 function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, parentSourceId: string): TavernAuthoredContextCatalog["volatileSources"] {
   let parsed: unknown;
-  try { parsed = JSON.parse(worldInfoContent(sourceValue)); } catch { return Object.freeze([]); }
+  try {
+    parsed = JSON.parse(worldInfoContent(sourceValue));
+  } catch {
+    // Native WorldBook with explicit keyword-gated entries: they become volatile
+    // lorebook_entry selection candidates (keyed by title) so the Chat surface —
+    // which has no lookup tools — can still surface them selectively.
+    if ("keywordEntries" in sourceValue && sourceValue.keywordEntries.length > 0) {
+      const revision = sourceValue.binding.revision;
+      const canonical = sourceValue.binding.canonicalHash;
+      return Object.freeze(
+        sourceValue.keywordEntries.flatMap((entry, index) => {
+          const content = entry.content;
+          if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
+          const sourceId = `${parentSourceId}_entry_${index + 1}`;
+          return [
+            Object.freeze({
+              sourceId,
+              kind: "lorebook_entry" as const,
+              revision: String(revision),
+              canonicalHash: hash(content),
+              content,
+              budgetTokens: Math.ceil(content.length / 4),
+              totalOrderKey: String(index + 1).padStart(4, "0"),
+              provenance: `tavern-world-book-entry/${sourceId}/revision/${revision}/canonical/${canonical}`,
+              selectionKeys: Object.freeze([entry.title]),
+            }),
+          ];
+        }),
+      );
+    }
+    return Object.freeze([]);
+  }
   if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return Object.freeze([]);
   const revision = sourceValue.binding.revision;
   const canonical = sourceValue.binding.canonicalHash;

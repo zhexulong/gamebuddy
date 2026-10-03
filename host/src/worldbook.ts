@@ -66,7 +66,11 @@ export function validateWorldBook(value: unknown): WorldBook {
     value.schemaVersion !== WORLDBOOK_SCHEMA_VERSION ||
     !isId(value.worldBookId) ||
     !isPositiveInt(value.revision) ||
-    !isText(value.alwaysOnPremise, 1_024) ||
+    // The premise may be empty: a card-worldbook with no global premise is a
+    // legal book — the constant entries carry the always-on background.
+    (typeof value.alwaysOnPremise !== "string" ||
+      value.alwaysOnPremise.length > 1_024 ||
+      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value.alwaysOnPremise)) ||
     !Array.isArray(value.entries) ||
     value.entries.length > MAX_ENTRIES
   )
@@ -93,7 +97,11 @@ export async function writeWorldBook(path: string, value: WorldBook): Promise<vo
   await rename(temporary, path);
 }
 
-/** Catalog deliberately omits body text; bodies need explicit bounded lookup. */
+/** Catalog deliberately omits body text; bodies need explicit bounded lookup.
+ *  S3: reviewed always-on content (the worldbook premise + `constant: true`
+ *  entries) now lives in the Tier 2 m[0] `lorebook_constant` source — the tools
+ *  must NOT echo it back, or the same background would ride in context twice.
+ *  They list/serve only the keyword-gated, queryable entries. */
 export function createWorldBookTools(binding: WorldBookBinding, activeScope?: WorldBookQueryScope): ToolDefinition[] {
   const catalog = defineTool({
     name: "companion_worldbook_catalog",
@@ -104,6 +112,7 @@ export function createWorldBookTools(binding: WorldBookBinding, activeScope?: Wo
     execute: async (_toolCallId, params) => {
       const topic = typeof params.topic === "string" ? normalizeQuery(params.topic) : "";
       const entries = visibleEntries(binding.book, activeScope)
+        .filter((entry) => entry.constant !== true)
         .filter((entry) => topic === "" || haystack(entry).includes(topic))
         .map((entry) => ({
           entryId: entry.entryId,
@@ -112,7 +121,7 @@ export function createWorldBookTools(binding: WorldBookBinding, activeScope?: Wo
           provenance: entry.provenance,
           tokenBudget: entry.tokenBudget,
         }));
-      return result({ worldBook: binding.metadata, alwaysOnPremise: binding.book.alwaysOnPremise, entries });
+      return result({ worldBook: binding.metadata, entries });
     },
   });
   const query = defineTool({
