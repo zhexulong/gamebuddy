@@ -64,16 +64,52 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "type": { "const": "body_node_admission_challenge" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionChallenge" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "body_node_admission_challenge"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/bodyNodeAdmissionChallenge"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "body_node_admission_grant" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionGrant" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "body_node_admission_grant"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/bodyNodeAdmissionGrant"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "body_node_admission_result" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/bodyNodeAdmissionResult" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "body_node_admission_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/bodyNodeAdmissionResult"
+          }
+        }
+      }
     },
     {
       "if": {
@@ -124,20 +160,68 @@
       }
     },
     {
-      "if": { "properties": { "type": { "const": "observe_scene_request" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/observeSceneRequest" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "observe_scene_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/observeSceneRequest"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "observe_scene_result" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/observeSceneResult" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "observe_scene_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/observeSceneResult"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "navigation_read_request" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/navigationReadRequest" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "navigation_read_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/navigationReadRequest"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "type": { "const": "navigation_read_result" } } },
-      "then": { "properties": { "payload": { "$ref": "#/$defs/navigationReadResult" } } }
+      "if": {
+        "properties": {
+          "type": {
+            "const": "navigation_read_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/navigationReadResult"
+          }
+        }
+      }
     },
     {
       "if": {
@@ -382,33 +466,131 @@
   ],
   "$defs": {
     "admissionOpaque": {
-      "type": "string", "minLength": 1, "maxLength": 4096,
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
       "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+(?![\\s\\S])",
       "$comment": "C# BridgeProtocol and Host validate/serialize paths enforce UTF-16 string bounds and the UTF-8 serialized frame byte limit; JSON Schema length counts Unicode code points."
     },
-    "admissionRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
-    "admissionAttempt": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "admissionRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "admissionAttempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
     "admissionCanonicalInteger": {
       "type": "string",
       "pattern": "^(?:0|-?[1-9][0-9]{0,17}|-?(?:[1-8][0-9]{18}|9[01][0-9]{17}|92[01][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[01][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])|-9223372036854775808)(?![\\s\\S])"
     },
     "admissionCanonicalValue": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "integer" }, "canonicalValue": { "$ref": "#/$defs/admissionCanonicalInteger" } } },
-        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "string" }, "canonicalValue": { "type": "string", "maxLength": 512 } } },
-        { "type": "object", "additionalProperties": false, "required": ["type", "canonicalValue"], "properties": { "type": { "const": "boolean" }, "canonicalValue": { "enum": ["true", "false"] } } },
         {
-          "type": "object", "additionalProperties": false, "required": ["type", "destination"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "canonicalValue"
+          ],
           "properties": {
-            "type": { "const": "destination_selector" },
+            "type": {
+              "const": "integer"
+            },
+            "canonicalValue": {
+              "$ref": "#/$defs/admissionCanonicalInteger"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "canonicalValue"
+          ],
+          "properties": {
+            "type": {
+              "const": "string"
+            },
+            "canonicalValue": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "canonicalValue"
+          ],
+          "properties": {
+            "type": {
+              "const": "boolean"
+            },
+            "canonicalValue": {
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "destination"
+          ],
+          "properties": {
+            "type": {
+              "const": "destination_selector"
+            },
             "destination": {
               "oneOf": [
                 {
-                  "type": "object", "additionalProperties": false, "required": ["kind", "label"],
-                  "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "\\S" } },
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "label"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "label"
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "\\S"
+                    }
+                  },
                   "$comment": "Unicode NFC and UTF-16 label bounds are runtime-only invariants enforced by C# BridgeProtocol and Host validate/serialize paths."
                 },
-                { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "ref" }, "ref": { "type": "string", "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$", "maxLength": 26 } } }
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "ref"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "ref"
+                    },
+                    "ref": {
+                      "type": "string",
+                      "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$",
+                      "maxLength": 26
+                    }
+                  }
+                }
               ]
             }
           }
@@ -417,37 +599,145 @@
     },
     "bodyNodeAdmissionFields": {
       "type": "object",
-      "required": ["programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"],
+      "required": [
+        "programId",
+        "nodeId",
+        "nodeAttempt",
+        "admissionAttempt",
+        "stopEpoch",
+        "catalogRevision",
+        "policyIdentity",
+        "actionId",
+        "canonicalBoundArgs",
+        "derivedResourceClaims",
+        "deadlineMs"
+      ],
       "properties": {
-        "programId": { "$ref": "#/$defs/opaqueId" }, "nodeId": { "$ref": "#/$defs/opaqueId" },
-        "nodeAttempt": { "$ref": "#/$defs/admissionAttempt" }, "admissionAttempt": { "$ref": "#/$defs/admissionAttempt" },
-        "stopEpoch": { "$ref": "#/$defs/admissionRevision" }, "catalogRevision": { "$ref": "#/$defs/admissionRevision" },
-        "policyIdentity": { "type": "object", "additionalProperties": false, "required": ["value", "capabilityRevision"], "properties": { "value": { "$ref": "#/$defs/admissionOpaque" }, "capabilityRevision": { "$ref": "#/$defs/admissionRevision" } } },
-        "actionId": { "$ref": "#/$defs/opaqueId" },
-        "canonicalBoundArgs": { "type": "object", "maxProperties": 32, "propertyNames": { "$ref": "#/$defs/opaqueId" }, "additionalProperties": { "$ref": "#/$defs/admissionCanonicalValue" } },
-        "derivedResourceClaims": { "type": "object", "maxProperties": 16, "propertyNames": { "$ref": "#/$defs/opaqueId" }, "additionalProperties": { "$ref": "#/$defs/opaqueId" } },
-        "deadlineMs": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        "programId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "nodeAttempt": {
+          "$ref": "#/$defs/admissionAttempt"
+        },
+        "admissionAttempt": {
+          "$ref": "#/$defs/admissionAttempt"
+        },
+        "stopEpoch": {
+          "$ref": "#/$defs/admissionRevision"
+        },
+        "catalogRevision": {
+          "$ref": "#/$defs/admissionRevision"
+        },
+        "policyIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "capabilityRevision"
+          ],
+          "properties": {
+            "value": {
+              "$ref": "#/$defs/admissionOpaque"
+            },
+            "capabilityRevision": {
+              "$ref": "#/$defs/admissionRevision"
+            }
+          }
+        },
+        "actionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "canonicalBoundArgs": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "$ref": "#/$defs/opaqueId"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/admissionCanonicalValue"
+          }
+        },
+        "derivedResourceClaims": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "$ref": "#/$defs/opaqueId"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/opaqueId"
+          }
+        },
+        "deadlineMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
       }
     },
     "bodyNodeAdmissionChallenge": {
-      "type": "object", "$ref": "#/$defs/bodyNodeAdmissionFields", "unevaluatedProperties": false
+      "type": "object",
+      "$ref": "#/$defs/bodyNodeAdmissionFields",
+      "unevaluatedProperties": false
     },
     "bodyNodeAdmissionGrant": {
-      "type": "object", "$ref": "#/$defs/bodyNodeAdmissionFields", "unevaluatedProperties": false,
-      "required": ["grantId", "attachmentGeneration", "policyRevision", "executionBinding"],
+      "type": "object",
+      "$ref": "#/$defs/bodyNodeAdmissionFields",
+      "unevaluatedProperties": false,
+      "required": [
+        "grantId",
+        "attachmentGeneration",
+        "policyRevision",
+        "executionBinding"
+      ],
       "properties": {
-        "grantId": { "$ref": "#/$defs/opaqueId" },
-        "attachmentGeneration": { "$ref": "#/$defs/admissionOpaque" }, "policyRevision": { "$ref": "#/$defs/admissionOpaque" },
+        "grantId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "attachmentGeneration": {
+          "$ref": "#/$defs/admissionOpaque"
+        },
+        "policyRevision": {
+          "$ref": "#/$defs/admissionOpaque"
+        },
         "executionBinding": {
           "$comment": "Parent-grant equality of programId, nodeId and nodeAttempt is a runtime-only invariant enforced by C# BridgeProtocol and Host validate/serialize paths.",
           "anyOf": [
-            { "type": "null" },
             {
-              "type": "object", "additionalProperties": false,
-              "required": ["programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId"],
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "programId",
+                "nodeId",
+                "nodeAttempt",
+                "requestId",
+                "idempotencyKey",
+                "executionId"
+              ],
               "properties": {
-                "programId": { "$ref": "#/$defs/opaqueId" }, "nodeId": { "$ref": "#/$defs/opaqueId" }, "nodeAttempt": { "$ref": "#/$defs/admissionAttempt" },
-                "requestId": { "$ref": "#/$defs/opaqueId" }, "idempotencyKey": { "$ref": "#/$defs/opaqueId" }, "executionId": { "$ref": "#/$defs/opaqueId" }
+                "programId": {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                "nodeId": {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                "nodeAttempt": {
+                  "$ref": "#/$defs/admissionAttempt"
+                },
+                "requestId": {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                "idempotencyKey": {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                "executionId": {
+                  "$ref": "#/$defs/opaqueId"
+                }
               }
             }
           ]
@@ -456,21 +746,83 @@
     },
     "bodyNodeAdmissionResult": {
       "oneOf": [
-        { "allOf": [
-          { "$ref": "#/$defs/bodyNodeAdmissionGrant" },
-          { "required": ["result"], "properties": { "result": { "const": "granted" } } }
-        ] },
-        { "allOf": [
-          { "$ref": "#/$defs/bodyNodeAdmissionChallenge" },
-          { "required": ["result", "code"], "properties": { "result": { "const": "rejected" }, "code": { "$ref": "#/$defs/reasonCode" } } }
-        ] },
-        { "allOf": [
-          { "$ref": "#/$defs/bodyNodeAdmissionChallenge" },
-          { "required": ["result", "code"], "properties": { "result": { "const": "unavailable" }, "code": { "const": "admission_unavailable" } } }
-        ] }
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/bodyNodeAdmissionGrant"
+            },
+            {
+              "required": [
+                "result"
+              ],
+              "properties": {
+                "result": {
+                  "const": "granted"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/bodyNodeAdmissionChallenge"
+            },
+            {
+              "required": [
+                "result",
+                "code"
+              ],
+              "properties": {
+                "result": {
+                  "const": "rejected"
+                },
+                "code": {
+                  "$ref": "#/$defs/reasonCode"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/bodyNodeAdmissionChallenge"
+            },
+            {
+              "required": [
+                "result",
+                "code"
+              ],
+              "properties": {
+                "result": {
+                  "const": "unavailable"
+                },
+                "code": {
+                  "const": "admission_unavailable"
+                }
+              }
+            }
+          ]
+        }
       ]
     },
-    "observationBinding": { "type": "object", "additionalProperties": false, "required": ["observationId", "ref"], "properties": { "observationId": { "$ref": "#/$defs/opaqueId" }, "ref": { "$ref": "#/$defs/opaqueId" } } },
+    "observationBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observationId",
+        "ref"
+      ],
+      "properties": {
+        "observationId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "ref": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
     "opaqueId": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{1,128}$"
@@ -539,40 +891,102 @@
     "observeSceneGround": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["dominantKind", "dominantTileCount", "scannedTileCount", "exceptions", "omittedExceptionTileCount"],
+      "required": [
+        "dominantKind",
+        "dominantTileCount",
+        "scannedTileCount",
+        "exceptions",
+        "omittedExceptionTileCount"
+      ],
       "properties": {
-        "dominantKind": { "enum": ["grass", "dirt", "stone", "wood", "other"] },
-        "dominantTileCount": { "type": "integer", "minimum": 0 },
-        "scannedTileCount": { "type": "integer", "minimum": 0 },
+        "dominantKind": {
+          "enum": [
+            "grass",
+            "dirt",
+            "stone",
+            "wood",
+            "other"
+          ]
+        },
+        "dominantTileCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scannedTileCount": {
+          "type": "integer",
+          "minimum": 0
+        },
         "exceptions": {
           "type": "array",
           "maxItems": 12,
-          "items": { "$ref": "#/$defs/observeSceneGroundTile" }
+          "items": {
+            "$ref": "#/$defs/observeSceneGroundTile"
+          }
         },
-        "omittedExceptionTileCount": { "type": "integer", "minimum": 0 }
+        "omittedExceptionTileCount": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "observeSceneGroundTile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tileX", "tileY", "kind"],
+      "required": [
+        "tileX",
+        "tileY",
+        "kind"
+      ],
       "properties": {
-        "tileX": { "type": "integer" },
-        "tileY": { "type": "integer" },
-        "kind": { "enum": ["grass", "dirt", "stone", "wood", "other"] }
+        "tileX": {
+          "type": "integer"
+        },
+        "tileY": {
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "grass",
+            "dirt",
+            "stone",
+            "wood",
+            "other"
+          ]
+        }
       }
     },
     "observeSceneAffordance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ref", "kind", "name", "distance", "direction", "actionHint"],
+      "required": [
+        "ref",
+        "kind",
+        "name",
+        "distance",
+        "direction",
+        "actionHint"
+      ],
       "properties": {
         "ref": {
           "type": "string",
           "pattern": "^sr1_[A-Za-z0-9_-]{16}$"
         },
         "kind": {
-            "enum": ["npc", "chest", "crop", "tree", "animal", "forage", "door", "machine", "water_source", "weed", "stone", "debris", "artifact_spot"]
+          "enum": [
+            "npc",
+            "chest",
+            "crop",
+            "tree",
+            "animal",
+            "forage",
+            "door",
+            "machine",
+            "water_source",
+            "weed",
+            "stone",
+            "debris",
+            "artifact_spot"
+          ]
         },
         "name": {
           "type": "string",
@@ -585,12 +999,23 @@
           "maximum": 30
         },
         "direction": {
-          "enum": ["North", "South", "East", "West", "CurrentTile"]
+          "enum": [
+            "North",
+            "South",
+            "East",
+            "West",
+            "CurrentTile"
+          ]
         },
         "actionHint": {
           "anyOf": [
-            { "type": "string", "maxLength": 160 },
-            { "type": "null" }
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -598,7 +1023,16 @@
     "observeSceneResult": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground"],
+      "required": [
+        "observationId",
+        "currentLocation",
+        "currentRegion",
+        "affordances",
+        "summary",
+        "partial",
+        "truncatedReason",
+        "ground"
+      ],
       "properties": {
         "observationId": {
           "type": "string",
@@ -618,7 +1052,9 @@
           "type": "array",
           "maxItems": 20,
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/observeSceneAffordance" }
+          "items": {
+            "$ref": "#/$defs/observeSceneAffordance"
+          }
         },
         "summary": {
           "type": "string",
@@ -630,39 +1066,103 @@
         },
         "truncatedReason": {
           "anyOf": [
-            { "enum": ["maximum_affordances", "payload_limit", "ground_limit"] },
-            { "type": "null" }
+            {
+              "enum": [
+                "maximum_affordances",
+                "payload_limit",
+                "ground_limit"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "ground": {
           "anyOf": [
-            { "$ref": "#/$defs/observeSceneGround" },
-            { "type": "null" }
+            {
+              "$ref": "#/$defs/observeSceneGround"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
       "allOf": [
         {
-          "if": { "properties": { "partial": { "const": true } } },
-          "then": { "properties": { "truncatedReason": { "enum": ["maximum_affordances", "payload_limit", "ground_limit"] } } }
+          "if": {
+            "properties": {
+              "partial": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "truncatedReason": {
+                "enum": [
+                  "maximum_affordances",
+                  "payload_limit",
+                  "ground_limit"
+                ]
+              }
+            }
+          }
         },
         {
-          "if": { "properties": { "partial": { "const": false } } },
-          "then": { "properties": { "truncatedReason": { "type": "null" } } }
+          "if": {
+            "properties": {
+              "partial": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "truncatedReason": {
+                "type": "null"
+              }
+            }
+          }
         }
       ]
     },
     "actionRegistration": {
       "type": "object",
       "additionalProperties": false,
-       "required": ["actionId", "familyId", "identityVersion", "lifecycle", "kind"],
-       "properties": {
-         "actionId": { "$ref": "#/$defs/opaqueId" },
-         "familyId": { "$ref": "#/$defs/opaqueId" },
-         "identityVersion": { "type": "integer", "minimum": 1 },
-         "lifecycle": { "enum": ["published", "live_verified", "experimental"] },
-         "kind": { "enum": ["execution", "read_only"] }
-       }
+      "required": [
+        "actionId",
+        "familyId",
+        "identityVersion",
+        "lifecycle",
+        "kind"
+      ],
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "familyId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "identityVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lifecycle": {
+          "enum": [
+            "published",
+            "live_verified",
+            "experimental"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "execution",
+            "read_only"
+          ]
+        }
+      }
     },
     "hello": {
       "type": "object",
@@ -699,22 +1199,20 @@
           },
           "maxItems": 128
         },
-        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "catalogRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
         "enabledActionIds": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/opaqueId" },
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          },
           "maxItems": 128
         },
         "presentationLocale": {
           "$ref": "#/$defs/bcp47Locale"
-        },
-        "catalogRevision": { "type": "integer", "minimum": 0 },
-        "enabledActionIds": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/opaqueId" },
-          "maxItems": 128
         },
         "registrations": {
           "type": "array",
@@ -724,25 +1222,68 @@
           "minItems": 1,
           "maxItems": 128
         },
-        "runtimeRole": { "enum": ["farmhand_client", "native_local_fixture", "unattested"] },
-        "launchGeneration": { "anyOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] }
+        "runtimeRole": {
+          "enum": [
+            "farmhand_client",
+            "native_local_fixture",
+            "unattested"
+          ]
+        },
+        "launchGeneration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       },
-      "allOf": [{
-        "if": { "properties": { "runtimeRole": { "const": "farmhand_client" } } },
-        "then": { "properties": { "launchGeneration": { "$ref": "#/$defs/opaqueId" } } },
-        "else": { "properties": { "launchGeneration": { "type": "null" } } }
-      }]
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "runtimeRole": {
+                "const": "farmhand_client"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "launchGeneration": {
+                "$ref": "#/$defs/opaqueId"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "launchGeneration": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "catalogUpdate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["catalogRevision", "enabledActionIds"],
+      "required": [
+        "catalogRevision",
+        "enabledActionIds"
+      ],
       "properties": {
-        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "catalogRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
         "enabledActionIds": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/opaqueId" },
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          },
           "maxItems": 128
         }
       }
@@ -853,7 +1394,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "x",
         "y",
         "qualifiedItemId",
@@ -890,7 +1432,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "x",
         "y",
         "qualifiedItemId",
@@ -927,7 +1470,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "x",
         "y",
         "cropId"
@@ -1000,7 +1544,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "slot",
         "x",
         "y",
@@ -1037,7 +1582,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "slot",
         "x",
         "y",
@@ -1125,7 +1671,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "x",
         "y",
         "qualifiedItemId",
@@ -1175,52 +1722,141 @@
           "maxLength": 128
         },
         "loadInputSlot": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 36
         },
         "loadInputQualifiedItemId": {
-          "anyOf": [{ "type": "null" }, { "const": "(O)433" }]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": "(O)433"
+            }
+          ]
         },
         "loadInputStack": {
-          "anyOf": [{ "type": "null" }, { "const": 5 }]
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": 5
+            }
+          ]
         },
         "collectOutputReady": {
-          "type": ["boolean", "null"]
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },
     "treeChopSourceTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "location", "x", "y", "treeType", "growthStage", "health", "stump", "moss", "tapped"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "treeType",
+        "growthStage",
+        "health",
+        "stump",
+        "moss",
+        "tapped"
+      ],
       "properties": {
-        "targetId": { "$ref": "#/$defs/opaqueId" },
-        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "x": { "$ref": "#/$defs/tile" },
-        "y": { "$ref": "#/$defs/tile" },
-        "treeType": { "type": "string", "minLength": 1, "maxLength": 32 },
-        "growthStage": { "type": "integer", "minimum": 5, "maximum": 20 },
-        "health": { "const": 1 },
-        "stump": { "const": false },
-        "moss": { "const": false },
-        "tapped": { "const": false }
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "treeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "growthStage": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 20
+        },
+        "health": {
+          "const": 1
+        },
+        "stump": {
+          "const": false
+        },
+        "moss": {
+          "const": false
+        },
+        "tapped": {
+          "const": false
+        }
       }
     },
     "treeChopResultTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "location", "x", "y", "treeType", "health", "stump", "moss", "tapped"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "treeType",
+        "health",
+        "stump",
+        "moss",
+        "tapped"
+      ],
       "properties": {
-        "targetId": { "$ref": "#/$defs/opaqueId" },
-        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "x": { "$ref": "#/$defs/tile" },
-        "y": { "$ref": "#/$defs/tile" },
-        "treeType": { "type": "string", "minLength": 1, "maxLength": 32 },
-        "health": { "const": 5 },
-        "stump": { "const": true },
-        "moss": { "const": false },
-        "tapped": { "const": false }
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "treeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "health": {
+          "const": 5
+        },
+        "stump": {
+          "const": true
+        },
+        "moss": {
+          "const": false
+        },
+        "tapped": {
+          "const": false
+        }
       }
     },
     "villagerWhereabouts": {
@@ -1352,40 +1988,43 @@
         "y",
         "petType",
         "friendship",
-          "pettedToday",
-          "stationary"
-        ],
-        "properties": {
-          "targetId": {
-            "$ref": "#/$defs/opaqueId"
-          },
-          "x": {
-            "$ref": "#/$defs/tile"
-          },
-          "y": {
-            "$ref": "#/$defs/tile"
-          },
-          "petType": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 32
-          },
-          "friendship": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 1000
-          },
-          "pettedToday": {
-            "const": false
-          },
-          "stationary": { "type": "boolean" }
+        "pettedToday",
+        "stationary"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "petType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "friendship": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "pettedToday": {
+          "const": false
+        },
+        "stationary": {
+          "type": "boolean"
         }
+      }
     },
     "animalProductTarget": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "targetId",
+        "displayName",
+        "targetId",
         "slot",
         "x",
         "y",
@@ -1474,7 +2113,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "slot",
+        "displayName",
+        "slot",
         "qualifiedItemId",
         "stack"
       ],
@@ -1505,7 +2145,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "displayName",        "slot",
+        "displayName",
+        "slot",
         "qualifiedItemId",
         "stack",
         "edibility",
@@ -1555,15 +2196,15 @@
         "actionable",
         "capabilities",
         "catalogRevision",
-          "enabledActionIds",
-          "presentationLocale",
-          "timeOfDay",
-          "dayOfMonth",
-          "seasonIndex",
-          "year",
-          "weather"
-        ],
-        "properties": {
+        "enabledActionIds",
+        "presentationLocale",
+        "timeOfDay",
+        "dayOfMonth",
+        "seasonIndex",
+        "year",
+        "weather"
+      ],
+      "properties": {
         "revision": {
           "type": "integer"
         },
@@ -1617,20 +2258,40 @@
           },
           "maxItems": 128
         },
-        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "catalogRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
         "enabledActionIds": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/opaqueId" },
+          "items": {
+            "$ref": "#/$defs/opaqueId"
+          },
           "maxItems": 128
         },
         "presentationLocale": {
           "$ref": "#/$defs/bcp47Locale"
         },
-        "timeOfDay": { "type": "integer", "minimum": 0, "maximum": 2600 },
-        "dayOfMonth": { "type": "integer", "minimum": 0, "maximum": 28 },
-        "seasonIndex": { "type": "integer", "minimum": 0, "maximum": 3 },
-        "year": { "type": "integer", "minimum": 0 },
+        "timeOfDay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2600
+        },
+        "dayOfMonth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 28
+        },
+        "seasonIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 0
+        },
         "weather": {
           "enum": [
             "sunny",
@@ -1735,13 +2396,55 @@
           },
           "maxItems": 64
         },
-        "woodFenceTargets": { "type": "array", "items": { "$ref": "#/$defs/woodFenceTarget" }, "maxItems": 16 },
-        "woodFenceResultTargets": { "type": "array", "items": { "$ref": "#/$defs/woodFenceResultTarget" }, "maxItems": 1 },
-        "crabPotTargets": { "type": "array", "items": { "$ref": "#/$defs/crabPotTarget" }, "maxItems": 16 },
-        "crabPotResultTargets": { "type": "array", "items": { "$ref": "#/$defs/crabPotResultTarget" }, "maxItems": 1 },
-        "crabPotCollectTargets": { "type": "array", "items": { "$ref": "#/$defs/crabPotCollectTarget" }, "maxItems": 16 },
-        "baitCrabPotTargets": { "type": "array", "items": { "$ref": "#/$defs/baitCrabPotTarget" }, "maxItems": 16 },
-        "baitCrabPotResultTargets": { "type": "array", "items": { "$ref": "#/$defs/baitCrabPotTarget" }, "maxItems": 1 },
+        "woodFenceTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/woodFenceTarget"
+          },
+          "maxItems": 16
+        },
+        "woodFenceResultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/woodFenceResultTarget"
+          },
+          "maxItems": 1
+        },
+        "crabPotTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/crabPotTarget"
+          },
+          "maxItems": 16
+        },
+        "crabPotResultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/crabPotResultTarget"
+          },
+          "maxItems": 1
+        },
+        "crabPotCollectTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/crabPotCollectTarget"
+          },
+          "maxItems": 16
+        },
+        "baitCrabPotTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/baitCrabPotTarget"
+          },
+          "maxItems": 16
+        },
+        "baitCrabPotResultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/baitCrabPotTarget"
+          },
+          "maxItems": 1
+        },
         "debrisTargets": {
           "type": "array",
           "items": {
@@ -1749,13 +2452,55 @@
           },
           "maxItems": 64
         },
-        "rockSourceTargets": { "type": "array", "items": { "$ref": "#/$defs/rockSourceTarget" }, "maxItems": 8 },
-        "clearHoeDirtTargets": { "type": "array", "items": { "$ref": "#/$defs/clearHoeDirtTarget" }, "maxItems": 8 },
-        "artifactSpotTargets": { "type": "array", "items": { "$ref": "#/$defs/artifactSpotTarget" }, "maxItems": 8 },
-        "artifactSpotResultTargets": { "type": "array", "items": { "$ref": "#/$defs/artifactSpotResultTarget" }, "maxItems": 1 },
-        "artifactSpotFarmSourceCount": { "type": ["integer", "null"], "minimum": 0 },
-        "treeChopSourceTargets": { "type": "array", "items": { "$ref": "#/$defs/treeChopSourceTarget" }, "maxItems": 64 },
-        "treeChopResultTargets": { "type": "array", "items": { "$ref": "#/$defs/treeChopResultTarget" }, "maxItems": 64 },
+        "rockSourceTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rockSourceTarget"
+          },
+          "maxItems": 8
+        },
+        "clearHoeDirtTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clearHoeDirtTarget"
+          },
+          "maxItems": 8
+        },
+        "artifactSpotTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactSpotTarget"
+          },
+          "maxItems": 8
+        },
+        "artifactSpotResultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactSpotResultTarget"
+          },
+          "maxItems": 1
+        },
+        "artifactSpotFarmSourceCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "treeChopSourceTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/treeChopSourceTarget"
+          },
+          "maxItems": 64
+        },
+        "treeChopResultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/treeChopResultTarget"
+          },
+          "maxItems": 64
+        },
         "machineTargets": {
           "type": "array",
           "items": {
@@ -1763,23 +2508,35 @@
           },
           "maxItems": 64
         },
-        "wateringCanFacts": { "type": "array", "items": { "$ref": "#/$defs/wateringCanFact" }, "maxItems": 36 },
-        "refillWateringCanTargets": { "type": "array", "items": { "$ref": "#/$defs/refillWateringCanTarget" }, "maxItems": 8 },
+        "wateringCanFacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/wateringCanFact"
+          },
+          "maxItems": 36
+        },
+        "refillWateringCanTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/refillWateringCanTarget"
+          },
+          "maxItems": 8
+        },
         "villagerWhereabouts": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/villagerWhereabouts"
-      },
-      "maxItems": 64
-    },
-    "harvestWhereabouts": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/harvestWhereabouts"
-      },
-      "maxItems": 64
-    },
-    "npcRelationshipTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/villagerWhereabouts"
+          },
+          "maxItems": 64
+        },
+        "harvestWhereabouts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harvestWhereabouts"
+          },
+          "maxItems": 64
+        },
+        "npcRelationshipTargets": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/npcRelationshipTarget"
@@ -1821,245 +2578,1740 @@
           },
           "maxItems": 36
         },
-        "craftingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
-        "cookingRecipeTargets": { "type": "array", "items": { "$ref": "#/$defs/recipeTarget" }, "maxItems": 64 },
-        "cookingStationTargets": { "type": "array", "items": { "$ref": "#/$defs/cookingStationTarget" }, "maxItems": 16 },
-        "treeStumpTargets": { "type": "array", "items": { "$ref": "#/$defs/treeStumpTarget" }, "maxItems": 16 },
-        "treeSaplingTargets": { "type": "array", "items": { "$ref": "#/$defs/treeSaplingTarget" }, "maxItems": 64 },
-        "weedTargets": { "type": "array", "items": { "$ref": "#/$defs/weedTarget" }, "maxItems": 16 },
-        "grassTargets": { "type": "array", "items": { "$ref": "#/$defs/grassTarget" }, "maxItems": 16 },
-        "scytheCropTargets": { "type": "array", "items": { "$ref": "#/$defs/scytheCropTarget" }, "maxItems": 16 },
-        "chestStoreTargets": { "type": "array", "items": { "$ref": "#/$defs/chestStoreTarget" }, "maxItems": 16 },
-        "chestRetrieveTargets": { "type": "array", "items": { "$ref": "#/$defs/chestRetrieveTarget" }, "maxItems": 16 },
-        "shippingBinTargets": { "type": "array", "items": { "$ref": "#/$defs/shippingBinTarget" }, "maxItems": 1 },
-        "minecartTargets": { "type": "array", "items": { "$ref": "#/$defs/minecartTarget" }, "maxItems": 24 }
+        "craftingRecipeTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recipeTarget"
+          },
+          "maxItems": 64
+        },
+        "cookingRecipeTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recipeTarget"
+          },
+          "maxItems": 64
+        },
+        "cookingStationTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cookingStationTarget"
+          },
+          "maxItems": 16
+        },
+        "treeStumpTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/treeStumpTarget"
+          },
+          "maxItems": 16
+        },
+        "treeSaplingTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/treeSaplingTarget"
+          },
+          "maxItems": 64
+        },
+        "weedTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/weedTarget"
+          },
+          "maxItems": 16
+        },
+        "grassTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/grassTarget"
+          },
+          "maxItems": 16
+        },
+        "caskTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/caskTarget"
+          },
+          "maxItems": 16
+        },
+        "mannequinTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/facilityTarget"
+          },
+          "maxItems": 16
+        },
+        "signTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signTarget"
+          },
+          "maxItems": 16
+        },
+        "siloTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/siloTarget"
+          },
+          "maxItems": 16
+        },
+        "lanternSlots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lanternSlot"
+          },
+          "maxItems": 16
+        },
+        "scytheCropTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scytheCropTarget"
+          },
+          "maxItems": 16
+        },
+        "chestStoreTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chestStoreTarget"
+          },
+          "maxItems": 16
+        },
+        "chestRetrieveTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chestRetrieveTarget"
+          },
+          "maxItems": 16
+        },
+        "shippingBinTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shippingBinTarget"
+          },
+          "maxItems": 1
+        },
+        "minecartTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/minecartTarget"
+          },
+          "maxItems": 24
+        },
+        "bushTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bushTarget"
+          },
+          "maxItems": 32
+        },
+        "fruitTreeTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bushTarget"
+          },
+          "maxItems": 16
+        },
+        "shakeTreeTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bushTarget"
+          },
+          "maxItems": 16
+        },
+        "pedestalTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pedestalTarget"
+          },
+          "maxItems": 16
+        },
+        "fenceGateTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fenceGateTarget"
+          },
+          "maxItems": 16
+        },
+        "raftTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/raftTarget"
+          },
+          "maxItems": 16
+        },
+        "horseTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/horseTarget"
+          },
+          "maxItems": 16
+        },
+        "mineEntranceTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mineEntranceTarget"
+          },
+          "maxItems": 16
+        },
+        "mineLampTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mineLampTarget"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "raftTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^raft_[a-f0-9]{16}$"
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "horseTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "name"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^horse_[a-f0-9]{16}$"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "mineEntranceTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^mine_entrance_[a-f0-9]{16}$"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "mineLampTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "lightLevel"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^mine_lamp_[a-f0-9]{16}$"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "lightLevel": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.6
+        }
       }
     },
     "minecartTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "networkId", "destinationId", "displayName", "price", "stationX", "stationY", "targetLocation", "targetTileX", "targetTileY"],
+      "required": [
+        "targetId",
+        "networkId",
+        "destinationId",
+        "displayName",
+        "price",
+        "stationX",
+        "stationY",
+        "targetLocation",
+        "targetTileX",
+        "targetTileY"
+      ],
       "properties": {
-        "targetId": { "type": "string", "pattern": "^minecart_[a-f0-9]{16}$" },
-        "networkId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "destinationId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "price": { "type": "integer", "minimum": 0 },
-        "stationX": { "$ref": "#/$defs/tile" },
-        "stationY": { "$ref": "#/$defs/tile" },
-        "targetLocation": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "targetTileX": { "$ref": "#/$defs/tile" },
-        "targetTileY": { "$ref": "#/$defs/tile" }
+        "targetId": {
+          "type": "string",
+          "pattern": "^minecart_[a-f0-9]{16}$"
+        },
+        "networkId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "destinationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "price": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stationX": {
+          "$ref": "#/$defs/tile"
+        },
+        "stationY": {
+          "$ref": "#/$defs/tile"
+        },
+        "targetLocation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "targetTileX": {
+          "$ref": "#/$defs/tile"
+        },
+        "targetTileY": {
+          "$ref": "#/$defs/tile"
+        }
       }
     },
-    "recipeTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "displayName", "ingredientsAvailable"], "properties": {
-        "targetId": { "$ref": "#/$defs/opaqueId" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "ingredientsAvailable": { "type": "boolean" } } },
+    "recipeTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "displayName",
+        "ingredientsAvailable"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ingredientsAvailable": {
+          "type": "boolean"
+        }
+      }
+    },
     "cookingStationTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "location", "x", "y", "stationKind"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "stationKind"
+      ],
       "properties": {
-        "targetId": { "type": "string", "pattern": "^cooking_station_[a-f0-9]{16}$" },
-        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "x": { "$ref": "#/$defs/tile" },
-        "y": { "$ref": "#/$defs/tile" },
-        "stationKind": { "enum": ["kitchen", "cookout_kit"] }
+        "targetId": {
+          "type": "string",
+          "pattern": "^cooking_station_[a-f0-9]{16}$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "stationKind": {
+          "enum": [
+            "kitchen",
+            "cookout_kit"
+          ]
+        }
       }
     },
-    "rockSourceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId", "health","displayName"], "properties": {
+    "rockSourceTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "health",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "health": { "const": 1 } } },
-    "clearHoeDirtTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
-    "artifactSpotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "health": {
+          "const": 1
+        }
+      }
+    },
+    "clearHoeDirtTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "crop",
+        "ground"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "crop": {
+          "const": false
+        },
+        "ground": {
+          "const": true
+        }
+      }
+    },
+    "artifactSpotTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "artifactSpotResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
-    "woodFenceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "artifactSpotResultTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "crop",
+        "ground"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "crop": {
+          "const": false
+        },
+        "ground": {
+          "const": true
+        }
+      }
+    },
+    "woodFenceTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)322" } } },
-    "woodFenceResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "isFence", "isGate", "health", "maxHealth","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)322"
+        }
+      }
+    },
+    "woodFenceResultTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "isFence",
+        "isGate",
+        "health",
+        "maxHealth",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)322" }, "isFence": { "const": true }, "isGate": { "const": false }, "health": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }, "maxHealth": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 } } },
-    "crabPotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)322"
+        },
+        "isFence": {
+          "const": true
+        },
+        "isGate": {
+          "const": false
+        },
+        "health": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "maxHealth": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "crabPotTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" } } },
-    "crabPotResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "ownerId", "offsetX", "offsetY", "overlayTiles","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)710"
+        }
+      }
+    },
+    "crabPotResultTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "ownerId",
+        "offsetX",
+        "offsetY",
+        "overlayTiles",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" }, "ownerId": { "type": "integer", "minimum": 0 }, "offsetX": { "type": "number" }, "offsetY": { "type": "number" }, "overlayTiles": { "type": "array", "maxItems": 4, "items": { "type": "object", "additionalProperties": false, "required": ["x", "y", "count"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "count": { "type": "integer", "minimum": 1 } } } } } },
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)710"
+        },
+        "ownerId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "offsetX": {
+          "type": "number"
+        },
+        "offsetY": {
+          "type": "number"
+        },
+        "overlayTiles": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "count"
+            ],
+            "properties": {
+              "x": {
+                "$ref": "#/$defs/tile"
+              },
+              "y": {
+                "$ref": "#/$defs/tile"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "refillWateringCanTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "x", "y"],
-      "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
     },
     "petBowlTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "x", "y"],
-      "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
     },
     "slimeHutchTroughTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "x", "y"],
-      "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
     },
     "wateringCanFact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["slot", "qualifiedItemId", "label", "water", "max"],
-      "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "label": { "type": "string", "minLength": 1, "maxLength": 128 }, "water": { "type": "integer", "minimum": 0, "maximum": 100 }, "max": { "type": "integer", "minimum": 1, "maximum": 100 } }
+      "required": [
+        "slot",
+        "qualifiedItemId",
+        "label",
+        "water",
+        "max"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "water": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
     },
-    "baitCrabPotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "baitQualifiedItemId", "ownerId", "baitStack","displayName"], "properties": {
+    "baitCrabPotTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "baitQualifiedItemId",
+        "ownerId",
+        "baitStack",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" }, "baitQualifiedItemId": { "const": "(O)685" }, "ownerId": { "type": "string", "pattern": "^[0-9]{1,20}$" }, "baitStack": { "const": 1 } } },
-    "crabPotCollectTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId", "outputQualifiedItemId", "outputStack","displayName"], "properties": {
+        },
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)710"
+        },
+        "baitQualifiedItemId": {
+          "const": "(O)685"
+        },
+        "ownerId": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "baitStack": {
+          "const": 1
+        }
+      }
+    },
+    "crabPotCollectTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "outputQualifiedItemId",
+        "outputStack",
+        "displayName"
+      ],
+      "properties": {
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
-        }, "targetId": { "type": "string", "pattern": "^collect_crab_pot_[a-f0-9]{16}$" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" }, "outputQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "outputStack": { "type": "integer", "minimum": 1 } } },
+        },
+        "targetId": {
+          "type": "string",
+          "pattern": "^collect_crab_pot_[a-f0-9]{16}$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "const": "(O)710"
+        },
+        "outputQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "outputStack": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "treeStumpTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","location","x","y","treeType","health"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "treeType",
+        "health"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "location": {"type":"string","minLength":1,"maxLength":256},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "treeType": {"type":"string","minLength":1,"maxLength":128},
-        "health": {"type":"number","minimum":0,"maximum":1000}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "treeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "health": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        }
       }
     },
     "treeSaplingTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","slot","x","y","qualifiedItemId","displayName"],
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "displayName"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "slot": {"type":"integer","minimum":0,"maximum":36},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
-        "displayName": {"type":"string","minLength":1,"maxLength":128}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "weedTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","location","x","y","health"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "health"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "location": {"type":"string","minLength":1,"maxLength":256},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "health": {"type":"integer","minimum":0,"maximum":1000}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "health": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "bushTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "pedestalTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "stack"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        }
+      }
+    },
+    "fenceGateTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "isOpen"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "isOpen": {
+          "type": "boolean"
+        }
       }
     },
     "grassTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "location", "x", "y", "grassType", "numberOfWeeds"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "grassType",
+        "numberOfWeeds"
+      ],
       "properties": {
-        "targetId": { "$ref": "#/$defs/opaqueId" },
-        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "x": { "$ref": "#/$defs/tile" },
-        "y": { "$ref": "#/$defs/tile" },
-        "grassType": { "type": "integer", "minimum": 1, "maximum": 8 },
-        "numberOfWeeds": { "type": "integer", "minimum": 1, "maximum": 1000 }
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "grassType": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "numberOfWeeds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    },
+    "caskTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "hasHeldObject",
+        "heldQualifiedItemId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "hasHeldObject": {
+          "type": "boolean"
+        },
+        "heldQualifiedItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "facilityTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "signTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "hasDisplayItem",
+        "displayQualifiedItemId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "hasDisplayItem": {
+          "type": "boolean"
+        },
+        "displayQualifiedItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "siloTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "hay"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "hay": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "lanternSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "isOn",
+        "fuelLeft"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "isOn": {
+          "type": "boolean"
+        },
+        "fuelLeft": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
     "scytheCropTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","location","x","y","cropId","qualifiedHarvestItemId","displayName"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "cropId",
+        "qualifiedHarvestItemId",
+        "displayName"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "location": {"type":"string","minLength":1,"maxLength":256},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "cropId": {"type":"string","minLength":1,"maxLength":128},
-        "qualifiedHarvestItemId": {"type":"string","minLength":1,"maxLength":128},
-        "displayName": {"type":"string","minLength":1,"maxLength":128}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "cropId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "qualifiedHarvestItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "chestStoreTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","x","y","slot","qualifiedItemId","stack","displayName"],
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "slot",
+        "qualifiedItemId",
+        "stack",
+        "displayName"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "slot": {"type":"integer","minimum":0,"maximum":36},
-        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
-        "stack": {"type":"integer","minimum":1},
-        "displayName": {"type":"string","minLength":1,"maxLength":128}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "chestRetrieveTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","x","y","qualifiedItemId","stack","displayName"],
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "stack",
+        "displayName"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
-        "stack": {"type":"integer","minimum":1},
-        "displayName": {"type":"string","minLength":1,"maxLength":128}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "shippingBinTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId","x","y","slot","qualifiedItemId","stack","displayName"],
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "slot",
+        "qualifiedItemId",
+        "stack",
+        "displayName"
+      ],
       "properties": {
-        "targetId": {"$ref":"#/$defs/opaqueId"},
-        "x": {"$ref":"#/$defs/tile"},
-        "y": {"$ref":"#/$defs/tile"},
-        "slot": {"type":"integer","minimum":0,"maximum":36},
-        "qualifiedItemId": {"type":"string","minLength":1,"maxLength":128},
-        "stack": {"type":"integer","minimum":1},
-        "displayName": {"type":"string","minLength":1,"maxLength":128}
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
-    "placeWoodFenceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)322" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "placeCrabPotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)710" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "baitCrabPotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)685" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "placeWoodFenceArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "const": "(O)322"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "placeCrabPotArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "const": "(O)710"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "baitCrabPotArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "const": "(O)685"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
     "refillWateringCanArgs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["slot", "x", "y", "expectedTargetId"],
-      "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } }
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
     },
-    "breakRockSourceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "clearHoeDirtArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "digArtifactSpotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "breakRockSourceArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "clearHoeDirtArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "digArtifactSpotArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
     "treeChopSourceArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -2086,7 +4338,22 @@
         }
       }
     },
-    "xyArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } } },
+    "xyArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
     "toolArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -2110,70 +4377,752 @@
         }
       }
     },
-    "xyTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "xyQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "pickupForageArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" }, "sceneTarget": { "$ref": "#/$defs/observationBinding" } } },
-    "slotXYTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "slotXYQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "slotQualifiedArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "expectedQualifiedItemId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "recipeTargetArgs": { "type": "object", "additionalProperties": false, "required": ["expectedTargetId"], "properties": { "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "advanceDayArgs": { "type": "object", "additionalProperties": false, "maxProperties": 0 },
-    "machineLoadArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)433" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "xyTargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "slotXYArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "xyQualifiedTargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "pickupForageArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId",
+        "sceneTarget"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sceneTarget": {
+          "$ref": "#/$defs/observationBinding"
+        }
+      }
+    },
+    "slotXYTargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "slotXYQualifiedTargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "slotQualifiedArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "expectedQualifiedItemId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "recipeTargetArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedTargetId"
+      ],
+      "properties": {
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "advanceDayArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "machineLoadArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedQualifiedItemId",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedQualifiedItemId": {
+          "const": "(O)433"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
     "navigationDestinationArgs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["destination"],
+      "required": [
+        "destination"
+      ],
       "properties": {
         "destination": {
           "oneOf": [
-            { "type": "object", "additionalProperties": false, "required": ["kind", "label"], "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-            { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "ref" }, "ref": { "type": "string", "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$" } } }
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "label"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "label"
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "ref"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "ref"
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$"
+                }
+              }
+            }
           ]
         }
       }
     },
     "navigationSelector": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["kind", "label", "ref"], "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128 }, "ref": { "type": "null" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "label", "ref"], "properties": { "kind": { "const": "ref" }, "label": { "type": "null" }, "ref": { "anyOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] } } }
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "label",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "label"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ref": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "label",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ref"
+            },
+            "label": {
+              "type": "null"
+            },
+            "ref": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
       ]
     },
     "navigationWorldMapEntry": {
-      "type": "object", "additionalProperties": false,
-      "required": ["label", "contextLabel", "nodeRef", "destination"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "contextLabel",
+        "nodeRef",
+        "destination"
+      ],
       "properties": {
-        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "contextLabel": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }] },
-        "nodeRef": { "anyOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] },
-        "destination": { "anyOf": [{ "$ref": "#/$defs/navigationSelector" }, { "type": "null" }] }
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nodeRef": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "destination": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/navigationSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       }
     },
     "navigationSearchCandidate": {
-      "type": "object", "additionalProperties": false,
-      "required": ["label", "contextLabel", "destination", "unlockState"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "contextLabel",
+        "destination",
+        "unlockState"
+      ],
       "properties": {
-        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "contextLabel": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }] },
-        "destination": { "$ref": "#/$defs/navigationSelector" },
-        "unlockState": { "const": "unknown" }
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "destination": {
+          "$ref": "#/$defs/navigationSelector"
+        },
+        "unlockState": {
+          "const": "unknown"
+        }
       }
     },
     "navigationReadRequest": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["operation", "args"], "properties": { "operation": { "const": "inspect_world_map" }, "args": { "$ref": "#/$defs/empty" } } },
-        { "type": "object", "additionalProperties": false, "required": ["operation", "args"], "properties": { "operation": { "const": "inspect_world_map" }, "args": { "type": "object", "additionalProperties": false, "required": ["nodeRef"], "properties": { "nodeRef": { "$ref": "#/$defs/opaqueId" } } } } },
-        { "type": "object", "additionalProperties": false, "required": ["operation", "args"], "properties": { "operation": { "const": "inspect_world_map" }, "args": { "type": "object", "additionalProperties": false, "required": ["cursor"], "properties": { "cursor": { "$ref": "#/$defs/opaqueId" } } } } },
-        { "type": "object", "additionalProperties": false, "required": ["operation", "args"], "properties": { "operation": { "const": "find_destination" }, "args": { "type": "object", "additionalProperties": false, "required": ["query"], "properties": { "query": { "type": "string", "minLength": 1, "maxLength": 128 } } } } }
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "args"
+          ],
+          "properties": {
+            "operation": {
+              "const": "inspect_world_map"
+            },
+            "args": {
+              "$ref": "#/$defs/empty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "args"
+          ],
+          "properties": {
+            "operation": {
+              "const": "inspect_world_map"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nodeRef"
+              ],
+              "properties": {
+                "nodeRef": {
+                  "$ref": "#/$defs/opaqueId"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "args"
+          ],
+          "properties": {
+            "operation": {
+              "const": "inspect_world_map"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "cursor"
+              ],
+              "properties": {
+                "cursor": {
+                  "$ref": "#/$defs/opaqueId"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "args"
+          ],
+          "properties": {
+            "operation": {
+              "const": "find_destination"
+            },
+            "args": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "query"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "navigationReadResult": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "succeeded" }, "reason": { "const": "world_map_observed" }, "entries": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/navigationWorldMapEntry" } }, "nextCursor": { "anyOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] }, "candidates": { "type": "null" }, "destination": { "type": "null" }, "unlockState": { "type": "null" } } },
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "resolved" }, "reason": { "enum": ["exact_current_locale", "exact_fallback_locale", "exact_alias"] }, "entries": { "type": "null" }, "nextCursor": { "type": "null" }, "candidates": { "type": "null" }, "destination": { "$ref": "#/$defs/navigationSelector" }, "unlockState": { "const": "unknown" } } },
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "candidates" }, "reason": { "enum": ["ambiguous_exact", "fuzzy_match"] }, "entries": { "type": "null" }, "nextCursor": { "type": "null" }, "candidates": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/navigationSearchCandidate" } }, "destination": { "type": "null" }, "unlockState": { "type": "null" } } },
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "not_found" }, "reason": { "const": "destination_not_found" }, "entries": { "type": "null" }, "nextCursor": { "type": "null" }, "candidates": { "type": "null" }, "destination": { "type": "null" }, "unlockState": { "type": "null" } } },
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "invalid" }, "reason": { "const": "destination_search_invalid" }, "entries": { "type": "null" }, "nextCursor": { "type": "null" }, "candidates": { "type": "null" }, "destination": { "type": "null" }, "unlockState": { "type": "null" } } },
-        { "type": "object", "additionalProperties": false, "required": ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"], "properties": { "status": { "const": "blocked" }, "reason": { "$ref": "#/$defs/reasonCode" }, "entries": { "type": "null" }, "nextCursor": { "type": "null" }, "candidates": { "type": "null" }, "destination": { "type": "null" }, "unlockState": { "type": "null" } } }
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "succeeded"
+            },
+            "reason": {
+              "const": "world_map_observed"
+            },
+            "entries": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/navigationWorldMapEntry"
+              }
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/opaqueId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "candidates": {
+              "type": "null"
+            },
+            "destination": {
+              "type": "null"
+            },
+            "unlockState": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "resolved"
+            },
+            "reason": {
+              "enum": [
+                "exact_current_locale",
+                "exact_fallback_locale",
+                "exact_alias"
+              ]
+            },
+            "entries": {
+              "type": "null"
+            },
+            "nextCursor": {
+              "type": "null"
+            },
+            "candidates": {
+              "type": "null"
+            },
+            "destination": {
+              "$ref": "#/$defs/navigationSelector"
+            },
+            "unlockState": {
+              "const": "unknown"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "candidates"
+            },
+            "reason": {
+              "enum": [
+                "ambiguous_exact",
+                "fuzzy_match"
+              ]
+            },
+            "entries": {
+              "type": "null"
+            },
+            "nextCursor": {
+              "type": "null"
+            },
+            "candidates": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/navigationSearchCandidate"
+              }
+            },
+            "destination": {
+              "type": "null"
+            },
+            "unlockState": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "not_found"
+            },
+            "reason": {
+              "const": "destination_not_found"
+            },
+            "entries": {
+              "type": "null"
+            },
+            "nextCursor": {
+              "type": "null"
+            },
+            "candidates": {
+              "type": "null"
+            },
+            "destination": {
+              "type": "null"
+            },
+            "unlockState": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "invalid"
+            },
+            "reason": {
+              "const": "destination_search_invalid"
+            },
+            "entries": {
+              "type": "null"
+            },
+            "nextCursor": {
+              "type": "null"
+            },
+            "candidates": {
+              "type": "null"
+            },
+            "destination": {
+              "type": "null"
+            },
+            "unlockState": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "entries",
+            "nextCursor",
+            "candidates",
+            "destination",
+            "unlockState"
+          ],
+          "properties": {
+            "status": {
+              "const": "blocked"
+            },
+            "reason": {
+              "$ref": "#/$defs/reasonCode"
+            },
+            "entries": {
+              "type": "null"
+            },
+            "nextCursor": {
+              "type": "null"
+            },
+            "candidates": {
+              "type": "null"
+            },
+            "destination": {
+              "type": "null"
+            },
+            "unlockState": {
+              "type": "null"
+            }
+          }
+        }
       ]
     },
     "executionRequest": {
@@ -2190,7 +5139,9 @@
       "allOf": [
         {
           "if": {
-            "required": ["action"],
+            "required": [
+              "action"
+            ],
             "properties": {
               "action": {
                 "const": "refill_watering_can"
@@ -2199,39 +5150,684 @@
           },
           "then": {
             "properties": {
-              "args": { "$ref": "#/$defs/refillWateringCanArgs" }
+              "args": {
+                "$ref": "#/$defs/refillWateringCanArgs"
+              }
             }
           }
         },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "place_wood_fence" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/placeWoodFenceArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "place_crab_pot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/placeCrabPotArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "bait_crab_pot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/baitCrabPotArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "break_rock_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/breakRockSourceArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "clear_hoedirt" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/clearHoeDirtArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "dig_artifact_spot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/digArtifactSpotArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeChopSourceArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "ride_minecart" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "navigate_to_destination" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/navigationDestinationArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/toolArgs" } } } },
-         { "if": { "required": ["action"], "properties": { "action": { "const": "pickup_forage" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/pickupForageArgs" } } } },
-         { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["water_crop", "machine_inspect", "machine_collect_output", "npc_relationship", "pet_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["clear_debris", "collect_animal_product", "feed_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["plant_seed", "fertilize_tile"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "machine_load" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/machineLoadArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "use_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotQualifiedArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "express_emote" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/expressEmoteArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "face_direction" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/faceDirectionArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chest_store", "chest_retrieve", "plant_sapling", "interact_npc_with_item"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "enum": ["chop_stump", "cut_weeds", "cut_grass", "scythe_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "enum": ["craft_item", "cook_recipe"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/recipeTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "collect_crab_pot_output" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "ship_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "water_pet_bowl" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "water_slime_hutch_trough" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
-    { "if": { "required": ["action"], "properties": { "action": { "const": "advance_day" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/advanceDayArgs" } } } }
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "place_wood_fence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/placeWoodFenceArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "place_crab_pot"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/placeCrabPotArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "bait_crab_pot"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/baitCrabPotArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "break_rock_source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/breakRockSourceArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "clear_hoedirt"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/clearHoeDirtArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "dig_artifact_spot"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/digArtifactSpotArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "chop_tree_source"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/treeChopSourceArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "move_to_tile",
+                  "travel",
+                  "enter_exit",
+                  "till_soil"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "ride_minecart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "navigate_to_destination"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/navigationDestinationArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "equip_tool"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/toolArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "pickup_forage"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/pickupForageArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "pickup_item",
+                  "harvest_crop"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyQualifiedTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "water_crop",
+                  "machine_inspect",
+                  "machine_collect_output",
+                  "npc_relationship",
+                  "pet_animal"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "clear_debris",
+                  "collect_animal_product",
+                  "feed_animal"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "plant_seed",
+                  "fertilize_tile"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "machine_load"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/machineLoadArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "use_item"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotQualifiedArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "express_emote"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/expressEmoteArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "face_direction"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/faceDirectionArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "chest_store",
+                  "chest_retrieve",
+                  "plant_sapling",
+                  "interact_npc_with_item"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "chop_stump",
+                  "cut_weeds",
+                  "cut_grass",
+                  "scythe_crop"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "craft_item",
+                  "cook_recipe"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/recipeTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "collect_crab_pot_output"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "clear_cask",
+                  "dress_mannequin",
+                  "set_sign_display",
+                  "deposit_silo_hay"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "toggle_tool_light"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "ship_item"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "ship_item"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "water_pet_bowl"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "water_slime_hutch_trough"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "dismiss_modal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/dismissModalArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "advance_day"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/advanceDayArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "enum": [
+                  "harvest_bush",
+                  "harvest_fruit_tree",
+                  "shake_tree",
+                  "take_pedestal_item",
+                  "toggle_fence_gate"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        }
       ],
       "properties": {
         "requestId": {
@@ -2247,6 +5843,10 @@
             "equip_tool",
             "travel",
             "ride_minecart",
+            "use_raft",
+            "mount_transport",
+            "enter_mine",
+            "toggle_mine_lamp",
             "enter_exit",
             "till_soil",
             "pickup_forage",
@@ -2280,6 +5880,11 @@
             "plant_sapling",
             "cut_weeds",
             "cut_grass",
+            "clear_cask",
+            "dress_mannequin",
+            "set_sign_display",
+            "deposit_silo_hay",
+            "toggle_tool_light",
             "scythe_crop",
             "interact_npc_with_item",
             "craft_item",
@@ -2288,7 +5893,13 @@
             "ship_item",
             "water_pet_bowl",
             "water_slime_hutch_trough",
-            "advance_day"
+            "dismiss_modal",
+            "advance_day",
+            "harvest_bush",
+            "harvest_fruit_tree",
+            "shake_tree",
+            "take_pedestal_item",
+            "toggle_fence_gate"
           ]
         },
         "args": {
@@ -2411,61 +6022,135 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 8,
-          "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
         }
       }
     },
     "companionPresentationRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["expressionId", "sourceEventId", "text", "locale", "expectedRevision", "presentationEpoch"],
+      "required": [
+        "expressionId",
+        "sourceEventId",
+        "text",
+        "locale",
+        "expectedRevision",
+        "presentationEpoch"
+      ],
       "properties": {
-        "expressionId": { "$ref": "#/$defs/opaqueId" },
-        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
-        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
-        "locale": { "$ref": "#/$defs/bcp47Locale" },
-        "expectedRevision": { "type": "integer", "minimum": 0 },
-        "presentationEpoch": { "type": "integer", "minimum": 0 }
+        "expressionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sourceEventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "locale": {
+          "$ref": "#/$defs/bcp47Locale"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "presentationEpoch": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "companionPresentationReceipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["expressionId", "revision", "presentationEpoch"],
+      "required": [
+        "expressionId",
+        "revision",
+        "presentationEpoch"
+      ],
       "properties": {
-        "expressionId": { "$ref": "#/$defs/opaqueId" },
-        "revision": { "type": "integer" },
-        "presentationEpoch": { "type": "integer", "minimum": 0 }
+        "expressionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "presentationEpoch": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "systemNoticeRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["noticeId", "key", "text", "locale"],
+      "required": [
+        "noticeId",
+        "key",
+        "text",
+        "locale"
+      ],
       "properties": {
-        "noticeId": { "$ref": "#/$defs/opaqueId" },
-        "key": { "enum": ["system.stop.active_turn_cancelled", "system.stop.no_active_turn"] },
-        "text": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "locale": { "$ref": "#/$defs/bcp47Locale" }
+        "noticeId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "key": {
+          "enum": [
+            "system.stop.active_turn_cancelled",
+            "system.stop.no_active_turn"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "locale": {
+          "$ref": "#/$defs/bcp47Locale"
+        }
       }
     },
     "systemNoticeReceipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["noticeId", "revision"],
+      "required": [
+        "noticeId",
+        "revision"
+      ],
       "properties": {
-        "noticeId": { "$ref": "#/$defs/opaqueId" },
-        "revision": { "type": "integer", "minimum": 0 }
+        "noticeId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "playerControlReceipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["controlId", "sourceEventId", "status"],
+      "required": [
+        "controlId",
+        "sourceEventId",
+        "status"
+      ],
       "properties": {
-        "controlId": { "$ref": "#/$defs/opaqueId" },
-        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
-        "status": { "const": "accepted" }
+        "controlId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sourceEventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "status": {
+          "const": "accepted"
+        }
       }
     },
     "error": {
@@ -2483,83 +6168,685 @@
     "bodyTrace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "executionId", "requestId", "tick", "revision"],
+      "required": [
+        "category",
+        "executionId",
+        "requestId",
+        "tick",
+        "revision"
+      ],
       "properties": {
-        "category": { "enum": ["execution_started", "route_progress", "execution_settled_succeeded", "execution_settled_cancelled", "execution_settled_failed", "execution_invalidated", "body_idle"] },
-        "executionId": { "$ref": "#/$defs/opaqueId" },
-        "requestId": { "$ref": "#/$defs/opaqueId" },
-        "tick": { "type": "integer", "minimum": 0 },
-        "revision": { "type": "integer" },
-        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "category": {
+          "enum": [
+            "execution_started",
+            "route_progress",
+            "execution_settled_succeeded",
+            "execution_settled_cancelled",
+            "execution_settled_failed",
+            "execution_invalidated",
+            "body_idle"
+          ]
+        },
+        "executionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "tick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
         "tile": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["x", "y"],
-          "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/tile"
+            },
+            "y": {
+              "$ref": "#/$defs/tile"
+            }
+          }
         }
       }
     },
     "semanticEvent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "revision", "activeExecution", "reasonCode"],
+      "required": [
+        "kind",
+        "revision",
+        "activeExecution",
+        "reasonCode"
+      ],
       "properties": {
         "kind": {
-          "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle", "player_input", "stop_all", "body_settled", "execution_started", "route_progress", "execution_settled_succeeded", "execution_settled_cancelled", "execution_settled_failed", "execution_invalidated", "body_idle"]
+          "enum": [
+            "snapshot_changed",
+            "execution_state",
+            "connection_state",
+            "lifecycle",
+            "player_input",
+            "stop_all",
+            "body_settled",
+            "execution_started",
+            "route_progress",
+            "execution_settled_succeeded",
+            "execution_settled_cancelled",
+            "execution_settled_failed",
+            "execution_invalidated",
+            "body_idle"
+          ]
         },
-        "revision": { "type": "integer" },
+        "revision": {
+          "type": "integer"
+        },
         "activeExecution": {
-          "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activeExecution"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        "reasonCode": { "$ref": "#/$defs/reasonCode" },
-        "bodyTrace": { "$ref": "#/$defs/bodyTrace" },
-        "playerControl": { "$ref": "#/$defs/playerControl" },
-        "stopObservation": { "$ref": "#/$defs/stopObservation" }
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        },
+        "bodyTrace": {
+          "$ref": "#/$defs/bodyTrace"
+        },
+        "playerControl": {
+          "$ref": "#/$defs/playerControl"
+        },
+        "stopObservation": {
+          "$ref": "#/$defs/stopObservation"
+        }
       },
       "oneOf": [
         {
-          "properties": { "kind": { "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle"] } },
-          "required": ["kind"],
-          "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] }
+          "properties": {
+            "kind": {
+              "enum": [
+                "snapshot_changed",
+                "execution_state",
+                "connection_state",
+                "lifecycle"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "bodyTrace": {}
+                },
+                "required": [
+                  "bodyTrace"
+                ]
+              },
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
         },
-        { "properties": { "kind": { "const": "execution_started" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_started" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "route_progress" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "route_progress" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "execution_settled_succeeded" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_succeeded" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "execution_settled_cancelled" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_cancelled" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "execution_settled_failed" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_failed" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "execution_invalidated" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_invalidated" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "body_idle" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "body_idle" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "player_input" }, "playerControl": { "type": "object", "properties": { "kind": { "const": "player_input" } }, "required": ["kind"] } }, "required": ["kind", "playerControl"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "stop_all" }, "playerControl": { "type": "object", "properties": { "kind": { "const": "stop_all" } }, "required": ["kind"] } }, "required": ["kind", "playerControl"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
-        { "properties": { "kind": { "const": "body_settled" }, "stopObservation": { "type": "object", "properties": { "kind": { "const": "body_settled" } }, "required": ["kind"] } }, "required": ["kind", "stopObservation"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "playerControl": {} }, "required": ["playerControl"] }] } }
+        {
+          "properties": {
+            "kind": {
+              "const": "execution_started"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "execution_started"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "route_progress"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "route_progress"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "execution_settled_succeeded"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "execution_settled_succeeded"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "execution_settled_cancelled"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "execution_settled_cancelled"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "execution_settled_failed"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "execution_settled_failed"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "execution_invalidated"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "execution_invalidated"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "body_idle"
+            },
+            "bodyTrace": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "const": "body_idle"
+                }
+              },
+              "required": [
+                "category"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "bodyTrace"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "player_input"
+            },
+            "playerControl": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "player_input"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "playerControl"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "bodyTrace": {}
+                },
+                "required": [
+                  "bodyTrace"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "stop_all"
+            },
+            "playerControl": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "stop_all"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "playerControl"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "bodyTrace": {}
+                },
+                "required": [
+                  "bodyTrace"
+                ]
+              },
+              {
+                "properties": {
+                  "stopObservation": {}
+                },
+                "required": [
+                  "stopObservation"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "body_settled"
+            },
+            "stopObservation": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "body_settled"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "stopObservation"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "properties": {
+                  "bodyTrace": {}
+                },
+                "required": [
+                  "bodyTrace"
+                ]
+              },
+              {
+                "properties": {
+                  "playerControl": {}
+                },
+                "required": [
+                  "playerControl"
+                ]
+              }
+            ]
+          }
+        }
       ]
     },
     "playerControl": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "controlId", "sourceEventId", "locale", "issuerPlayerId"],
+      "required": [
+        "kind",
+        "controlId",
+        "sourceEventId",
+        "locale",
+        "issuerPlayerId"
+      ],
       "properties": {
-        "kind": { "enum": ["player_input", "stop_all"] },
-        "controlId": { "$ref": "#/$defs/opaqueId" },
-        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
-        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
-        "locale": { "$ref": "#/$defs/bcp47Locale" },
-        "issuerPlayerId": { "$ref": "#/$defs/opaqueId" }
+        "kind": {
+          "enum": [
+            "player_input",
+            "stop_all"
+          ]
+        },
+        "controlId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sourceEventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "locale": {
+          "$ref": "#/$defs/bcp47Locale"
+        },
+        "issuerPlayerId": {
+          "$ref": "#/$defs/opaqueId"
+        }
       },
       "allOf": [
-        { "if": { "required": ["kind"], "properties": { "kind": { "const": "player_input" } } }, "then": { "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000 } }, "required": ["text"] } },
-        { "if": { "required": ["kind"], "properties": { "kind": { "const": "stop_all" } } }, "then": { "not": { "required": ["text"] } } }
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "player_input"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "stop_all"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "text"
+              ]
+            }
+          }
+        }
       ]
     },
     "stopObservation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "stopId", "sourceEventId", "epoch"],
+      "required": [
+        "kind",
+        "stopId",
+        "sourceEventId",
+        "epoch"
+      ],
       "properties": {
-        "kind": { "const": "body_settled" },
-        "stopId": { "$ref": "#/$defs/opaqueId" },
-        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
-        "epoch": { "type": "integer", "minimum": 1 }
+        "kind": {
+          "const": "body_settled"
+        },
+        "stopId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "sourceEventId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "lifecycle": {
@@ -2717,6 +7004,11 @@
           "type": "object"
         }
       }
+    },
+    "dismissModalArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
     }
   }
 }

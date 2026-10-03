@@ -177,6 +177,12 @@ activeExecution?: ActiveExecution | null;
   petBowlTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /** The current Slime Hutch's unwatered trough tiles (water_slime_hutch_trough). */
   slimeHutchTroughTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+  /** Current location's live, in-bloom berry bushes available to native shake. */
+  bushTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
+  fruitTreeTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
+  shakeTreeTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
+  pedestalTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; qualifiedItemId: string; stack: number }>[];
+  fenceGateTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; isOpen: boolean }>[];
   /** Nearby ready, ordinary Grab crops available through native Crop.harvest. */
   harvestTargets?: readonly Readonly<{
     targetId: string;
@@ -381,6 +387,12 @@ activeExecution?: ActiveExecution | null;
   weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
   /** Nearby Grass tufts (TerrainFeature) cuttable by an equipped scythe (cut_grass); grassType 1/7 drops Hay into a silo, 6 drops rare items. */
   grassTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; grassType: number; numberOfWeeds: number }>[];
+  /** Nearby live Casks available to clear_cask. */
+  caskTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hasHeldObject: boolean; heldQualifiedItemId: string | null }>[];
+  mannequinTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
+  signTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hasDisplayItem: boolean; displayQualifiedItemId: string | null }>[];
+  siloTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hay: number }>[];
+  lanternSlots?: readonly Readonly<{ slot: number; isOn: boolean; fuelLeft: number }>[];
   /** Nearby ready Scythe-method crops harvestable by an equipped scythe (scythe_crop). */
   scytheCropTargets?: readonly Readonly<{
     targetId: string;
@@ -514,9 +526,14 @@ activeExecution?: ActiveExecution | null;
     stationKind: "kitchen" | "cookout_kit" }>[];
    /** Available native minecart rides from a station on the current map, as
     * advertised for the `ride_minecart` action. */
-  minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
-    displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
-    targetTileX: number; targetTileY: number }>[];
+   minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
+     displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
+     targetTileX: number; targetTileY: number }>[];
+   /** Adjacent native water tiles where the equipped Raft can be launched. */
+   raftTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+   horseTargets?: readonly Readonly<{ targetId: string; x: number; y: number; name: string }>[];
+   mineEntranceTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+   mineLampTargets?: readonly Readonly<{ targetId: string; x: number; y: number; lightLevel: number }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -529,6 +546,10 @@ export type ExecutionRequest = Readonly<{
     | "equip_tool"
     | "travel"
     | "ride_minecart"
+    | "use_raft"
+    | "mount_transport"
+    | "enter_mine"
+    | "toggle_mine_lamp"
     | "enter_exit"
     | "till_soil"
     | "pickup_forage"
@@ -562,6 +583,11 @@ export type ExecutionRequest = Readonly<{
     | "plant_sapling"
     | "cut_weeds"
     | "cut_grass"
+    | "clear_cask"
+    | "dress_mannequin"
+    | "set_sign_display"
+    | "deposit_silo_hay"
+    | "toggle_tool_light"
     | "scythe_crop"
     | "interact_npc_with_item"
     | "craft_item"
@@ -569,7 +595,13 @@ export type ExecutionRequest = Readonly<{
     | "collect_crab_pot_output"
     | "ship_item"
     | "water_pet_bowl"
+    | "dismiss_modal"
     | "water_slime_hutch_trough"
+    | "harvest_bush"
+    | "harvest_fruit_tree"
+    | "shake_tree"
+    | "take_pedestal_item"
+    | "toggle_fence_gate"
     // The cross-day lifecycle. It carries no arguments: its target is the
     // actor's own bed and its readiness is native state.
     | "advance_day";
@@ -1074,8 +1106,13 @@ const SNAPSHOT_KEYS = [
   "treeStumpTargets",
   "treeSaplingTargets",
   "weedTargets",
-  "grassTargets",
-  "scytheCropTargets",
+    "grassTargets",
+    "caskTargets",
+    "mannequinTargets",
+    "signTargets",
+    "siloTargets",
+    "lanternSlots",
+    "scytheCropTargets",
   "npcRelationshipTargets",
   "villagerWhereabouts",
   "harvestWhereabouts",
@@ -1091,7 +1128,18 @@ const SNAPSHOT_KEYS = [
   "cookingRecipeTargets",
   "cookingStationTargets",
   "minecartTargets",
+  "bushTargets",
+  "fruitTreeTargets",
+  "shakeTreeTargets",
+  "pedestalTargets",
+  "fenceGateTargets",
   "weather",
+   "minecartTargets",
+    "raftTargets",
+    "horseTargets",
+    "mineEntranceTargets",
+    "mineLampTargets",
+    "weather",
 ] as const;
 
 
@@ -1589,13 +1637,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "navigate_to_destination" &&
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
-    value.action !== "ride_minecart" &&
-    value.action !== "enter_exit" &&
+     value.action !== "ride_minecart" &&
+     value.action !== "use_raft" &&
+     value.action !== "mount_transport" &&
+     value.action !== "enter_mine" &&
+     value.action !== "toggle_mine_lamp" &&
+     value.action !== "enter_exit" &&
     value.action !== "till_soil" &&
     value.action !== "pickup_forage" &&
     value.action !== "pickup_item" &&
     value.action !== "water_crop" &&
     value.action !== "water_pet_bowl" &&
+    value.action !== "dismiss_modal" &&
     value.action !== "water_slime_hutch_trough" &&
     value.action !== "refill_watering_can" &&
     value.action !== "harvest_crop" &&
@@ -1623,15 +1676,25 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chest_retrieve" &&
     value.action !== "chop_stump" &&
     value.action !== "plant_sapling" &&
-    value.action !== "cut_weeds" &&
-    value.action !== "cut_grass" &&
-    value.action !== "scythe_crop" &&
+     value.action !== "cut_weeds" &&
+     value.action !== "cut_grass" &&
+     value.action !== "clear_cask" &&
+     value.action !== "dress_mannequin" &&
+     value.action !== "set_sign_display" &&
+     value.action !== "deposit_silo_hay" &&
+     value.action !== "toggle_tool_light" &&
+     value.action !== "scythe_crop" &&
     value.action !== "interact_npc_with_item" &&
     value.action !== "craft_item" &&
     value.action !== "cook_recipe" &&
     value.action !== "collect_crab_pot_output" &&
     value.action !== "ship_item" &&
-    value.action !== "advance_day"
+    value.action !== "advance_day" &&
+    value.action !== "harvest_bush" &&
+    value.action !== "harvest_fruit_tree" &&
+    value.action !== "shake_tree" &&
+    value.action !== "take_pedestal_item" &&
+    value.action !== "toggle_fence_gate"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1666,6 +1729,26 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
     
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
+  } else if (value.action === "use_raft") {
+    const args = value.args;
+    if (!hasExactKeys(args, ["slot", "x", "y"])) return "invalid_args";
+    if (!isToolSlot(args.slot) || !isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_raft_target";
+    const targets = snapshot.raftTargets;
+    if (!Array.isArray(targets) || !targets.some(target => target.x === args.x && target.y === args.y)) return "invalid_raft_target";
+  } else if (value.action === "mount_transport") {
+    const mountArgs = value.args;
+    if (!hasExactKeys(mountArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(mountArgs.x) || !isTileCoordinate(mountArgs.y) || !isOpaqueId(mountArgs.expectedTargetId)) return "invalid_horse_target";
+    if (!snapshot.horseTargets?.some(target => target.targetId === mountArgs.expectedTargetId && target.x === mountArgs.x && target.y === mountArgs.y)) return "invalid_horse_target";
+  } else if (value.action === "enter_mine") {
+    const mineArgs = value.args;
+    if (!hasExactKeys(mineArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(mineArgs.x) || !isTileCoordinate(mineArgs.y) || !isOpaqueId(mineArgs.expectedTargetId)) return "invalid_mine_entrance";
+    if (!snapshot.mineEntranceTargets?.some(target => target.targetId === mineArgs.expectedTargetId && target.x === mineArgs.x && target.y === mineArgs.y)) return "invalid_mine_entrance";
+  } else if (value.action === "toggle_mine_lamp") {
+    const lampArgs = value.args;
+    if (!hasExactKeys(lampArgs, ["x", "y"])) return "invalid_args";
+    if (!isTileCoordinate(lampArgs.x) || !isTileCoordinate(lampArgs.y) || !snapshot.mineLampTargets?.some(target => target.x === lampArgs.x && target.y === lampArgs.y)) return "invalid_mine_lamp";
   } else if (value.action === "ride_minecart") {
     // The station tile plus one exact published ride. Both x/y and the opaque
     // selector are mandatory: unlike `travel`, there is no "plain" form, so a
@@ -1739,6 +1822,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_pet_bowl_target";
+  } else if (value.action === "dismiss_modal") {
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
   } else if (value.action === "water_slime_hutch_trough") {
     if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
     if (
@@ -1980,6 +2065,16 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_chest_target";
+  } else if (value.action === "clear_cask") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+      return "invalid_cask_target";
+  } else if (value.action === "dress_mannequin" || value.action === "set_sign_display" || value.action === "deposit_silo_hay") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId)) return "invalid_facility_target";
+  } else if (value.action === "toggle_tool_light") {
+    if (!hasExactKeys(value.args, ["slot", "x", "y"])) return "invalid_args";
+    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_lantern_slot";
   } else if (value.action === "chop_stump" || value.action === "cut_weeds" || value.action === "cut_grass" || value.action === "scythe_crop") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
     if (
@@ -2039,6 +2134,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_ship_target";
+  } else if (["harvest_bush", "harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"].includes(value.action)) {
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+      return `invalid_${value.action}_target`;
   } else if (value.action === "advance_day") {
     // No client-supplied target: the bed and the ready state are native facts.
     if (!hasExactKeys(value.args, [])) return "invalid_args";
@@ -2160,6 +2259,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.harvestTargets.every(isHarvestTargetFact))
   )
     return "invalid_snapshot:harvestTargets";
+  if (value.bushTargets !== undefined &&
+    (!Array.isArray(value.bushTargets) || value.bushTargets.length > 32 || !value.bushTargets.every(isBushTargetFact)))
+    return "invalid_snapshot:bushTargets";
+  if (value.fruitTreeTargets !== undefined && (!Array.isArray(value.fruitTreeTargets) || value.fruitTreeTargets.length > 16 || !value.fruitTreeTargets.every(isBushTargetFact))) return "invalid_snapshot:fruitTreeTargets";
+  if (value.shakeTreeTargets !== undefined && (!Array.isArray(value.shakeTreeTargets) || value.shakeTreeTargets.length > 16 || !value.shakeTreeTargets.every(isBushTargetFact))) return "invalid_snapshot:shakeTreeTargets";
+  if (value.pedestalTargets !== undefined && (!Array.isArray(value.pedestalTargets) || value.pedestalTargets.length > 16 || !value.pedestalTargets.every(isPedestalTargetFact))) return "invalid_snapshot:pedestalTargets";
+  if (value.fenceGateTargets !== undefined && (!Array.isArray(value.fenceGateTargets) || value.fenceGateTargets.length > 16 || !value.fenceGateTargets.every(isFenceGateTargetFact))) return "invalid_snapshot:fenceGateTargets";
   if (
     value.seedTargets !== undefined &&
     (!Array.isArray(value.seedTargets) || value.seedTargets.length > 64 || !value.seedTargets.every(isSeedTargetFact))
@@ -2257,13 +2363,19 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.weedTargets.every(isWeedTargetFact))
   )
     return "invalid_snapshot:weedTargets";
-  if (
-    value.grassTargets !== undefined &&
-    (!Array.isArray(value.grassTargets) ||
-      value.grassTargets.length > 16 ||
-      !value.grassTargets.every(isGrassTargetFact))
-  )
-    return "invalid_snapshot:grassTargets";
+   if (
+     value.grassTargets !== undefined &&
+     (!Array.isArray(value.grassTargets) ||
+       value.grassTargets.length > 16 ||
+       !value.grassTargets.every(isGrassTargetFact))
+   )
+     return "invalid_snapshot:grassTargets";
+    if (value.caskTargets !== undefined && (!Array.isArray(value.caskTargets) || value.caskTargets.length > 16 || !value.caskTargets.every(isCaskTargetFact)))
+      return "invalid_snapshot:caskTargets";
+    if (value.mannequinTargets !== undefined && (!Array.isArray(value.mannequinTargets) || value.mannequinTargets.length > 16 || !value.mannequinTargets.every(isFacilityTargetFact))) return "invalid_snapshot:mannequinTargets";
+    if (value.signTargets !== undefined && (!Array.isArray(value.signTargets) || value.signTargets.length > 16 || !value.signTargets.every(isSignTargetFact))) return "invalid_snapshot:signTargets";
+    if (value.siloTargets !== undefined && (!Array.isArray(value.siloTargets) || value.siloTargets.length > 16 || !value.siloTargets.every(isSiloTargetFact))) return "invalid_snapshot:siloTargets";
+    if (value.lanternSlots !== undefined && (!Array.isArray(value.lanternSlots) || value.lanternSlots.length > 16 || !value.lanternSlots.every(isLanternSlotFact))) return "invalid_snapshot:lanternSlots";
   if (
     value.scytheCropTargets !== undefined &&
     (!Array.isArray(value.scytheCropTargets) ||
@@ -2365,13 +2477,16 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.cookingStationTargets.every(isCookingStationTargetFact))
   )
     return "invalid_snapshot:cookingStationTargets";
-  if (
-    value.minecartTargets !== undefined &&
-    (!Array.isArray(value.minecartTargets) ||
-      value.minecartTargets.length > 24 ||
-      !value.minecartTargets.every(isMinecartTargetFact))
-  )
-    return "invalid_snapshot:minecartTargets";
+   if (
+     value.minecartTargets !== undefined &&
+     (!Array.isArray(value.minecartTargets) ||
+       value.minecartTargets.length > 24 ||
+       !value.minecartTargets.every(isMinecartTargetFact))
+   )
+     return "invalid_snapshot:minecartTargets";
+   if (value.raftTargets !== undefined &&
+     (!Array.isArray(value.raftTargets) || value.raftTargets.length > 16 || !value.raftTargets.every(isRaftTargetFact)))
+     return "invalid_snapshot:raftTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -2532,14 +2647,24 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.weedTargets) &&
         value.weedTargets.length <= 16 &&
         value.weedTargets.every(isWeedTargetFact))) &&
-    (value.grassTargets === undefined ||
-      (Array.isArray(value.grassTargets) &&
-        value.grassTargets.length <= 16 &&
-        value.grassTargets.every(isGrassTargetFact))) &&
+     (value.grassTargets === undefined ||
+       (Array.isArray(value.grassTargets) &&
+         value.grassTargets.length <= 16 &&
+         value.grassTargets.every(isGrassTargetFact))) &&
+      (value.caskTargets === undefined || (Array.isArray(value.caskTargets) && value.caskTargets.length <= 16 && value.caskTargets.every(isCaskTargetFact))) &&
+      (value.mannequinTargets === undefined || (Array.isArray(value.mannequinTargets) && value.mannequinTargets.length <= 16 && value.mannequinTargets.every(isFacilityTargetFact))) &&
+      (value.signTargets === undefined || (Array.isArray(value.signTargets) && value.signTargets.length <= 16 && value.signTargets.every(isSignTargetFact))) &&
+      (value.siloTargets === undefined || (Array.isArray(value.siloTargets) && value.siloTargets.length <= 16 && value.siloTargets.every(isSiloTargetFact))) &&
+      (value.lanternSlots === undefined || (Array.isArray(value.lanternSlots) && value.lanternSlots.length <= 16 && value.lanternSlots.every(isLanternSlotFact))) &&
     (value.scytheCropTargets === undefined ||
       (Array.isArray(value.scytheCropTargets) &&
         value.scytheCropTargets.length <= 16 &&
         value.scytheCropTargets.every(isScytheCropTargetFact))) &&
+    (value.bushTargets === undefined || (Array.isArray(value.bushTargets) && value.bushTargets.length <= 32 && value.bushTargets.every(isBushTargetFact))) &&
+    (value.fruitTreeTargets === undefined || (Array.isArray(value.fruitTreeTargets) && value.fruitTreeTargets.length <= 16 && value.fruitTreeTargets.every(isBushTargetFact))) &&
+    (value.shakeTreeTargets === undefined || (Array.isArray(value.shakeTreeTargets) && value.shakeTreeTargets.length <= 16 && value.shakeTreeTargets.every(isBushTargetFact))) &&
+    (value.pedestalTargets === undefined || (Array.isArray(value.pedestalTargets) && value.pedestalTargets.length <= 16 && value.pedestalTargets.every(isPedestalTargetFact))) &&
+    (value.fenceGateTargets === undefined || (Array.isArray(value.fenceGateTargets) && value.fenceGateTargets.length <= 16 && value.fenceGateTargets.every(isFenceGateTargetFact))) &&
     (value.npcRelationshipTargets === undefined ||
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
@@ -2595,10 +2720,15 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
         value.cookingStationTargets.length <= 16 &&
         value.cookingStationTargets.every(isCookingStationTargetFact))) &&
     (value.minecartTargets === undefined ||
-      (Array.isArray(value.minecartTargets) &&
-        value.minecartTargets.length <= 24 &&
-        value.minecartTargets.every(isMinecartTargetFact))) &&
-    isStringArray(value.capabilities) &&
+     (Array.isArray(value.minecartTargets) &&
+       value.minecartTargets.length <= 24 &&
+       value.minecartTargets.every(isMinecartTargetFact))) &&
+    (value.raftTargets === undefined ||
+      (Array.isArray(value.raftTargets) && value.raftTargets.length <= 16 && value.raftTargets.every(isRaftTargetFact))) &&
+    (value.horseTargets === undefined || (Array.isArray(value.horseTargets) && value.horseTargets.length <= 16 && value.horseTargets.every(isHorseTargetFact))) &&
+    (value.mineEntranceTargets === undefined || (Array.isArray(value.mineEntranceTargets) && value.mineEntranceTargets.length <= 16 && value.mineEntranceTargets.every(isMineEntranceTargetFact))) &&
+    (value.mineLampTargets === undefined || (Array.isArray(value.mineLampTargets) && value.mineLampTargets.length <= 16 && value.mineLampTargets.every(isMineLampTargetFact))) &&
+     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
     (value.activeExecution === undefined ||
@@ -2616,13 +2746,18 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
       value.action === "travel" ||
-      value.action === "ride_minecart" ||
-      value.action === "enter_exit" ||
+       value.action === "ride_minecart" ||
+       value.action === "use_raft" ||
+       value.action === "mount_transport" ||
+       value.action === "enter_mine" ||
+       value.action === "toggle_mine_lamp" ||
+       value.action === "enter_exit" ||
       value.action === "till_soil" ||
       value.action === "pickup_forage" ||
       value.action === "pickup_item" ||
       value.action === "water_crop" ||
       value.action === "water_pet_bowl" ||
+      value.action === "dismiss_modal" ||
       value.action === "water_slime_hutch_trough" ||
       value.action === "refill_watering_can" ||
       value.action === "harvest_crop" ||
@@ -2651,13 +2786,23 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_stump" ||
       value.action === "plant_sapling" ||
       value.action === "cut_weeds" ||
-      value.action === "cut_grass" ||
-      value.action === "scythe_crop" ||
+       value.action === "cut_grass" ||
+       value.action === "clear_cask" ||
+       value.action === "dress_mannequin" ||
+       value.action === "set_sign_display" ||
+       value.action === "deposit_silo_hay" ||
+       value.action === "toggle_tool_light" ||
+       value.action === "scythe_crop" ||
       value.action === "interact_npc_with_item" ||
       value.action === "craft_item" ||
       value.action === "cook_recipe" ||
       value.action === "collect_crab_pot_output" ||
       value.action === "ship_item" ||
+      value.action === "harvest_bush" ||
+      value.action === "harvest_fruit_tree" ||
+      value.action === "shake_tree" ||
+      value.action === "take_pedestal_item" ||
+      value.action === "toggle_fence_gate" ||
       value.action === "advance_day") &&
     isRecord(value.args) &&
     Object.keys(value.args).length <= 8 &&
@@ -3659,6 +3804,50 @@ function isGrassTargetFact(value: unknown): boolean {
   );
 }
 
+function isPedestalTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "stack"]) &&
+    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
+    isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.qualifiedItemId === "string" && value.qualifiedItemId.length > 0 && value.qualifiedItemId.length <= 128 &&
+    Number.isSafeInteger(value.stack) && (value.stack as number) > 0 && (value.stack as number) <= 999;
+}
+
+function isFenceGateTargetFact(value: unknown): boolean {
+  return isBushTargetFact({ targetId: value && isRecord(value) ? value.targetId : null, location: value && isRecord(value) ? value.location : null, x: value && isRecord(value) ? value.x : null, y: value && isRecord(value) ? value.y : null }) && isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "isOpen"]) && typeof value.isOpen === "boolean";
+}
+
+function isBushTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y"]) &&
+    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
+    isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+
+function isCaskTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hasHeldObject", "heldQualifiedItemId"]) &&
+    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
+    isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.hasHeldObject === "boolean" &&
+    // A cask that claims to hold an object must name it. A name without the
+    // flag is tolerated: discovery reads the held object directly (the fixture
+    // and the runner disagree on whether an empty cask may carry a stray id).
+    !(value.hasHeldObject === true && value.heldQualifiedItemId === null) &&
+    (value.heldQualifiedItemId === null || (typeof value.heldQualifiedItemId === "string" && value.heldQualifiedItemId.length > 0 && value.heldQualifiedItemId.length <= 128));
+}
+
+function isFacilityTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+
+function isSignTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hasDisplayItem", "displayQualifiedItemId"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.hasDisplayItem === "boolean" && (value.displayQualifiedItemId === null || (typeof value.displayQualifiedItemId === "string" && value.displayQualifiedItemId.length > 0 && value.displayQualifiedItemId.length <= 128));
+}
+
+function isSiloTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hay"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y) && Number.isSafeInteger(value.hay) && (value.hay as number) >= 0;
+}
+
+function isLanternSlotFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["slot", "isOn", "fuelLeft"]) && isToolSlot(value.slot) && typeof value.isOn === "boolean" && Number.isSafeInteger(value.fuelLeft) && (value.fuelLeft as number) >= 0 && (value.fuelLeft as number) <= 100;
+}
+
 function isScytheCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -3922,6 +4111,22 @@ function isCookingStationTargetFact(value: unknown): boolean {
     isTileCoordinate(value.y) &&
     (value.stationKind === "kitchen" || value.stationKind === "cookout_kit")
   );
+}
+
+function isRaftTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) &&
+    typeof value.targetId === "string" && /^raft_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+
+function isHorseTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "name"]) && typeof value.targetId === "string" && /^horse_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.name === "string" && value.name.length > 0 && value.name.length <= 64;
+}
+function isMineEntranceTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) && typeof value.targetId === "string" && /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+function isMineLampTargetFact(value: unknown): boolean {
+  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "lightLevel"]) && typeof value.targetId === "string" && /^mine_lamp_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.lightLevel === "number" && Number.isFinite(value.lightLevel) && value.lightLevel >= 0 && value.lightLevel <= 0.6;
 }
 
 function isMinecartTargetFact(value: unknown): boolean {

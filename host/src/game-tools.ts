@@ -950,6 +950,47 @@ export function createStardewActionTools(
   { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.harvest_bush,
+        label: "Harvest Stardew Berry Bush",
+        description:
+          "Harvest a live in-bloom berry bush using its native interaction. x, y and expectedTargetId must come from the bushTargets entries of the most recent observe result for the current location.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        action: "harvest_bush",
+        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+      }),
+    );
+  }
+  for (const action of ["harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"] as const) {
+    const labels = ({
+      harvest_fruit_tree: ["Harvest Stardew Fruit Tree", "fruitTreeTargets", "Harvest fruit from a live fruit tree through its native interaction."],
+      shake_tree: ["Shake Stardew Tree", "shakeTreeTargets", "Shake a live tree that has not been shaken today through its native interaction."],
+      take_pedestal_item: ["Take Stardew Pedestal Item", "pedestalTargets", "Take the displayed item through the native pedestal inventory transaction."],
+      toggle_fence_gate: ["Toggle Stardew Fence Gate", "fenceGateTargets", "Toggle a live fence gate through its native gate state transition."],
+    } as const)[action];
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES[action],
+      label: labels[0],
+      description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result.`,
+      parameters: Type.Object({
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+        requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      }),
+      action,
+      toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+    }));
+  }
+  { // constant mount; per-action admission at execution
+    tools.push(
+      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.fertilize_tile,
         label: "Fertilize Stardew Soil",
         description:
@@ -1458,6 +1499,28 @@ export function createStardewActionTools(
   }
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "dismiss_modal",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("dismiss_modal", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("dismiss_modal", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.dismiss_modal,
+          label: "Dismiss a Dialog",
+          description:
+            "Close the informational native dialogue currently on screen (a DialogueBox with no pending question) through the native closeDialogue path. The dialog must have been opened by the world (a villager, a door gate, an event) and must not be a question that requires choosing an answer.",
+          parameters: schema,
+          action: "dismiss_modal",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "ride_minecart",
     );
     if (
@@ -1784,6 +1847,45 @@ export function createStardewActionTools(
   { // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.clear_cask,
+        label: "Clear Cask",
+        description: "Use the equipped Axe, Pickaxe, or Hoe on one live adjacent Cask. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and caskTargets in the MOST RECENT observe result. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        action: "clear_cask",
+        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+      }),
+    );
+  }
+  for (const action of ["dress_mannequin", "set_sign_display", "deposit_silo_hay"] as const) {
+    const isMannequin = action === "dress_mannequin";
+    const isSign = action === "set_sign_display";
+    const targetKey = isMannequin ? "mannequinTargets" : isSign ? "signTargets" : "siloTargets";
+    const label = isMannequin ? "Dress Mannequin" : isSign ? "Set Sign Display" : "Deposit Silo Hay";
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES[action], label,
+      description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result.`,
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      action, toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+    }));
+  }
+  {
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES.toggle_tool_light, label: "Toggle Tool Light",
+      description: "Toggle the Lantern light; slot must identify the Lantern currently equipped, copied from lanternSlots in the most recent observe result. The light toggles on the tool itself, not on a world object.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      action: "toggle_tool_light", toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
+    }));
+  }
+  { // constant mount; per-action admission at execution
+    tools.push(
+      makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
         label: "Scythe Crop",
         description:
@@ -1916,6 +2018,46 @@ export function createStardewActionTools(
         }),
       }),
     );
+  }
+  { // constant mount; per-action admission at execution
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES.mount_transport,
+      label: "Mount a Native Horse",
+      description: "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
+      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
+      action: "mount_transport",
+      toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+    }));
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES.enter_mine,
+      label: "Enter the Mine",
+      description: "Enter the live mine entrance tile; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. This uses normal game progression and does not accept a level selector.",
+      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
+      action: "enter_mine",
+      toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+    }));
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES.toggle_mine_lamp,
+      label: "Toggle Mine Lamp",
+      description: "Toggle one live Lamp action in the current mine; x and y must be copied exactly from mineLampTargets in the most recent observe result.",
+      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
+      action: "toggle_mine_lamp",
+      toArgs: params => ({ x: params.x, y: params.y }),
+    }));
+    tools.push(makeGameActionTool({
+      name: STARDEW_ACTION_TOOL_NAMES.use_raft,
+      label: "Launch Stardew Raft",
+      description: "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
+      parameters: Type.Object({
+        slot: Type.Integer({ minimum: 0, maximum: 36 }),
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      }, { additionalProperties: false }),
+      action: "use_raft",
+      toArgs: params => ({ slot: params.slot, x: params.x, y: params.y }),
+    }));
   }
   return tools;
 }
