@@ -292,4 +292,85 @@ test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
       ),
     /game_authored_context_surface_mismatch/,
   );
+});test("native WorldBookBinding materializes constant entries into lorebook_constant and keyword entries as volatile", async () => {
+  const root = await canonicalTestRoot("gamebuddy-native-catalog-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  // A bound WorldBookBinding metadata exactly as the reviewed import writes it.
+  const book = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "gamebuddy-worldbook-companion-x",
+    revision: 1,
+    alwaysOnPremise: "The valley breathes with the seasons.",
+    entries: [
+      {
+        entryId: "deepseek-entry-10",
+        title: "不懂艺术的肥鱼",
+        content: "鲸鱼娘自己没有任何艺术特长。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "deepseek-entry-1",
+        title: "喜欢帅哥",
+        content: "鲸鱼娘其实喜欢帅气男生。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const metadata = worldBookMetadata(book);
+  const binding = {
+    worldBookId: book.worldBookId,
+    revision: metadata.revision,
+    canonicalHash: metadata.canonicalHash,
+    provenance: "reviewed-import" as const,
+  };
+  const threads = createChatThreadStore(root, "continuity-key");
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      worldBookBinding: binding,
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, {
+      continuityId: "continuity",
+      sessionId: "pi-session",
+      surface: "tavern",
+      threadId: "thread",
+      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+    }, {
+      binding,
+      alwaysOnPremise: book.alwaysOnPremise,
+      constantEntries: book.entries.filter((entry) => entry.constant === true),
+      keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+    });
+    const stable = catalog.stableSources.find((source) => source.kind === "lorebook_constant");
+    assert.ok(stable);
+    assert.equal(stable.sourceId, book.worldBookId);
+    // The constant entry AND the premise ride the stable m[0] source.
+    assert.match(stable.content, /The valley breathes/);
+    assert.match(stable.content, /不懂艺术的肥鱼/);
+    assert.match(stable.content, /没有.{0,4}艺术特长/);
+    // Keyword-gated entry stays OUT of the stable prefix...
+    assert.doesNotMatch(stable.content, /喜欢帅哥/);
+    // ...and becomes a volatile selection candidate instead.
+    assert.equal(catalog.volatileSources.length, 1);
+    assert.equal(catalog.volatileSources[0]?.kind, "lorebook_entry");
+    assert.equal(catalog.volatileSources[0]?.content, "鲸鱼娘其实喜欢帅气男生。");
+    assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["喜欢帅哥"]);
+  } finally {
+    threads.close?.();
+  }
 });

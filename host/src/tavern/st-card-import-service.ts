@@ -155,6 +155,9 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     name: profile.identity.name,
     reviewState: "pending",
     fields: Object.freeze(fields),
+    ...(value.worldBookCandidates.length === 0
+      ? {}
+      : { worldBookCandidates: Object.freeze(value.worldBookCandidates) }),
   });
 }
 function reportFromDecode(importId: string, report: StCardImportReport, sourceHash: string): StCardImportRecord {

@@ -380,3 +380,56 @@ test("New Companion provisions reviewed scenario and first greeting for library 
     await cleanupTestRoot(root);
   }
 });
+test("reviewed card world book lands as the bound worldbook.json and threads carry its metadata binding (S3)", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-worldbook-");
+  const candidates = {
+    ...candidate,
+    worldBookCandidates: [
+      {
+        entryId: "deepseek-entry-10",
+        title: "不懂艺术的肥鱼",
+        content: "鲸鱼娘自己没有任何艺术特长。",
+        scope: "setting" as const,
+        provenance: "reviewed-import" as const,
+        tokenBudget: "small" as const,
+        constant: true,
+      },
+      {
+        entryId: "deepseek-entry-1",
+        title: "喜欢帅哥",
+        content: "鲸鱼娘其实喜欢帅气男生。",
+        scope: "setting" as const,
+        provenance: "reviewed-import" as const,
+        tokenBudget: "small" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(candidates, {
+      reviewedFields: ["persona_core"],
+      approvedAtMs: 10,
+    });
+    const threadStore = createChatThreadStore(root, "e".repeat(64));
+    try {
+      const created = await provisionNewCompanion(root, "player", candidates, review, threadStore);
+      const runtimeRoot = join(root, "contexts", identityKey(created.identity));
+      const worldbook = JSON.parse(await readFile(join(runtimeRoot, "worldbook.json"), "utf8"));
+      assert.equal(worldbook.worldBookId, `gamebuddy-worldbook-${created.identity.companionId}`);
+      assert.equal(worldbook.revision, 1);
+      assert.equal(worldbook.entries.length, 2);
+      assert.equal(worldbook.entries[0].constant, true);
+      assert.equal(worldbook.entries[1].constant, undefined);
+      // The binding a chat creator will mount (createNewChat already carries
+      // TavernStableWorldBookBinding) is exactly the on-disk revision metadata.
+      assert.match(worldbook.canonicalHash, /^[a-f0-9]{64}$/);
+    } finally {
+      threadStore.close?.();
+    }
+  } finally {
+    await cleanupTestRoot(root);
+  }
+});

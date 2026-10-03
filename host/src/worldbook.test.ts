@@ -110,3 +110,55 @@ test("readWorldBook reads manual JSON without canonicalHash, writeWorldBook pers
     await rm(dir, { recursive: true, force: true });
   }
 });
+test("WorldBook tools never echo always-on content back (S3: it already rides Tier 2 m[0])", async () => {
+  const constantBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_constant",
+    revision: 1,
+    alwaysOnPremise: "The valley premise that lives in the m[0] lorebook_constant source.",
+    entries: [
+      {
+        entryId: "deepseek-entry-10",
+        title: "不懂艺术的肥鱼",
+        content: "鲸鱼娘自己没有任何艺术特长。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "deepseek-entry-1",
+        title: "喜欢帅哥",
+        content: "鲸鱼娘其实喜欢帅气男生。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const [catalog, query] = createWorldBookTools({ metadata: worldBookMetadata(constantBook), book: constantBook });
+  const execute = (tool: typeof catalog, params: unknown) => {
+    assert.ok(tool);
+    return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+  };
+  // The catalog omits the constant entry (deduplicated against m[0]) and no
+  // longer re-sends the premise.
+  const catalogResult = await execute(catalog, {});
+  const catalogBody = JSON.parse((catalogResult.content[0]! as { text: string }).text);
+  assert.deepEqual(
+    catalogBody.entries.map((entry: { entryId: string }) => entry.entryId),
+    ["deepseek-entry-1"],
+  );
+  assert.equal(Object.hasOwn(catalogBody, "alwaysOnPremise"), false);
+  // Query still serves full text on demand, including the constant entry.
+  const viaTopic = await execute(query, { topic: "肥鱼" });
+  assert.equal(
+    JSON.parse((viaTopic.content[0]! as { text: string }).text).entries[0].content,
+    "鲸鱼娘自己没有任何艺术特长。",
+  );
+  const viaId = await execute(query, { entryId: "deepseek-entry-1" });
+  assert.equal(
+    JSON.parse((viaId.content[0]! as { text: string }).text).entries[0].entryId,
+    "deepseek-entry-1",
+  );
+});

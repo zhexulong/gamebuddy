@@ -14,6 +14,7 @@ import {
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
+import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
 import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
@@ -172,9 +173,7 @@ async function buildExactChatRuntimeConstruction(
           ? undefined
           : "source" in effectiveBinding
             ? await managedWorldInfoResolver.resolve(effectiveBinding)
-            : (() => {
-                throw new Error("chat_runtime_exact_content_unavailable");
-              })(),
+            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");
@@ -263,4 +262,42 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
     Date.now() > permit.deadlineAtMs
   )
     throw new Error("chat_runtime_construction_permit_rejected");
+}
+/**
+ * Resolves a native (non-managed) WorldBookBinding — the bound worldbook.json
+ * the reviewed import wrote into the runtime root — into the always-on
+ * `lorebook_constant` materialization input. The on-disk book must EXACTLY
+ * match the thread binding (id/revision/hash): a drifted or manually edited
+ * book refuses construction instead of silently materializing stale content,
+ * mirroring the managed World Info hash gate.
+ *
+ * `constant: true` entries are reviewed always-on background and ride in the
+ * stable lorebook_constant source (Tier 2 m[0]); keyword-gated entries stay
+ * out of the stable prefix and become volatile selection candidates.
+ */
+async function resolveBoundWorldBookSource(
+  binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
+  runtimeCwd: string,
+): Promise<import("../tavern/catalog-service.js").TavernWorldInfoSource> {
+  let book;
+  try {
+    book = await readWorldBook(join(runtimeCwd, "worldbook.json"));
+  } catch {
+    throw new Error("chat_runtime_exact_content_unavailable");
+  }
+  const metadata = worldBookMetadata(book);
+  if (
+    book.worldBookId !== binding.worldBookId ||
+    metadata.revision !== binding.revision ||
+    metadata.canonicalHash !== binding.canonicalHash
+  )
+    throw new Error("chat_runtime_exact_content_unavailable");
+  const constantEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant === true);
+  const keywordEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant !== true);
+  return Object.freeze({
+    binding,
+    alwaysOnPremise: book.alwaysOnPremise,
+    ...(constantEntries.length > 0 ? { constantEntries } : {}),
+    ...(keywordEntries.length > 0 ? { keywordEntries } : {}),
+  });
 }

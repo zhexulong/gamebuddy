@@ -14,6 +14,17 @@ export type CharacterCandidate = ArtifactRevision &
     name: string;
     reviewState: "pending" | "reviewed";
     fields: readonly Readonly<{ field: string; text: string; eligibility: RuntimeEligibility }>[];
+    /** Reviewed-card world book candidates (S3): the reviewed import folds the
+     *  card's book into the companion's worldbook.json at provision time. */
+    worldBookCandidates?: readonly Readonly<{
+      entryId: string;
+      title: string;
+      content: string;
+      scope: "companion" | "setting" | "integration" | "world";
+      provenance: "authored" | "st-card-import" | "reviewed-import";
+      tokenBudget: "small" | "medium";
+      constant?: boolean;
+    }>[];
   }>;
 /**
  * Player-scoped library metadata. This is deliberately not an IdentityProfile
@@ -121,6 +132,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       "name",
       "reviewState",
       "fields",
+      "worldBookCandidates",
     ])
   )
     fail();
@@ -132,6 +144,36 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       eligibility: requiredEligibility(x.eligibility),
     });
   });
+  const worldBookCandidates =
+    v.worldBookCandidates === undefined
+      ? undefined
+      : array(v.worldBookCandidates, 128).map((x) => {
+          if (
+            !record(x) ||
+            !only(x, ["entryId", "title", "content", "scope", "provenance", "tokenBudget", "constant"])
+          )
+            fail();
+          const scope = x.scope;
+          const provenance = x.provenance;
+          const tokenBudget = x.tokenBudget;
+          if (
+            typeof scope !== "string" ||
+            !["companion", "setting", "integration", "world"].includes(scope) ||
+            typeof provenance !== "string" ||
+            !["authored", "st-card-import", "reviewed-import"].includes(provenance) ||
+            (tokenBudget !== "small" && tokenBudget !== "medium")
+          )
+            fail();
+          return freeze({
+            entryId: requiredId(x.entryId),
+            title: requiredText(x.title, 256),
+            content: requiredText(x.content, 65_536),
+            scope: scope as "companion" | "setting" | "integration" | "world",
+            provenance: provenance as "authored" | "st-card-import" | "reviewed-import",
+            tokenBudget: tokenBudget as "small" | "medium",
+            ...(x.constant === undefined ? {} : { constant: requiredConstant(x.constant) }),
+          });
+        });
   const candidateId = requiredId(v.candidateId);
   const sourceFormat = requiredSourceFormat(v.sourceFormat);
   const sourceVersion = requiredText(v.sourceVersion, 64);
@@ -148,6 +190,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
     name,
     reviewState,
     fields: freeze(fields),
+    ...(worldBookCandidates === undefined ? {} : { worldBookCandidates: freeze(worldBookCandidates) }),
   });
 }
 function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
@@ -391,8 +434,7 @@ function requiredHash(v: unknown): string {
   return v;
 }
 function requiredRevision(v: unknown): number {
-  if (!revision(v)) fail();
-  return v;
+  if (!revision(v)) fail();  return v;
 }
 function requiredTimestamp(v: unknown): number {
   if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) fail();
@@ -435,4 +477,8 @@ function freeze<T>(v: T): T {
 }
 function fail(): never {
   throw new Error("invalid_tavern_artifact");
+}
+function requiredConstant(v: unknown): boolean {
+  if (typeof v !== "boolean") fail();
+  return v;
 }

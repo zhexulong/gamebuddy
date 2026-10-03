@@ -53,10 +53,18 @@ test("ST card application import persists hash-verified inert candidate/report a
         "persona_core",
         "persona_interaction_style",
         "persona_expression_style",
+        // first_mes with no mes_example folds into one reviewed example row
+        // (voice-anchor fallback); the greeting field remains too.
+        "example_1",
         "first_greeting",
         "worldbook_st-st-v3-1",
       ],
     );
+    // S3: the card's world book travels with the candidate so the reviewed
+    // import can bind it as the companion's WorldBookBinding at provision.
+    assert.equal(result.candidate.artifact.worldBookCandidates?.length, 1);
+    assert.equal(result.candidate.artifact.worldBookCandidates?.[0]?.entryId, "st-st-v3-1");
+    assert.equal(result.candidate.artifact.worldBookCandidates?.[0]?.content, "inert background");
     assert.equal(
       result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.eligibility,
       "profile_eligible_after_explicit_review",
