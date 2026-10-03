@@ -1070,6 +1070,7 @@ public sealed partial class ModEntry : Mod
         ResourceToolActionHandler resourceTools = new(executions);
         ExpressionActionHandler expression = new(executions);
         WorldLifecycleActionHandler lifecycle = new(executions);
+    ModalActionHandler modal = new(executions);
         FarmhandActionRouter router = new();
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
@@ -1085,6 +1086,7 @@ public sealed partial class ModEntry : Mod
                 FarmhandActionHandlerGroup.ResourceTools => resourceTools,
                 FarmhandActionHandlerGroup.Expression => expression,
                 FarmhandActionHandlerGroup.WorldLifecycle => lifecycle,
+        FarmhandActionHandlerGroup.Modal => modal,
                 _ => throw new InvalidOperationException("Unknown Farmhand execution action handler group."),
             };
             router.Register(registration, handler);

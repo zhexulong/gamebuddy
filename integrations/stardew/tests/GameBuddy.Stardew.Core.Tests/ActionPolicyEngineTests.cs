@@ -78,13 +78,20 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         // Opting a name in is only meaningful for an action that is NOT already
-        // default-consent. cut_grass is the one experimental subject again (it
-        // awaits its live gate); every other registration is published or
-        // live_verified.
-        FarmhandActionCatalog.Registrations
+        // default-consent. cut_grass (the added experimental) and dismiss_modal
+        // (the WIA modal family, live gate landed) coexist with other lane
+        // experimental registrations; every non-experimental registration is
+        // published or live_verified.
+        string[] experimentalIds = FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
             .Select(registration => registration.ActionId)
-            .Should().Equal("cut_grass");
+            .ToArray();
+        experimentalIds.Should().Contain("cut_grass");
+        experimentalIds.Should().Contain("dismiss_modal");
+        FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Lifecycle != FarmhandActionLifecycle.Experimental)
+            .Select(registration => registration.ActionId)
+            .Should().OnlyContain(id => id != "cut_grass" && id != "dismiss_modal");
         var options = new ActionPolicyOptions(
             ExperimentalActions: new[] { "cut_grass", "ride_minecart", "non_existent_action" }
         );

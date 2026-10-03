@@ -1818,13 +1818,18 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             // the station tile while expectedTargetId selects one advertised
             // (station, destination) ride.
             "ride_minecart" => new[] { "x", "y", "expectedTargetId" },
+            "use_raft" => new[] { "slot", "x", "y" },
+            "mount_transport" or "enter_mine" => new[] { "x", "y", "expectedTargetId" },
+            "toggle_mine_lamp" => new[] { "x", "y" },
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
-        "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => new[] { "x", "y", "expectedTargetId" },
+            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "chest_store" or "chest_retrieve" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "toggle_tool_light" => new[] { "slot", "x", "y" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },
         "express_emote" => new[] { "emote" },
@@ -1838,7 +1843,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "ship_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
-        "advance_day" => Array.Empty<string>(),
+            "advance_day" => Array.Empty<string>(),
+    // WIA §4.2: dismiss_modal targets the currently open modal itself, so it
+    // carries no client-supplied arguments either.
+    "dismiss_modal" => Array.Empty<string>(),
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
         _ => null,
