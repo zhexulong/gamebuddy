@@ -27,13 +27,19 @@ test("buildChatCompanionSystemPrompt and buildGameCompanionSystemPrompt render p
   const chatPrompt = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(chatPrompt, /companion_text/);
   assert.doesNotMatch(chatPrompt, /private/);
-  assert.match(chatPrompt, /Write GameBuddy Companion's next reply in a fictional roleplay chat/);
+  // Chat surface: shared framework (You are …, first person, no fourth wall),
+  // no ST-barebones "fictional roleplay chat" and no empty "Stay in character".
+  assert.match(chatPrompt, /^You are GameBuddy Companion, accompanying the player\./);
+  assert.match(chatPrompt, /Reply as GameBuddy Companion would, in the first person/);
+  assert.doesNotMatch(chatPrompt, /fictional roleplay chat/);
+  assert.doesNotMatch(chatPrompt, /Stay in character/);
   assert.match(chatPrompt, /\[Character: GameBuddy Companion\]/);
 
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.doesNotMatch(gamePrompt, /companion_text/);
   assert.doesNotMatch(gamePrompt, /private/);
-  assert.match(gamePrompt, /accompanying the player as an active in-game companion/);
+  // Game surface shares the same framework core, then adds the game conduct.
+  assert.match(gamePrompt, /^You are GameBuddy Companion, accompanying the player\./);
   assert.match(gamePrompt, /\[Character: GameBuddy Companion\]/);
 });
 
@@ -53,20 +59,23 @@ test("the Game conduct forbids claiming an NPC reaction the game never reported"
   assert.match(gamePrompt, /say what they MEAN to a person instead of reading them out/);
 });
 
-test("the Game system prompt names the language the player actually speaks", () => {
+test("the Game/chat system prompt shares one framework core and names the language the player actually speaks", () => {
   // A live run on a zh-CN fixture answered entirely in English: the system
   // prompt is written in English and only said "speak the player's language",
   // never which language that was. The locale now reaches the builder.
   const zh = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
-  assert.match(zh, /Answer the player in Chinese \(Simplified\)\./);
+  assert.match(zh, /Consistently converse in Chinese \(Simplified\)/);
   const en = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "en-US");
-  assert.match(en, /Answer the player in English\./);
+  assert.match(en, /Consistently converse in English/);
   // A tag we do not map still yields an instruction rather than silence.
   const other = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "fr-FR");
-  assert.match(other, /Answer the player in fr-FR\./);
-  // Omitting the locale keeps the previous prompt shape (no dangling sentence).
+  assert.match(other, /Consistently converse in fr-FR/);
+  // Omitting the locale falls back to a safe generic, never a dangling sentence.
   const bare = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.doesNotMatch(bare, /Answer the player in/);
+  assert.match(bare, /Consistently converse in the player's language/);
+  // Chat surface gets the same locale plumbing now.
+  const chatZh = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
+  assert.match(chatZh, /Consistently converse in Chinese \(Simplified\)/);
 });
 
 test("the Game conduct permits company while working but still forbids step reports", () => {
