@@ -258,11 +258,37 @@ function reviewedProfile(
            ),
            expressionStyle: render(expressionStyle ?? base.persona?.expressionStyle ?? "Use clear, natural language."),
          });
+  // Reviewed example dialogues: fields are "example_N" with a JSON-encoded
+  // {user, companion} pair written by candidateFromReport. Only approved rows
+  // are consumed, each rendered through the same card macros as the persona.
+  const examples = Object.freeze(
+    Object.entries(Object.fromEntries([...fields.entries()].filter(([name]) => /^example_\d+$/u.test(name))))
+      .sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
+      .flatMap(([, raw]) => {
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            !("user" in parsed) ||
+            !("companion" in parsed) ||
+            typeof (parsed as { user?: unknown }).user !== "string" ||
+            typeof (parsed as { companion?: unknown }).companion !== "string"
+          )
+            return [];
+          const pair = parsed as { user: string; companion: string };
+          return [Object.freeze({ user: render(pair.user), companion: render(pair.companion) })];
+        } catch {
+          return [];
+        }
+      }),
+  );
   return Object.freeze({
     ...base,
     profileId: `gamebuddy.${companionId}`,
     identity,
     ...(persona === undefined ? {} : { persona }),
+    ...(examples.length === 0 ? {} : { examples }),
   });
 }
 function validateMetadata(value: NewCompanionMetadata): void {

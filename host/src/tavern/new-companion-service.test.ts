@@ -134,6 +134,55 @@ test("New Companion fails closed when runtime namespace is replaced by a symlink
   }
 });
 
+test("New Companion renders macros inside reviewed examples and writes them into the profile (AIRP fork S2)", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-examples-");
+  const examplesCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "persona_core",
+        text: "{{char}} likes amethyst.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "example_1",
+        text: JSON.stringify({ user: "Want to play?", companion: "<BOT> is always up for it." }),
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "example_2",
+        text: JSON.stringify({ user: "{{user}} tired?", companion: "A little, but stay with me." }),
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(examplesCandidate, {
+      reviewedFields: ["persona_core", "example_1", "example_2"],
+      approvedAtMs: 10,
+    });
+    const threadStore = createChatThreadStore(root, "d".repeat(64));
+    try {
+      const created = await provisionNewCompanion(root, "player", examplesCandidate, review, threadStore);
+      // Examples survive review, are macro-rendered ({{char}}→name, {{user}}→player)
+      // and land in the IdentityProfile so renderIdentityProfile can teach from them.
+      assert.deepEqual(created.profile.examples, [
+        { user: "Want to play?", companion: "GameBuddy Companion is always up for it." },
+        { user: "player tired?", companion: "A little, but stay with me." },
+      ]);
+      assert.equal(identityProfileHash(created.profile), identityProfileHash(created.profile));
+    } finally {
+      threadStore.close?.();
+    }
+  } finally {
+    await cleanupTestRoot(root);
+  }
+});
+
 test("New Companion maps the reviewed persona and renders card macros deterministically", async () => {
   const root = await canonicalTestRoot("tavern-new-companion-persona-");
   const personaCandidate = {

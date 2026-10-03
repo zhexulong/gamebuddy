@@ -821,7 +821,7 @@ export async function createRuntimeWithFixedToolsCore(
     noContextFiles: true,
     systemPrompt:
       runtimeSurface === "chat"
-        ? buildChatCompanionSystemPrompt(profile)
+        ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
         : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale),
     appendSystemPrompt: [],
   });

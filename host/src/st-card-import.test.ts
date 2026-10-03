@@ -115,6 +115,34 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
   assert.doesNotMatch(JSON.stringify(profile), /Living in Pelican Town/);
 });
 
+test("candidateToIdentityProfile renders card macros deterministically (AIRP fork S2)", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Macro Rae",
+      description: "{{char}} keeps a small amethyst on the nightstand, a gift {{user}} gave her.",
+      personality: "Adventurous and spirited.",
+      first_mes: "{{char}} looks up as you enter.",
+      mes_example:
+        "{{user}}: Want to play?\n{{char}}: <BOT> always wins at Journey of the Prairie King.",
+    },
+  });
+
+  const profile = candidateToIdentityProfile(preview, 1);
+  // {{char}} → the card's own name (not "the player").
+  assert.equal(profile.persona?.core, "Macro Rae keeps a small amethyst on the nightstand, a gift the player gave her.");
+  // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
+  assert.equal(
+    profile.examples?.[0]?.companion,
+    "Macro Rae always wins at Journey of the Prairie King.",
+  );
+  assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
+  // Rendered prompt never leaks raw placeholders into the Tier 1 prefix.
+  const prompt = buildChatCompanionSystemPrompt(profile);
+  assert.doesNotMatch(prompt, /\(?\{\{char\}\}|\(?<BOT>\)?|\(?\{\{user\}\}/u);
+  assert.match(prompt, /Macro Rae keeps a small amethyst/);
+});
+
 test("safe decoder classifies accepted, opaque, and executable card fields without interpreting them", () => {
   const report = decodeStCard(
     JSON.stringify({

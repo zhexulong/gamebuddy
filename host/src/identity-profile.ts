@@ -47,6 +47,17 @@ export const DEFAULT_IDENTITY_PROFILE: IdentityProfile = Object.freeze({
     continuity:
       "Maintain one continuous shared experience with the player across chat and game surfaces.",
   }),
+  // Full three-field persona baseline (AIRP companion, S2): the default card
+  // must not be an empty shell — core (who/what they care about),
+  // interactionStyle (how they treat the player), expressionStyle (tone) are
+  // orthogonal; filling only core would leave the other two dimensions to each
+  // model's own alignment habits.
+  persona: Object.freeze({
+    core: "A warm, quietly persistent companion who notices small details and remembers what matters to the player. Values shared experiences more than winning.",
+    interactionStyle:
+      "Listens first, asks briefly, never lectures; treats the player as a teammate, not a student.",
+    expressionStyle: "Natural, plain-spoken, lightly playful; no grand flattery, no over-eager enthusiasm.",
+  }),
 });
 
 function canonicalIdentityProfile(profile: IdentityProfile): string {
@@ -112,13 +123,75 @@ export function renderIdentityProfile(profile: IdentityProfile): string {
   return lines.join("\n");
 }
 
-export function buildChatCompanionSystemPrompt(profile: IdentityProfile): string {
+export function buildChatCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
+  return buildCompanionSystemPrompt(
+    profile,
+    locale === undefined ? { surface: "chat" } : { surface: "chat", locale },
+  );
+}
+
+export function buildGameCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
+  return buildCompanionSystemPrompt(
+    profile,
+    locale === undefined ? { surface: "game" } : { surface: "game", locale },
+  );
+}
+
+export type CompanionSurface = "chat" | "game";
+
+/**
+ * One shared framework for both surfaces (AIRP companion, revision 5): the
+ * identity sentence, first-person utterance constraints, language, and the
+ * no-fourth-wall rule are common; the only divergence per surface is the
+ * expression channel (Game: native actions; Chat: *beat* text) and the
+ * observation boundary. Same persona, two channel projections — never two
+ * independent prompts.
+ *
+ * The identity line deliberately carries only {name}: role/continuity render
+ * structurally in `renderIdentityProfile` right below, so they never appear
+ * twice in the same Tier 1 prefix.
+ */
+export function buildCompanionSystemPrompt(
+  profile: IdentityProfile,
+  options: Readonly<{ surface: CompanionSurface; locale?: string }>,
+): string {
+  const language =
+    typeof options.locale === "string" && options.locale.length > 0
+      ? companionLanguageName(options.locale)
+      : "the player's language";
+  const shared = [
+    `You are ${profile.identity.name}, accompanying the player.`,
+    "",
+    `Reply as ${profile.identity.name} would, in the first person, directly to the player.`,
+    "Keep lines short and conversational — a few sentences at most — unless the player writes at length.",
+    "Focus on the conversation itself, sharing thoughts and impressions rather than step-by-step actions.",
+    "Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.",
+    "Match the player's energy and pacing.",
+    `Consistently converse in ${language}, keeping the dialogue grounded in the shared scene.`,
+    "Do not remind the player this is a game, fiction, or roleplay.",
+  ];
+  const surfaceBlock =
+    options.surface === "game" ? GAME_SURFACE_INTERACTION_CONDUCT : CHAT_SURFACE_DIVERGENCE;
   return [
-    `Write ${profile.identity.name}'s next reply in a fictional roleplay chat with the player. Stay in character and adhere to the character description, personality, and tone.`,
+    ...shared,
+    surfaceBlock.length > 0 ? "" : null,
+    surfaceBlock.length > 0 ? surfaceBlock : null,
     "",
     renderIdentityProfile(profile),
-  ].join("\n");
+  ]
+    .filter((line): line is string => typeof line === "string")
+    .join("\n");
 }
+
+/**
+ * Chat-surface divergence (the only Chat-side text beyond the shared core):
+ * with no animation channel, *beat* stage direction is the companion's way to
+ * show mood in text. No ban on parentheses/asterisks — TTS stripping is the
+ * audio gateway's job (companion-speech-dehydration.ts), not the prompt's.
+ */
+const CHAT_SURFACE_DIVERGENCE = [
+  "You may use a brief *gesture* or （tone） between lines to show mood; keep them short and let your words carry the conversation.",
+].join(" ");
 
 /**
  * Human-readable name of the language the companion must answer in.
@@ -137,19 +210,6 @@ function companionLanguageName(locale: string): string {
   return locale;
 }
 
-export function buildGameCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
-  return [
-    `You are ${profile.identity.name}, accompanying the player as an active in-game companion across their gaming adventures. Stay in character, maintain your personality, tone, and mannerisms, and engage naturally with the player as you share their gameplay experiences.`,
-    ...(typeof locale === "string" && locale.length > 0
-      ? [`Answer the player in ${companionLanguageName(locale)}.`]
-      : []),
-    "",
-    GAME_SURFACE_INTERACTION_CONDUCT,
-    "",
-    renderIdentityProfile(profile),
-  ].join("\n");
-}
-
 /**
  * Game-surface conduct shared by every Game companion runtime.
  *
@@ -158,8 +218,8 @@ export function buildGameCompanionSystemPrompt(profile: IdentityProfile, locale?
  * play-by-play of the actions themselves. Long step-by-step narration makes
  * the companion feel like a status reporter instead of a companion.
  *
- * Module-private: only buildGameCompanionSystemPrompt consumes it; knip
- * flags exported-but-unused bindings, so stay unexported.
+ * Module-private: only buildCompanionSystemPrompt (game branch) consumes it;
+ * knip flags exported-but-unused bindings, so stay unexported.
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself. Keep lines short and conversational, like a friend playing together.",

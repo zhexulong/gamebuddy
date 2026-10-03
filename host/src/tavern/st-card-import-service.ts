@@ -138,7 +138,7 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
           field("persona_expression_style", profile.persona.expressionStyle, "profile_eligible_after_explicit_review"),
         ]),
     ...profile.examples.map((example, index) =>
-      field(`example_${index + 1}`, JSON.stringify(example), "candidate_only"),
+      field(`example_${index + 1}`, JSON.stringify(example), "profile_eligible_after_explicit_review"),
     ),
     ...(profile.firstGreeting === undefined
       ? []

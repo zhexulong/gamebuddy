@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
+import { renderMacros } from "./tavern/macro-engine.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { WorldBookEntry } from "./worldbook.js";
 
@@ -80,7 +81,11 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
 
 /**
  * Maps an imported candidate's static persona and identity into a Host IdentityProfile,
- * ensuring 100% Prefix Caching in m[0].
+ * ensuring 100% Prefix Caching in m[0]. Card macros are rendered deterministically
+ * ({{char}} → name, {{user}} → "the player") before the profile is frozen, so a card
+ * writer can use the standard ST token set without leaking raw placeholders into the
+ * Tier 1 prefix. Rendering is single-pass (renderMacros), values are re-checked by
+ * validateIdentityProfile at the write boundary.
  */
 export function candidateToIdentityProfile(
   previewOrCandidate: StCardImportPreview | StCardImportCandidate,
@@ -90,6 +95,24 @@ export function candidateToIdentityProfile(
     "profileCandidate" in previewOrCandidate
       ? previewOrCandidate.profileCandidate
       : (previewOrCandidate as StCardImportPreview).profileCandidate;
+  const macros = Object.freeze({ char: profileCandidate.identity.name, user: "the player" });
+  const render = (value: string): string => renderMacros(value, macros);
+  const persona =
+    profileCandidate.persona === undefined
+      ? undefined
+      : Object.freeze({
+          core: render(profileCandidate.persona.core),
+          interactionStyle: render(profileCandidate.persona.interactionStyle),
+          expressionStyle: render(profileCandidate.persona.expressionStyle),
+        });
+  const examples =
+    profileCandidate.examples === undefined || profileCandidate.examples.length === 0
+      ? undefined
+      : Object.freeze(
+          profileCandidate.examples.map((example) =>
+            Object.freeze({ user: render(example.user), companion: render(example.companion) }),
+          ),
+        );
   return Object.freeze({
     schemaVersion: 1,
     profileId: profileCandidate.profileId,
@@ -99,10 +122,8 @@ export function candidateToIdentityProfile(
       role: profileCandidate.identity.role,
       continuity: profileCandidate.identity.continuity,
     }),
-    ...(profileCandidate.persona === undefined ? {} : { persona: profileCandidate.persona }),
-    ...(profileCandidate.examples === undefined || profileCandidate.examples.length === 0
-      ? {}
-      : { examples: profileCandidate.examples }),
+    ...(persona === undefined ? {} : { persona }),
+    ...(examples === undefined ? {} : { examples }),
   });
 }
 
