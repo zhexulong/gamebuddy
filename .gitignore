@@ -97,7 +97,10 @@ tmp_*
 /plans/
 /naming-refactor-review*.md
 /.cortexkit/
-/scratch/
+**/scratch/**
+**/scripts/scratch/**
+**/.tmp/**
+**/*.backup
 /host/.agents/
 /host/dist-*
 /host/.dist-production-*/
