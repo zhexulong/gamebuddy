@@ -452,9 +452,30 @@ async function buildComposedProductionArtifact({
   const stagingRoot = resolve(hostRoot, ".tmp", "build-staging", `.dist-production-emitted-${process.pid}-${buildId}`);
   const closureRoot = resolve(hostRoot, ".tmp", "build-staging", `.dist-production-closure-${process.pid}-${buildId}`);
   const browserStagingRoot = resolve(browserStagingParent, buildId);
+  // The emitted `windows-reparse-inspector/index.js` resolves its helper pair
+  // REPOSITORY-RELATIVE from its own location (`hostRoot` = two directory
+  // levels up, `repositoryRoot` = one more). When staging sat directly under
+  // the host root this resolved to the real repository. Since staging moved
+  // under `host/.tmp/build-staging/` (eb5584a) the emitted module's
+  // repository root is `host/.tmp`, so its `host/native/...` helper path is
+  // nonexistent and Vite's config load fails with
+  // `windows_reparse_inspection_unavailable`. The build stages a mirror of
+  // the verified helper pair at exactly that location so the emitted adapter
+  // keeps working unchanged; the mirror is removed with the other private
+  // roots so no other build can observe it.
+  const stagingInspectorMirrorRoot = resolve(
+    dirname(stagingRoot),
+    "..",
+    "host",
+    "native",
+    "windows-reparse-inspector",
+    ".dist",
+    "win-x64",
+  );
   await rm(stagingRoot, { recursive: true, force: true });
   await rm(closureRoot, { recursive: true, force: true });
   await rm(browserStagingRoot, { recursive: true, force: true });
+  await rm(stagingInspectorMirrorRoot, { recursive: true, force: true });
   try {
     await cleanupStaleStagingDirectories({ hostRoot, browserStagingParent });
     await verifyMagicContext();
@@ -472,7 +493,20 @@ async function buildComposedProductionArtifact({
       await buildWindowsReparseInspector();
       const config = await readArtifactConfig(hostRoot);
       if (config.windowsReparseInspector === undefined) throw new Error("windows_reparse_inspector_descriptor_missing");
-      await verifyBuiltWindowsReparseInspector(config.windowsReparseInspector);
+      const verifiedInspectorPair = await verifyBuiltWindowsReparseInspector(config.windowsReparseInspector);
+      // Mirror the verified helper pair at the repository-relative location the
+      // emitted adapter derives from its own module path (see staging comment
+      // above). Only the build-time helper is mirrored; the published launch
+      // closure copy happens later through copyVerifiedWindowsReparseInspector.
+      await mkdir(stagingInspectorMirrorRoot, { recursive: true });
+      for (const name of [config.windowsReparseInspector.helper, config.windowsReparseInspector.manifest]) {
+        await copyFile(resolve(verifiedInspectorPair.pairRoot, name), resolve(stagingInspectorMirrorRoot, name));
+      }
+      // The mirror is byte-identical to the pair that just passed
+      // verifyBuiltWindowsReparseInspector, and the emitted adapter re-checks
+      // the manifest digest itself before minting a capability, so no second
+      // descriptor-layout verify is needed here (the descriptor's destination
+      // describes the published closure layout, not the staging mirror).
       await buildWindowsStardewFolderPicker();
       if (config.windowsStardewFolderPicker === undefined) throw new Error("windows_stardew_folder_picker_descriptor_missing");
       await verifyWindowsStardewFolderPickerPair({ root: resolve(windowsStardewFolderPickerBuildRoot, ".."), descriptor: { ...config.windowsStardewFolderPicker, destination: "win-x64" } });
@@ -521,6 +555,7 @@ async function buildComposedProductionArtifact({
     await rm(browserStagingRoot, { recursive: true, force: true });
     await rm(stagingRoot, { recursive: true, force: true });
     await rm(closureRoot, { recursive: true, force: true });
+    await rm(stagingInspectorMirrorRoot, { recursive: true, force: true });
   }
 }
 

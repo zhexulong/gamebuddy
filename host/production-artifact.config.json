@@ -113,6 +113,12 @@
         "module": "tavern/memory-management/memory-management.js",
         "expression": "\"@cortexkit/pi-magic-context/memory\"",
         "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 0
       }
     ]
   },
