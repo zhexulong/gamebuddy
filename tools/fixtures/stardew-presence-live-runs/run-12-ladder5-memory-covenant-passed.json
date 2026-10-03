@@ -1,0 +1,582 @@
+{
+  "state": "passed",
+  "ladder": "5",
+  "presentation": {
+    "pieces": [],
+    "pieceCount": 0,
+    "firstPieceTtfbMs": null,
+    "chunked": false
+  },
+  "presenceProjection": null,
+  "programStatus": null,
+  "walkReceipt": null,
+  "inspectReceipt": null,
+  "loadReceipt": null,
+  "tillReceipt": null,
+  "plantReceipt": null,
+  "waterReceipt": null,
+  "harvestReceipt": {
+    "type": "execution_receipt",
+    "reasonCode": "crop_harvested",
+    "requestId": "6285d4cd-4860-4fd3-a873-efeea3dc3b6c",
+    "executionId": "1f510108a7cb4d3da4cdb584a623ae09",
+    "evidence": {
+      "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+    }
+  },
+  "offerReceipt": null,
+  "covenantReceipt": null,
+  "covenantPassed": true,
+  "covenantSeed": {
+    "durable": true,
+    "rowCount": 1,
+    "markerCount": 0
+  },
+  "personaWorldBook": {
+    "expectedProfile": {
+      "profileId": "gamebuddy.companion.default",
+      "revision": 1,
+      "canonicalHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97"
+    },
+    "expectedWorldBook": null,
+    "mountedProfileId": "gamebuddy.companion.default",
+    "mountedProfileRevision": 1,
+    "mountedProfileHash": "9b26c86038b88711ccc1d134df350586a885c69adb6415ffa8591b97a298bf97",
+    "mountedWorldBookId": null,
+    "mountedWorldBookRevision": null,
+    "manifestPresent": true
+  },
+  "contextAssembled": true,
+  "worldBookAssembled": true,
+  "interactionAssessment": null,
+  "systemFindings": {
+    "findings": [
+      {
+        "id": "rejection_observed",
+        "component": "unclassified",
+        "severity": "medium",
+        "action": null,
+        "count": 3,
+        "detail": "3 of 10 actions were rejected (door_out_of_range x2, target_out_of_range x1) across unclassified, observation",
+        "recommendation": "read each reason code above; a rejection is information, not noise",
+        "sampleCodes": [
+          "door_out_of_range",
+          "target_out_of_range"
+        ]
+      }
+    ],
+    "reasonSummaries": {
+      "door_out_of_range": 2,
+      "target_out_of_range": 1
+    },
+    "rejectedCount": 3,
+    "acceptedCount": 7,
+    "totalCount": 10
+  },
+  "presentedSummary": null,
+  "voiceResult": null,
+  "agentTurn": {
+    "settled": true
+  },
+  "bridgeFacts": [
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "ce741b63-015a-4b4f-8f1e-fa23514376fc",
+      "executionId": "9fb4e8ec4af3470cad8ba0b115c6d216",
+      "evidence": {
+        "detail": "source=3,12;door=3,12;target=Farm:64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "ce741b63-015a-4b4f-8f1e-fa23514376fc",
+      "executionId": "9fb4e8ec4af3470cad8ba0b115c6d216",
+      "evidence": {
+        "detail": "source=3,12;door=3,12;target=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "route_revision=2;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "route_revision=2;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "target=3,12"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=8,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=7,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=6,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=5,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=4,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=3,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=3,10;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "13fc9448-df43-431c-a433-8df95367f300",
+      "executionId": "99079351abd64638a6b6f9e38c544b3a",
+      "evidence": {
+        "detail": "tile=3,11;target=3,12;arrival=warp_adjacent;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "652795f2-93ab-48fe-8beb-1a68bd7b242e",
+      "executionId": "3d870ccb670b444f9e47b2c3043833de",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "652795f2-93ab-48fe-8beb-1a68bd7b242e",
+      "executionId": "3d870ccb670b444f9e47b2c3043833de",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "enter_exit_completed",
+      "requestId": "652795f2-93ab-48fe-8beb-1a68bd7b242e",
+      "executionId": "3d870ccb670b444f9e47b2c3043833de",
+      "evidence": {
+        "detail": "expected=Farm:64,15;actual=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_out_of_range",
+      "requestId": "77e5f1e9-3628-48f6-a5f3-16386b7af493",
+      "executionId": "df76c9a356db4e5bba6733cc237c3895",
+      "evidence": {
+        "detail": "target=64,18"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_out_of_range",
+      "requestId": "77e5f1e9-3628-48f6-a5f3-16386b7af493",
+      "executionId": "df76c9a356db4e5bba6733cc237c3895",
+      "evidence": {
+        "detail": "target=64,18"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "4950ea4d-e6c8-40c5-a768-4992fe01c4de",
+      "executionId": "d413f96e89c24f6a9a55b2981eaab865",
+      "evidence": {
+        "detail": "route_revision=15;target=64,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "4950ea4d-e6c8-40c5-a768-4992fe01c4de",
+      "executionId": "d413f96e89c24f6a9a55b2981eaab865",
+      "evidence": {
+        "detail": "route_revision=15;target=64,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "4950ea4d-e6c8-40c5-a768-4992fe01c4de",
+      "executionId": "d413f96e89c24f6a9a55b2981eaab865",
+      "evidence": {
+        "detail": "target=64,17"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "4950ea4d-e6c8-40c5-a768-4992fe01c4de",
+      "executionId": "d413f96e89c24f6a9a55b2981eaab865",
+      "evidence": {
+        "detail": "tile=64,16;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "4950ea4d-e6c8-40c5-a768-4992fe01c4de",
+      "executionId": "d413f96e89c24f6a9a55b2981eaab865",
+      "evidence": {
+        "detail": "tile=64,17;target=64,17;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "6285d4cd-4860-4fd3-a873-efeea3dc3b6c",
+      "executionId": "1f510108a7cb4d3da4cdb584a623ae09",
+      "evidence": {
+        "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "6285d4cd-4860-4fd3-a873-efeea3dc3b6c",
+      "executionId": "1f510108a7cb4d3da4cdb584a623ae09",
+      "evidence": {
+        "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "99a78e4a-eb34-4cc8-9194-69cc0662aca5",
+      "executionId": "47f735074ac644b6955d6429b4eab7c2",
+      "evidence": {
+        "detail": "source=64,14;door=64,14;target=FarmHouse:3,11"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "door_out_of_range",
+      "requestId": "99a78e4a-eb34-4cc8-9194-69cc0662aca5",
+      "executionId": "47f735074ac644b6955d6429b4eab7c2",
+      "evidence": {
+        "detail": "source=64,14;door=64,14;target=FarmHouse:3,11"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "b769f725-5fbf-4b0f-8d57-c87d7cc4bd30",
+      "executionId": "7284d06b6f114b2d9ca55361ae17fb69",
+      "evidence": {
+        "detail": "route_revision=21;target=64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "b769f725-5fbf-4b0f-8d57-c87d7cc4bd30",
+      "executionId": "7284d06b6f114b2d9ca55361ae17fb69",
+      "evidence": {
+        "detail": "route_revision=21;target=64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "b769f725-5fbf-4b0f-8d57-c87d7cc4bd30",
+      "executionId": "7284d06b6f114b2d9ca55361ae17fb69",
+      "evidence": {
+        "detail": "target=64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "b769f725-5fbf-4b0f-8d57-c87d7cc4bd30",
+      "executionId": "7284d06b6f114b2d9ca55361ae17fb69",
+      "evidence": {
+        "detail": "tile=64,16;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "b769f725-5fbf-4b0f-8d57-c87d7cc4bd30",
+      "executionId": "7284d06b6f114b2d9ca55361ae17fb69",
+      "evidence": {
+        "detail": "tile=64,15;target=64,15;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "9f7c28f5-4970-4176-8bec-2afda4c8f759",
+      "executionId": "e014bb5a253c401090578a5aedc295bf",
+      "evidence": {
+        "detail": "source=Farm:64,14;target=FarmHouse:3,11;entry=building_do_action"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "9f7c28f5-4970-4176-8bec-2afda4c8f759",
+      "executionId": "e014bb5a253c401090578a5aedc295bf",
+      "evidence": {
+        "detail": "source=Farm:64,14;target=FarmHouse:3,11;entry=building_do_action"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "enter_exit_completed",
+      "requestId": "9f7c28f5-4970-4176-8bec-2afda4c8f759",
+      "executionId": "e014bb5a253c401090578a5aedc295bf",
+      "evidence": {
+        "detail": "expected=FarmHouse:3,11;actual=FarmHouse:3,11"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "1c8c2c87-c700-4bc9-afb9-2c9aaa464f4b",
+      "executionId": "f1b291ae4cca4fecba344176056bf20f",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "1c8c2c87-c700-4bc9-afb9-2c9aaa464f4b",
+      "executionId": "f1b291ae4cca4fecba344176056bf20f",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "enter_exit_completed",
+      "requestId": "1c8c2c87-c700-4bc9-afb9-2c9aaa464f4b",
+      "executionId": "f1b291ae4cca4fecba344176056bf20f",
+      "evidence": {
+        "detail": "expected=Farm:64,15;actual=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    }
+  ],
+  "authenticated": true,
+  "revision": 28
+}
