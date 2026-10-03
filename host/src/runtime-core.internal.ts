@@ -100,6 +100,52 @@ export const MAGIC_CONTEXT_MEMORY_ENABLED = true;
 // Magic Context's own ongoing-interaction Historian can publish eligible
 // Semantic facts when it is enabled. The Host never classifies or writes them.
 export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
+
+const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;
+const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
+const WEATHER_NAMES_ZH: Record<string, string> = {
+  sunny: "晴天",
+  rain: "雨天",
+  snow: "下雪",
+  lightning: "雷雨",
+  debris: "风沙",
+  unknown: "未知天气",
+};
+const WEATHER_NAMES_EN: Record<string, string> = {
+  sunny: "sunny",
+  rain: "rainy",
+  snow: "snowy",
+  lightning: "thunderstorm",
+  debris: "windy",
+  unknown: "unknown weather",
+};
+
+/** Native 24h game clock "600"/"2600" → 12h with period; 2600 (2 AM) is the last legal clock. */
+export function formatGameClock(timeOfDay: number): string {
+  if (!Number.isSafeInteger(timeOfDay) || timeOfDay < 0) return "";
+  const h24 = Math.floor(timeOfDay / 100);
+  const minute = timeOfDay % 100;
+  if (h24 > 26 || minute > 59) return "";
+  // 24:00/25:00/26:00 are the late-night wrap hours (2 AM); period is decided
+  // on the RAW 24h hour, not the 12h remainder.
+  const raw = h24 % 24;
+  const period = raw < 12 ? "AM" : "PM";
+  const h12 = raw % 12 === 0 ? 12 : raw % 12;
+  return `${h12}:${String(minute).padStart(2, "0")} ${period}`;
+}
+
+export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
+  const season =
+    (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
+  if (zh) return `${year}年第${day}天 ${season}`;
+  return `Year ${year}, Day ${day} of ${season}`;
+}
+
+export function formatGameWeather(token: string, zh: boolean): string {
+  const map = zh ? WEATHER_NAMES_ZH : WEATHER_NAMES_EN;
+  const name = map[token] ?? token;
+  return zh ? `天气：${name}` : `weather: ${name}`;
+}
 /**
  * Magic Context's native trigger may now run the embedded-SDK, no-tool
  * Historian when its own context-pressure policy requires organization.
@@ -727,6 +773,30 @@ export async function createRuntimeWithFixedToolsCore(
           );
     if (renderPartition !== undefined) {
       memoryHooks.setDeclaredProjectIdentity(renderPartition);
+    }
+
+    // Non-durable runtime environment facts (game clock, date, weather): the
+    // host registers one provider per runtime; the Magic Context transform
+    // pass injects its CURRENT value as an idempotent <runtime-environment>
+    // block so the companion sees live world state on the next turn without
+    // ever writing it to player memory. Facts are read straight from the
+    // authenticated Mod snapshot (the same numbers the native game reads).
+    // Absent a usable snapshot the provider renders nothing; the block is
+    // then stripped by the same pass and the companion sees no stale state.
+    if (integration !== undefined && identity.continuityId !== undefined) {
+      memoryHooks.setRuntimeEnvironmentFacts(() => {
+        const connection = integration as import("./game-connection.js").StardewBridgeConnection;
+        const snapshot = connection.state?.snapshot;
+        if (snapshot === null || snapshot === undefined) return "";
+        const locale = snapshot.presentationLocale?.toLowerCase() ?? "";
+        const zh = locale.startsWith("zh");
+        return [
+          formatGameClock(snapshot.timeOfDay),
+          formatGameDate(snapshot.dayOfMonth, snapshot.seasonIndex, snapshot.year, zh),
+          formatGameWeather(snapshot.weather, zh),
+          `${zh ? "位置" : "location"}: ${snapshot.location}`,
+        ].join("；");
+      });
     }
   }
 
