@@ -180,7 +180,9 @@
     "diagnose:procs": "powershell.exe -File tools/scripts/list-procs.ps1",
     "check:stardew-loop-closure": "node tools/check-stardew-loop-closure.mjs",
     "test:stardew-loop-closure": "node --test tools/check-stardew-loop-closure.test.mjs",
-    "test:stardew-loop-closure-mutation": "node tools/check-stardew-loop-closure.mutation.mjs"
+    "test:stardew-loop-closure-mutation": "node tools/check-stardew-loop-closure.mutation.mjs",
+    "clean:host": "node tools/scripts/clean-host-workspace.mjs",
+    "clean:all": "pnpm --filter host clean && pnpm --filter dialogue-web clean && dotnet clean integrations/stardew/GameBuddy.Stardew.csproj"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

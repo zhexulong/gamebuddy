@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
+import { resolve } from "node:path";
 import { launchStardewLiveRun } from "./lib/stardew-live-run.mjs";
 
 // One-shot orchestrator for the ladder live run.
@@ -16,11 +17,19 @@ if (process.argv.length > 2) {
   process.exit(2);
 }
 
-const GAME_PATH = "D:\\Steam\\steamapps\\common\\Stardew Valley";
-const MODS_PATH = "D:\\Steam\\steamapps\\common\\Stardew Valley\\Mods";
+let GAME_PATH = process.env.GAMEBUDDY_STARDEW_GAME_DIR;
+let MODS_PATH = process.env.GAMEBUDDY_STARDEW_MODS_DIR;
+if (!GAME_PATH || !MODS_PATH) {
+  // No default: this orchestrator deliberately starts a real game process, so
+  // machine-specific paths must be supplied explicitly.
+  console.error("GAMEBUDDY_STARDEW_GAME_DIR and GAMEBUDDY_STARDEW_MODS_DIR must be set");
+  process.exit(2);
+}
+GAME_PATH = GAME_PATH.replaceAll("/", "\\");
+MODS_PATH = MODS_PATH.replaceAll("/", "\\");
 const PIPE_NAME = "gamebuddy-stardew";
 
-const logPath = "E:\\projects\\ai-game-companion\\tools\\_ladder-live-runner.log";
+const logPath = process.env.GAMEBUDDY_LADDER_LIVE_LOG ?? resolve(process.cwd(), "tools", "_ladder-live-runner.log");
 const runnerLog = createWriteStream(logPath, { flags: "w" });
 
 let game = null;
