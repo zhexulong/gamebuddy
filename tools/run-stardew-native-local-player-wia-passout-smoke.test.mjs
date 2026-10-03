@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runWiaPassOutSmoke } from "./run-stardew-native-local-wia-passout-smoke.mjs";
+import { runWiaPassOutSmoke } from "./run-stardew-native-local-player-wia-passout-smoke.mjs";
 
 const config = {
   SaveId: "save",

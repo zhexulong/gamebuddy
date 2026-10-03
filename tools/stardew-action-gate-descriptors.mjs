@@ -292,8 +292,8 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // classifies it as invalidated/pass_out (body facts) or
   // invalidated/modal_interrupted (intent breakpoint) instead of an opaque
   // action fault. Not a new action; they grant no capability.
-  wia_pass_out: "run-stardew-native-local-wia-passout-smoke.mjs",
-  wia_modal_interrupt: "run-stardew-native-local-wia-modal-interrupt-smoke.mjs",
+  wia_pass_out: "run-stardew-native-local-player-wia-passout-smoke.mjs",
+  wia_modal_interrupt: "run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {
