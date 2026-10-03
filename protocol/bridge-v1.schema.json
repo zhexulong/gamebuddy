@@ -1261,6 +1261,34 @@
         }
       }
     },
+    "harvestWhereabouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "readyForHarvestCount",
+        "nearestX",
+        "nearestY"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "readyForHarvestCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "nearestX": {
+          "$ref": "#/$defs/tile"
+        },
+        "nearestY": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
     "npcRelationshipTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -1532,7 +1560,8 @@
           "timeOfDay",
           "dayOfMonth",
           "seasonIndex",
-          "year"
+          "year",
+          "weather"
         ],
         "properties": {
         "revision": {
@@ -1602,6 +1631,16 @@
         "dayOfMonth": { "type": "integer", "minimum": 0, "maximum": 28 },
         "seasonIndex": { "type": "integer", "minimum": 0, "maximum": 3 },
         "year": { "type": "integer", "minimum": 0 },
+        "weather": {
+          "enum": [
+            "sunny",
+            "rain",
+            "snow",
+            "lightning",
+            "debris",
+            "unknown"
+          ]
+        },
         "activeExecution": {
           "anyOf": [
             {
@@ -1730,6 +1769,13 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/villagerWhereabouts"
+      },
+      "maxItems": 64
+    },
+    "harvestWhereabouts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/harvestWhereabouts"
       },
       "maxItems": 64
     },

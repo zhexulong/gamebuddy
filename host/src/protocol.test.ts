@@ -2839,6 +2839,88 @@ test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
   );
 });
 
+test("snapshot admits weather and harvestWhereabouts and rejects malformed values", () => {
+  const base = {
+    revision: 5,
+    location: "Farm",
+    tile: { x: 10, y: 11 },
+    stamina: 270,
+    exhausted: false,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    activeExecution: null,
+  };
+  // weather is optional for wire compatibility with older Mod snapshots, but
+  // when present it must be one of the projected tokens - free text would let
+  // a malformed Mod smuggle arbitrary string into the snapshot.
+  for (const token of ["sunny", "rain", "snow", "lightning", "debris", "unknown"]) {
+    assert.equal(
+      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, weather: token }, `w_${token}`, now), scope, now),
+      "accepted",
+    );
+  }
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, weather: "frosty" }, "w_free", now), scope, now),
+    "invalid_snapshot:weather",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, weather: 42 }, "w_num", now), scope, now),
+    "invalid_snapshot:weather",
+  );
+
+  // harvestWhereabouts follows the villagerWhereabouts shape: exact keys,
+  // bounded count, real tiles, 64-entry cap.
+  const row = { location: "Farm", readyForHarvestCount: 1, nearestX: 64, nearestY: 18 };
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [row] }, "hw_ok", now), scope, now),
+    "accepted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [] }, "hw_empty", now), scope, now),
+    "accepted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [{ ...row, extra: 1 }] }, "hw_extra", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:harvestWhereabouts",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [{ ...row, readyForHarvestCount: -1 }] }, "hw_neg", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:harvestWhereabouts",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [{ ...row, nearestX: -3, nearestY: 99999 }] }, "hw_tile", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:harvestWhereabouts",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: Array.from({ length: 65 }, () => row) }, "hw_many", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:harvestWhereabouts",
+  );
+});
+
 test("snapshot admits crafting/cooking recipe and cooking-station discovery and rejects malformed rows", () => {
   // craft_item and cook_recipe accept only expectedTargetId, so without these
   // lists an Agent had no way to learn a recipe key - and cook_recipe had no way

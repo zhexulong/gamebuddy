@@ -510,6 +510,7 @@ public sealed class BridgeProtocolSerializationTests
             ScytheCropTargets: null,
             NpcRelationshipTargets: null,
             VillagerWhereabouts: null,
+            HarvestWhereabouts: null,
             PetTargets: null,
             AnimalProductTargets: null,
             FeedTroughTargets: null,
@@ -529,6 +530,7 @@ public sealed class BridgeProtocolSerializationTests
             DayOfMonth: 1,
             SeasonIndex: 0,
             Year: 1,
+            Weather: "sunny",
             PresentationLocale: "en-US");
         var envelope = new BridgeEnvelope<BridgeSnapshot>(
             BridgeProtocol.Version,
