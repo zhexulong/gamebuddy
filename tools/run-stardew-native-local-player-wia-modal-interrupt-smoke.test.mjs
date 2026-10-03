@@ -48,6 +48,7 @@ function makeClient(terminalState, terminalReason, evidence) {
     observe: async () => snapshot,
     execute: async (request) => {
       if (request.action === "move_to_tile") {
+        assert.deepEqual(request.args, { x: 35, y: 35 }, "move args must carry only x/y (exact-shape contract)");
         moveCalls++;
         const executionId = `modal-exec-${moveCalls}`;
         receipts.push({

@@ -11,6 +11,7 @@ import {
   waitForTerminal,
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_wia_pass_out_v1";
 const EXPECTED_ACTIONS = ["cancel_active_execution", "move_to_tile", "travel", "observe_scene"];
@@ -51,7 +52,7 @@ export async function runWiaPassOutSmoke(
     const target = chooseDistantSoilTile(snapshot);
     if (target === null) throw new Error("no_distant_live_soil_tile");
     const fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
-    const accepted = await execute("wia_pass_out", "move_to_tile", target, fresh, trace, client);
+    const accepted = await execute("wia_pass_out", "move_to_tile", { x: target.x, y: target.y }, fresh, trace, client);
     if (accepted.state !== "accepted") throw new Error(`wia_pass_out_not_accepted:${accepted.reasonCode}`);
 
     const receipt = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
@@ -102,7 +103,7 @@ export async function runWiaPassOutSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runWiaPassOutSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
@@ -209,7 +210,7 @@ function chooseDistantSoilTile(snapshot) {
           ...tile,
           distance: Math.max(Math.abs(tile.x - player.x), Math.abs(tile.y - player.y)),
         }))
-        .filter((tile) => tile.distance > 8)
+        .filter((tile) => tile.distance >= 2)
         .sort((a, b) => b.distance - a.distance)
     : [];
   return ranks.length > 0 ? { x: ranks[0].x, y: ranks[0].y, distance: ranks[0].distance } : null;
