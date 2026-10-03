@@ -54,10 +54,32 @@ type TavernBrowserOperationV1 = Readonly<{
     | "memory.mutate"
     | "world-info.bind"
     | "settings.voice.read"
-    | "settings.voice.consent";
+    | "settings.voice.consent"
+    | "settings.voice.devices"
+    | "settings.language.read"
+    | "settings.language.update"
+    | "settings.connection.read"
+    | "settings.connection.create"
+    | "settings.connection.test"
+    | "settings.connection.activate"
+    | "settings.connection.model"
+    | "settings.connection.remove"
+    | "companion.list"
+    | "companion.detail"
+    | "companion.create"
+    | "persona.read"
+    | "persona.update"
+    | "scenario.read"
+    | "scenario.update"
+    | "greeting.read"
+    | "greeting.update"
+    | "chat.archive"
+    | "chat.restore"
+    | "chat.trash";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
+    | "tavern.nav.characters"
     | "tavern.operation.submit"
     | "tavern.operation.cancel"
     | "tavern.operation.draft.save"
@@ -66,7 +88,28 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.memory.mutate"
     | "tavern.operation.world-info.bind"
     | "tavern.operation.settings.voice.read"
-    | "tavern.operation.settings.voice.consent";
+    | "tavern.operation.settings.voice.consent"
+    | "tavern.operation.settings.voice.devices"
+    | "tavern.operation.settings.language.read"
+    | "tavern.operation.settings.language.update"
+    | "tavern.operation.settings.connection.read"
+    | "tavern.operation.settings.connection.create"
+    | "tavern.operation.settings.connection.test"
+    | "tavern.operation.settings.connection.activate"
+    | "tavern.operation.settings.connection.model"
+    | "tavern.operation.settings.connection.remove"
+    | "tavern.operation.companion.list"
+    | "tavern.operation.companion.detail"
+    | "tavern.operation.companion.create"
+    | "tavern.operation.persona.read"
+    | "tavern.operation.persona.update"
+    | "tavern.operation.scenario.read"
+    | "tavern.operation.scenario.update"
+    | "tavern.operation.greeting.read"
+    | "tavern.operation.greeting.update"
+    | "tavern.operation.chat.archive"
+    | "tavern.operation.chat.restore"
+    | "tavern.operation.chat.trash";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;
@@ -91,6 +134,54 @@ export type SetWorldInfoBindingCommandV1 = Readonly<{
   selectionGeneration: number;
   expectedRevision: string;
   sourceHandle: string | null;
+}>;
+
+/** Metadata-only companion library entry: opaque handle plus display name. */
+export type CompanionListEntryV1 = Readonly<{
+  handle: string;
+  name: string;
+  isCurrent: boolean;
+}>;
+export type CompanionListV1 = Readonly<{
+  apiVersion: 1;
+  companions: readonly CompanionListEntryV1[];
+}>;
+/** Safe player-visible companion detail: name only. */
+export type CompanionDetailV1 = Readonly<{
+  apiVersion: 1;
+  name: string;
+}>;
+/** Player persona projection: revision and safe display fields. */
+export type PersonaV1 = Readonly<{
+  apiVersion: 1;
+  present: boolean;
+  revision: number | null;
+  name: string | null;
+  description: string | null;
+}>;
+/** Player scenario projection. */
+export type ScenarioV1 = Readonly<{
+  apiVersion: 1;
+  present: boolean;
+  revision: number | null;
+  name: string | null;
+  description: string | null;
+  preview: string | null;
+}>;
+/** Player greeting set projection. */
+export type GreetingV1 = Readonly<{
+  apiVersion: 1;
+  present: boolean;
+  revision: number | null;
+  label: string | null;
+  variants: readonly Readonly<{ label: string | null; text: string }>[];
+}>;
+/** Chat lifecycle retention result. */
+export type ChatRetentionResultV1 = Readonly<{
+  apiVersion: 1;
+  handle: string;
+  status: "active" | "archived" | "trashed";
+  managementRevision: number;
 }>;
 
 export type TavernVoicePreferenceV1 = Readonly<{
@@ -370,6 +461,19 @@ const OPERATION_IDS = [
   "settings.connection.activate",
   "settings.connection.model",
   "settings.connection.remove",
+  // design/28 §2 Character / Persona / Scenario / Greeting + Chat retention.
+  "companion.list",
+  "companion.detail",
+  "companion.create",
+  "persona.read",
+  "persona.update",
+  "scenario.read",
+  "scenario.update",
+  "greeting.read",
+  "greeting.update",
+  "chat.archive",
+  "chat.restore",
+  "chat.trash",
 ] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
@@ -392,9 +496,22 @@ const LABEL_KEYS = [
   "tavern.operation.settings.connection.activate",
   "tavern.operation.settings.connection.model",
   "tavern.operation.settings.connection.remove",
+  "tavern.nav.characters",
+  "tavern.operation.companion.list",
+  "tavern.operation.companion.detail",
+  "tavern.operation.companion.create",
+  "tavern.operation.persona.read",
+  "tavern.operation.persona.update",
+  "tavern.operation.scenario.read",
+  "tavern.operation.scenario.update",
+  "tavern.operation.greeting.read",
+  "tavern.operation.greeting.update",
+  "tavern.operation.chat.archive",
+  "tavern.operation.chat.restore",
+  "tavern.operation.chat.trash",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
-const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
+const NAVIGATION_ITEM_IDS = ["chat", "memory", "characters"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "pending", "unavailable"] as const;
 const VOICE_DISCLOSURE_VERSIONS = ["mimo-cloud-tts-v1"] as const;
@@ -427,6 +544,12 @@ const PROBLEM_CODES = [
   "connection_not_ready",
   "connection_conflict",
   "connection_limit_reached",
+  "companion_not_found",
+  "companion_conflict",
+  "persona_conflict",
+  "scenario_conflict",
+  "greeting_conflict",
+  "authored_content_invalid",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
@@ -724,6 +847,92 @@ function isSetWorldInfoBindingCommand(value: unknown): value is SetWorldInfoBind
     isPositiveSafeInteger(value.selectionGeneration) &&
     isOpaqueHandle(value.expectedRevision) &&
     (value.sourceHandle === null || isOpaqueHandle(value.sourceHandle))
+  );
+}
+
+const COMPANION_LIST_KEYS = ["apiVersion", "companions"] as const;
+const COMPANION_LIST_ENTRY_KEYS = ["handle", "name", "isCurrent"] as const;
+const COMPANION_DETAIL_KEYS = ["apiVersion", "name"] as const;
+const PERSONA_KEYS = ["apiVersion", "present", "revision", "name", "description"] as const;
+const SCENARIO_KEYS = ["apiVersion", "present", "revision", "name", "description", "preview"] as const;
+const GREETING_KEYS = ["apiVersion", "present", "revision", "label", "variants"] as const;
+const GREETING_VARIANT_KEYS = ["label", "text"] as const;
+const RETENTION_RESULT_KEYS = ["apiVersion", "handle", "status", "managementRevision"] as const;
+const RETENTION_OPERATIONS = ["archive", "restore", "trash"] as const;
+
+function isCompanionList(value: unknown): value is CompanionListV1 {
+  if (!isRecord(value) || !hasExactKeys(value, COMPANION_LIST_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    Array.isArray(value.companions) &&
+    value.companions.every(
+      (entry) =>
+        isRecord(entry) &&
+        hasExactKeys(entry, COMPANION_LIST_ENTRY_KEYS) &&
+        isOpaqueHandle(entry.handle) &&
+        isLengthBoundedString(entry.name, 1, 128) &&
+        typeof entry.isCurrent === "boolean",
+    )
+  );
+}
+
+function isCompanionDetail(value: unknown): value is CompanionDetailV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_DETAIL_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isLengthBoundedString(value.name, 1, 128)
+  );
+}
+
+function isPersona(value: unknown): value is PersonaV1 {
+  if (!isRecord(value) || !hasExactKeys(value, PERSONA_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    typeof value.present === "boolean" &&
+    (value.present ? isNonNegativeSafeInteger(value.revision) : value.revision === null) &&
+    (value.name === null || isLengthBoundedString(value.name, 1, 128)) &&
+    (value.description === null || isLengthBoundedString(value.description, 1, 4096))
+  );
+}
+
+function isScenario(value: unknown): value is ScenarioV1 {
+  if (!isRecord(value) || !hasExactKeys(value, SCENARIO_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    typeof value.present === "boolean" &&
+    (value.present ? isNonNegativeSafeInteger(value.revision) : value.revision === null) &&
+    (value.name === null || isLengthBoundedString(value.name, 1, 128)) &&
+    (value.description === null || isLengthBoundedString(value.description, 1, 8192)) &&
+    (value.preview === null || isLengthBoundedString(value.preview, 1, 512))
+  );
+}
+
+function isGreeting(value: unknown): value is GreetingV1 {
+  if (!isRecord(value) || !hasExactKeys(value, GREETING_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    typeof value.present === "boolean" &&
+    (value.present ? isNonNegativeSafeInteger(value.revision) : value.revision === null) &&
+    (value.label === null || isLengthBoundedString(value.label, 1, 128)) &&
+    Array.isArray(value.variants) &&
+    value.variants.every(
+      (variant) =>
+        isRecord(variant) &&
+        hasExactKeys(variant, GREETING_VARIANT_KEYS) &&
+        (variant.label === null || isLengthBoundedString(variant.label, 1, 128)) &&
+        isLengthBoundedString(variant.text, 1, 8192),
+    )
+  );
+}
+
+function isChatRetentionResult(value: unknown): value is ChatRetentionResultV1 {
+  if (!isRecord(value) || !hasExactKeys(value, RETENTION_RESULT_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.handle) &&
+    isOneOf(value.status, ["active", "archived", "trashed"]) &&
+    isNonNegativeSafeInteger(value.managementRevision)
   );
 }
 
@@ -1166,6 +1375,36 @@ export function validateSetWorldInfoBindingCommand(value: unknown): SetWorldInfo
   return value;
 }
 
+export function validateCompanionList(value: unknown): CompanionListV1 {
+  if (!isCompanionList(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateCompanionDetail(value: unknown): CompanionDetailV1 {
+  if (!isCompanionDetail(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validatePersona(value: unknown): PersonaV1 {
+  if (!isPersona(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateScenario(value: unknown): ScenarioV1 {
+  if (!isScenario(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateGreeting(value: unknown): GreetingV1 {
+  if (!isGreeting(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateChatRetentionResult(value: unknown): ChatRetentionResultV1 {
+  if (!isChatRetentionResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatList(value: unknown): ChatListV1 {
   if (!isChatList(value)) throw new TavernProtocolError();
   return value;
@@ -1268,6 +1507,45 @@ export type ManagementPipelineApi = Readonly<{
     expectedRevision: number,
     csrfToken: string,
   ): Promise<TavernConnectionStateV1>;
+  /** GET /api/tavern/v1/companions: metadata-only companion library. */
+  listCompanions(): Promise<CompanionListV1>;
+  /** GET /api/tavern/v1/companions/:handle: safe detail for one projected handle. */
+  readCompanionDetail(handle: string): Promise<CompanionDetailV1>;
+  /** POST /api/tavern/v1/companions: creates a Host-owned namespace from a display name. */
+  createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1>;
+  /** GET /api/tavern/v1/persona: the player's own persona projection. */
+  readPersona(): Promise<PersonaV1>;
+  /** PUT /api/tavern/v1/persona with durable revision CAS. */
+  updatePersona(
+    command: Readonly<{ expectedRevision: number; name: string; description?: string }>,
+    csrfToken: string,
+  ): Promise<PersonaV1>;
+  /** GET /api/tavern/v1/scenario. */
+  readScenario(): Promise<ScenarioV1>;
+  /** PUT /api/tavern/v1/scenario with durable revision CAS. */
+  updateScenario(
+    command: Readonly<{ expectedRevision: number; name: string; description: string }>,
+    csrfToken: string,
+  ): Promise<ScenarioV1>;
+  /** GET /api/tavern/v1/greeting. */
+  readGreeting(): Promise<GreetingV1>;
+  /** PUT /api/tavern/v1/greeting with durable revision CAS. */
+  updateGreeting(
+    command: Readonly<{
+      expectedRevision: number;
+      label?: string;
+      variants: readonly Readonly<{ label?: string; text: string }>[];
+    }>,
+    csrfToken: string,
+  ): Promise<GreetingV1>;
+  /** POST /api/tavern/v1/chats/:handle/{archive|restore|trash} with durable lifecycle CAS. */
+  transitionChatLifecycle(
+    chatHandle: string,
+    operation: "archive" | "restore" | "trash",
+    selectionGeneration: number,
+    expectedManagementRevision: number,
+    csrfToken: string,
+  ): Promise<ChatRetentionResultV1>;
 }>;
 
 export type ManagementOperationObservation = Readonly<{
@@ -1519,6 +1797,143 @@ export function createManagementPipelineApi(
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
       );
+    },
+    async listCompanions(): Promise<CompanionListV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/companions", 200, validateCompanionList);
+    },
+    async readCompanionDetail(handle: string): Promise<CompanionDetailV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}`, 200, validateCompanionDetail);
+    },
+    async createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1> {
+      if (!isLengthBoundedString(name, 1, 128) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/companions",
+        200,
+        validateCompanionDetail,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, name },
+      );
+      observe("companion.create", "passed", String(result.name));
+      return result;
+    },
+    async readPersona(): Promise<PersonaV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/persona", 200, validatePersona);
+    },
+    async updatePersona(
+      command: Readonly<{ expectedRevision: number; name: string; description?: string }>,
+      csrfToken: string,
+    ): Promise<PersonaV1> {
+      if (!isNonNegativeSafeInteger(command.expectedRevision) || !isOpaqueHandle(csrfToken))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/persona",
+        200,
+        validatePersona,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          ...(command.description === undefined ? {} : { description: command.description }),
+        },
+      );
+      observe("persona.update", "passed", String(result.revision));
+      return result;
+    },
+    async readScenario(): Promise<ScenarioV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/scenario", 200, validateScenario);
+    },
+    async updateScenario(
+      command: Readonly<{ expectedRevision: number; name: string; description: string }>,
+      csrfToken: string,
+    ): Promise<ScenarioV1> {
+      if (!isNonNegativeSafeInteger(command.expectedRevision) || !isOpaqueHandle(csrfToken))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/scenario",
+        200,
+        validateScenario,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          description: command.description,
+        },
+      );
+      observe("scenario.update", "passed", String(result.revision));
+      return result;
+    },
+    async readGreeting(): Promise<GreetingV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/greeting", 200, validateGreeting);
+    },
+    async updateGreeting(
+      command: Readonly<{
+        expectedRevision: number;
+        label?: string;
+        variants: readonly Readonly<{ label?: string; text: string }>[];
+      }>,
+      csrfToken: string,
+    ): Promise<GreetingV1> {
+      if (!isNonNegativeSafeInteger(command.expectedRevision) || !isOpaqueHandle(csrfToken))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/greeting",
+        200,
+        validateGreeting,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedRevision: command.expectedRevision,
+          ...(command.label === undefined ? {} : { label: command.label }),
+          variants: command.variants.map((variant) => ({
+            ...(variant.label === undefined ? {} : { label: variant.label }),
+            text: variant.text,
+          })),
+        },
+      );
+      observe("greeting.update", "passed", String(result.revision));
+      return result;
+    },
+    async transitionChatLifecycle(
+      chatHandle: string,
+      operation: "archive" | "restore" | "trash",
+      selectionGeneration: number,
+      expectedManagementRevision: number,
+      csrfToken: string,
+    ): Promise<ChatRetentionResultV1> {
+      if (
+        !isOpaqueHandle(chatHandle) ||
+        !isOpaqueHandle(csrfToken) ||
+        !isNonNegativeSafeInteger(selectionGeneration) ||
+        !isNonNegativeSafeInteger(expectedManagementRevision) ||
+        !isOneOf(operation, RETENTION_OPERATIONS)
+      )
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/chats/${chatHandle}/${operation}`,
+        200,
+        validateChatRetentionResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          selectionGeneration,
+          expectedManagementRevision,
+        },
+      );
+      observe(operation === "archive" ? "chat.archive" : operation === "restore" ? "chat.restore" : "chat.trash", "passed", String(result.managementRevision));
+      return result;
     },
   });
 }

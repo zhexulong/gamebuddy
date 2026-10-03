@@ -123,6 +123,12 @@ export type MountedChatBrowserProjection = Readonly<{
    * `chatHandle` so list entries and the selection always agree.
    */
   projectChatHandle(chatThreadId: string, chatSurfaceSessionId: string): string;
+  /**
+   * Projects an already-validated durable companion identifier into a
+   * display-only reference. The mounted companion projects to a stable
+   * handle so the library list and the detail route always agree.
+   */
+  projectCompanionHandle(companionId: string): string;
 }>;
 export type MountedChatRuntimeLease = Readonly<{
   /**
@@ -1233,7 +1239,7 @@ function createMountedChatBrowserProjection(
   if (!Number.isSafeInteger(selectionRevision) || selectionRevision < 1)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_selection_revision_rejected");
   const secret = randomBytes(32);
-  const project = (domain: "chat" | "selection-state" | "message" | "turn", value: string): string =>
+  const project = (domain: "chat" | "selection-state" | "message" | "turn" | "companion", value: string): string =>
     createHmac("sha256", secret)
       .update(`${domain}\0${chatThreadId}\0${chatSurfaceSessionId}\0${value}`, "utf8")
       .digest("base64url");
@@ -1256,6 +1262,11 @@ function createMountedChatBrowserProjection(
       if (otherChatThreadId === chatThreadId && otherChatSurfaceSessionId === chatSurfaceSessionId)
         return project("chat", "");
       return project("chat", `${otherChatThreadId}\0${otherChatSurfaceSessionId}`);
+    },
+    projectCompanionHandle(otherCompanionId: string): string {
+      if (!validId(otherCompanionId))
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_companion_id_rejected");
+      return project("companion", otherCompanionId);
     },
   });
 }

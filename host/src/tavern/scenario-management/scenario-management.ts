@@ -105,7 +105,7 @@ function validateUpdateRequest(value: unknown): asserts value is UpdatePlayerSce
     !record(value) ||
     !allowed(value, ["expectedRevision", "name", "description"]) ||
     !Number.isSafeInteger(value.expectedRevision) ||
-    (value.expectedRevision as number) < 1 ||
+    (value.expectedRevision as number) < 0 ||
     !safeText(value.name, 128) ||
     !safeText(value.description, 8_192)
   )

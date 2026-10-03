@@ -48,6 +48,18 @@ const ALL_OPERATIONS = [
   "settings.connection.activate",
   "settings.connection.model",
   "settings.connection.remove",
+  "companion.list",
+  "companion.detail",
+  "companion.create",
+  "persona.read",
+  "persona.update",
+  "scenario.read",
+  "scenario.update",
+  "greeting.read",
+  "greeting.update",
+  "chat.archive",
+  "chat.restore",
+  "chat.trash",
 ];
 
 test("the producer exercises every operation the mounted profile declares", async () => {

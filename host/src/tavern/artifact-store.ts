@@ -142,6 +142,21 @@ export class TavernArtifactStore {
       },
       async update(expectedRevision, buildNext) {
         const latest = await readLatestArtifact();
+        // The wire contract allows `expectedRevision: 0` as the create-if-absent
+        // form of an update (design/28 §2): a fresh root has no persona/scenario/
+        // greeting artifact, so the management UI's first save must be able to
+        // mint revision 1 through the same save control. Creating when an
+        // artifact ALREADY exists still conflicts, and any other revision must
+        // match the latest exactly.
+        if (latest === undefined && expectedRevision === 0) {
+          if (buildNext(1).revision !== 1) throw options.invalidArtifact();
+          try {
+            return options.project((await store.write(revisionPath(1), buildNext(1), options.validateArtifact)).artifact);
+          } catch (error) {
+            if (error instanceof TavernRevisionConflict) throw options.conflict();
+            throw error;
+          }
+        }
         if (latest === undefined || latest.artifact.revision !== expectedRevision) throw options.conflict();
         const artifact = buildNext(expectedRevision + 1);
         if (artifact.revision !== expectedRevision + 1) throw options.invalidArtifact();

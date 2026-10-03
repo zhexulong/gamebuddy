@@ -22,6 +22,7 @@ import {
   ManagementPipelineSessionError,
 } from "../management-pipeline-session";
 import type { ChatSummary } from "../types";
+import { CharactersPanel } from "./CharactersPanel";
 import { ChatsDrawer } from "./drawers/ChatsDrawer";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
@@ -325,7 +326,55 @@ export function ManagementApp() {
     }
   };
 
+  const handleTransitionChat = async (handle: string, operation: "archive" | "trash"): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready" || current.session.snapshot.selection === null) return;
+    const entry = current.session.chatList?.chats.find((chat) => chat.handle === handle);
+    if (entry === undefined) {
+      commit({ ...current, notice: { kind: "failure", text: labels().failure } });
+      return;
+    }
+    try {
+      await apiRef.current.transitionChatLifecycle(
+        handle,
+        operation,
+        current.session.snapshot.selection.generation,
+        entry.managementRevision,
+        current.session.snapshot.csrfToken,
+      );
+      // The transition removed the chat from the active list (metadata-only
+      // mutation); reconcile so the drawer matches the durable list.
+      const session = await reconcileList(current);
+      commit({ ...current, session, notice: { kind: "success", text: labels().success } });
+    } catch {
+      try {
+        const session = await reconcileList(current);
+        commit({ ...current, session, notice: { kind: "failure", text: labels().chatRetentionFailed } });
+      } catch {
+        commit({ ...current, notice: { kind: "failure", text: labels().chatRetentionFailed } });
+      }
+    }
+  };
+
   const [draftText, setDraftText] = useState("");
+  // The Characters surface is mounted by a read-probe, mirroring the
+  // connection panel: a profile without the Character routes answers
+  // `unavailable`, so the UI never shows controls that could not work.
+  const [charactersAvailable, setCharactersAvailable] = useState(false);
+  const charactersProbeRef = useRef(false);
+
+  useEffect(() => {
+    if (view.kind !== "ready" || charactersProbeRef.current) return;
+    charactersProbeRef.current = true;
+    void (async () => {
+      try {
+        await apiRef.current.listCompanions();
+        setCharactersAvailable(true);
+      } catch {
+        setCharactersAvailable(false);
+      }
+    })();
+  }, [view]);
 
   const memoryReadAvailable =
     view.kind === "ready" && view.session.snapshot.memory.readAvailable === true;
@@ -547,6 +596,9 @@ export function ManagementApp() {
   const renameAvailable =
     view.kind === "ready" &&
     view.session.snapshot.operations.some((op) => op.operationId === "chat.rename" && op.availability === "available");
+  const retentionAvailable =
+    view.kind === "ready" &&
+    view.session.snapshot.operations.some((op) => op.operationId === "chat.archive" && op.availability === "available");
 
   const worldInfoBindAvailable =
     view.kind === "ready" &&
@@ -626,6 +678,9 @@ export function ManagementApp() {
                 onRemove={(connectionId) => void handleRemoveConnection(connectionId)}
               />
             )}
+            {charactersAvailable && (
+              <CharactersPanel api={apiRef.current} csrfToken={view.session.snapshot.csrfToken} labels={labels()} />
+            )}
             {worldInfoBindAvailable && view.session.snapshot.chat.worldInfo !== null && (
               <WorldInfoBindingPanel
                 worldInfo={view.session.snapshot.chat.worldInfo}
@@ -688,6 +743,7 @@ export function ManagementApp() {
             chats={chats}
             currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
             onRenameChat={renameAvailable ? (handle, title) => void handleRenameChat(handle, title) : undefined}
+            onTransitionChat={retentionAvailable ? (handle, operation) => void handleTransitionChat(handle, operation) : undefined}
           />
         </>
       )}

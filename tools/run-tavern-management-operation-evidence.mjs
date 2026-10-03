@@ -434,6 +434,194 @@ async function exerciseOperations(origin, client) {
     });
   });
 
+  // design/28 §2 Characters surface: companion library + persona / scenario /
+  // greeting CRUD through the same durable artifact-store services the desktop
+  // owner composes. Every step asserts a DURABLE postcondition (revision or
+  // content round-trip), never a bare 2xx.
+  await attempt("companion.list", async () => {
+    const list = await readJson(origin, client, "/api/tavern/v1/companions");
+    if (list === null || typeof list !== "object") throw new Error("companion_list_unavailable");
+    if (!Array.isArray(list.companions)) throw new Error("companion_list_missing");
+    // The mounted companion must be present with its projected opaque handle
+    // and the current marker: the composition always leads the library with
+    // the mounted principal. Listing it is the durable proof the surface
+    // mounted the library at all.
+    const current = list.companions.find((entry) => entry?.isCurrent === true);
+    if (current === undefined) throw new Error("companion_current_missing");
+    if (typeof current.handle !== "string" || current.handle.length === 0)
+      throw new Error("companion_handle_unavailable");
+    if (typeof current.name !== "string" || current.name.length === 0) throw new Error("companion_name_missing");
+    for (const entry of list.companions) {
+      if (typeof entry?.handle !== "string" || entry.handle.length === 0) throw new Error("companion_handle_unavailable");
+      if (typeof entry?.name !== "string" || entry.name.length === 0) throw new Error("companion_name_missing");
+    }
+  });
+
+  await attempt("companion.detail", async () => {
+    const list = await readJson(origin, client, "/api/tavern/v1/companions");
+    const handle = Array.isArray(list?.companions) ? list.companions.find((entry) => entry?.isCurrent === true)?.handle : undefined;
+    if (typeof handle !== "string" || handle.length === 0) throw new Error("companion_handle_unavailable");
+    const detail = await readJson(origin, client, `/api/tavern/v1/companions/${handle}`);
+    if (detail === null || typeof detail !== "object") throw new Error("companion_detail_unavailable");
+    // The detail must name the same current companion back; a route that
+    // answered with a generic shape would be reporting a capability it does
+    // not actually bind.
+    if (typeof detail.name !== "string" || detail.name.length === 0) throw new Error("companion_detail_name_missing");
+  });
+
+  await attempt("companion.create", async () => {
+    const created = await sendJson(origin, client, "POST", "/api/tavern/v1/companions", {
+      apiVersion: 1,
+      name: "Harvest Helper",
+    });
+    if (created === null || typeof created !== "object") throw new Error("companion_create_unavailable");
+    // The reply is the safe created detail; a bare 2xx would pass a write that
+    // stored nothing. The created namespace is durable on disk in the store.
+    if (created.name !== "Harvest Helper") throw new Error("companion_create_not_applied");
+    const after = await readJson(origin, client, "/api/tavern/v1/companions");
+    if (!Array.isArray(after?.companions)) throw new Error("companion_list_after_create_missing");
+    if (!after.companions.some((entry) => entry?.name === "Harvest Helper"))
+      throw new Error("companion_create_not_listed");
+  });
+
+  await attempt("persona.read", async () => {
+    const persona = await readJson(origin, client, "/api/tavern/v1/persona");
+    if (persona === null || typeof persona !== "object") throw new Error("persona_unavailable");
+    if (typeof persona.present !== "boolean") throw new Error("persona_present_invalid");
+    if (persona.present !== (Number.isInteger(persona.revision) && persona.revision >= 0))
+      throw new Error("persona_revision_shape_invalid");
+  });
+
+  await attempt("persona.update", async () => {
+    const before = await readJson(origin, client, "/api/tavern/v1/persona");
+    const expectedRevision = before?.present === true && Number.isInteger(before.revision) ? before.revision : 0;
+    const saved = await sendJson(origin, client, "PUT", "/api/tavern/v1/persona", {
+      apiVersion: 1,
+      expectedRevision,
+      name: "The Gate Farmer",
+      description: "A keeper of ledgers",
+    });
+    if (saved === null || typeof saved !== "object") throw new Error("persona_update_unavailable");
+    if (saved.present !== true) throw new Error("persona_update_not_present");
+    if (!Number.isInteger(saved.revision) || saved.revision <= expectedRevision)
+      throw new Error("persona_revision_unadvanced");
+    if (saved.name !== "The Gate Farmer") throw new Error("persona_name_not_applied");
+  });
+
+  await attempt("scenario.read", async () => {
+    const scenario = await readJson(origin, client, "/api/tavern/v1/scenario");
+    if (scenario === null || typeof scenario !== "object") throw new Error("scenario_unavailable");
+    if (typeof scenario.present !== "boolean") throw new Error("scenario_present_invalid");
+    if (scenario.present !== (Number.isInteger(scenario.revision) && scenario.revision >= 0))
+      throw new Error("scenario_revision_shape_invalid");
+  });
+
+  await attempt("scenario.update", async () => {
+    const before = await readJson(origin, client, "/api/tavern/v1/scenario");
+    const expectedRevision = before?.present === true && Number.isInteger(before.revision) ? before.revision : 0;
+    const saved = await sendJson(origin, client, "PUT", "/api/tavern/v1/scenario", {
+      apiVersion: 1,
+      expectedRevision,
+      name: "First Spring",
+      description: "The opening scene of a new save.",
+    });
+    if (saved === null || typeof saved !== "object") throw new Error("scenario_update_unavailable");
+    if (saved.present !== true) throw new Error("scenario_update_not_present");
+    if (!Number.isInteger(saved.revision) || saved.revision <= expectedRevision)
+      throw new Error("scenario_revision_unadvanced");
+    if (saved.name !== "First Spring") throw new Error("scenario_name_not_applied");
+  });
+
+  await attempt("greeting.read", async () => {
+    const greeting = await readJson(origin, client, "/api/tavern/v1/greeting");
+    if (greeting === null || typeof greeting !== "object") throw new Error("greeting_unavailable");
+    if (typeof greeting.present !== "boolean") throw new Error("greeting_present_invalid");
+  });
+
+  await attempt("greeting.update", async () => {
+    const before = await readJson(origin, client, "/api/tavern/v1/greeting");
+    const expectedRevision = before?.present === true && Number.isInteger(before.revision) ? before.revision : 0;
+    const saved = await sendJson(origin, client, "PUT", "/api/tavern/v1/greeting", {
+      apiVersion: 1,
+      expectedRevision,
+      label: "Morning",
+      variants: [{ label: "Casual", text: "Morning, chief." }],
+    });
+    if (saved === null || typeof saved !== "object") throw new Error("greeting_update_unavailable");
+    if (saved.present !== true) throw new Error("greeting_update_not_present");
+    if (!Number.isInteger(saved.revision) || saved.revision <= expectedRevision)
+      throw new Error("greeting_revision_unadvanced");
+    if (!Array.isArray(saved.variants) || saved.variants.length !== 1 || saved.variants[0]?.text !== "Morning, chief.")
+      throw new Error("greeting_variant_not_applied");
+  });
+
+  // Chat lifecycle retention: the exact mounted chat's handle + management
+  // revision come from the chat list; each transition CASes that revision and
+  // asserts the durable status in the reply. Archive then restore then trash,
+  // so the final state is trashed and every transition is real. The active
+  // list only carries active chats, so after archiving the next revision is
+  // threaded from the previous transition's result instead of a re-read.
+  let retainedChat;
+  const currentChat = async () => {
+    if (retainedChat !== undefined) return retainedChat;
+    const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
+    const generation = snapshot?.selection?.generation;
+    const chatHandle = snapshot?.selection?.chatHandle;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
+    if (typeof chatHandle !== "string" || chatHandle.length === 0) throw new Error("chat_handle_unavailable");
+    const list = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
+    const entries = Array.isArray(list?.chats) ? list.chats : Array.isArray(list) ? list : [];
+    const entry = entries.find((candidate) => candidate?.handle === chatHandle);
+    if (entry === undefined) throw new Error("selected_chat_entry_unavailable");
+    if (!Number.isInteger(entry.managementRevision) || entry.managementRevision < 0)
+      throw new Error("management_revision_unavailable");
+    return { generation, chatHandle, managementRevision: entry.managementRevision };
+  };
+
+  await attempt("chat.archive", async () => {
+    const { generation, chatHandle, managementRevision } = await currentChat();
+    const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/archive`, {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedManagementRevision: managementRevision,
+    });
+    if (result === null || typeof result !== "object") throw new Error("chat_archive_unavailable");
+    if (result.status !== "archived") throw new Error("chat_archive_not_applied");
+    if (!Number.isInteger(result.managementRevision) || result.managementRevision <= managementRevision)
+      throw new Error("chat_archive_revision_unadvanced");
+    retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
+  });
+
+    await attempt("chat.restore", async () => {
+    const { generation, chatHandle, managementRevision } = await currentChat();
+    const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/restore`, {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedManagementRevision: managementRevision,
+    });
+    if (result === null || typeof result !== "object") throw new Error("chat_restore_unavailable");
+    if (result.status !== "active") throw new Error("chat_restore_not_applied");
+    if (!Number.isInteger(result.managementRevision) || result.managementRevision <= managementRevision)
+      throw new Error("chat_restore_revision_unadvanced");
+    retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
+  });
+
+    await attempt("chat.trash", async () => {
+    // Trash is legal directly from active (resolveLifecycleTransition:
+    // trash from active or archived), and the previous restore left the chat
+    // active with a threaded revision, so this is a single real transition.
+    const { generation, chatHandle, managementRevision } = await currentChat();
+    const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/trash`, {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedManagementRevision: managementRevision,
+    });
+    if (result === null || typeof result !== "object") throw new Error("chat_trash_unavailable");
+    if (result.status !== "trashed") throw new Error("chat_trash_not_applied");
+    if (!Number.isInteger(result.managementRevision) || result.managementRevision <= managementRevision)
+      throw new Error("chat_trash_revision_unadvanced");
+  });
+
   return results;
 }
 

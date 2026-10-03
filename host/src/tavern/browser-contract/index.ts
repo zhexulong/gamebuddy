@@ -90,6 +90,13 @@ const ProblemCode = Type.Union([
   Type.Literal("connection_not_ready"),
   Type.Literal("connection_conflict"),
   Type.Literal("connection_limit_reached"),
+  // design/28 §2 Character/Persona rows: library + authored-content operations.
+  Type.Literal("companion_not_found"),
+  Type.Literal("companion_conflict"),
+  Type.Literal("persona_conflict"),
+  Type.Literal("scenario_conflict"),
+  Type.Literal("greeting_conflict"),
+  Type.Literal("authored_content_invalid"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({
@@ -330,11 +337,23 @@ export const TavernConnectionProbeV1Schema = strictObject({
 const OperationId = Type.Union([
   Type.Literal("chat.submit"),
   Type.Literal("chat.cancel"),
+  Type.Literal("chat.archive"),
+  Type.Literal("chat.restore"),
+  Type.Literal("chat.trash"),
   Type.Literal("draft.save"),
   Type.Literal("draft.discard"),
   Type.Literal("chat.rename"),
   Type.Literal("memory.mutate"),
   Type.Literal("world-info.bind"),
+  Type.Literal("companion.list"),
+  Type.Literal("companion.detail"),
+  Type.Literal("companion.create"),
+  Type.Literal("persona.read"),
+  Type.Literal("persona.update"),
+  Type.Literal("scenario.read"),
+  Type.Literal("scenario.update"),
+  Type.Literal("greeting.read"),
+  Type.Literal("greeting.update"),
   Type.Literal("settings.voice.read"),
   Type.Literal("settings.voice.consent"),
   Type.Literal("settings.voice.devices"),
@@ -350,6 +369,7 @@ const OperationId = Type.Union([
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
   Type.Literal("tavern.nav.memory"),
+  Type.Literal("tavern.nav.characters"),
   Type.Literal("tavern.operation.submit"),
   Type.Literal("tavern.operation.cancel"),
   Type.Literal("tavern.operation.draft.save"),
@@ -357,6 +377,18 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.rename"),
   Type.Literal("tavern.operation.memory.mutate"),
   Type.Literal("tavern.operation.world-info.bind"),
+  Type.Literal("tavern.operation.chat.archive"),
+  Type.Literal("tavern.operation.chat.restore"),
+  Type.Literal("tavern.operation.chat.trash"),
+  Type.Literal("tavern.operation.companion.list"),
+  Type.Literal("tavern.operation.companion.detail"),
+  Type.Literal("tavern.operation.companion.create"),
+  Type.Literal("tavern.operation.persona.read"),
+  Type.Literal("tavern.operation.persona.update"),
+  Type.Literal("tavern.operation.scenario.read"),
+  Type.Literal("tavern.operation.scenario.update"),
+  Type.Literal("tavern.operation.greeting.read"),
+  Type.Literal("tavern.operation.greeting.update"),
   Type.Literal("tavern.operation.settings.voice.read"),
   Type.Literal("tavern.operation.settings.voice.consent"),
   Type.Literal("tavern.operation.settings.voice.devices"),
@@ -375,7 +407,7 @@ export const TavernBrowserOperationV1Schema = strictObject({
   availability: Type.Union([Type.Literal("available"), Type.Literal("busy"), Type.Literal("unavailable")]),
   routeId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9._-]*$" }),
 });
-const NavigationItemId = Type.Union([Type.Literal("chat"), Type.Literal("memory")]);
+const NavigationItemId = Type.Union([Type.Literal("chat"), Type.Literal("memory"), Type.Literal("characters")]);
 const NavigationItem = strictObject({
   itemId: NavigationItemId,
   labelKey: LabelKey,
@@ -416,6 +448,101 @@ export const SetWorldInfoBindingCommandV1Schema = strictObject({
   selectionGeneration: PositiveGeneration,
   expectedRevision: OpaqueHandle,
   sourceHandle: Type.Union([OpaqueHandle, Type.Null()]),
+});
+
+/**
+ * Companion library entry: opaque handle plus display metadata only. No
+ * identity, continuity, profile, hash, path or runtime fact is expressible.
+ */
+export const CompanionListEntryV1Schema = strictObject({
+  handle: OpaqueHandle,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  isCurrent: Type.Boolean(),
+});
+export const CompanionListV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  companions: Type.Array(CompanionListEntryV1Schema, { maxItems: 100 }),
+});
+/** Safe player-visible companion detail: name only (companion-detail boundary). */
+export const CompanionDetailV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+});
+/** Create companion from a player-supplied display name; Host mints all IDs. */
+export const CreateCompanionCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+});
+/** Player persona projection: revision and safe display fields only. */
+export const PersonaV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  present: Type.Boolean(),
+  revision: Type.Union([Revision, Type.Null()]),
+  name: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+  description: Type.Union([Type.String({ minLength: 1, maxLength: 4096 }), Type.Null()]),
+});
+export const PersonaUpdateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Type.Union([Revision, Type.Literal(0)]),
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  description: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+});
+/** Player scenario projection: safe display fields plus a bounded preview. */
+export const ScenarioV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  present: Type.Boolean(),
+  revision: Type.Union([Revision, Type.Null()]),
+  name: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+  description: Type.Union([Type.String({ minLength: 1, maxLength: 8192 }), Type.Null()]),
+  preview: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+});
+export const ScenarioUpdateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Type.Union([Revision, Type.Literal(0)]),
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  description: Type.String({ minLength: 1, maxLength: 8192 }),
+});
+/** Player greeting set projection: variants with bounded label + verbatim text. */
+export const GreetingV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  present: Type.Boolean(),
+  revision: Type.Union([Revision, Type.Null()]),
+  label: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+  variants: Type.Array(
+    strictObject({
+      label: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+      text: Type.String({ minLength: 1, maxLength: 8192 }),
+    }),
+    { maxItems: 16 },
+  ),
+});
+export const GreetingUpdateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Type.Union([Revision, Type.Literal(0)]),
+  label: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  variants: Type.Array(
+    strictObject({
+      label: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      text: Type.String({ minLength: 1, maxLength: 8192 }),
+    }),
+    { minItems: 1, maxItems: 16 },
+  ),
+});
+/**
+ * Chat lifecycle retention body. The exact Chat is named by the route path
+ * handle and the operation by the route suffix (mirroring the connection
+ * routes); the body carries only the CAS facts a browser can legitimately hold.
+ */
+export const ChatRetentionCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedManagementRevision: Revision,
+});
+export const ChatRetentionResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  handle: OpaqueHandle,
+  status: Type.Union([Type.Literal("active"), Type.Literal("archived"), Type.Literal("trashed")]),
+  managementRevision: Revision,
 });
 
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
@@ -707,6 +834,8 @@ const IdempotentCsrfHeaders = strictObject({ "x-csrf-token": OpaqueHandle, "idem
 const BootstrapRequest = strictObject({ apiVersion: ApiVersion, bootstrapToken: OpaqueHandle });
 const TurnPath = strictObject({ turnHandle: OpaqueHandle });
 const ConnectionPath = strictObject({ connectionId: OpaqueHandle });
+const CompanionPath = strictObject({ companionHandle: OpaqueHandle });
+const ChatPath = strictObject({ chatHandle: OpaqueHandle });
 const EventsQuery = strictObject({ apiVersion: ApiVersion, cursor: Type.Optional(OpaqueHandle) });
 const noQuery = strictObject({});
 const noPath = strictObject({});
@@ -1099,6 +1228,181 @@ const RouteDescriptors = Object.freeze([
     query: EventsQuery,
     success: { status: 200, contentType: "text/event-stream", schema: BrowserEventV1Schema },
   }),
+  route({
+    routeId: "companion.list",
+    method: "GET",
+    path: "/api/tavern/v1/companions",
+    operationId: "companion.list",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionListV1Schema },
+  }),
+  route({
+    routeId: "companion.detail",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle",
+    operationId: "companion.detail",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
+  }),
+  route({
+    routeId: "companion.create",
+    method: "POST",
+    path: "/api/tavern/v1/companions",
+    operationId: "companion.create",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: CreateCompanionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
+  }),
+  route({
+    routeId: "persona.read",
+    method: "GET",
+    path: "/api/tavern/v1/persona",
+    operationId: "persona.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: PersonaV1Schema },
+  }),
+  route({
+    routeId: "persona.update",
+    method: "PUT",
+    path: "/api/tavern/v1/persona",
+    operationId: "persona.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: PersonaUpdateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: PersonaV1Schema },
+  }),
+  route({
+    routeId: "scenario.read",
+    method: "GET",
+    path: "/api/tavern/v1/scenario",
+    operationId: "scenario.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: ScenarioV1Schema },
+  }),
+  route({
+    routeId: "scenario.update",
+    method: "PUT",
+    path: "/api/tavern/v1/scenario",
+    operationId: "scenario.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: ScenarioUpdateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ScenarioV1Schema },
+  }),
+  route({
+    routeId: "greeting.read",
+    method: "GET",
+    path: "/api/tavern/v1/greeting",
+    operationId: "greeting.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: GreetingV1Schema },
+  }),
+  route({
+    routeId: "greeting.update",
+    method: "PUT",
+    path: "/api/tavern/v1/greeting",
+    operationId: "greeting.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: GreetingUpdateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: GreetingV1Schema },
+  }),
+  route({
+    routeId: "chat.archive",
+    method: "POST",
+    path: "/api/tavern/v1/chats/:chatHandle/archive",
+    operationId: "chat.archive",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ChatPath,
+    query: noQuery,
+    request: ChatRetentionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatRetentionResultV1Schema },
+  }),
+  route({
+    routeId: "chat.restore",
+    method: "POST",
+    path: "/api/tavern/v1/chats/:chatHandle/restore",
+    operationId: "chat.restore",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ChatPath,
+    query: noQuery,
+    request: ChatRetentionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatRetentionResultV1Schema },
+  }),
+  route({
+    routeId: "chat.trash",
+    method: "POST",
+    path: "/api/tavern/v1/chats/:chatHandle/trash",
+    operationId: "chat.trash",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ChatPath,
+    query: noQuery,
+    request: ChatRetentionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatRetentionResultV1Schema },
+  }),
 ]);
 
 export const TavernBrowserContractV1 = Object.freeze({
@@ -1154,6 +1458,18 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernConnectionProbeV1Schema,
     WorldInfoStateV1Schema,
     SetWorldInfoBindingCommandV1Schema,
+    CompanionListEntryV1Schema,
+    CompanionListV1Schema,
+    CompanionDetailV1Schema,
+    CreateCompanionCommandV1Schema,
+    PersonaV1Schema,
+    PersonaUpdateCommandV1Schema,
+    ScenarioV1Schema,
+    ScenarioUpdateCommandV1Schema,
+    GreetingV1Schema,
+    GreetingUpdateCommandV1Schema,
+    ChatRetentionCommandV1Schema,
+    ChatRetentionResultV1Schema,
     SubmitResultV1Schema,
     MessageSubmissionStatusV1Schema,
     CancelTurnResultV1Schema,
@@ -1199,6 +1515,18 @@ export type MemoryMutationCommandV1 = Static<typeof MemoryMutationCommandV1Schem
 export type MemoryMutationResultV1 = Static<typeof MemoryMutationResultV1Schema>;
 export type WorldInfoStateV1 = Static<typeof WorldInfoStateV1Schema>;
 export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingCommandV1Schema>;
+export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
+export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
+export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
+export type CreateCompanionCommandV1 = Static<typeof CreateCompanionCommandV1Schema>;
+export type PersonaV1 = Static<typeof PersonaV1Schema>;
+export type PersonaUpdateCommandV1 = Static<typeof PersonaUpdateCommandV1Schema>;
+export type ScenarioV1 = Static<typeof ScenarioV1Schema>;
+export type ScenarioUpdateCommandV1 = Static<typeof ScenarioUpdateCommandV1Schema>;
+export type GreetingV1 = Static<typeof GreetingV1Schema>;
+export type GreetingUpdateCommandV1 = Static<typeof GreetingUpdateCommandV1Schema>;
+export type ChatRetentionCommandV1 = Static<typeof ChatRetentionCommandV1Schema>;
+export type ChatRetentionResultV1 = Static<typeof ChatRetentionResultV1Schema>;
 export type MemoryReadV1 = Readonly<{
   apiVersion: typeof TAVERN_BROWSER_API_VERSION;
   projectionRevision: string;
@@ -1230,7 +1558,7 @@ const routeIdByOperationId = new Map<TavernBrowserOperationIdV1, TavernBrowserRo
   }),
 );
 const routeBoundOperationIds = new Set(routeIdByOperationId.keys());
-const contractDeclaredNavigationItemIds = new Set<TavernBrowserNavigationItemIdV1>(["chat", "memory"]);
+const contractDeclaredNavigationItemIds = new Set<TavernBrowserNavigationItemIdV1>(["chat", "memory", "characters"]);
 export type ComposedTavernProfile = Readonly<{
   readonly profileId: string;
   readonly releaseTier: TavernReleaseTierV1;

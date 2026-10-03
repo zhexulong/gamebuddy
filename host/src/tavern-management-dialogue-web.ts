@@ -6,15 +6,26 @@ import type { VoicePreference, VoicePreferenceUpdate } from "./settings/voice-pr
 import type { LanguagePreference, LanguagePreferenceUpdate } from "./settings/language-preference-store.js";
 import {
   type ChatListQueryV1,
+  type ChatRetentionCommandV1,
+  type CompanionDetailV1,
+  type CompanionListV1,
   type ComposedTavernProfile,
+  type CreateCompanionCommandV1,
   type DiscardDraftCommandV1,
+  type GreetingUpdateCommandV1,
+  type GreetingV1,
   isComposedTavernProfile,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
+  type PersonaUpdateCommandV1,
+  type PersonaV1,
   type RenameChatTitleCommandV1,
   type SaveDraftCommandV1,
+  type ScenarioUpdateCommandV1,
+  type ScenarioV1,
   type SetWorldInfoBindingCommandV1,
   TAVERN_BROWSER_API_V1,
+  TAVERN_BROWSER_API_VERSION,
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
@@ -117,8 +128,26 @@ const MANAGEMENT_CONNECTION_ROUTES = [
   "settings.connection.model",
   "settings.connection.remove",
 ] as const;
-const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat"] as const;
-const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory"] as const;
+const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat", "characters"] as const;
+const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory", "characters"] as const;
+/** Legacy navigation variants before the Characters surface (no characters item). */
+const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY = ["chat"] as const;
+const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY = ["chat", "memory"] as const;
+/** Optional Character / Persona / Scenario / Greeting / retention extension. */
+const MANAGEMENT_P9_ROUTES = [
+  "companion.list",
+  "companion.detail",
+  "companion.create",
+  "persona.read",
+  "persona.update",
+  "scenario.read",
+  "scenario.update",
+  "greeting.read",
+  "greeting.update",
+  "chat.archive",
+  "chat.restore",
+  "chat.trash",
+] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -137,6 +166,11 @@ const voicePreferenceConsentValidator = Compile(
 const languagePreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernLanguagePreferenceCommandV1Schema,
 );
+const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
+const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
+const scenarioUpdateValidator = Compile(TavernBrowserContractV1.schemas.ScenarioUpdateCommandV1Schema);
+const greetingUpdateValidator = Compile(TavernBrowserContractV1.schemas.GreetingUpdateCommandV1Schema);
+const chatRetentionValidator = Compile(TavernBrowserContractV1.schemas.ChatRetentionCommandV1Schema);
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
@@ -164,6 +198,64 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * stay unavailable otherwise.
    */
   connectionService?: TavernConnectionService;
+  /**
+   * Host-owned companion library / persona / scenario / greeting management
+   * (design/28 §2 Character + Persona rows). Each service is bound exactly
+   * like the others: the profile must declare the route, the production
+   * composition must inject the exact service, and a missing service with an
+   * advertised route fails closed before any dispatch.
+   */
+  libraryService?: Readonly<{
+    /**
+     * Projects the exact companion library: opaque handles, display names and
+     * the current marker. The Host composition mints handles through the
+     * mounted lease projection so the browser can never decode a durable
+     * companion identifier.
+     */
+    listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]>;
+  }>;
+  /**
+   * Read-only safe companion detail, keyed by the exact opaque handle from
+   * `libraryService.listCompanions`. Any other handle resolves to null and is
+   * reported 404; the underlying service never names a durable identity.
+   */
+  companionDetailService?: Readonly<{
+    read(handle: string): Promise<Readonly<{ name: string }> | null>;
+  }>;
+  /**
+   * Host-owned new-companion provisioner. The browser sends a display name
+   * only; the Host mints every durable identity and returns the safe name.
+   */
+  newCompanionProvisioner?: Readonly<{
+    create(name: string): Promise<Readonly<{ name: string }>>;
+  }>;
+  personaService?: Readonly<{
+    read(): Promise<Readonly<{ revision: number; name: string; description?: string }> | null>;
+    update(
+      request: Readonly<{ expectedRevision: number; name: string; description?: string }>,
+    ): Promise<Readonly<{ revision: number; name: string; description?: string }>>;
+  }>;
+  scenarioService?: Readonly<{
+    read(): Promise<Readonly<{ revision: number; name: string; description: string; preview: string }> | null>;
+    update(
+      request: Readonly<{ expectedRevision: number; name: string; description: string }>,
+    ): Promise<Readonly<{ revision: number; name: string; description: string; preview: string }>>;
+  }>;
+  greetingService?: Readonly<{
+    read(): Promise<
+      | Readonly<{ revision: number; label?: string; variants: readonly Readonly<{ label?: string; text: string }>[] }>
+      | null
+    >;
+    update(
+      request: Readonly<{
+        expectedRevision: number;
+        label?: string;
+        variants: readonly Readonly<{ label?: string; text: string }>[];
+      }>,
+    ): Promise<
+      Readonly<{ revision: number; label?: string; variants: readonly Readonly<{ label?: string; text: string }>[] }>
+    >;
+  }>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
   readonly [key: string]: unknown;
@@ -204,6 +296,12 @@ export function createTavernManagementDialogueWebRequestHandler(
   const listVoiceOutputDevices = options.listVoiceOutputDevices;
   const languagePreferenceStore = options.languagePreferenceStore;
   const connectionService = options.connectionService;
+  const libraryService = options.libraryService;
+  const companionDetailService = options.companionDetailService;
+  const newCompanionProvisioner = options.newCompanionProvisioner;
+  const personaService = options.personaService;
+  const scenarioService = options.scenarioService;
+  const greetingService = options.greetingService;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -245,6 +343,31 @@ export function createTavernManagementDialogueWebRequestHandler(
       if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
         throw new Error("tavern_management_composition_unavailable");
     }
+  }
+  // The Character / Persona / Scenario / Greeting routes are mounted only when
+  // the exact service is injected; a profile that advertises any of them
+  // without the bound service fails closed before any dispatch, so no route
+  // can claim a management capability it cannot serve. Reads stay optional
+  // (read-only projections are additive), but every advertised mutation must
+  // also be declared in operationIds.
+  const P9_ROUTE_SERVICES = [
+    ["companion.list", libraryService],
+    ["companion.detail", libraryService],
+    ["companion.create", libraryService],
+    ["persona.read", personaService],
+    ["persona.update", personaService],
+    ["scenario.read", scenarioService],
+    ["scenario.update", scenarioService],
+    ["greeting.read", greetingService],
+    ["greeting.update", greetingService],
+  ] as const;
+  for (const [routeId, bound] of P9_ROUTE_SERVICES) {
+    if (profile.routeIds.includes(routeId) && bound === undefined)
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  for (const routeId of ["companion.create", "persona.update", "scenario.update", "greeting.update"] as const) {
+    if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+      throw new Error("tavern_management_composition_unavailable");
   }
 
   let browser: BrowserSession | undefined;
@@ -576,6 +699,249 @@ export function createTavernManagementDialogueWebRequestHandler(
         const command = body as TavernConnectionRevisionCommandV1;
         return sendJson(response, 200, await connection.remove(connectionRoute.connectionId, command.expectedRevision));
       }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/companions") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("companion.list") || libraryService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const companions = await libraryService.listCompanions();
+        const list: CompanionListV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          companions: companions.map((companion) =>
+            Object.freeze({
+              handle: companion.handle,
+              name: companion.name,
+              isCurrent: companion.isCurrent,
+            }),
+          ),
+        });
+        if (!TavernBrowserValidatorsV1.CompanionListV1Schema.Check(list)) throw new Error("companion_list_service_unavailable");
+        return sendJson(response, 200, list);
+      }
+      {
+        const companionDetailHandle = matchCompanionDetailRoute(request.method, url.pathname);
+        if (companionDetailHandle !== null) {
+          // companion.detail: the exact opaque handle the list projected. A
+          // foreign handle is answered by the bound service as null (404), so
+          // browser input can never name another durable companion identity.
+          if (url.search !== "" || (await hasRequestBody(request)))
+            return sendProblem(response, 400, "invalid_request");
+          if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (
+            !profile.routeIds.includes("companion.detail") ||
+            libraryService === undefined ||
+            companionDetailService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const detail = await companionDetailService.read(companionDetailHandle);
+          if (detail === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionDetailV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            name: detail.name,
+          });
+          if (!TavernBrowserValidatorsV1.CompanionDetailV1Schema.Check(result))
+            throw new Error("companion_detail_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/companions") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (!profile.routeIds.includes("companion.create") || libraryService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!createCompanionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const { name } = body as CreateCompanionCommandV1;
+        if (newCompanionProvisioner === undefined) return sendProblem(response, 503, "runtime_unavailable");
+        const provisioned = await newCompanionProvisioner.create(name);
+        const result: CompanionDetailV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          name: provisioned.name,
+        });
+        if (!TavernBrowserValidatorsV1.CompanionDetailV1Schema.Check(result))
+          throw new Error("companion_create_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/persona") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("persona.read") || personaService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const persona = await personaService.read();
+        const result: PersonaV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: persona !== null,
+          revision: persona?.revision ?? null,
+          name: persona?.name ?? null,
+          description: persona?.description ?? null,
+        });
+        if (!TavernBrowserValidatorsV1.PersonaV1Schema.Check(result)) throw new Error("persona_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/persona") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("persona.update") ||
+          !profile.operationIds.includes("persona.update") ||
+          personaService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!personaUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as PersonaUpdateCommandV1;
+        const persona = await personaService.update({
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          ...(command.description === undefined ? {} : { description: command.description }),
+        });
+        const result: PersonaV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: persona.revision,
+          name: persona.name,
+          description: persona.description ?? null,
+        });
+        if (!TavernBrowserValidatorsV1.PersonaV1Schema.Check(result)) throw new Error("persona_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/scenario") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("scenario.read") || scenarioService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const scenario = await scenarioService.read();
+        const result: ScenarioV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: scenario !== null,
+          revision: scenario?.revision ?? null,
+          name: scenario?.name ?? null,
+          description: scenario?.description ?? null,
+          preview: scenario?.preview ?? null,
+        });
+        if (!TavernBrowserValidatorsV1.ScenarioV1Schema.Check(result)) throw new Error("scenario_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/scenario") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("scenario.update") ||
+          !profile.operationIds.includes("scenario.update") ||
+          scenarioService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!scenarioUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as ScenarioUpdateCommandV1;
+        const scenario = await scenarioService.update({
+          expectedRevision: command.expectedRevision,
+          name: command.name,
+          description: command.description,
+        });
+        const result: ScenarioV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: scenario.revision,
+          name: scenario.name,
+          description: scenario.description,
+          preview: scenario.preview,
+        });
+        if (!TavernBrowserValidatorsV1.ScenarioV1Schema.Check(result)) throw new Error("scenario_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/greeting") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("greeting.read") || greetingService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const greeting = await greetingService.read();
+        const result: GreetingV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: greeting !== null,
+          revision: greeting?.revision ?? null,
+          label: greeting?.label ?? null,
+          variants: (greeting?.variants ?? []).map((variant) =>
+            Object.freeze({ label: variant.label ?? null, text: variant.text }),
+          ),
+        });
+        if (!TavernBrowserValidatorsV1.GreetingV1Schema.Check(result)) throw new Error("greeting_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/greeting") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("greeting.update") ||
+          !profile.operationIds.includes("greeting.update") ||
+          greetingService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!greetingUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as GreetingUpdateCommandV1;
+        const greeting = await greetingService.update({
+          expectedRevision: command.expectedRevision,
+          ...(command.label === undefined ? {} : { label: command.label }),
+          variants: command.variants.map((variant) =>
+            Object.freeze({ ...(variant.label === undefined ? {} : { label: variant.label }), text: variant.text }),
+          ),
+        });
+        const result: GreetingV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          present: true,
+          revision: greeting.revision,
+          label: greeting.label ?? null,
+          variants: greeting.variants.map((variant) =>
+            Object.freeze({ label: variant.label ?? null, text: variant.text }),
+          ),
+        });
+        if (!TavernBrowserValidatorsV1.GreetingV1Schema.Check(result)) throw new Error("greeting_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      {
+        const retentionRoute = matchRetentionRoute(request.method, url.pathname);
+        if (retentionRoute !== null) {
+          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = authenticate(request, browser, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes(retentionRoute.operationId) ||
+            !profile.operationIds.includes(retentionRoute.operationId) ||
+            managementService?.transitionLifecycle === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!chatRetentionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const wire = body as ChatRetentionCommandV1;
+          const result = await managementService.transitionLifecycle(
+            Object.freeze({
+              apiVersion: wire.apiVersion,
+              selectionGeneration: wire.selectionGeneration,
+              chatHandle: retentionRoute.chatHandle,
+              expectedManagementRevision: wire.expectedManagementRevision,
+              operation: retentionRoute.operation,
+            }),
+          );
+          if (!TavernBrowserValidatorsV1.ChatRetentionResultV1Schema.Check(result))
+            throw new Error("chat_management_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
       return sendProblem(response, 404, "profile_operation_unavailable");
     } catch (error) {
       const { status, code } = problemFor(error);
@@ -722,6 +1088,12 @@ function navigationItem(itemId: TavernBrowserNavigationItemIdV1, memoryReadAvail
       labelKey: "tavern.nav.chat" as const,
       availability: "available" as const,
     };
+  if (itemId === "characters")
+    return {
+      itemId,
+      labelKey: "tavern.nav.characters" as const,
+      availability: "available" as const,
+    };
   // The Memory navigation item is projected only when the mounted profile
   // declares it AND the exact-bound read actually succeeded; it never claims
   // capability on false read availability.
@@ -742,10 +1114,14 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   if (profile.profileId !== MANAGEMENT_PROFILE_ID || profile.releaseTier !== MANAGEMENT_RELEASE_TIER)
     throw new Error("tavern_management_profile_operation_unavailable");
   // A memory-capable profile must declare the Memory navigation item and the
-  // inverse (Memory route but no Memory navigation) fails closed.
+  // inverse (Memory route but no Memory navigation) fails closed. The
+  // Characters item is present on the current-facing profile; legacy profiles
+  // that predate the Characters surface keep the old navigation shape.
   const withMemory = profile.routeIds.includes("memory.read");
-  if (!sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY))
-    throw new Error("tavern_management_profile_operation_unavailable");
+  const navigationMatches =
+    sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY) ||
+    sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY);
+  if (!navigationMatches) throw new Error("tavern_management_profile_operation_unavailable");
   // The core surface and the three extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
@@ -762,12 +1138,12 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   if (
     !isCanonicalGroupSelection(
       profile.routeIds,
-      [coreRoutes, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES],
+      [coreRoutes, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES, MANAGEMENT_P9_ROUTES],
       coreRoutes,
     ) ||
     !isCanonicalGroupSelection(
       profile.operationIds,
-      [coreOperations, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES],
+      [coreOperations, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES, MANAGEMENT_P9_ROUTES],
       coreOperations,
     )
   )
@@ -830,6 +1206,37 @@ function matchConnectionRoute(
   return route === null || route === undefined ? null : Object.freeze({ operationId: route.operationId, connectionId });
 }
 
+/** Chat lifecycle retention subroutes: archive / restore / trash on an exact handle. */
+const RETENTION_SUBROUTES = [
+  Object.freeze({ operationId: "chat.archive" as const, suffix: "archive", method: "POST" as const }),
+  Object.freeze({ operationId: "chat.restore" as const, suffix: "restore", method: "POST" as const }),
+  Object.freeze({ operationId: "chat.trash" as const, suffix: "trash", method: "POST" as const }),
+];
+
+function matchRetentionRoute(
+  method: string | undefined,
+  pathname: string,
+): Readonly<{ operationId: "chat.archive" | "chat.restore" | "chat.trash"; chatHandle: string; operation: "archive" | "restore" | "trash" }> | null {
+  const match = /^\/api\/tavern\/v1\/chats\/([A-Za-z0-9_-]{43})\/(archive|restore|trash)$/.exec(pathname);
+  if (match === null) return null;
+  const route = RETENTION_SUBROUTES.find(
+    (entry) => entry.suffix === match[2] && entry.method === method,
+  );
+  return route === undefined
+    ? null
+    : Object.freeze({
+        operationId: route.operationId,
+        chatHandle: match[1]!,
+        operation: match[2] as "archive" | "restore" | "trash",
+      });
+}
+
+function matchCompanionDetailRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
 /**
  * A connection route is mounted only when the mounted profile declares both the
  * route and its operation and the exact Host service backs it. The inverse
@@ -851,6 +1258,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (message === "chat_management_selection_conflict") return { status: 409, code: "selection_conflict" };
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
+  if (message === "chat_management_lifecycle_invalid") return { status: 409, code: "state_reconciliation_required" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
   if (message === "context_unavailable") return { status: 503, code: "runtime_unavailable" };
