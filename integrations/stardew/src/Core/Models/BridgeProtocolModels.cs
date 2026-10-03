@@ -262,6 +262,21 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
+/// One farm location's ready-for-harvest crop summary, across the loaded world.
+///
+/// <para>
+/// Per-location harvest targets are Chebyshev-bounded to the player's
+/// neighbourhood, so an Agent standing at the FarmHouse entrance cannot see
+/// the lone ripe crop sixty tiles away — a live ladder-5 run measured the
+/// Agent searching Farm (63-64,17-19) while the crop sat at (3,12) and never
+/// discovered it. This is the missing planning fact: how many ripe crops each
+/// loaded location holds and where the nearest (Chebyshev) one is, so the
+/// companion can route to a location before the bounded discovery takes over.
+/// </para>
+/// </summary>
+public sealed record BridgeHarvestWhereabouts(string Location, int ReadyForHarvestCount, int NearestX, int NearestY);
+
+/// <summary>
 /// One available minecart ride from a station on the current map (travel's
 /// minecart objective family).
 ///
@@ -395,6 +410,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeScytheCropTarget>? ScytheCropTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgeVillagerWhereabouts>? VillagerWhereabouts,
+    IReadOnlyList<BridgeHarvestWhereabouts>? HarvestWhereabouts,
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
@@ -416,6 +432,10 @@ public sealed record BridgeSnapshot(
     int DayOfMonth,
     int SeasonIndex,
     int Year,
+    // The native weather flags (Game1.isRaining / isSnowing / isLightning /
+    // isDebrisWeather) projected as a single stable token. Same macro-context
+    // rule as the date fields: plain native reads, no interpretation.
+    string Weather,
     string PresentationLocale
     );
 

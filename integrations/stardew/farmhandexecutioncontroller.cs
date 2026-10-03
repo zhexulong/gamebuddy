@@ -1480,6 +1480,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
             DiscoverVillagerWhereabouts(),
+            DiscoverHarvestWhereabouts(),
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
@@ -1499,6 +1500,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             DayOfMonth: Game1.Date?.DayOfMonth ?? 0,
             SeasonIndex: Game1.Date?.SeasonIndex ?? 0,
             Year: Game1.Date?.Year ?? 0,
+            Weather: ProjectWeather(),
             PresentationLocale: string.Empty);
     }
 
@@ -1516,13 +1518,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
+        Weather: "unknown",
         PresentationLocale: string.Empty);
     }
 
@@ -1669,6 +1672,75 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result
             .OrderBy(entry => entry.Location, StringComparer.Ordinal)
             .ThenBy(entry => entry.NpcName, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Project the native weather flags onto one stable token for the snapshot.
+    /// Same macro-context rule as the date fields: plain reads of Game1 state,
+    /// no interpretation, no advice about what the weather implies. Lightning
+    /// only occurs while raining in the native game, so the order below puts the
+    /// more specific flag first; "unknown" is only used by the world-not-ready
+    /// placeholder snapshot, never in a live world.
+    /// </summary>
+    private static string ProjectWeather()
+    {
+        if (Game1.isLightning) return "lightning";
+        if (Game1.isRaining) return "rain";
+        if (Game1.isSnowing) return "snow";
+        if (Game1.isDebrisWeather) return "debris";
+        return "sunny";
+    }
+
+    /// <summary>
+    /// Summarize every loaded location's ready-for-harvest crops.
+    ///
+    /// <para>
+    /// Per-location HarvestTargets are Chebyshev-bounded, so this is the only
+    /// planning fact that tells the companion a ripe crop exists elsewhere —
+    /// same role as VillagerWhereabouts. Countable crops only (the same predicate
+    /// the bounded discovery uses), nearest tile is the one closest to the
+    /// player's current tile, and the result is bounded like the other snapshot
+    /// lists (Host accepts up to 64).
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts()
+    {
+        List<BridgeHarvestWhereabouts> result = new();
+        foreach (GameLocation location in Game1.locations)
+        {
+            if (result.Count >= 64) break;
+            int readyCount = 0;
+            Vector2? nearest = null;
+            float nearestDistance = float.MaxValue;
+            Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
+            foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
+            {
+                if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
+                    || dirt.crop is null
+                    || dirt.crop.forageCrop.Value
+                    || !dirt.readyForHarvest()
+                    || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                    continue;
+                readyCount++;
+                float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = pair.Key;
+                }
+            }
+            if (readyCount > 0 && nearest is not null)
+            {
+                result.Add(new BridgeHarvestWhereabouts(
+                    location.NameOrUniqueName,
+                    readyCount,
+                    (int)nearest.Value.X,
+                    (int)nearest.Value.Y));
+            }
+        }
+        return result
+            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
             .ToArray();
     }
 

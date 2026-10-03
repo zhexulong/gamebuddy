@@ -191,7 +191,7 @@ internal sealed partial class ExecutionManager
         if (warp is null || warp.TargetName is null or "")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_not_available" : "warp_not_available", $"source={sourceX},{sourceY}");
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_out_of_range" : "warp_out_of_range", $"source={sourceX},{sourceY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_out_of_range" : "warp_out_of_range", $"source={sourceX},{sourceY};door={warp.X},{warp.Y};target={warp.TargetName}:{warp.TargetX},{warp.TargetY}");
 
         LocalTravelSpec specification = new(
             executionId,

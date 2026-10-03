@@ -122,6 +122,12 @@ activeExecution?: ActiveExecution | null;
   dayOfMonth: number;
   seasonIndex: number;
   year: number;
+  /**
+   * Native weather flags projected to one stable token ("sunny" | "rain" |
+   * "snow" | "lightning" | "debris" | "unknown"). Same macro-context rule as
+   * the date fields: plain reads of Game1 state, no interpretation.
+   */
+  weather: string;
   /** Live native warp targets; older Mod snapshots may omit this field. */
   warps?: readonly Readonly<{
     sourceX: number;
@@ -426,6 +432,20 @@ activeExecution?: ActiveExecution | null;
     x: number;
     y: number;
     inCurrentLocation: boolean;
+  }>[];
+  /**
+   * Every loaded location's ready-for-harvest crop summary, across the loaded
+   * world. The per-location harvestTargets array is Chebyshev-bounded to the
+   * player's neighbourhood, so this is the only planning fact that tells the
+   * Agent a ripe crop exists elsewhere — same role as villagerWhereabouts. The
+   * nearest tile lets the Agent route to the location before the bounded
+   * discovery takes over.
+   */
+  harvestWhereabouts?: readonly Readonly<{
+    location: string;
+    readyForHarvestCount: number;
+    nearestX: number;
+    nearestY: number;
   }>[];
   /** Nearby native pets that have not been petted today. */
   petTargets?: readonly Readonly<{
@@ -1057,6 +1077,7 @@ const SNAPSHOT_KEYS = [
   "scytheCropTargets",
   "npcRelationshipTargets",
   "villagerWhereabouts",
+  "harvestWhereabouts",
   "petTargets",
   "animalProductTargets",
   "feedTroughTargets",
@@ -1069,6 +1090,7 @@ const SNAPSHOT_KEYS = [
   "cookingRecipeTargets",
   "cookingStationTargets",
   "minecartTargets",
+  "weather",
 ] as const;
 
 
@@ -2060,6 +2082,7 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isNonNegativeSafeInteger(value.dayOfMonth) || value.dayOfMonth > 28) return "invalid_snapshot:dayOfMonth";
   if (!isNonNegativeSafeInteger(value.seasonIndex) || value.seasonIndex > 3) return "invalid_snapshot:seasonIndex";
   if (!isNonNegativeSafeInteger(value.year)) return "invalid_snapshot:year";
+  if (value.weather !== undefined && value.weather !== null && !isWeatherToken(value.weather)) return "invalid_snapshot:weather";
   if (value.currentTool !== undefined && value.currentTool !== null && typeof value.currentTool !== "string")
     return "invalid_snapshot:currentTool";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
@@ -2262,6 +2285,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:villagerWhereabouts";
   if (
+    value.harvestWhereabouts !== undefined &&
+    (!Array.isArray(value.harvestWhereabouts) ||
+      value.harvestWhereabouts.length > 64 ||
+      !value.harvestWhereabouts.every(isHarvestWhereaboutsFact))
+  )
+    return "invalid_snapshot:harvestWhereabouts";
+  if (
     value.petTargets !== undefined &&
     (!Array.isArray(value.petTargets) || value.petTargets.length > 16 || !value.petTargets.every(isPetTargetFact))
   )
@@ -2375,6 +2405,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   isNonNegativeSafeInteger(value.seasonIndex) &&
   value.seasonIndex <= 3 &&
   isNonNegativeSafeInteger(value.year) &&
+    (value.weather === undefined || isWeatherToken(value.weather)) &&
     (value.warps === undefined ||
       (Array.isArray(value.warps) && value.warps.length <= 512 && value.warps.every(isWarp))) &&
     (value.doorTargets === undefined ||
@@ -2516,6 +2547,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.villagerWhereabouts) &&
         value.villagerWhereabouts.length <= 64 &&
         value.villagerWhereabouts.every(isVillagerWhereaboutsFact))) &&
+    (value.harvestWhereabouts === undefined ||
+      (Array.isArray(value.harvestWhereabouts) &&
+        value.harvestWhereabouts.length <= 64 &&
+        value.harvestWhereabouts.every(isHarvestWhereaboutsFact))) &&
     (value.petTargets === undefined ||
       (Array.isArray(value.petTargets) && value.petTargets.length <= 16 && value.petTargets.every(isPetTargetFact))) &&
     (value.animalProductTargets === undefined ||
@@ -3701,6 +3736,38 @@ function isVillagerWhereaboutsFact(value: unknown): boolean {
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     typeof value.inCurrentLocation === "boolean"
+  );
+}
+
+/**
+ * One loaded location's ready-for-harvest crop summary. The count is bounded
+ * to a safe non-negative integer (a full farm cannot exceed a few thousand
+ * crops; 1_000_000 is a generous but still finite ceiling), and the nearest
+ * tile must be a real in-map coordinate.
+ */
+function isHarvestWhereaboutsFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["location", "readyForHarvestCount", "nearestX", "nearestY"]) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isNonNegativeSafeInteger(value.readyForHarvestCount) &&
+    value.readyForHarvestCount <= 1_000_000 &&
+    isTileCoordinate(value.nearestX) &&
+    isTileCoordinate(value.nearestY)
+  );
+}
+
+/**
+ * The Mod's projected weather token. "unknown" is the world-not-ready
+ * placeholder; the live tokens are the four native flags plus the sunny
+ * default. Strict whitelist so a malformed Mod can never smuggle free text.
+ */
+function isWeatherToken(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    (value === "sunny" || value === "rain" || value === "snow" || value === "lightning" || value === "debris" || value === "unknown")
   );
 }
 
