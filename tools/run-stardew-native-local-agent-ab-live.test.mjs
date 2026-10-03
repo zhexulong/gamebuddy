@@ -69,7 +69,11 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /const actionTrace = \[\]/);
   assert.match(RUNNER_SOURCE, /actionTrace\.push\(entry\)/);
   assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace\)/);
-  assert.match(RUNNER_SOURCE, /systemFindings,\n    presentedSummary/);
+  // First-class fields of the result JSON: the health report and its
+  // companion observation block (roll-monitoring data) sit next to the
+  // presented text in the same result object.
+  assert.match(RUNNER_SOURCE, /systemFindings,\n    observation,\n    presentedSummary/);
+  assert.match(RUNNER_SOURCE, /buildRunObservation\(\{\n\s+prompt,/);
 });
 
 test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {

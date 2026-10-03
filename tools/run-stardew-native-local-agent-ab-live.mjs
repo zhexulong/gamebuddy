@@ -24,6 +24,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { LocalStardewBridgeClient } from "../host/dist-test/local-stardew-bridge.js";
 import { dehydrateCompanionSpeech } from "../host/dist-test/companion-speech-dehydration.js";
 import { LocalVoiceGatewayClient } from "../host/dist-test/voice-gateway-client.js";
@@ -615,6 +616,16 @@ try {
       })
     : null;
   void turnStartedMs;
+  const observation = buildRunObservation({
+    prompt,
+    ladder: LADDER,
+    turnStartedAtMs,
+    actionTrace,
+    factLog,
+    contextAssembled,
+    worldBookAssembled,
+    presentedSummary: presentedSummary ?? null,
+  });
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
@@ -637,6 +648,7 @@ try {
     worldBookAssembled,
     interactionAssessment,
     systemFindings,
+    observation,
     presentedSummary: presentedSummary ?? null,
     voiceResult,
     agentTurn: agentTurnResult,
@@ -666,6 +678,16 @@ try {
     offerReceipt: factLog.find((fact) => fact.type === "execution_receipt" && (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered")) ?? null,
     covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
     covenantSeed,
+    observation: buildRunObservation({
+      prompt: undefined,
+      ladder: LADDER,
+      turnStartedAtMs: null,
+      actionTrace,
+      factLog,
+      contextAssembled: null,
+      worldBookAssembled: null,
+      presentedSummary: presentedSummary ?? null,
+    }),
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
       LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
@@ -762,4 +784,40 @@ function splitSpeakableSentenceChunks(text) {
   }
   if (cursor < normalized.length) chunks.push(normalized.slice(cursor));
   return chunks;
+}
+
+/**
+ * Observation block for the roll-observation loop (design §observation loop).
+ * Pure monitor points — recorded on every real run, NEVER part of the verdict.
+ * A single run's text output is a random draw; only the aggregate across runs
+ * (tools/roll-aggregate.mjs) decides whether a prompt/context change beats its
+ * baseline beyond the roll noise. Grouping key: promptSha256 + ladder.
+ */
+function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, factLog, contextAssembled, worldBookAssembled, presentedSummary }) {
+  let promptSha256 = null;
+  if (typeof prompt === "string" && prompt.length > 0) {
+    promptSha256 = createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 16);
+  }
+  const rejections = (actionTrace ?? []).filter((entry) => {
+    const state = entry?.state;
+    return state === "rejected" || state === "uncertain" || state === "failed";
+  });
+  const terminalReceipts = (factLog ?? []).filter((fact) => fact?.type === "execution_receipt" && fact?.reasonCode !== undefined);
+  return Object.freeze({
+    schema: "game_ladder_observation/v1",
+    // Grouping keys: the exact prompt text (overridden or default) and the rung.
+    promptSha256,
+    promptOverridden: process.env.GAMEBUDDY_AGENT_PROMPT !== undefined,
+    ladder: String(ladder),
+    // Deterministic assembly facts (L0) — single-run truth, no averaging needed.
+    contextAssembled: contextAssembled ?? false,
+    worldBookAssembled: worldBookAssembled ?? false,
+    // Behavioral monitor points (L1/L2) — meaningful only across runs.
+    turnMs: turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs,
+    actionCount: (actionTrace ?? []).length,
+    rejectionCount: rejections.length,
+    rejectionRate: (actionTrace ?? []).length === 0 ? null : rejections.length / (actionTrace ?? []).length,
+    receiptCount: terminalReceipts.length,
+    summaryChars: typeof presentedSummary === "string" ? presentedSummary.length : null,
+  });
 }
