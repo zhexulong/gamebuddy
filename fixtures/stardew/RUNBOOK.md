@@ -1288,3 +1288,34 @@ match `run-stardew-native-local-player-*` (move-fixture.ps1 resolver regex);
 the fixture action/scenario allow-lists in `tools/lib/…fixture.mjs` must
 contain the harness action; `move_to_tile` args must be exactly `{x,y}` (the
 Mod's exact-shape parse rejects extra fields, `navigation_execution_parse_rejected`).
+
+## 29. L3 stall watchdog live evidence: stalled_waiting then native_path_ended (2026-10-04)
+
+Re-run of the Pet move-stall probe (`native_move_stall_probe_pet_v1`, action
+`move_stall_probe_pet`, fixture `GameBuddyFixtureStable_445936768`, private
+bundle staging, test-module host loader) on the tree that carries the L3 stall
+watchdog (e1d0893): the watchdog fires a non-terminal `stalled_waiting`
+progress after 120 ticks of zero tile progress, and only fails
+`native_path_ended` after the bounded budget — instead of failing the moment
+the native controller ends.
+
+- geometry actor(40,4) → blocker Pet(40,5) → target(40,6).
+- phase1 trace: accepted(r1) → controller_started(r2) → tile_advanced(r3) →
+  **stalled_waiting(r4)** → native_path_ended(r5); 5121 ms; finalTile (40,5);
+  Pet pushed to (41,5).
+- phase2 trace: accepted(r6) → controller_started(r7) → **stalled_waiting(r8)**
+  → native_path_ended(r9); 5035 ms; same finalTile, Pet back on route
+  (41,5).
+- conclusion blocker_survived, moved=true, blockerStillOnRoute=true, no
+  retry resolution; elapsed 12.6 s across both attempts.
+
+**Reading:** the watchdog behaved as designed under a real 5s native-path-cancel
+stall — it held the execution alive through `stalled_waiting` (a meaningful,
+non-terminal progress the Agent can observe) and then terminated honestly with
+`native_path_ended`, never looping or fake-retrying internally. The probe also
+confirms the design-5.3 conclusion still holds on this tree: same-target retry
+does not help against a walking Pet (pushing moves it one tile, it returns), so
+recovery must remain an Agent-level decision with fresh observation.
+
+Profile restored, backup/lock removed, working save cleaned, no residual
+Stardew/SMAPI process.
