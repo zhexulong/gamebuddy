@@ -76,6 +76,9 @@ const TARGET_FIELD = Object.freeze({
   // Added by the minecart lane after this table was written; the audit caught the
   // omission rather than letting the action ship with an unverified discovery leg.
   ride_minecart: "MinecartTargets",
+  // cut_grass targets the TerrainFeature `Grass`, whose discovery field is
+  // `grassTargets` — distinct from the Object-layer `cut_weeds`/`weedTargets`.
+  cut_grass: "GrassTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */
@@ -117,24 +120,31 @@ export function auditDiscoveryChannels({
     ),
   );
 
-  // Agent-facing tools: `isVisible("<action>")` is the Host's own gate.
+  // Agent-facing tools: earlier the Host gated each tool with an `isVisible("<action>")`
+  // marker, which this audit sliced on. Since 36608fa every Game Action tool is a
+  // constant mount (`makeGameActionTool` with an `action: "<id>"` field) and
+  // per-action authority is decided at execution, so the visible set is the set of
+  // mounted tool ids. A mount counts only when its `action` id is immediately
+  // followed by its `toArgs` projector, matching the promotion checker.
   const toolVisible = new Set(
-    [...gameTools.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\)/g)].map(
-      (m) => m[1],
-    ),
+    [
+      ...gameTools.matchAll(
+        /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
+      ),
+    ].map((m) => m[1]),
   );
 
   // The snapshot list each tool description actually tells the Agent to read.
   //
-  // Slice on the isVisible markers rather than requiring tools.push to follow
-  // immediately: a few actions (pet_animal, interact_npc_with_item, ...) run a
-  // descriptor-completeness guard and a schema build before pushing, so a
+  // Slice on the makeGameActionTool markers rather than requiring tools.push to
+  // follow immediately: a few actions (pet_animal, interact_npc_with_item, ...)
+  // run a descriptor-completeness guard and a schema build before pushing, so a
   // pattern anchored on tools.push would silently skip them and report a
   // "does not name its field" gap that is not real.
   const describedFields = new Map();
-  const chunks = gameTools.split(/if \(isVisible\("/).slice(1);
+  const chunks = gameTools.split(/makeGameActionTool\(\{/).slice(1);
   for (const chunk of chunks) {
-    const visible = chunk.match(/^([a-z0-9_]+)"\)\)/);
+    const visible = chunk.match(/\n\s*action: "([a-z0-9_]+)",/);
     if (!visible) continue;
     const desc = chunk.match(
       /description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/,

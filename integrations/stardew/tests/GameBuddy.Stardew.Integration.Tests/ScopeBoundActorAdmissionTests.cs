@@ -8,6 +8,7 @@ using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Handlers;
 using Netcode;
 using StardewValley;
+using StardewValley.Network;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -332,6 +333,17 @@ public sealed class ScopeBoundActorAdmissionTests
             typeof(Farmer)
                 .GetField("uniqueMultiplayerID", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
                 .SetValue(actor, new NetLong(actorId.Value));
+            // WIA admission reads the per-tick disposition (WorldModel.ReadFacts),
+            // so a probe Farmer must supply every NetField it touches.
+            typeof(Farmer)
+                .GetField("netStamina", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(actor, new NetFloat(270f));
+            typeof(Farmer)
+                .GetField("usingTool", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(actor, new NetBool(false));
+            typeof(Farmer)
+                .GetField("toolPower", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(actor, new NetInt(0));
         }
 
         executions.SetTestActorResolver(() => actor);

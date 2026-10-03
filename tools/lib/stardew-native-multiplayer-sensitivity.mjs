@@ -172,6 +172,72 @@ export function extractMethodBody(sourceText, signature) {
   return null;
 }
 
+/** Call names never treated as helper calls when scanning a seam body. */
+const SKIPPED_SEAM_CALLS = new Set([
+  "if", "for", "foreach", "while", "switch", "return", "new", "throw", "base",
+  "this", "Math", "string", "int", "float", "bool", "double", "Vector2", "Game1",
+  "item", "who", "t", "location", "farmer", "out", "ref", "in", "nameof",
+  "typeof", "default", "await", "Color", "Rectangle", "List", "Dictionary",
+  "HashSet", "Array", "Task", "KeyValuePair", "Point",
+  "Get", "Set", "TryGetValue", "ContainsKey", "Contains", "Add", "Remove",
+  "ToString", "GetHashCode", "Equals", "Any", "All", "Where", "Select",
+  "OrderBy", "ToArray", "ToList", "First", "FirstOrDefault", "Single",
+  "SingleOrDefault", "Max", "Min", "Sum", "Count", "Length", "Wait", "Sleep",
+]);
+
+/**
+ * Every private/protected/internal method body in one source file, keyed by
+ * member name. Used to follow the real effect when a seam's own body reads no
+ * multiplayer token but delegates the mutation to a helper (the same shape the
+ * seam-terminal audit calls terminal_in_delegate).
+ */
+function indexHelperBodies(sourceText) {
+  const bodies = new Map();
+  const re = /(?:private|protected|internal)(?:\s+(?:static|virtual|override))*\s+[\w<>,\[\].\?]+\s+(\w+)\s*\([^)]*\)\s*(?:=>\s*[^;]+;|\{)/g;
+  let m;
+  while ((m = re.exec(sourceText))) {
+    const open = sourceText.indexOf("{", m.index + m[0].length - 1);
+    if (open < 0) continue;
+    let depth = 0;
+    let started = false;
+    for (let j = open; j < sourceText.length; j += 1) {
+      if (sourceText[j] === "{") {
+        depth += 1;
+        started = true;
+      } else if (sourceText[j] === "}") {
+        depth -= 1;
+        if (started && depth === 0) {
+          bodies.set(m[1], sourceText.slice(open, j + 1));
+          break;
+        }
+      }
+    }
+  }
+  return bodies;
+}
+
+/**
+ * Follow one hop of same-file helper calls from a seam body, collecting any
+ * multiplayer tokens the helpers carry. Returns { decisive, context, helpers }.
+ */
+function collectDelegatedTokens(bodyText, sourceText) {
+  const decisive = [];
+  const context = [];
+  const helpers = [];
+  const bodies = indexHelperBodies(sourceText);
+  const seen = new Set();
+  for (const match of bodyText.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g)) {
+    const name = match[1];
+    if (SKIPPED_SEAM_CALLS.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    const helperBody = bodies.get(name);
+    if (helperBody === undefined || helperBody === null) continue;
+    for (const d of collectDecisiveTokens(helperBody)) if (!decisive.includes(d)) decisive.push(d);
+    for (const c of collectContextTokens(helperBody)) if (!context.includes(c)) context.push(c);
+    helpers.push(name);
+  }
+  return { decisive, context, helpers };
+}
 /** Distinct decisive multiplayer tokens present in a method body. */
 export function collectDecisiveTokens(bodyText) {
   const seen = new Set();
@@ -216,12 +282,22 @@ export function deriveNativeSeamEvidence(seams, sources) {
     const body = extractMethodBody(source.text, signature);
     if (body === null)
       fail("mp_sensitivity_seam_signature_missing", `Signature not found in ${file}.`, { file, signature });
+    const decisiveTokens = collectDecisiveTokens(body);
+    const contextTokens = collectContextTokens(body);
+    let delegatedHelpers;
+    if (decisiveTokens.length === 0 && contextTokens.length === 0) {
+      const delegated = collectDelegatedTokens(body, source.text);
+      for (const d of delegated.decisive) if (!decisiveTokens.includes(d)) decisiveTokens.push(d);
+      for (const c of delegated.context) if (!contextTokens.includes(c)) contextTokens.push(c);
+      if (delegated.helpers.length > 0) delegatedHelpers = Object.freeze(delegated.helpers);
+    }
     return Object.freeze({
       kind,
       file,
       signature,
-      decisiveTokens: Object.freeze(collectDecisiveTokens(body)),
-      contextTokens: Object.freeze(collectContextTokens(body)),
+      decisiveTokens: Object.freeze(decisiveTokens),
+      contextTokens: Object.freeze(contextTokens),
+      ...(delegatedHelpers !== undefined ? { delegatedHelpers } : {}),
     });
   });
 }

@@ -285,6 +285,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
         this.controller = new StardewBodyController(this.RecordControllerTransition);
+        // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
+        // "is the current modal the current action's own modal" is answered by
+        // THIS ledger's single-field lease. Production is single-ExecutionManager
+        // on the game thread; tests that fork several managers must reset their
+        // own lease through RegisterModalOwner/ReleaseModalOwner, and a null
+        // lease (no action ever registered) stays worldOwned — the safe default.
+        WorldModel.ModalActionOwnedCheck = () => this.activeModalOwnerExecutionId is not null;
+    }
+
+    /// <summary>
+    /// WIA §4.2 owner lease: the executionId of the action that deliberately
+    /// opened the modal currently on screen (an action-owned notice board /
+    /// caption / dialogue). Null until an action registers it: every
+    /// asynchronous modal that appears without an explicit registration is
+    /// deterministically worldOwned.
+    /// </summary>
+    internal string? ActiveModalOwnerExecutionId => this.activeModalOwnerExecutionId;
+
+    internal void RegisterModalOwner(string executionId)
+    {
+        this.activeModalOwnerExecutionId = executionId;
+    }
+
+    /// <summary>Releases the owner lease; only the owning execution may clear it.</summary>
+    internal void ReleaseModalOwner(string executionId)
+    {
+        if (string.Equals(this.activeModalOwnerExecutionId, executionId, StringComparison.Ordinal))
+            this.activeModalOwnerExecutionId = null;
     }
 
     public long Revision => this.revision;
@@ -406,6 +434,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private Func<Farmer?>? testActorResolver;
 
+    private string? activeModalOwnerExecutionId;
+
+    /// <summary>
+    /// The per-tick world/body projection (WIA §1.2.1). Refreshed once at the
+    /// top of <see cref="Update"/>; consumers read this field, never a fresh
+    /// computation, so every ruling in one tick agrees on the same world.
+    /// </summary>
+    private ActorDisposition disposition = ActorDisposition.Idle;
+
     internal void SetTestActorResolver(Func<Farmer?>? resolver)
     {
         this.testActorResolver = resolver;
@@ -471,6 +508,79 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         /// kept for actions that are not tool-driven.
         /// </summary>
         General,
+
+        /// <summary>
+        /// The modal-handling family profile (actions in
+        /// <see cref="ModalActionFamily"/>: answer_dialogue / dismiss_modal).
+        /// An open modal (DialogueBox / LetterViewer / ReadyCheck / GameMenu)
+        /// is this profile's WORKING PRECONDITION, not an obstacle — unlike the
+        /// body-owning profiles it must not be refused while a menu is up, or
+        /// the modal-interrupted flow deadlocks (WIA §4.2 closes the §3.2
+        /// admission lock). A modal handling call is an instantaneous native
+        /// invocation (GameLocation.answerDialogue / closeDialogue) that takes
+        /// no body lease and moves no one, so the body_owned check is exempt;
+        /// deadline and identity/scope/revision checks stay exactly as for the
+        /// other profiles.
+        /// </summary>
+        Modal,
+    }
+
+    /// <summary>
+    /// The frozen modal-handling action family admitted through the
+    /// <see cref="AdmissionActionabilityProfile.Modal"/> profile. The concrete
+    /// action identities are finalized by design 7.4.2 (dialogue-internal
+    /// resolution); WIA 2026-10-02 freezes exactly these two stand-ins until
+    /// that design replaces them.
+    /// </summary>
+    internal static readonly string[] ModalActionFamily = { "answer_dialogue", "dismiss_modal" };
+
+    /// <summary>
+    /// WIA disposition projection for admission (§4.2). Local stand-in for Lane
+    /// A's <see cref="WorldModel.ComputeDisposition"/>: it applies the same
+    /// precedence as the landed WorldModel — PassOut &gt; Event &gt; Modal &gt;
+    /// Transient &gt; Idle — so admission, the body loop and the WorldModel share
+    /// one consistent per-tick classification once the swap completes (WIA
+    /// acceptance §6-6).
+    /// TODO(WIA): WorldModel.cs 已落地但 ComputeDisposition 无条件读取
+    /// player.Stamina/UsingTool（netStamina/usingTool NetFields 在现有 probe
+    /// farmer 上为 null），直接换用会让既有准入测试 NRE；待 Lane A 的
+    /// WorldModel 对 probe farmer 安全后，删除本投影与本判定，AdmitExecution
+    /// 单读 WorldModel.ComputeDisposition(actor).Kind。
+    /// </summary>
+    private enum LocalDispositionKind
+    {
+        Idle,
+        Modal,
+        Event,
+        PassOut,
+        Transient,
+    }
+
+    /// <summary>
+    /// The WIA §4.2 admission ruling, delegated to the single authority
+    /// (<see cref="WorldModel.Classify"/>). This wrapper only narrows the kind set
+    /// for the admission decision and preserves the pre-convergence
+    /// <c>!CanMove</c> reading: a movement lock that is neither an event, a menu,
+    /// nor a pass-out still keeps the body non-actionable for the body-owning
+    /// profiles (the pre-WIA short-circuit chain decided exactly this).
+    /// </summary>
+    private static LocalDispositionKind ClassifyAdmissionDisposition(Farmer actor)
+    {
+        ActorWorldFacts facts = WorldModel.ReadFacts(actor);
+        ActorDispositionKind kind = WorldModel.Classify(facts).Kind;
+        LocalDispositionKind disposition = kind switch
+        {
+            ActorDispositionKind.Event => LocalDispositionKind.Event,
+            ActorDispositionKind.Modal => LocalDispositionKind.Modal,
+            ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
+            ActorDispositionKind.Transient => LocalDispositionKind.Transient,
+            _ => LocalDispositionKind.Idle,
+        };
+        // Any remaining movement lock (eating / knockback / warp transition)
+        // stays non-Idle exactly as the pre-convergence !CanMove check decided.
+        if (disposition == LocalDispositionKind.Idle && !actor.CanMove)
+            return LocalDispositionKind.Transient;
+        return disposition;
     }
 
     /// <summary>
@@ -478,6 +588,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// order invariant 1 fixes: identity → actionability → deadline → body
     /// exclusivity. Geometry, target identity and postconditions are
     /// deliberately absent — they belong to the action body.
+    ///
+    /// Actionability is disposition-driven (WIA §4.2): the non-Modal profiles
+    /// require the body to be Idle; the Modal profile (modal-handling family)
+    /// requires the modal to actually be present — the open modal is its
+    /// working precondition — and is exempt from the body-lease check, while
+    /// deadline and identity/scope/revision checks stay unchanged.
     ///
     /// Returns <see langword="null"/> when the request is admitted. Otherwise it
     /// returns the terminal rejection, whose reasonCode is byte-identical to the
@@ -491,21 +607,29 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         long nowMs,
         AdmissionActionabilityProfile profile)
     {
+        // Kept private by the pre-WIA source pin (ToolApproachContractTests:
+        // admission must count an approach as a busy body).
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
 
-        // Kept as one short-circuit chain so the evaluated property set stays
-        // identical to the inline form this replaces.
-        bool notActionable = profile is AdmissionActionabilityProfile.Physical
-            ? Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0
-            : Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove;
+        // WIA §4.2: read the disposition projection instead of re-deriving
+        // CanMove/menu/event. Only the Modal profile may act while the world
+        // holds a modal; every other profile still requires Idle (menu / event /
+        // pass-out / transient → player_not_actionable as before). The explicit
+        // eventUp clause keeps the §4.2 "and !eventUp" precondition even if the
+        // WorldModel swap ever reorders the precedence.
+        LocalDispositionKind disposition = ClassifyAdmissionDisposition(boundActor);
+        bool notActionable = profile is AdmissionActionabilityProfile.Modal
+            ? disposition != LocalDispositionKind.Modal || Game1.eventUp
+            : disposition != LocalDispositionKind.Idle;
         if (notActionable)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
 
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution)
+        if (profile is not AdmissionActionabilityProfile.Modal
+            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
         return null;
@@ -887,6 +1011,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     public void Update()
     {
         this.tick++;
+        // WIA §1.2.1: the single per-tick world/body projection. Computed once
+        // here, on the game thread, BEFORE anything consumes it this tick — the
+        // world-change arbitration below, the body loop's own rulings, and
+        // admission (which reads the same authority through
+        // WorldModel.Classify). Consumers never re-derive CanMove / menu / event.
+        this.disposition = WorldModel.ComputeDisposition(Game1.player);
         // The owned cross-day night advances first: it is the only execution whose
         // work is driven by the native day pipeline rather than by the body
         // controller, and it must observe its terminal on the same game thread
@@ -1165,6 +1295,49 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Controller success releases its native ownership only after its
         // transition callback returns; drain pending idle after that boundary.
         this.DrainPendingIdleAfterRelease();
+
+        // WIA §4.1 top-level arbitration (review #2, 2026-10-02): movement
+        // world-change interruptions are already arbitrated inside
+        // StardewBodyController.Update, but NON-movement executions
+        // (travel / pet / tool approach / item pickup / item use / animal
+        // product) never reach the body controller — they must be interrupted
+        // here, on the same game thread, through the same InvalidateForLifecycle
+        // funnel the lifecycle boundaries already use.
+        this.ArbitrateWorldChangeInterruptions();
+    }
+
+    /// <summary>
+    /// WIA §4.1/§4.3: terminates non-movement executions the moment the world
+    /// holds an interruptible state that requires the body (a modal, an event
+    /// cutscene, or an imminent pass-out). World-change classification follows
+    /// the WorldModel precedence (Event &gt; Modal &gt; PassOut &gt; Transient);
+    /// Transient is intentionally NOT arbitrated here — it is the body
+    /// controller's self-healing window and is reported through its own
+    /// mechanism. The movement execution is likewise excluded: it has its own
+    /// intention-breakpoint evidence inside StardewBodyController.Update.
+    /// </summary>
+    private void ArbitrateWorldChangeInterruptions()
+    {
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null
+            || this.activeAnimalProduct is not null || this.activeItemUse is not null
+            || this.activeItemPickup is not null || this.activeToolApproach is not null)
+        {
+            switch (this.disposition.Kind)
+            {
+                case ActorDispositionKind.Event:
+                    this.InvalidateForLifecycle("event_started");
+                    break;
+                case ActorDispositionKind.Modal:
+                    this.InvalidateForLifecycle("modal_interrupted");
+                    break;
+                case ActorDispositionKind.PassOut:
+                    this.InvalidateForLifecycle("pass_out");
+                    break;
+                case ActorDispositionKind.Transient:
+                case ActorDispositionKind.Idle:
+                    break;
+            }
+        }
     }
 
     public void InvalidateForLifecycle(string reasonCode)

@@ -24,7 +24,17 @@ function surface() {
   };
 }
 function tool(description) {
-  return `if (isVisible("${ACTION}")) {\n tools.push(\n  makeGameActionTool({\n   description:\n    "${description}",\n   parameters: {}`;
+  // Constant-mount shape (36608fa): the tool is mounted unconditionally; its
+  // `action` id must be followed by `toArgs`, and the description precedes the
+  // parameter schema exactly as in production. The description prose below is
+  // what the audit reads for the named-target-field check.
+  return `makeGameActionTool({
+   name: "stardew_${ACTION}",
+   description:
+    "${description}",
+   parameters: {},
+   action: "${ACTION}",
+   toArgs: `;
 }
 function schemaWith(properties) {
   return { $defs: { snapshot: { properties } } };
@@ -91,7 +101,7 @@ test("the audit reports one hole per broken layer rather than passing silently",
     models: MODEL,
     protocol: PROTOCOL,
     schema: schemaWith({ [FIELD]: {} }),
-    gameTools: "// no isVisible gate at all",
+    gameTools: "// no makeGameActionTool mount at all",
   });
   assert.ok(noTool.gaps.some((gap) => gap.gap === "no_agent_tool"));
 
