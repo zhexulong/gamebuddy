@@ -21,6 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -59,7 +60,7 @@ import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.
 // Magic Context database + log, session logs). This is what makes a content
 // defect (e.g. an empty default persona) visible to a reviewer — the harness
 // is an external tool and is not bound by the Host's write-ownership rule.
-const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: new URL("../..", import.meta.url).pathname });
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../..", import.meta.url)) });
 
 const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
