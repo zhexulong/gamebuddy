@@ -312,6 +312,21 @@ function projectOperations(profile: ComposedTavernProfile): readonly TavernBrows
         routeId: "world-info.bind",
       }),
     );
+  for (const operationId of ["chat.archive", "chat.restore", "chat.trash"] as const) {
+    if (profile.operationIds.includes(operationId))
+      operations.push(
+        Object.freeze({
+          operationId,
+          labelKey: operationId === "chat.archive"
+            ? "tavern.operation.chat.archive"
+            : operationId === "chat.restore"
+              ? "tavern.operation.chat.restore"
+              : "tavern.operation.chat.trash",
+          availability: "available",
+          routeId: operationId,
+        }),
+      );
+  }
   return Object.freeze(operations);
 }
 

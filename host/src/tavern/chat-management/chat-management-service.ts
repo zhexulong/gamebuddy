@@ -9,6 +9,7 @@ import {
   type ChatListEntryV1,
   type ChatListQueryV1,
   type ChatListV1,
+  type ChatRetentionResultV1,
   type ChatTitleV1,
   type ComposedTavernProfile,
   type DiscardDraftCommandV1,
@@ -17,6 +18,20 @@ import {
   TAVERN_BROWSER_API_VERSION,
   TavernBrowserValidatorsV1,
 } from "../browser-contract/index.js";
+
+/**
+ * Service-level retention command: the wire body (revision + selection
+ * generation) plus the exact mounted handle and the operation named by the
+ * route. Kept separate from the browser contract type so the wire shape can
+ * never carry a handle the browser could forge.
+ */
+export type ChatRetentionServiceCommand = Readonly<{
+  apiVersion: number;
+  selectionGeneration: number;
+  chatHandle: string;
+  expectedManagementRevision: number;
+  operation: "archive" | "restore" | "trash";
+}>;
 import { type ChatThread, createChatThreadStore } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
 
@@ -30,9 +45,17 @@ import { createChatTitleManagementService } from "./chat-title-management.js";
  */
 export type ChatManagementService = Readonly<{
   /** Metadata-only list of the exact companion/continuity's active Chats. */
+  /** Rejects new admission and drains admitted dispatches before resolving. */
   listChats(query: ChatListQueryV1): Promise<ChatListV1>;
   /** Exact mounted-Chat title rename with selection generation, handle and management-revision CAS. */
   renameChatTitle(command: RenameChatTitleCommandV1): Promise<ChatTitleV1>;
+  /**
+   * Durable Chat lifecycle retention (archive / restore / trash) through the
+   * store's lifecycle CAS. The command names the exact mounted Chat handle and
+   * an expected management revision; messages, bindings, title and draft are
+   * never changed. Archived/trashed Chats leave the active list.
+   */
+  transitionLifecycle(command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1>;
   /** Reads the exact mounted Chat draft after validating the selection generation. */
   readDraft(): Promise<BrowserDraftV1>;
   /** Saves the exact mounted Chat draft through durable revision CAS. */
@@ -204,9 +227,39 @@ export function createChatManagementService(options: ChatManagementServiceOption
     }
   };
 
+  const transitionLifecycle = async (command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1> => {
+    assertOpen();
+    validateRetentionCommand(command, lease);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    if (typeof store.transitionLifecycle !== "function") throw unavailable();
+    try {
+      const thread = await store.transitionLifecycle({
+        chatThreadId: lease.chatThreadId,
+        chatSurfaceSessionId: lease.chatSurfaceSessionId,
+        companionId: manifest.principal.companionId,
+        continuityId: manifest.principal.continuityId,
+        expectedManagementRevision: command.expectedManagementRevision,
+        operation: command.operation,
+      });
+      assertLeaseAfterDurableRead();
+      if (thread.chatThreadId === undefined || thread.chatSurfaceSessionId === undefined) throw unavailable();
+      const result: ChatRetentionResultV1 = Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        handle: lease.browserProjection.projectChatHandle(thread.chatThreadId, thread.chatSurfaceSessionId),
+        status: (thread.lifecycleStatus ?? "active") as ChatRetentionResultV1["status"],
+        managementRevision: thread.managementRevision ?? 1,
+      });
+      if (!TavernBrowserValidatorsV1.ChatRetentionResultV1Schema.Check(result)) throw unavailable();
+      return result;
+    } catch (error) {
+      throw rethrowRetentionError(error);
+    }
+  };
+
   return Object.freeze({
     listChats,
     renameChatTitle,
+    transitionLifecycle,
     readDraft,
     saveDraft,
     discardDraft,
@@ -272,6 +325,28 @@ function validateRenameCommand(command: RenameChatTitleCommandV1, lease: Mounted
   // or another Chat than the one mounted by the coordinator.
   if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
   if (command.chatHandle !== lease.browserProjection.chatHandle) throw selectionConflict();
+}
+
+function validateRetentionCommand(command: ChatRetentionServiceCommand, lease: MountedChatRuntimeLease): void {
+  if (command === null || typeof command !== "object" || Array.isArray(command)) throw unavailable();
+  if (command.apiVersion !== TAVERN_BROWSER_API_VERSION) throw unavailable();
+  if (!Number.isSafeInteger(command.selectionGeneration) || command.selectionGeneration < 1) throw unavailable();
+  if (!Number.isSafeInteger(command.expectedManagementRevision) || command.expectedManagementRevision < 0)
+    throw unavailable();
+  if (command.operation !== "archive" && command.operation !== "restore" && command.operation !== "trash")
+    throw unavailable();
+  if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+  if (command.chatHandle !== lease.browserProjection.chatHandle) throw selectionConflict();
+}
+
+function rethrowRetentionError(error: unknown): Error {
+  if (!(error instanceof Error)) return unavailable();
+  if (error.message === "chat_thread_management_revision_conflict") return new Error("chat_management_revision_conflict");
+  if (error.message === "chat_thread_surface_mismatch") return selectionConflict();
+  if (error.message === "chat_thread_lifecycle_not_active") return new Error("chat_management_service_unavailable");
+  if (error.message === "chat_thread_lifecycle_transition_invalid") return new Error("chat_management_lifecycle_invalid");
+  if (isStorageError(error)) return storageUnavailable();
+  return unavailable();
 }
 
 function rethrowReadError(error: unknown): Error {

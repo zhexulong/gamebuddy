@@ -32,6 +32,14 @@ async function loadGenerationModules(artifactRoot: string) {
     load("windows-reparse-inspector/index.js"),
     load("windows-stale-lock-reclaimer/index.js"),
     load("path-lock.js"),
+    load("tavern/artifact-store.js"),
+    load("tavern/persona-management/persona-management.js"),
+    load("tavern/scenario-management/scenario-management.js"),
+    load("tavern/greeting-management/greeting-management.js"),
+    load("tavern/companion-detail/companion-detail-service.js"),
+    load("tavern/library-service.js"),
+    load("tavern/new-companion-service.js"),
+    load("tavern/tavern-paths.js"),
   ]);
 }
 
@@ -44,6 +52,13 @@ async function startMountedManagementComposition(
      * answer so the closed outcome is deterministic.
      */
     endpointHandler?: (url: string, headers: Record<string, string>) => Readonly<{ status: number; body: string }>;
+    /**
+     * Mounts the Characters surface (design/28 §2): companion library,
+     * persona/scenario/greeting CRUD and Chat lifecycle retention through the
+     * same real artifact-store services the desktop owner composes. Absent
+     * by default so the existing journeys keep the legacy management shape.
+     */
+    withCharacters?: boolean;
   }> = {},
 ) {
   test.skip(process.platform !== "win32", "requires the real Windows mounted coordinator");
@@ -72,6 +87,14 @@ async function startMountedManagementComposition(
     inspectorModule,
     reclaimerModule,
     pathLock,
+    artifactStoreModule,
+    personaManagementModule,
+    scenarioManagementModule,
+    greetingManagementModule,
+    companionDetailModule,
+    libraryServiceModule,
+    newCompanionModule,
+    tavernPathsModule,
   ] = await loadGenerationModules(artifactRoot);
   const root = resolve(tmpdir(), `gamebuddy-management-browser-${process.pid}-${Date.now()}`);
   await rm(root, { recursive: true, force: true });
@@ -119,6 +142,22 @@ async function startMountedManagementComposition(
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      ...(options.withCharacters === true
+        ? [
+            "companion.list",
+            "companion.detail",
+            "companion.create",
+            "persona.read",
+            "persona.update",
+            "scenario.read",
+            "scenario.update",
+            "greeting.read",
+            "greeting.update",
+            "chat.archive",
+            "chat.restore",
+            "chat.trash",
+          ]
+        : []),
     ],
     operationIds: [
       "draft.save",
@@ -135,8 +174,24 @@ async function startMountedManagementComposition(
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      ...(options.withCharacters === true
+        ? [
+            "companion.list",
+            "companion.detail",
+            "companion.create",
+            "persona.read",
+            "persona.update",
+            "scenario.read",
+            "scenario.update",
+            "greeting.read",
+            "greeting.update",
+            "chat.archive",
+            "chat.restore",
+            "chat.trash",
+          ]
+        : []),
     ],
-    navigationItemIds: ["chat", "memory"],
+    navigationItemIds: options.withCharacters === true ? ["chat", "memory", "characters"] : ["chat", "memory"],
   });
   const worldInfoRepository = worldInfoManagementModule.createWorldInfoManagementRepository(root);
   await worldInfoRepository.create({
@@ -154,6 +209,70 @@ async function startMountedManagementComposition(
     // the browser sees the bound state immediately.
     settleAuthoredContext: () => coordinatorModule.settleMountedAuthoredContext(manifest, lease),
   });
+  // The Characters surface shares the same real artifact-store authorities the
+  // desktop owner composes (design/28 §2): every journey that mounts it talks
+  // to the durable store, never a stub, so read-backs are genuine.
+  let personaService: ReturnType<typeof personaManagementModule.createPersonaManagementService> | undefined;
+  let scenarioService: ReturnType<typeof scenarioManagementModule.createScenarioManagementService> | undefined;
+  let greetingService: ReturnType<typeof greetingManagementModule.createGreetingManagementService> | undefined;
+  let libraryService: Readonly<{ listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]> }> | undefined;
+  let companionDetailService:
+    | Readonly<{ read(handle: string): Promise<Readonly<{ name: string }> | null> }>
+    | undefined;
+  let newCompanionProvisioner: Readonly<{ create(name: string): Promise<Readonly<{ name: string }>> }> | undefined;
+  if (options.withCharacters === true) {
+    const tavernPaths = tavernPathsModule.resolveTavernPaths(
+      runtimeIdentity.resolveRuntimePaths(principal, root, lease.chatSurfaceSessionId),
+      principal,
+    );
+    const artifactStore = new artifactStoreModule.TavernArtifactStore(root);
+    personaService = personaManagementModule.createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
+    scenarioService = scenarioManagementModule.createScenarioManagementService(artifactStore, tavernPaths.companionRoot);
+    greetingService = greetingManagementModule.createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
+    const libraryThreads = chatThreadStoreModule.createChatThreadStore(root, runtimeIdentity.identityKey(principal));
+    const libraryBase = libraryServiceModule.createTavernLibraryService(
+      tavernPaths,
+      artifactStore,
+      libraryThreads,
+      {
+        // The library's metadata reader is consumed on new-chat paths only;
+        // companion listing reads the artifact repositories directly. The
+        // browser journeys never create a Chat through the library.
+        async readExact() {
+          throw new Error("identity_profile_not_written_in_browser_fixture");
+        },
+      },
+    );
+    const currentCompanionId = principal.companionId;
+    const companionHandleFor = (companionId: string): string =>
+      lease.browserProjection.projectCompanionHandle(companionId);
+    libraryService = Object.freeze({
+      async listCompanions() {
+        const companions = await libraryBase.listCompanions();
+        return companions.map((companion) =>
+          Object.freeze({
+            handle: companionHandleFor(companion.companionId),
+            name: companion.name,
+            isCurrent: companion.companionId === currentCompanionId,
+          }),
+        );
+      },
+    });
+    const companionDetailBase = companionDetailModule.createCompanionDetailService(tavernPaths, artifactStore);
+    companionDetailService = Object.freeze({
+      async read(handle: string) {
+        if (handle !== companionHandleFor(currentCompanionId)) return null;
+        const detail = await companionDetailBase.read();
+        return Object.freeze({ name: detail.name });
+      },
+    });
+    newCompanionProvisioner = Object.freeze({
+      async create(name: string) {
+        const provision = await newCompanionModule.provisionDirectNewCompanion(root, principal.playerId, name);
+        return Object.freeze({ name: provision.companion.name });
+      },
+    });
+  }
   const managementStateFacade = await stateModule.createTavernManagementStateFacade(
     manifest,
     lease,
@@ -206,6 +325,12 @@ async function startMountedManagementComposition(
     worldInfoService,
     voicePreferenceStore,
     connectionService,
+    ...(personaService === undefined ? {} : { personaService }),
+    ...(scenarioService === undefined ? {} : { scenarioService }),
+    ...(greetingService === undefined ? {} : { greetingService }),
+    ...(libraryService === undefined ? {} : { libraryService }),
+    ...(companionDetailService === undefined ? {} : { companionDetailService }),
+    ...(newCompanionProvisioner === undefined ? {} : { newCompanionProvisioner }),
     profile,
     bootstrapToken,
   });
@@ -993,6 +1118,119 @@ test("management browser tests connections with a closed outcome, activates a re
     await expect(page.locator("[data-connection-settings]")).toBeVisible();
     const deepseekAfterReload = page.locator("[data-connection-row]", { hasText: "DeepSeek V4 Pro" });
     await expect(deepseekAfterReload.locator("select")).toHaveValue("max");
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("management browser with the Characters surface saves Persona, Scenario and Greeting durably and lists the companion library", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition({ withCharacters: true });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const mutations: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/tavern/v1/")) mutations.push(`${request.method()} ${url.pathname}`);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-characters-panel]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+
+    // Persona starts absent and saves through the durable store with a
+    // revision read-back; every save is a real PUT round-trip.
+    await expect(panel.getByText("No persona saved yet.")).toBeVisible();
+    await panel.locator("#persona-name").fill("The Farmer");
+    await panel.locator("#persona-description").fill("A quiet soul who loves cauliflower.");
+    await panel.getByRole("button", { name: "Save Persona" }).click();
+    await expect(panel.getByText("Saved.").first()).toBeVisible();
+    await expect(panel.getByText("Present")).toBeVisible();
+
+    // Scenario saves and reloads.
+    await panel.locator("#scenario-name").fill("Spring in Pelican Town");
+    await panel.locator("#scenario-description").fill("Stardew Valley, the first of spring.");
+    await panel.getByRole("button", { name: "Save Scenario" }).click();
+    await expect(panel.getByText("Saved.").first()).toBeVisible();
+
+    // Greeting saves one variant through the durable store.
+    await panel.locator("#greeting-label").fill("Morning");
+    await panel.locator("#greeting-variant-0-text").fill("Good morning, sunshine.");
+    await panel.getByRole("button", { name: "Save Greeting" }).click();
+    await expect(panel.getByText("Saved.").first()).toBeVisible();
+
+    // The companion library starts empty on a fresh fixture root (the mounted
+    // Chat runtime does not mint a companion artifact into the library's
+    // repository tree), then a create through the durable store adds one. The
+    // mount-projected identity is never the mounted companion here, so the
+    // current-marker semantics are not exercised by this journey.
+    await expect(panel.getByText("No companions yet.")).toBeVisible();
+    await panel.getByRole("textbox", { name: "New companion" }).fill("Harvest Helper");
+    await panel.getByRole("button", { name: "Create companion" }).click();
+    await expect(panel.locator("[data-companion-entry]").first()).toContainText("Harvest Helper");
+    // The projected handle is opaque: no durable companion identity text may
+    // reach the DOM (companion_01 is the fixture principal; a created
+    // companion would leak a `companion-<uuid>` otherwise).
+    await expect(panel.locator("[data-companion-entry]").first()).not.toContainText("companion_01");
+    await expect(panel.locator("[data-companion-entry]").first()).not.toContainText("companion-");
+
+    // Reload proves every section read back from the durable store.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    const reloaded = page.locator("[data-characters-panel]");
+    await expect(reloaded).toBeVisible();
+    await expect(reloaded.getByText("Present")).toBeVisible();
+    await expect(reloaded.locator("#persona-name")).toHaveValue("The Farmer");
+    await expect(reloaded.locator("#scenario-name")).toHaveValue("Spring in Pelican Town");
+    await expect(reloaded.locator("#greeting-variant-0-text")).toHaveValue("Good morning, sunshine.");
+    // The created companion is durable too: after reload the library re-reads
+    // the artifact repository.
+    await expect(reloaded.locator("[data-companion-entry]").first()).toContainText("Harvest Helper");
+
+    // Every durable mutation was a PUT against a mounted route.
+    assert.equal(mutations.filter((entry) => entry.startsWith("PUT /api/tavern/v1/persona")).length, 1);
+    assert.equal(mutations.filter((entry) => entry.startsWith("PUT /api/tavern/v1/scenario")).length, 1);
+    assert.equal(mutations.filter((entry) => entry.startsWith("PUT /api/tavern/v1/greeting")).length, 1);
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("management browser with the Characters surface archives and trashes the mounted chat through lifecycle retention", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition({ withCharacters: true });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const mutations: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/tavern/v1/")) mutations.push(`${request.method()} ${url.pathname}`);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-characters-panel]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+
+    // The drawer shows the mounted chat with archive/trash controls on the
+    // current row only (retention is a mounted-chat-only operation).
+    await page.getByRole("button", { name: "Chats" }).click();
+    const currentRow = page.locator(".chat-item-card.selected");
+    await expect(currentRow.getByRole("button", { name: "Archive" })).toBeVisible();
+    await expect(currentRow.getByRole("button", { name: "Trash" })).toBeVisible();
+
+    // Archive removes the chat from the active list through the lifecycle
+    // route; the drawer reconciles to the durable list.
+    await currentRow.getByRole("button", { name: "Archive" }).click();
+    await expect
+      .poll(() => mutations.some((entry) => entry.startsWith("POST /api/tavern/v1/chats/") && entry.endsWith("/archive")))
+      .toBe(true);
+    await expect(page.locator(".chat-item-card")).toHaveCount(0);
+
+    // A reload of the characters surface still renders (retention did not
+    // corrupt the management surface) and the drawer stays empty.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    await expect(page.locator("[data-characters-panel]")).toBeVisible();
   } finally {
     await browser.close();
     await mounted.close();

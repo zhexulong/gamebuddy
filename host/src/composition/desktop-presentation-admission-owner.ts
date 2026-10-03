@@ -1,6 +1,8 @@
 import { join, resolve } from "node:path";
 
+import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
+import { identityKey } from "../runtime.js";
 
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -9,8 +11,16 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { VoicePreferenceStore } from "../settings/voice-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
+import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
+import { createChatThreadStore } from "../tavern/chat-thread-store.js";
+import { createGreetingManagementService } from "../tavern/greeting-management/greeting-management.js";
+import { createTavernLibraryService } from "../tavern/library-service.js";
+import { provisionDirectNewCompanion } from "../tavern/new-companion-service.js";
+import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
+import { createScenarioManagementService } from "../tavern/scenario-management/scenario-management.js";
+import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
@@ -241,6 +251,102 @@ export async function startTavernManagementPresentationAdmission(
     const voicePreferenceStore = new VoicePreferenceStore(
       join(input.manifest.runtimeRoot, "settings", "voice-preference.json"),
     );
+    // The Character / Persona / Scenario / Greeting library is the real
+    // durable tavern artifact store (design/28 §2). Companion handles are
+    // minted through the exact mounted lease projection, so the browser can
+    // never decode a durable companion identifier; companion.create mints a
+    // Host-owned namespace from the player-supplied display name alone.
+    const runtimePaths = resolveRuntimePaths(
+      input.manifest.principal,
+      input.manifest.runtimeRoot,
+      input.lease.chatSurfaceSessionId,
+    );
+    const tavernPaths = resolveTavernPaths(runtimePaths, input.manifest.principal);
+    const artifactStore = new TavernArtifactStore(input.manifest.runtimeRoot);
+    const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
+    const scenarioService = createScenarioManagementService(artifactStore, tavernPaths.companionRoot);
+    const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
+    // The library service owns one lazily opened thread connection; it is
+    // opened only if a Chat-creating route ever runs and is closed with this
+    // management owner's drain.
+    const libraryThreads = createChatThreadStore(runtimePaths.runtimeCwd, identityKey(input.manifest.principal));
+    createdServices.push({
+      close: async () => {
+        libraryThreads.close?.();
+      },
+    });
+    const libraryBase = createTavernLibraryService(tavernPaths, artifactStore, libraryThreads, {
+      async readExact() {
+        return identityProfileMetadata(await readIdentityProfile(runtimePaths.identityProfilePath));
+      },
+    });
+    const currentCompanionId = input.manifest.principal.companionId;
+    const companionHandleFor = (companionId: string): string =>
+      input.lease.browserProjection.projectCompanionHandle(companionId);
+    // The mounted companion is ALWAYS the current library entry: the identity
+    // profile the runtime provisioned at mount is its authoritative display
+    // name, and its projected handle is the only handle the detail route will
+    // ever resolve. Created companions join the library durably below.
+    const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
+      .then((profile) => profile.identity.name)
+      .catch(() => undefined);
+    const libraryService = Object.freeze({
+      async listCompanions() {
+        const [mountedName, companions] = await Promise.all([
+          mountedNamePromise,
+          libraryBase.listCompanions(),
+        ]);
+        return [
+          // The unchanged mounted companion is always first with its projected
+          // handle and current marker; a provisioning failure of the identity
+          // profile would leave the name undefined, but the runtime always
+          // writes the profile at mount, so this is only a defense-in-depth
+          // guard, never the normal path.
+          ...(mountedName === undefined
+            ? []
+            : [
+                Object.freeze({
+                  handle: companionHandleFor(currentCompanionId),
+                  name: mountedName,
+                  isCurrent: true,
+                }),
+              ]),
+          ...companions.map((companion: Readonly<{ companionId: string; name: string }>) =>
+            Object.freeze({
+              handle: companionHandleFor(companion.companionId),
+              name: companion.name,
+              isCurrent: companion.companionId === currentCompanionId,
+            }),
+          ),
+        ];
+      },
+    });
+    const companionDetailService = Object.freeze({
+      async read(handle: string) {
+        // Only the exact mounted companion's handle resolves; any other
+        // handle (foreign, forged, or a non-mounted library entry) is null
+        // and reported 404 rather than projected as a different identity.
+        if (handle !== companionHandleFor(currentCompanionId)) return null;
+        const mountedName = await mountedNamePromise;
+        if (mountedName === undefined) return null;
+        // The mounted companion's canonical display name is the identity
+        // profile the runtime provisioned at mount; the artifact-store
+        // companion.json only exists for library-created companions.
+        return Object.freeze({ name: mountedName });
+      },
+    });
+    const newCompanionProvisioner = Object.freeze({
+      async create(name: string) {
+        // The provisioner mints a new Host-owned identity namespace; the
+        // browser supplies a display name and receives the safe name back.
+        const provision = await provisionDirectNewCompanion(
+          input.manifest.runtimeRoot,
+          input.manifest.principal.playerId,
+          name,
+        );
+        return Object.freeze({ name: provision.companion.name });
+      },
+    });
     server = await startTavernManagementStaticShellComposition({
       managementStateFacade,
       managementService,
@@ -248,6 +354,12 @@ export async function startTavernManagementPresentationAdmission(
       worldInfoService,
       voicePreferenceStore,
       connectionService,
+      libraryService,
+      companionDetailService,
+      newCompanionProvisioner,
+      personaService,
+      scenarioService,
+      greetingService,
       ...(input.listVoiceOutputDevices === undefined
         ? {}
         : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
@@ -406,6 +518,18 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "companion.list",
+      "companion.detail",
+      "companion.create",
+      "persona.read",
+      "persona.update",
+      "scenario.read",
+      "scenario.update",
+      "greeting.read",
+      "greeting.update",
+      "chat.archive",
+      "chat.restore",
+      "chat.trash",
     ],
     operationIds: [
       "draft.save",
@@ -422,9 +546,22 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "companion.list",
+      "companion.detail",
+      "companion.create",
+      "persona.read",
+      "persona.update",
+      "scenario.read",
+      "scenario.update",
+      "greeting.read",
+      "greeting.update",
+      "chat.archive",
+      "chat.restore",
+      "chat.trash",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
-    // item only projects `available` after the exact-bound read succeeds.
-    navigationItemIds: ["chat", "memory"],
+    // item only projects `available` after the exact-bound read succeeds. The
+    // characters item is paired with the companion library routes.
+    navigationItemIds: ["chat", "memory", "characters"],
   });
 }

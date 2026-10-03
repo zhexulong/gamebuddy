@@ -82,11 +82,25 @@ const OPERATION_ROUTE_IDS = Object.freeze({
   // siblings are listed explicitly so a profile that declares a settings
   // operation the gate does not know still fails membership rather than
   // passing unnoticed.
+  // Every settings surface the mounted tavern management profile declares is
+  // served through the route of the same id. The connection surface and its
+  // siblings are listed explicitly so a profile that declares a settings
+  // operation the gate does not know still fails membership rather than
+  // passing unnoticed. The same holds for the Characters surface
+  // (design/28 §2): companion/persona/scenario/greeting/retention operations
+  // are declared in the mounted vocabulary, so they are folded in here by
+  // derivation instead of a fourth hand-maintained copy.
   "settings.voice.read": "settings.voice.read",
   "settings.voice.consent": "settings.voice.consent",
   "settings.voice.devices": "settings.voice.devices",
   ...Object.fromEntries(
     MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")).map((id) => [id, id]),
+  ),
+  ...Object.fromEntries(
+    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => !id.startsWith("settings.") && !id.startsWith("chat.")).map((id) => [id, id]),
+  ),
+  ...Object.fromEntries(
+    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("chat.") && !["chat.rename", "chat.submit", "chat.cancel"].includes(id)).map((id) => [id, id]),
   ),
 });
 const CONTRACT_ROUTE_IDS = new Set([
@@ -111,9 +125,18 @@ const CONTRACT_ROUTE_IDS = new Set([
   "settings.voice.consent",
   "settings.voice.devices",
   ...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")),
+  // The Characters and retention surfaces (companion.*, persona.*, scenario.*,
+  // greeting.*, chat.archive/restore/trash) come from the same mounted
+  // vocabulary; a route the vocabulary declares is a route the gate knows.
+  ...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter(
+    (id) => !id.startsWith("settings.") && !id.startsWith("chat."),
+  ),
+  "chat.archive",
+  "chat.restore",
+  "chat.trash",
   "events",
 ]);
-const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory"]);
+const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory", "characters"]);;
 const PROFILE_IDENTITY_MAPPING_KEYS = Object.freeze(["schema_version", "profile", "operations"]);
 const PROFILE_ID_HASH_MAPPING_KEYS = Object.freeze(["schema_version", "profile_id", "profile_hash", "release_tier", "operations"]);
 const PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS = Object.freeze([

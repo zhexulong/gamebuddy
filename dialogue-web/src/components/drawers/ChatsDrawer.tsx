@@ -1,4 +1,4 @@
-import { Download, MessageSquare, MessageSquarePlus, Pencil, X } from "lucide-react";
+import { Archive, Download, MessageSquare, MessageSquarePlus, Pencil, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Messages } from "../../i18n";
 import type { ChatSummary } from "../../types";
@@ -13,6 +13,7 @@ export function ChatsDrawer({
   onNewChat,
   onExportChat,
   onRenameChat,
+  onTransitionChat,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -26,6 +27,12 @@ export function ChatsDrawer({
   /** Absent in mounted profiles that mount no export operation. */
   onExportChat?: (handle: string) => void;
   onRenameChat?: (handle: string, newTitle: string) => void;
+  /**
+   * Chat lifecycle retention (archive/trash) for the exact mounted chat; the
+   * service only ever transitions the mounted chat. Absent when the mounted
+   * profile does not publish the retention routes.
+   */
+  onTransitionChat?: (handle: string, operation: "archive" | "trash") => void;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const [editingHandle, setEditingHandle] = useState<string | null>(null);
@@ -156,6 +163,28 @@ export function ChatsDrawer({
                             >
                               <Download size={14} aria-hidden="true" />
                             </button>
+                          )}
+                          {onTransitionChat !== undefined && isSelected && (
+                            <>
+                              <button
+                                type="button"
+                                className="icon-button-small"
+                                title={labels.chatRetentionArchive}
+                                aria-label={labels.chatRetentionArchive}
+                                onClick={() => onTransitionChat(chat.chatHandle, "archive")}
+                              >
+                                <Archive size={14} aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-button-small"
+                                title={labels.chatRetentionTrash}
+                                aria-label={labels.chatRetentionTrash}
+                                onClick={() => onTransitionChat(chat.chatHandle, "trash")}
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>

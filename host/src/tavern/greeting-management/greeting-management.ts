@@ -92,7 +92,10 @@ function validateRequest(value: unknown): asserts value is CreateGreetingSetRequ
     value.variants.length > 16 ||
     !value.variants.every(
       (variant) =>
-        record(variant) && allowed(variant, ["label", "text"]) && singleLine(variant.label, 128) && text(variant.text, 8_192),
+        record(variant) &&
+        allowed(variant, ["label", "text"]) &&
+        (variant.label === undefined || singleLine(variant.label, 128)) &&
+        text(variant.text, 8_192),
     )
   )
     throw new Error("invalid_greeting_request");
@@ -102,7 +105,7 @@ function validateUpdateRequest(value: unknown): asserts value is UpdateGreetingS
     !record(value) ||
     !allowed(value, ["expectedRevision", "label", "variants"]) ||
     !Number.isSafeInteger(value.expectedRevision) ||
-    (value.expectedRevision as number) < 1
+    (value.expectedRevision as number) < 0
   )
     throw new Error("invalid_greeting_request");
   validateRequest({ label: value.label, variants: value.variants });

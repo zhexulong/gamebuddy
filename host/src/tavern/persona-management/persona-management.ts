@@ -93,7 +93,7 @@ function validateUpdateRequest(value: unknown): asserts value is UpdatePlayerPer
     !record(value) ||
     !allowed(value, ["expectedRevision", "name", "description"]) ||
     !Number.isSafeInteger(value.expectedRevision) ||
-    (value.expectedRevision as number) < 1 ||
+    (value.expectedRevision as number) < 0 ||
     !singleLine(value.name, 128) ||
     (value.description !== undefined && !text(value.description, 4_096))
   )
