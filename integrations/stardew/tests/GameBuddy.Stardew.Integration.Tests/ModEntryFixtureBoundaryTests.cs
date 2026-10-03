@@ -40,6 +40,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativePetFixture", "IsFixtureAdjacentToFarmer", "IsFixtureAdjacentToPlayer",
         "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
+        "FindNativeMineEntranceFixtureTarget",
     };
 
     private static IEnumerable<string> DeclaredMethodNames(string source)

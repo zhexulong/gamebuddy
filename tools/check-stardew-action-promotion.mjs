@@ -233,11 +233,24 @@ function parseExplicitRoutes(gameTools) {
   // projector, preserving the old per-tool shape checks.
   const tools = [
     ...gameTools.matchAll(
-      /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
+      /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g,
     ),
   ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[1] }));
-  const visibility = tools.map((entry) => entry.visibleAction);
-  return { tools, visibility };
+  // Loop-mounted families (e.g. the facility actions built with
+  // `for (const action of ["dress_mannequin", ...] as const)`) do not repeat the
+  // id as a string literal; their `action: action` line is a variable. Expand
+  // them: the loop header names the ids, the body mounts one tool per id.
+  for (const loop of gameTools.matchAll(
+    /for \(const action of (\[[a-z0-9_"\s,]+\]) as const\) \{[\s\S]*?makeGameActionTool\(\{/g,
+  )) {
+    const ids = [...loop[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+    for (const id of ids) {
+      // Duplicates are harmless; the set semantics below deduplicates.
+      tools.push({ visibleAction: id, adapterAction: id });
+    }
+  }
+  const visibility = [...new Set(tools.map((entry) => entry.visibleAction))];
+  return { tools: [...tools], visibility };
 }
 
 function extractUniqueHostWrapperFactoryBody(gameTools) {

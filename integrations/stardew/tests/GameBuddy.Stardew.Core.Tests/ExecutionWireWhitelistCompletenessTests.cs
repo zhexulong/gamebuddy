@@ -38,6 +38,22 @@ public sealed class ExecutionWireWhitelistCompletenessTests
     }
 
     [Fact]
+    public void ClearCaskIsReachableOverTheWireWithEquippedToolSlot()
+    {
+        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("clear_cask");
+
+        argumentProperties.Should().NotBeNull();
+        argumentProperties!.Should().Equal(new[] { "x", "y", "slot", "expectedTargetId" });
+    }
+
+    [Fact]
+    public void UseRaftIsReachableOverTheWire()
+    {
+        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("use_raft");
+        argumentProperties.Should().Equal(new[] { "slot", "x", "y" });
+    }
+
+    [Fact]
     public void CutGrassIsReachableOverTheWire()
     {
         string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("cut_grass");

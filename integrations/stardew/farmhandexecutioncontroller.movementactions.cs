@@ -385,12 +385,16 @@ internal sealed partial class ExecutionManager
                 ? "enter_exit_completed"
                 : specification.Action == "ride_minecart"
                     ? "minecart_ride_completed"
-                    : "travel_completed"
+                    : specification.Action == "enter_mine"
+                        ? "mine_entered"
+                        : "travel_completed"
             : specification.Action == "enter_exit"
                 ? "enter_exit_postcondition_mismatch"
                 : specification.Action == "ride_minecart"
                     ? "minecart_ride_postcondition_mismatch"
-                    : "travel_postcondition_mismatch";
+                    : specification.Action == "enter_mine"
+                        ? "mine_entry_postcondition_mismatch"
+                        : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.

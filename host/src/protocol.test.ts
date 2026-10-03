@@ -1094,6 +1094,17 @@ test("the native litter-category targets accept any bounded item id, not one pin
   }
 });
 
+test("clear_cask requires exact target coordinates and the selected tool slot", () => {
+  const request = {
+    requestId: "request_clear_cask_01", idempotencyKey: "idempotency_clear_cask_01", action: "clear_cask",
+    args: { slot: 2, x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" }, expectedRevision: snapshot.revision, deadlineMs: now + 10_000,
+  };
+  const enabled = { ...snapshot, capabilities: [...snapshot.capabilities, "clear_cask"] };
+  assert.equal(validateExecutionRequest(request, enabled, now), null);
+  assert.equal(validateExecutionRequest({ ...request, args: { x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" } }, enabled, now), "invalid_args");
+  assert.equal(validateExecutionRequest({ ...request, args: { ...request.args, slot: 99 } }, enabled, now), "invalid_cask_target");
+});
+
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
   const valid = {
     requestId: "request_01",
@@ -1269,6 +1280,12 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_args",
   );
+  const raftCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "use_raft"] };
+  const raftSnapshot = { ...raftCapability, raftTargets: [{ targetId: "raft_0123456789abcdef", x: 10, y: 11 }] };
+  const useRaft = { ...valid, action: "use_raft" };
+  assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 11 } }, raftSnapshot, now), null);
+  assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 37, x: 10, y: 11 } }, raftSnapshot, now), "invalid_raft_target");
+  assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now), "invalid_raft_target");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
@@ -2518,6 +2535,32 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     "invalid_snapshot:treeSaplingTargets",
   );
   assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeSaplingTargets: undefined } }, scope, now), "accepted");
+});
+
+test("snapshot validates Cask target identity and held-object projection", () => {
+  const basePayload: Snapshot = {
+    ...snapshot,
+    capabilities: ["clear_cask"],
+    enabledActionIds: ["clear_cask"],
+    caskTargets: [{ targetId: "cask_0123456789abcdef", location: "Farm", x: 6, y: 7, hasHeldObject: false, heldQualifiedItemId: null }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "cask_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } }, scope, now), "invalid_snapshot:caskTargets");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] } }, scope, now), "accepted");
+});
+
+test("snapshot validates Cask target identity and held-object projection", () => {
+  const basePayload: Snapshot = {
+    ...snapshot,
+    capabilities: ["clear_cask"],
+    enabledActionIds: ["clear_cask"],
+    caskTargets: [{ targetId: "cask_0123456789abcdef", location: "Farm", x: 6, y: 7, hasHeldObject: false, heldQualifiedItemId: null }],
+  };
+  const base = newEnvelope("snapshot", scope, basePayload, "cask_snapshot_01", now);
+  assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } }, scope, now), "invalid_snapshot:caskTargets");
+  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] } }, scope, now), "accepted");
 });
 
 test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows", () => {

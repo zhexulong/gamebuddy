@@ -60,6 +60,26 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "toggle_fence_gate" => this.executions.RequestLocalToggleFenceGate(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "clear_cask" => this.executions.RequestLocalClearCask(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "dress_mannequin" => this.executions.RequestLocalDressMannequin(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "set_sign_display" => this.executions.RequestLocalSetSignDisplay(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "deposit_silo_hay" => this.executions.RequestLocalDepositSiloHay(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "toggle_tool_light" => this.executions.RequestLocalToggleToolLight(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.DeadlineMs),
+
             "break_rock_source" => this.executions.RequestLocalBreakRockSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,

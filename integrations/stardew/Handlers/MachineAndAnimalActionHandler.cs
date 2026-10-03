@@ -102,6 +102,13 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "take_pedestal_item" => this.executions.RequestLocalTakePedestalItem(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             // Loop-closure W0a routing. The four bodies live in the lane-owned
             // partials (farmhandexecutioncontroller.{crafting,cooking,crabpot,
             // shipping}actions.cs) and are replaced by lanes B/C/D/E; W0a only

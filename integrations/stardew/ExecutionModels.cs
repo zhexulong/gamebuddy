@@ -128,6 +128,19 @@ internal sealed record LocalCropWateringSpec(
     long RouteRevision,
     long DeadlineMs);
 
+internal sealed record LocalPedestalTakingSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    string QualifiedItemId,
+    int StackBefore,
+    int InventoryBefore,
+    int StartedTick,
+    long DeadlineMs);
+
 internal sealed record LocalCropHarvestingSpec(
     string ExecutionId,
     string RequestId,
@@ -237,6 +250,16 @@ internal sealed record LocalPettingSpec(
     int ExpectedFriendshipAfter,
     int PetDay,
     long RouteRevision,
+    long DeadlineMs);
+
+internal sealed record LocalMountTransportSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    System.Guid HorseId,
     long DeadlineMs);
 
 internal sealed record LocalFeedTroughSpec(
