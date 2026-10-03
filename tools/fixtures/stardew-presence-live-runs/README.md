@@ -140,3 +140,12 @@ ative_accepted=true）+ gentTurn.settled=true + covenantPassed=true（无 item_
   约定本体在已播种记忆里——这是跨面（management → Game）记忆召回的首个真实证据。
   边界：首轮 B gate 出现一次 `stale_interruption_admission`（播种 child 与 Game runtime 同 root 的
   顺序交互瞬时失败），本轮未复现；首轮 `markerCount=0` 是播种 child 自身不渲染 m0，不构成缺口。
+- run-13 (2026-10-03, C gate): 环境事实注入真实生效(`<runtime-environment>` 块)。
+  Host 从 Mod snapshot 注册 provider(时间/日期/季节/天气/位置,zh/en 按 presentationLocale),
+  MC Pi 侧 `context-handler` 在每次 transform pass 注入当前快照,日志实测:
+  `environment-facts: injected current facts block`(session 01a101d0,多次 pass)。
+  同时 ladder-5 记忆 covenant 全链路仍通过:`covenantSeed.durable=true`,
+  `harvest=crop_harvested`, `covenantPassed=true`, `agentTurn.settled=true`。
+  关键:此轮之前(live-12)Pi 侧注入代码尚未进 dist,`magic-context.log` 无注入记录;
+  此轮全仓(含 pnpm store 同步)重建后首次出现注入日志 —— 证明链路真实接通,
+  而非只靠静态实现。
