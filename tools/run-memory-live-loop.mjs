@@ -48,7 +48,7 @@ import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers } from "./lib/memory-funnel.mjs";
+import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
 
 /**
  * The Class B marker Magic Context emits with the ids it assembled into m[0]
@@ -60,6 +60,7 @@ import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers } from "./lib/memor
  * it, so the duplication cannot rot silently.
  */
 const PROBE_M0_MEMORY_IDS_PREFIX = "[probe:m0_memory_ids]";
+const PROBE_M0_CHAPTERS_PREFIX = "[probe:m0_chapters]";
 
 function assertMarkerContract() {
   const source = resolve(
@@ -75,6 +76,9 @@ function assertMarkerContract() {
   if (!existsSync(source)) return;
   const declared = readFileSync(source, "utf8");
   if (!declared.includes(`export const PROBE_M0_MEMORY_IDS_PREFIX = "${PROBE_M0_MEMORY_IDS_PREFIX}"`)) {
+    throw new Error("memory_loop_probe_marker_contract_drift");
+  }
+  if (!declared.includes(`export const PROBE_M0_CHAPTERS_PREFIX = "${PROBE_M0_CHAPTERS_PREFIX}"`)) {
     throw new Error("memory_loop_probe_marker_contract_drift");
   }
 }
@@ -423,9 +427,10 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on?.("data", (chunk) => {
-        for (const line of String(chunk).split("\n")) {
-          if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX)) markers.push(line.trim());
-        }
+      		for (const line of String(chunk).split("\n")) {
+			if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) || line.startsWith(PROBE_M0_CHAPTERS_PREFIX))
+				markers.push(line.trim());
+		}
       });
       return child;
     },
@@ -458,29 +463,30 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   // m[0]. We collect the lines here instead of only keeping a bounded diagnostic
   // tail, because those markers are the ONLY observability the L2 (assembly) stage
   // has - the Host never sees m[0] bytes and the persistence row is not exposed.
-  const markers = [];
-  const launch = await launchDesktopCompositionGateChild({
-    outputRoot: OUTPUT_ROOT,
-    root,
-    surface,
-    nonceSha256,
-    manifestPath: deploymentManifestPath,
-    readyTimeoutMs: START_TIMEOUT_MS,
-    gameSessionMode,
-    spawnImpl: (command, args, options) => {
-      const child = spawn(command, args, options);
-      child.stderr?.setEncoding?.("utf8");
-      child.stderr?.on?.("data", (chunk) => {
-        if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
-        for (const line of String(chunk).split("\n")) {
-          // Strictly prefixed and parsed: an unrelated stderr line can never be
-          // mistaken for a materialization fact.
-          if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX)) markers.push(line.trim());
-        }
-      });
-      return child;
-    },
-  });
+ 	const markers = [];
+	const launch = await launchDesktopCompositionGateChild({
+		outputRoot: OUTPUT_ROOT,
+		root,
+		surface,
+		nonceSha256,
+		manifestPath: deploymentManifestPath,
+		readyTimeoutMs: START_TIMEOUT_MS,
+		gameSessionMode,
+		spawnImpl: (command, args, options) => {
+			const child = spawn(command, args, options);
+			child.stderr?.setEncoding?.("utf8");
+			child.stderr?.on?.("data", (chunk) => {
+				if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+				for (const line of String(chunk).split("\n")) {
+					// Strictly prefixed and parsed: an unrelated stderr line can never be
+					// mistaken for a materialization fact.
+					if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) || line.startsWith(PROBE_M0_CHAPTERS_PREFIX))
+						markers.push(line.trim());
+				}
+			});
+			return child;
+		},
+	});
   try {
     const launchUrl = await launch.waitForReady();
     const url = new URL(launchUrl);
@@ -793,6 +799,9 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     //
     // An unresolved seed id is ALSO a gap, not a break: without the comparison key we
     // cannot say whether the id was missing or we simply asked the wrong question.
+    // Resolve the chapters rendered into m[0] (v1 chapter rollup marker).
+    const chapters = renderedChaptersFromMarkers(chatResult.markers);
+
     const renderedIds = renderedIdsForRun(chatResult.markers);
     const attributed = attributeMemoryFunnel({
       ...observation,
@@ -829,6 +838,14 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         markerObserved: renderedIds !== undefined,
         renderedIdCount: renderedIds === undefined ? null : renderedIds.size,
         seedIdRendered: seededMemoryId !== undefined && renderedIds?.has(seededMemoryId) === true,
+      }),
+      // Chapter rollup observation (v1): did sealed chapters reach m[0], and
+      // is the chapter block byte-stable? `null` means the vendor never
+      // emitted the marker; a number (possibly 0) means it did.
+      chapters: Object.freeze({
+        markerObserved: chapters !== undefined,
+        renderedCount: chapters?.count ?? null,
+        ...(chapters?.digest === undefined ? {} : { blockDigest: chapters.digest }),
       }),
       chat: Object.freeze({
         attempted: true,

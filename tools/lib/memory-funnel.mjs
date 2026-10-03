@@ -1,4 +1,65 @@
 /**
+ * Parse Magic Context's rendered-memory marker lines into the id set it assembled.
+ *
+ * Kept here (not in the runner) because the parse IS the L2 evidence boundary: the
+ * encoding details below are what decide whether L2 is observed or a gap, so they
+ * belong in the module that owns the funnel rules and can be tested without a live
+ * run. The marker line is `[probe:m0_memory_ids] <revision> <ids|"-">`.
+ *
+ * Returns `undefined` when NO marker was present. That distinction is load-bearing:
+ * an absent marker means the vendor never reported (a producer gap), while an
+ * emitted `-` means it reported an EMPTY rendered set. Collapsing the two would let
+ * "we have no idea" masquerade as "the fact was not rendered".
+ */
+export function renderedMemoryIdsFromMarkers(markers) {
+  const ids = new Set();
+  let observed = false;
+  for (const line of markers) {
+    // Exactly three whitespace-separated tokens; anything else is not our marker and
+    // must not be read as one (a partially-written line stays a gap, not an empty set).
+    const match = /^\S+\s+(\S+)\s+(\S+)$/u.exec(String(line).trim());
+    if (match === null) continue;
+    observed = true;
+    if (match[2] === "-") continue;
+    for (const part of match[2].split(",")) {
+      const value = Number(part);
+      if (Number.isSafeInteger(value) && value >= 0) ids.add(value);
+    }
+  }
+  return observed ? ids : undefined;
+}
+
+/**
+ * Parse Magic Context's chapter-rollup marker lines into the rendered chapter
+ * summary. Same Class B contract as the memory-ids marker (v1 chapter rollup,
+ * vendor probe-materialization-marker.ts): the line is
+ * `[probe:m0_chapters] <revision> <count> <sha256|\"-\">`.
+ *
+ * Returns `undefined` when NO marker was present (producer gap) — never a
+ * fabricated `{count: 0}`; a real zero-count marker (`-` digest) is the
+ * vendor's own report that no chapters rendered this pass, which is different
+ * from us not having looked.
+ */
+export function renderedChaptersFromMarkers(markers) {
+  let observed = false;
+  let count = null;
+  let digest = undefined;
+  for (const line of markers) {
+    const match = /^\S+\s+(\S+)\s+(\S+)\s+(\S+)$/u.exec(String(line).trim());
+    if (match === null) continue;
+    observed = true;
+    count = Number(match[2]);
+    if (match[3] !== "-") digest = match[3];
+  }
+  if (!observed) return undefined;
+  return Object.freeze({
+    observed: true,
+    count: Number.isSafeInteger(count) && count >= 0 ? count : null,
+    ...(digest === undefined ? {} : { digest }),
+  });
+}
+
+/**
  * The four-stage memory funnel (design §10.3):
  *
  *   L1 write      did the fact reach durable storage?
@@ -89,10 +150,10 @@ function stageWrite({ seedRequired, seedPresentInReadback, conflictObserved }) {
 /**
  * L2: was the fact rendered into what the model received?
  *
- * Evidence is Magic Context's own persisted `ModuleMeta.rendered_memory_ids` - the
- * list of ids that survived the budget trim and were written into m[0]. The caller
- * passes in whether the seeded id appears in it. We never infer this from "the
- * write succeeded, so it must be in the prompt".
+ * Evidence is Magic Context's own rendered-memory marker: the list of ids that
+ * survived the budget trim and were written into m[0]. The caller passes in whether
+ * the seeded id appears in it. We never infer this from "the write succeeded, so it
+ * must be in the prompt".
  */
 function stageAssembly({ renderedMemoryIdsObserved, seedIdRendered }) {
   // L2 is the delivery step every distance must obtain to attribute its own

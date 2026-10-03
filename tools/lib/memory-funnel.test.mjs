@@ -5,6 +5,8 @@ import { test } from "node:test";
 import {
   MEMORY_FUNNEL_STAGES,
   attributeMemoryFunnel,
+  renderedMemoryIdsFromMarkers,
+  renderedChaptersFromMarkers,
   summarizeMemoryFunnel,
 } from "./memory-funnel.mjs";
 
@@ -240,3 +242,83 @@ test("the real run-07 trace attributes honestly: upstream gaps, L4 passed, no fi
   // Nothing broke, so the run reports no defect - only the missing producers.
   assert.equal(attributed.findings.length, 0);
 });
+
+test("renderedMemoryIdsFromMarkers distinguishes an absent marker from an empty render", () => {
+  // An absent marker is a PRODUCER gap - the vendor never told us anything. An
+  // emitted `-` is a real observation that m[0] carried no memories. Collapsing
+  // these two would report "we do not know" as "the fact was not rendered", which
+  // is exactly the mis-attribution the funnel exists to prevent.
+  assert.equal(renderedMemoryIdsFromMarkers([]), undefined);
+  assert.notEqual(renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_1", "-")]), undefined);
+  assert.equal(renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_1", "-")]).size, 0);
+});
+
+test("renderedMemoryIdsFromMarkers reads the id list and ignores non-marker lines", () => {
+  const single = renderedMemoryIdsFromMarkers(["refreshed 7 memories", renderedMemoryMarker("rev_9", "3,1,2")]);
+  assert.deepEqual([...single].sort((left, right) => left - right), [1, 2, 3]);
+  // Two emissions in one run union into the observed set rather than overwriting:
+  // a pass may render more than once (fold + soft refresh).
+  const union = renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_a", "1,2"), renderedMemoryMarker("rev_b", "2,3")]);
+  assert.deepEqual([...union].sort((left, right) => left - right), [1, 2, 3]);
+  // A malformed tail is skipped, not parsed as an id: "-" stays empty and junk is dropped.
+  const junk = renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_c", "1,-,abc,2")]);
+  assert.deepEqual([...junk].sort((left, right) => left - right), [1, 2]);
+});
+
+test("renderedChaptersFromMarkers distinguishes absent from zero and reads count+digest", () => {
+  // Absent marker = producer gap; a real `-` digest = vendor says zero chapters.
+  assert.equal(renderedChaptersFromMarkers([]), undefined);
+  const zero = renderedChaptersFromMarkers([`[probe:m0_chapters] rev_1 0 -`]);
+  assert.equal(zero.observed, true);
+  assert.equal(zero.count, 0);
+  assert.equal(zero.digest, undefined);
+  const digest = "a".repeat(64);
+  const two = renderedChaptersFromMarkers([`[probe:m0_chapters] rev_2 2 ${digest}`]);
+  assert.equal(two.observed, true);
+  assert.equal(two.count, 2);
+  assert.equal(two.digest, digest);
+});
+
+test("renderedChaptersFromMarkers ignores non-marker lines and junk tails", () => {
+  const single = renderedChaptersFromMarkers(["refreshed 7 memories", `[probe:m0_chapters] rev_9 1 ${`b`.repeat(64)}`]);
+  assert.equal(single.count, 1);
+  // A malformed count is reported as null, not fabricated.
+  const junk = renderedChaptersFromMarkers([`[probe:m0_chapters] rev_c junk debug`]);
+  assert.equal(junk.observed, true);
+  assert.equal(junk.count, null);
+});
+
+test("a marker-observed render feeds L2 instead of leaving it a gap", () => {
+  // The whole point of the L2 producer: with the marker present, the funnel can
+  // finally attribute the assembly step rather than reporting a gap.
+  const present = attributeMemoryFunnel({
+    distance: "turn",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+    probeEvent: "needle.hit",
+  });
+  assert.equal(statusOf(present, "L2_assembly"), "passed");
+  assert.equal(present.stages.find((row) => row.stage === "L4_expression").status, "passed");
+
+  // ...and when the id is genuinely missing from a render we DID observe, that is a
+  // real L2 break, attributable all the way down.
+  const absent = attributeMemoryFunnel({
+    distance: "turn",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: false,
+    probeEvent: "needle.miss",
+  });
+  assert.equal(statusOf(absent, "L2_assembly"), "broken");
+  // A broken upstream stage leaves L4 `not_reached`, not a gap: we KNOW the fact
+  // never got in, so the reply says nothing about expression. (The gap rule is for
+  // stages we could not observe at all.)
+  assert.equal(statusOf(absent, "L4_expression"), "not_reached");
+});
+
+function renderedMemoryMarker(revision, ids) {
+  return `[probe:m0_memory_ids] ${revision} ${ids}`;
+}
