@@ -149,3 +149,14 @@ ative_accepted=true）+ gentTurn.settled=true + covenantPassed=true（无 item_
   关键:此轮之前(live-12)Pi 侧注入代码尚未进 dist,`magic-context.log` 无注入记录;
   此轮全仓(含 pnpm store 同步)重建后首次出现注入日志 —— 证明链路真实接通,
   而非只靠静态实现。
+
+## run-14 · ladder-5 observation-first (2026-10-03)
+
+第一个携带 `observation` 观测块的真实 run(roll-observation 循环落地)。
+
+- state: passed;ladder: 5;agentTurn.settled: true;harvest=crop_harvested;covenantPassed: true
+- observation(gate 之外纯监控):
+  - promptSha256=25457151f0cd8310(ladder-5 默认 prompt;与 GAMEBUDDY_AGENT_PROMPT 并存的指纹)
+  - contextAssembled=true、worldBookAssembled=true(L0 装配事实,单 run 定论)
+  - turnMs=206464 · actionCount=21 · rejectionCount=8 · rejectionRate=0.38 · receiptCount=67
+- 单 run 的 rejectionRate 是随机抽样,不作判定(tools/roll-aggregate.mjs 跨 run 对比才有"improved/no_conclusion"结论)。
