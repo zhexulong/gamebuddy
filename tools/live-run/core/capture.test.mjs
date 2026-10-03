@@ -105,7 +105,12 @@ test("the file budget truncates loudly instead of filling the disk", async (t) =
   await capture.captureRuntimeRoot(source);
   const summary = await capture.close();
   assert.ok(summary.skipped.length > 0, "budget overflow recorded");
-  assert.equal(summary.skipped.every((entry) => entry.reason === "max_files"), true);
+  // Copy-path skips carry their path; the close-time summary record may also be
+  // skipped (budget exhausted) which is honest. Only the copy skips must be
+  // max_files.
+  const copySkips = summary.skipped.filter((entry) => typeof entry.path === "string");
+  assert.ok(copySkips.length > 0, "copy skips present");
+  assert.ok(copySkips.every((entry) => entry.reason === "max_files"));
 });
 
 test("a missing source is recorded as a failure and never throws", async (t) => {
@@ -115,6 +120,56 @@ test("a missing source is recorded as a failure and never throws", async (t) => 
   const summary = await capture.close();
   assert.equal(summary.failures.length, 1);
   assert.equal(summary.failures[0].op, "readdir");
+});
+
+test("append and record are budgeted too (audit MEDIUM-1): runaway stderr cannot exceed the byte budget", async (t) => {
+  const root = await scratch(t);
+  const capture = await openLiveRunCapture({ kind: "memory-loop", root, budget: { maxBytes: 200 } });
+  await capture.append("child-stderr.log", "a".repeat(150));
+  await capture.append("child-stderr.log", "b".repeat(150));
+  await capture.record("obs.json", { text: "c".repeat(150) });
+  const summary = await capture.close();
+  assert.ok(summary.skipped.length >= 2, "over-budget appends/records recorded as skipped");
+  assert.ok(summary.skipped.some((entry) => entry.reason === "max_bytes_append"));
+  assert.ok(summary.skipped.some((entry) => entry.reason === "max_bytes_record"));
+  // The file that fit is on disk; its content is preserved.
+  const text = await readFile(join(capture.dir, "child-stderr.log"), "utf8");
+  assert.equal(text.length, 150);
+});
+
+test("a failed copy rolls back its charge (audit NOTE-2)", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "source");
+  await mkdir(source, { recursive: true });
+  await writeFile(join(source, "evidence.db"), "x".repeat(64), "utf8");
+  const capture = await openLiveRunCapture({ kind: "memory-loop", root, budget: { maxBytes: 1024, maxFiles: 1 } });
+  // First copy succeeds (1 file).
+  assert.equal(await capture.copyFileInto(join(source, "evidence.db"), "a.db"), true);
+  // Blow the file budget: the SECOND copy is refused before writing.
+  assert.equal(await capture.copyFileInto(join(source, "evidence.db"), "b.db"), false);
+  const summary = await capture.close();
+  assert.equal(summary.skipped[0].reason, "max_files");
+  assert.equal(existsSync(join(capture.dir, "b.db")), false);
+});
+
+test("symlinks are recorded as skipped, not silently dropped (audit NOTE-3)", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  await mkdir(source, { recursive: true });
+  const target = join(source, "real-file.txt");
+  await writeFile(target, "data", "utf8");
+  try {
+    await symlink(target, join(source, "linked-evidence.txt"));
+  } catch {
+    // Windows may need privileges for symlinks; skip the assertion then.
+    t.skip("symlink creation not permitted in this environment");
+    return;
+  }
+  const capture = await openLiveRunCapture({ kind: "game-ladder", root });
+  await capture.captureRuntimeRoot(source);
+  const summary = await capture.close();
+  assert.ok(summary.skipped.some((entry) => entry.reason === "symlink"));
+  assert.equal(existsSync(join(capture.dir, "runtime-root", "linked-evidence.txt")), false);
 });
 
 test("captureRuntimeRoot rejects an empty root explicitly", async (t) => {

@@ -507,6 +507,20 @@ try {
     if (quick !== null) { turn = quick; break; }
   }
   if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
+  // Audit MEDIUM-3: distinguish "settled because the session worked" from
+  // "settled but the player input may never have reached the session".
+  // host-service acceptPlayerInput returns silently when the integration
+  // admission is closed, so a real run can look like a 1s no-op with no
+  // receipt, no tool call and no presented text. `steerObserved` is an
+  // OBSERVED fact — any tool call, receipt or presented companion line means
+  // the steer reached the session; none of them observed means the result must
+  // say so instead of pretending the agent chose to do nothing.
+  turn.steerObserved =
+    (factLog ?? []).length > 0 ||
+    agentProgramId !== null ||
+    (typeof presentedSummary === "string" && presentedSummary.length > 0);
+  if (turn.settled === true && turn.steerObserved === false)
+    turn.reason = "steer_may_have_been_silently_dropped";
   agentTurnResult = turn;
   // Ladder 2 additionally waits for the voice gateway's terminal playback
   // observation for the companion line streamed on machine_coffee_loaded.
@@ -595,6 +609,18 @@ try {
   const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  // World-book visibility (audit MEDIUM-2): absence-as-pass is only valid when
+  // the product has NO world book configured (expectedWorldBook null). When one
+  // IS expected but nothing mounted, that is a real assembly gap and must fail
+  // loudly, never pass as "nothing to assert".
+  const worldBookGate = personaWorldBook.expectedWorldBook === null
+    ? Object.freeze({ expected: false, mounted: personaWorldBook.mountedWorldBookId !== null })
+    : Object.freeze({
+        expected: true,
+        mounted: personaWorldBook.mountedWorldBookId !== null,
+        assembled: worldBookAssembled,
+      });
+  const worldBookPassed = worldBookGate.expected === true ? worldBookGate.assembled === true : true;
   const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
@@ -657,7 +683,7 @@ try {
     runManifestModel: personaWorldBook.model,
   });
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && contentPassed && interactionPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && contentPassed && worldBookPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
     presentation,
     presenceProjection,
@@ -676,6 +702,7 @@ try {
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
+    worldBookGate,
     contentGate,
     contentPassed,
     interactionAssessment,

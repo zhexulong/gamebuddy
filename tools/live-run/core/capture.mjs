@@ -88,17 +88,14 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
   let filesWritten = 0;
 
   const charge = (size) => {
-    if (filesWritten + 1 > limits.maxFiles) {
-      skipped.push({ reason: "max_files", size });
-      return false;
-    }
-    if (bytesWritten + size > limits.maxBytes) {
-      skipped.push({ reason: "max_bytes", size });
-      return false;
-    }
+    // Returns "ok" | "max_files" | "max_bytes"; the CALLER records the
+    // specific skip reason so it can stay precise (audit MEDIUM-1: append and
+    // record get their own reasons instead of a duplicated generic one).
+    if (filesWritten + 1 > limits.maxFiles) return "max_files";
+    if (bytesWritten + size > limits.maxBytes) return "max_bytes";
     bytesWritten += size;
     filesWritten += 1;
-    return true;
+    return "ok";
   };
 
   let opened = true;
@@ -109,36 +106,57 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
     failures.push({ op: "mkdir", path: dir, error: String(error?.message ?? error) });
   }
 
-  /** JSON record (an observation, not a copy). Small and always kept. */
+  /** JSON record (an observation, not a copy). Small and usually kept; still
+   * charged so a runaway caller cannot exceed the budget through records. */
   async function record(name, value) {
     const path = join(dir, name);
     try {
       await mkdir(join(path, ".."), { recursive: true });
       const text = `${JSON.stringify(value, null, 2)}\n`;
+      const size = Buffer.byteLength(text);
+      const outcome = charge(size);
+      if (outcome !== "ok") {
+        skipped.push({ reason: "max_bytes_record", name });
+        return undefined;
+      }
       await writeFile(path, text, "utf8");
-      bytesWritten += Buffer.byteLength(text);
-      filesWritten += 1;
       return path;
     } catch (error) {
+      // Roll back the charge on a failed write so filesWritten/bytesWritten stay
+      // the honest counts of files actually on disk (audit NOTE-2).
+      bytesWritten -= size;
+      filesWritten -= 1;
       failures.push({ op: "record", path, error: String(error?.message ?? error) });
       return undefined;
     }
   }
 
-  /** Append text (child stdout/stderr, harness narration). */
+  /** Append text (child stdout/stderr, harness narration). BUDGETED like every
+   * other write (audit MEDIUM-1): the memory-loop stderr feed must not be able
+   * to grow without bound behind the shared byte budget. */
   async function append(name, text) {
     if (typeof text !== "string" || text.length === 0) return;
     const path = join(dir, name);
+    const size = Buffer.byteLength(text);
+    const outcome = charge(size);
+    if (outcome !== "ok") {
+      skipped.push({ reason: "max_bytes_append", name });
+      return;
+    }
     try {
       await mkdir(join(path, ".."), { recursive: true });
       await appendFile(path, text, "utf8");
-      bytesWritten += Buffer.byteLength(text);
     } catch (error) {
+      // Roll back the charge: an append that failed never hit disk.
+      bytesWritten -= size;
+      filesWritten -= 1;
       failures.push({ op: "append", path, error: String(error?.message ?? error) });
     }
   }
 
-  /** Copy one file if it fits the budget; a missing file is a recorded miss. */
+  /** Copy one file if it fits the budget; a missing file is a recorded miss.
+   * A failed copy ROLLS BACK its charge so filesWritten/bytesWritten stay the
+   * honest counts of what actually reached disk (audit NOTE-2). */
   async function copyFileInto(sourcePath, destRel, { required = false } = {}) {
     let size = 0;
     try {
@@ -147,13 +165,19 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
       if (required) failures.push({ op: "stat", path: sourcePath, error: String(error?.message ?? error) });
       return false;
     }
-    if (!charge(size)) return false;
+    const outcome = charge(size);
+    if (outcome !== "ok") {
+      skipped.push({ reason: outcome, size, ...(typeof destRel === "string" ? { path: destRel } : {}) });
+      return false;
+    }
     const dest = join(dir, destRel);
     try {
       await mkdir(join(dest, ".."), { recursive: true });
       await copyFile(sourcePath, dest);
       return true;
     } catch (error) {
+      bytesWritten -= size;
+      filesWritten -= 1;
       failures.push({ op: "copy", path: sourcePath, dest, error: String(error?.message ?? error) });
       return false;
     }
@@ -181,7 +205,13 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
           await walk(absolute);
           continue;
         }
-        if (!entry.isFile()) continue;
+        // Symlinks are recorded as skipped (audit NOTE-3) rather than silently
+        // disappearing: a linked evidence file that capture refuses to follow is
+        // an observable decision, not an invisible hole.
+        if (!entry.isFile()) {
+          if (entry.isSymbolicLink()) skipped.push({ reason: "symlink", path: rel });
+          continue;
+        }
         if (!accept(rel)) continue;
         await copyFileInto(absolute, destPrefix.length > 0 ? `${destPrefix}/${rel}` : rel);
       }

@@ -191,3 +191,9 @@ voice-gateway/scripts/player-turn-*.wav
 # tools/live-run/README.md.
 /.live-runs/
 /.audit-runs/
+
+# Live-run diagnostic result files (never committed; archive deliberately under
+# tools/fixtures/ when a run deserves evidence).
+/_*.result.json
+/_*.log
+/tools/_*.result.json
