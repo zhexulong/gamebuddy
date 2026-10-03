@@ -223,6 +223,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
  * native-local smoke runner appear here.
  */
 export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
+  // The loop-closure pilot: cut grass tufts (TerrainFeature Grass) through the
+  // native scythe seam. Registered as Experimental in the Mod catalog until its
+  // live gate passes; the runner is the scythe-family contract shape.
+  cut_grass: "run-stardew-native-local-player-cut-grass-smoke.mjs",
   // Promoted actions (clear_debris, npc_relationship, water_pet_bowl,
   // water_slime_hutch_trough, chest_store, chest_retrieve, chop_stump,
   // plant_sapling, cut_weeds, scythe_crop, craft_item, cook_recipe,
@@ -282,6 +286,14 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // no capability. Two harness labels select the blocker kind.
   move_stall_probe_pet: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
   move_stall_probe_npc: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
+  // WIA world-interruption live proofs (world-interruption-arbitration.md
+  // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
+  // that stage a world-change mid-move, measuring that the running body loop
+  // classifies it as invalidated/pass_out (body facts) or
+  // invalidated/modal_interrupted (intent breakpoint) instead of an opaque
+  // action fault. Not a new action; they grant no capability.
+  wia_pass_out: "run-stardew-native-local-wia-passout-smoke.mjs",
+  wia_modal_interrupt: "run-stardew-native-local-wia-modal-interrupt-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

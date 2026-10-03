@@ -28,6 +28,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalInteractNpcWithItemFixture", "InitializeNativeLocalJodiHarvestDeliverFixture",
         "InitializeNativeLocalStrawberryCovenantFixture", "InitializeNativeLocalNpcRelationshipFixture",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
+        "InstallWiaInterruptionFixture",
         "IsCrabPotFixtureInventoryUnchanged", "FindNativeLocalFarmFixtureTile",
         "FindNativeLocalFarmResourceClumpFixtureTile", "IsFixtureOwnedOrdinaryChest",
         "DescribeNativeLocalFixtureSetupFailure", "TryStartHostAutomation",

@@ -307,7 +307,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_admission_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -361,10 +361,22 @@ public sealed partial class ModEntry : Mod
                 // native pipeline does next. The player already stands inside
                 // the FarmHouse, so no placement is needed.
                 player.stamina = -20;
-                this.nativeLocalPlayerFixtureInitialized = true;
-                return;
-            }
-            if (player.MaxItems < 36)
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_pass_out_v1")
+        {
+            InstallWiaInterruptionFixture(player, farm, WiaInterruptionFixtureKind.PassOut);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_modal_interrupt_v1")
+        {
+            InstallWiaInterruptionFixture(player, farm, WiaInterruptionFixtureKind.ModalInterrupt);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (player.MaxItems < 36)
                 player.increaseBackpackSize(36 - player.MaxItems);
 
             if (fixture.FixtureScenario == "native_machine_navigate_ab_v1")
@@ -2786,6 +2798,76 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
     /// movement, interaction or action; the block is exercised by production's
     /// move_to_tile.
     /// </summary>
+    /// <summary>Which WIA world-change interruption the fixture must stage.</summary>
+    private enum WiaInterruptionFixtureKind
+    {
+        PassOut,
+        ModalInterrupt,
+    }
+
+    /// <summary>
+    /// WIA world-change interruption preconditions (see
+    /// design/domains/stardew/world-interruption-arbitration.md §4.1 / §4.3).
+    ///
+    /// The receipts under test are produced by a RUNNING body execution, never
+    /// by admission: a request issued while the interruption already holds is
+    /// refused at admission with player_not_actionable. So the actor starts
+    /// healthy and the interruption is staged a few ticks AFTER a native path
+    /// controller is up — the precise world change the running body loop must
+    /// classify.
+    ///
+    /// PassOut drops stamina below the native pass-out floor (Game1.cs:6452);
+    /// ModalInterrupt opens a real native modal through the same call the
+    /// door-gate refusal uses. Nothing here moves the actor or emits a receipt
+    /// itself.
+    /// </summary>
+    private void InstallWiaInterruptionFixture(Farmer player, GameLocation farm, WiaInterruptionFixtureKind kind)
+    {
+        // Far bare-soil targets for the move under test (the same native
+        // cleanup the stamina-recovery precondition uses): the runner selects a
+        // soil tile at a distance, so the staged interruption always lands
+        // mid-move rather than after an instant arrival.
+        GameLocation? wiaPreviousLocation = Game1.currentLocation;
+        try
+        {
+            Game1.currentLocation = farm;
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null))
+                throw new InvalidOperationException("fixture_native_local_wia_remove_dirt_unavailable");
+        }
+        finally
+        {
+            Game1.currentLocation = wiaPreviousLocation;
+        }
+        player.stamina = 270f;
+        int ticksAfterMoveStart = 0;
+        void OnTick(object? sender, UpdateTickedEventArgs e)
+        {
+            Farmer? actor = Game1.player;
+            if (actor is null)
+                return;
+            if (actor.controller is not StardewValley.Pathfinding.PathFindController)
+            {
+                ticksAfterMoveStart = 0;
+                return;
+            }
+            ticksAfterMoveStart++;
+            // A few ticks into the move: admission already happened, so the
+            // staged world change can only surface through the body loop.
+            if (ticksAfterMoveStart < 5)
+                return;
+            if (kind == WiaInterruptionFixtureKind.PassOut)
+            {
+                actor.stamina = -20f;
+            }
+            else
+            {
+                Game1.drawObjectDialogue("GameBuddy WIA modal interruption probe");
+            }
+            this.Helper.Events.GameLoop.UpdateTicked -= OnTick;
+        }
+        this.Helper.Events.GameLoop.UpdateTicked += OnTick;
+    }
+
     private void InitializeNativeLocalMoveStallProbeFixture(Farmer player, Farm farm, bool useHorseBlock)
     {
         Vector2? anchor = FindNativeLocalMoveStallAnchor(farm);
