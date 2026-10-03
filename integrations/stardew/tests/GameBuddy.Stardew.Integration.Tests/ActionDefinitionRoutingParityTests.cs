@@ -35,6 +35,7 @@ public sealed class ActionDefinitionRoutingParityTests
             [FarmhandActionHandlerGroup.ResourceTools] = typeof(ResourceToolActionHandler),
             [FarmhandActionHandlerGroup.Expression] = typeof(ExpressionActionHandler),
             [FarmhandActionHandlerGroup.WorldLifecycle] = typeof(WorldLifecycleActionHandler),
+            [FarmhandActionHandlerGroup.Modal] = typeof(ModalActionHandler),
         };
 
     private static IReadOnlyList<FarmhandActionRegistration> Executions =>

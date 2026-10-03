@@ -20,7 +20,7 @@ public sealed record FarmhandActionObservationBindingDescriptor(string Type, int
 public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
-public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle }
+public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
 public static class FarmhandActionHandlerGroupWire
 {
     public static string ToWireValue(this FarmhandActionHandlerGroup group) => group switch
@@ -32,6 +32,7 @@ public static class FarmhandActionHandlerGroupWire
         FarmhandActionHandlerGroup.ResourceTools => "resource_tools",
         FarmhandActionHandlerGroup.Expression => "expression",
         FarmhandActionHandlerGroup.WorldLifecycle => "world_lifecycle",
+        FarmhandActionHandlerGroup.Modal => "modal",
         _ => throw new ArgumentOutOfRangeException(nameof(group)),
     };
 }
@@ -96,6 +97,10 @@ public static class FarmhandActionCatalog
         // fixture (scenario name + real UnlockCondition); publication review is
         // still owed for the final `published` rung.
         E("ride_minecart", "transport_warps", FarmhandActionHandlerGroup.Movement, MinecartRide(), FarmhandActionLifecycle.LiveVerified),
+        E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.Experimental),
+        E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
+        E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
+        E("toggle_mine_lamp", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_lamp_toggled", ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.Experimental),
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
@@ -124,7 +129,17 @@ public static class FarmhandActionCatalog
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.Experimental),
+        E("clear_cask", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "cask_cleared", "Cask.performToolAction"), FarmhandActionLifecycle.Experimental),
+        E("dress_mannequin", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mannequin_dressed", "Mannequin.performObjectDropInAction"), FarmhandActionLifecycle.Experimental),
+        E("set_sign_display", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "sign_display_set", "Sign.checkForAction"), FarmhandActionLifecycle.Experimental),
+        E("deposit_silo_hay", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "silo_hay_deposited", "GameLocation.tryToAddHay"), FarmhandActionLifecycle.Experimental),
+        E("toggle_tool_light", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "tool_light_toggled", "Lantern.DoFunction"), FarmhandActionLifecycle.Experimental),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
+        E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.Experimental),
+        E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.Experimental),
+        E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.Experimental),
+        E("take_pedestal_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental),
+        E("toggle_fence_gate", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Target(), FarmhandActionLifecycle.Experimental),
         // Loop-closure W0a pre-registration. W0a owns registration and routing;
         // the native bodies are lane-owned partials
         // (farmhandexecutioncontroller.{crafting,cooking,crabpot,shipping}actions.cs)
@@ -143,6 +158,21 @@ public static class FarmhandActionCatalog
         E("cook_recipe", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("collect_crab_pot_output", "buildings_farm_management", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified),
         E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
+    // WIA §4.2 modal-handling family: the ONE action that may run while the
+    // world holds a modal. `dismiss_modal` only closes an informational native
+    // dialogue (a DialogueBox with no pending question); answering a question
+    // dialogue is answer_dialogue's future seam (design 7.4.2) and is refused
+    // here. It carries no arguments: the target is the currently open modal
+    // itself, and readiness is native state. The receipt is minted by the one
+    // execution ledger and the Modal admission profile (AdmitExecution) is the
+    // only profile that grants it admission.
+    E("dismiss_modal", "modal_handling", FarmhandActionHandlerGroup.Modal, new FarmhandActionDescriptor(
+        Array.Empty<FarmhandActionArgument>(),
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "modal_dismissed",
+        "DialogueBox.closeDialogue"), FarmhandActionLifecycle.Experimental),
         // M2 cross-day lifecycle wiring. The catalog contract
         // (single_player_sleep_and_advance_day / end_day_with_all_players_ready)
         // is coordinated, but the AI's own share of it is one bounded native
