@@ -165,3 +165,32 @@ test("IdentityProfile binding is opaque and never stores profile body", async ()
   assert.doesNotMatch(stored, /GameBuddy Companion/);
   assert.doesNotMatch(stored, /continuity/);
 });
+test("IdentityProfile accepts long user-authored description up to the anti-blowup ceiling (product policy: never truncate)", () => {
+  const longCore = "x".repeat(5_000);
+  const profile = validateIdentityProfile({
+    ...DEFAULT_IDENTITY_PROFILE,
+    persona: {
+      core: longCore,
+      interactionStyle: "listen first",
+      expressionStyle: "brief",
+    },
+    examples: [
+      { user: "u".repeat(2_000), companion: "c".repeat(2_000) },
+      { user: "u2", companion: "c2" },
+      { user: "u3", companion: "c3" },
+      { user: "u4", companion: "c4" },
+      { user: "u5", companion: "c5" },
+    ],
+  });
+  assert.equal(profile.persona?.core, longCore);
+  assert.equal(profile.examples?.length, 5);
+  // Only the physical anti-blowup ceiling (64 KiB chars) rejects.
+  assert.throws(
+    () =>
+      validateIdentityProfile({
+        ...DEFAULT_IDENTITY_PROFILE,
+        persona: { core: "x".repeat(65_537), interactionStyle: "i", expressionStyle: "e" },
+      }),
+    /invalid_identity_profile/,
+  );
+});

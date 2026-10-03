@@ -247,6 +247,15 @@ export function createIdentityProfileBinding(
   });
 }
 
+/** Product policy: limits only prevent physical blowup, never the player's choices.
+ *  User-authored description text loads losslessly up to an anti-blowup ceiling
+ *  (64 KiB chars); the ST ecosystem's 99.999% of cards stay far below it. */
+const MAX_PROFILE_TEXT_CHARS = 65_536;
+/** Few-shot teaching rows are bounded only against unreasonable blowup. */
+const MAX_EXAMPLES = 64;
+/** Identifier semantics (profile name), not a user-text limit. */
+const MAX_NAME_CHARS = 128;
+
 export function validateIdentityProfile(value: unknown): IdentityProfile {
   const candidateExamples = isRecord(value) && Array.isArray(value.examples) ? value.examples : undefined;
   if (
@@ -256,20 +265,22 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
     !Number.isSafeInteger(value.revision) ||
     value.revision < 1 ||
     !isRecord(value.identity) ||
-    !isBoundedText(value.identity.name, 128) ||
-    !isBoundedText(value.identity.role, 512) ||
-    !isBoundedText(value.identity.continuity, 1_024) ||
+    !isBoundedText(value.identity.name, MAX_NAME_CHARS) ||
+    !isBoundedText(value.identity.role, MAX_PROFILE_TEXT_CHARS) ||
+    !isBoundedText(value.identity.continuity, MAX_PROFILE_TEXT_CHARS) ||
     (value.persona !== undefined &&
       (!isRecord(value.persona) ||
-        !isBoundedText(value.persona.core, 1_024) ||
-        !isBoundedText(value.persona.interactionStyle, 1_024) ||
-        !isBoundedText(value.persona.expressionStyle, 1_024))) ||
+        !isBoundedText(value.persona.core, MAX_PROFILE_TEXT_CHARS) ||
+        !isBoundedText(value.persona.interactionStyle, MAX_PROFILE_TEXT_CHARS) ||
+        !isBoundedText(value.persona.expressionStyle, MAX_PROFILE_TEXT_CHARS))) ||
     (value.examples !== undefined &&
       (candidateExamples === undefined ||
-        candidateExamples.length > 4 ||
+        candidateExamples.length > MAX_EXAMPLES ||
         candidateExamples.some(
           (example: unknown) =>
-            !isRecord(example) || !isBoundedText(example.user, 512) || !isBoundedText(example.companion, 512),
+            !isRecord(example) ||
+            !isBoundedText(example.user, MAX_PROFILE_TEXT_CHARS) ||
+            !isBoundedText(example.companion, MAX_PROFILE_TEXT_CHARS),
         )))
   ) {
     throw new Error("invalid_identity_profile");

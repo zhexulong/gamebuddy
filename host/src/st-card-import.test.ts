@@ -507,4 +507,23 @@ test("preview folds first_mes into a reviewed example row when mes_example is mi
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.match(prompt, /\[Dialogue Examples\]/);
   assert.match(prompt, /Anchor Rae glances up/);
+});test("preview surfaces softHints for unusually long persona fields (frontend notice, never a gate)", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Long Tail",
+      description: "d".repeat(4_001),
+      personality: "s",
+    },
+  });
+  assert.ok(Array.isArray(preview.softHints));
+  const coreHint = preview.softHints.find((hint) => hint.field === "core");
+  assert.ok(coreHint);
+  assert.equal(coreHint.chars, 4_001);
+  // Normal-length cards produce no hints.
+  const plain = previewStCard({ spec: "chara_card_v3", data: { name: "Short", description: "brief" } });
+  assert.deepEqual(plain.softHints, []);
+  // The report path carries the same hints so the review UI can show them.
+  const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: { name: "Long Tail", description: "d".repeat(4_002) } }));
+  assert.equal(report.softHints[0]?.chars, 4_002);
 });

@@ -54,7 +54,7 @@ import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
 // its own directory with the runtime root's evidence and the child stderr, so a
 // reviewer can see what actually reached the model instead of only digest facts.
-const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: new URL("../..", import.meta.url).pathname });
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../..", import.meta.url)) });
 
 /**
  * The Class B marker Magic Context emits with the ids it assembled into m[0]
@@ -290,59 +290,29 @@ async function installCharacterCard(root, identity, cardPath) {
   const card = JSON.parse(await readFile(cardPath, "utf8"));
   const preview = previewStCard(card);
   const profile = candidateToIdentityProfile(preview, 1);
-  // Identity-profile write limits are the product's own (persona fields <=1024
-  // chars, <=4 examples, example lines <=512): a preview may legitimately exceed
-  // them (review fails closed later), but THIS harness writes the file the
-  // runtime reads as the approved profile, so it must land in-bounds. Bound it
-  // explicitly so a long card cannot produce a silently-boarded child.
-  const boundsB = {
-    core: 1_024,
-    interactionStyle: 1_024,
-    expressionStyle: 1_024,
-    exampleUser: 512,
-    exampleCompanion: 512,
-    examples: 4,
-  };
-  const bound = profile.persona === undefined ? undefined : {
-    core: profile.persona.core.slice(0, boundsB.core),
-    interactionStyle: profile.persona.interactionStyle.slice(0, boundsB.interactionStyle),
-    expressionStyle: profile.persona.expressionStyle.slice(0, boundsB.expressionStyle),
-  };
-  const boundExamples = (profile.examples ?? []).slice(0, boundsB.examples).map((example) => ({
-    user: example.user.slice(0, boundsB.exampleUser),
-    companion: example.companion.slice(0, boundsB.exampleCompanion),
-  }));
-  const bounded = Object.freeze({
-    ...profile,
-    ...(bound === undefined ? {} : { persona: Object.freeze(bound) }),
-    ...(boundExamples.length === 0 ? {} : { examples: Object.freeze(boundExamples) }),
-  });
-  validateIdentityProfile(bounded); // fail loudly, never ship an invalid profile
+  // Product policy: limits only prevent physical blowup, never the player's
+  // choices. The card profile loads LOSSESSLY (no truncation); the product's
+  // own write validator is the only gate, and it is anti-blowup wide (64 KiB
+  // chars). A card the validator rejects is a harness bug to report loudly,
+  // never silently boarded.
+  validateIdentityProfile(profile);
   const paths = resolveRuntimePaths(identity, root);
   await mkdir(paths.runtimeCwd, { recursive: true });
-  const metadata = identityProfileMetadata(bounded);
+  const metadata = identityProfileMetadata(profile);
   await writeFile(
     join(paths.runtimeCwd, "identity-profile.json"),
-    `${JSON.stringify({ ...bounded, canonicalHash: metadata.canonicalHash }, null, 2)}\n`,
+    `${JSON.stringify({ ...profile, canonicalHash: metadata.canonicalHash }, null, 2)}\n`,
     "utf8",
   );
   const worldbookPath = join(dirname(cardPath), "worldbook.json");
   if (existsSync(worldbookPath)) {
     await copyFile(worldbookPath, join(paths.runtimeCwd, "worldbook.json"));
   }
+  const coreChars = profile.persona === undefined ? null : profile.persona.core.length;
   return Object.freeze({
     profileId: metadata.profileId,
     canonicalHash: metadata.canonicalHash,
-    coreChars: bound === undefined ? null : bound.core.length,
-    ...(profile.persona !== undefined && bound !== undefined &&
-      (profile.persona.core.length > boundsB.core ||
-        profile.persona.interactionStyle.length > boundsB.interactionStyle ||
-        profile.persona.expressionStyle.length > boundsB.expressionStyle)
-      ? { boundedTruncation: true }
-      : {}),
-    ...(profile.examples !== undefined && boundExamples.length !== profile.examples.length
-      ? { examplesTruncated: true }
-      : {}),
+    coreChars,
   });
 }
 
@@ -1036,8 +1006,6 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
               profileId: installedCard.profileId,
               canonicalHash: installedCard.canonicalHash,
               coreChars: installedCard.coreChars,
-              ...(installedCard.boundedTruncation === true ? { boundedTruncation: true } : {}),
-              ...(installedCard.examplesTruncated === true ? { examplesTruncated: true } : {}),
             }),
           }),
       // S1/S2/S3 effect observations: prefix-cache stability, reply language,
