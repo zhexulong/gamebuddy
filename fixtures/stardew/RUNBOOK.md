@@ -1255,3 +1255,36 @@ arrival neighborhood, wait for the character to wander, or a path around it).
 
 Both runs restored profile, removed backup/lock and working save, and left no
 Stardew/SMAPI process.
+
+## 28. WIA live proofs: pass_out and modal_interrupted classifications (2026-10-04)
+
+Two native-local live gates (scenario `native_wia_pass_out_v1` /
+`native_wia_modal_interrupt_v1`, fixture `GameBuddyFixtureStable_445936768`,
+profile `native-local-move`, private bundle staging, test-module host loader)
+prove the WIA world-change classifications against the real game
+(world-interruption-arbitration.md §4.1 ② / §4.3):
+
+- **pass_out**: the fixture stages a stamina drop below the native floor
+  (Game1.cs:6452) a few ticks after a running move; the body loop must surface
+  the world fact, not an admission refusal.
+  `state=passed reasonCode=pass_out receipt=invalidated/pass_out revision=3`
+  evidence `stamina=-20;time_of_day=600;tile=20,19;revision=1`; target `18,16`
+  (distant soil tile), accepted revision 1 → invalidated revision 3, actor not
+  actionable afterwards, activeExecution released. 355 ms.
+- **modal_interrupted**: the fixture opens a real native modal
+  (Game1.drawObjectDialogue, the same call the door-gate refusal uses) mid-move;
+  the body loop must classify it with the intent breakpoint.
+  `state=passed reasonCode=modal_interrupted receipt=invalidated/modal_interrupted
+  revision=3` evidence `interrupted_by=DialogueBox;target_tile=18,16;
+  interrupted_at=20,19;remaining_distance=3.61;revision=1`; 401 ms.
+
+Both receipts carry the WIA body/intent facts the Agent replans on (vs. the
+pre-WIA opaque `menu_opened` / `player_not_actionable` terminals). Both runs
+restored profile, removed backup/lock and working save, and left no
+Stardew/SMAPI process.
+
+Gate notes (each fixed a real defect on the way): the runner identity must
+match `run-stardew-native-local-player-*` (move-fixture.ps1 resolver regex);
+the fixture action/scenario allow-lists in `tools/lib/…fixture.mjs` must
+contain the harness action; `move_to_tile` args must be exactly `{x,y}` (the
+Mod's exact-shape parse rejects extra fields, `navigation_execution_parse_rejected`).

@@ -2838,6 +2838,14 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         {
             Game1.currentLocation = wiaPreviousLocation;
         }
+        // The actor lands ON the Farm, so the runner's travel leg is skipped and
+        // the FIRST native path controller is the move under test. The warp is
+        // the same native lifecycle the move-stall probe uses; nothing here
+        // invokes an action.
+        Vector2? wiaAnchor = FindNativeLocalFarmFixtureTile(farm, new Vector2(20f, 20f), 18, requireEmptyObjectTile: true);
+        if (wiaAnchor is null)
+            throw new InvalidOperationException("fixture_native_local_wia_farm_anchor_missing");
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)wiaAnchor.Value.X, (int)wiaAnchor.Value.Y, false));
         player.stamina = 270f;
         int ticksAfterMoveStart = 0;
         void OnTick(object? sender, UpdateTickedEventArgs e)
@@ -2845,15 +2853,19 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             Farmer? actor = Game1.player;
             if (actor is null)
                 return;
-            if (actor.controller is not StardewValley.Pathfinding.PathFindController)
+            if (actor.controller is not StardewValley.Pathfinding.PathFindController
+                || actor.currentLocation is not Farm)
             {
+                // Only the Farm-side move under test counts: a leftover
+                // FarmHouse travel leg (runner fallback) must never arm the
+                // interruption, or the WIA receipt would be a false positive.
                 ticksAfterMoveStart = 0;
                 return;
             }
             ticksAfterMoveStart++;
             // A few ticks into the move: admission already happened, so the
             // staged world change can only surface through the body loop.
-            if (ticksAfterMoveStart < 5)
+            if (ticksAfterMoveStart < 2)
                 return;
             if (kind == WiaInterruptionFixtureKind.PassOut)
             {
