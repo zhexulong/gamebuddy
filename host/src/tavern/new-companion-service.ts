@@ -14,7 +14,7 @@ import { withPathLock } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
 import { join } from "node:path";
 import { TavernArtifactStore } from "./artifact-store.js";
-import { type ChatThreadStore, createChatThreadStore, type TavernStableWorldBookBinding } from "./chat-thread-store.js";
+import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { renderMacros } from "./macro-engine.js";
@@ -177,7 +177,6 @@ async function provisionNewCompanionNamespace(
       // m[0] lorebook_constant source, keyword entries stay queryable/volatile.
       // The thread carries only the metadata binding; the body stays at the
       // independently-audited runtime path.
-      let worldBookBinding: TavernStableWorldBookBinding | undefined;
       if (worldBookCandidates !== undefined && worldBookCandidates.length > 0) {
         const book: WorldBook = validateWorldBook(
           Object.freeze({
@@ -201,13 +200,9 @@ async function provisionNewCompanionNamespace(
           }),
         );
         await writeWorldBook(join(paths.runtimeCwd, "worldbook.json"), book);
-        const metadata = worldBookMetadata(book);
-        worldBookBinding = Object.freeze({
-          worldBookId: metadata.worldBookId,
-          revision: metadata.revision,
-          canonicalHash: metadata.canonicalHash,
-          provenance: "reviewed-import" as const,
-        });
+        // The metadata binding itself is currently unused by the thread creation
+        // flow (b178a13); only the durable worldbook.json body is authoritative.
+        void worldBookMetadata(book);
       }
       const tavernPaths = resolveTavernPaths(paths, identity);
       const scenarioService = createScenarioManagementService(
