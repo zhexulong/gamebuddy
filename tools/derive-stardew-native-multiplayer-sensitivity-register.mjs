@@ -392,6 +392,109 @@ const TABLE = {
       "different trigger, after the barrier every required player satisfies. A Farmhand client cannot roll the date itself " +
       "(dayOfMonth/stats.DaysPlayed advance only when Game1.IsMasterGame), so a single-player pass cannot stand in for it.",
   ],
+  // WIA §4.2 modal-handling family (in-flight lane): dismiss_modal closes the
+  // informational DialogueBox through the public closeDialogue seam
+  // (Game1.exitActiveMenu + dialogueUp=false); the modal's presence and
+  // dismissal are pure client-side world state, and the receipt never touches
+  // a server or net-field.
+  dismiss_modal: [
+    "StardewValley.Menus/DialogueBox.cs",
+    "public void closeDialogue()",
+    "mp-insensitive",
+    "closeDialogue calls Game1.exitActiveMenu (menu = null) and Game1.dialogueUp = false; both are client-side UI state " +
+      "with no multiplayer read or write on the path",
+  ],
+  // Loop-closure wave (2026-10-04): 14 actions integrated from the
+  // plants/facility/transport lanes. Each seam mirrors the lane's native entry;
+  // the classification follows the same rules as their existing families.
+
+  // Loop-closure wave (2026-10-04): 14 actions integrated from the
+  // plants/facility/transport lanes. Each seam mirrors the lane's native entry;
+  // the classification follows the same rules as their existing families.
+  harvest_bush: [
+    "StardewValley.TerrainFeatures/Bush.cs",
+    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "mp-insensitive",
+    "shakes fruit into debris on the shared location and plays a sound; the body reads no multiplayer token",
+  ],
+  harvest_fruit_tree: [
+    "StardewValley.TerrainFeatures/FruitTree.cs",
+    "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "mp-insensitive",
+    "drops fruit debris on the shared location; the body reads no multiplayer token",
+  ],
+  shake_tree: [
+    "StardewValley.TerrainFeatures/Tree.cs",
+    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "mp-observational",
+    "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode",
+  ],
+  take_pedestal_item: [
+    "StardewValley.Objects/ItemPedestal.cs",
+    "public bool DropObject(Farmer who)",
+    "mp-insensitive",
+    "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token",
+  ],
+  toggle_fence_gate: [
+    "StardewValley/Fence.cs",
+    "public virtual void toggleGate(bool open, bool is_toggling_counterpart = false, Farmer who = null)",
+    "mp-insensitive",
+    "flips gatePosition on the shared fence; the body reads no multiplayer token",
+  ],
+  clear_cask: [
+    "StardewValley.Objects/Cask.cs",
+    "public override bool performToolAction(Tool t)",
+    "mp-insensitive",
+    "splits heldObject into debris on the shared location; the body reads no multiplayer token",
+  ],
+  dress_mannequin: [
+    "StardewValley.Objects/Mannequin.cs",
+    "public override bool performObjectDropInAction(Item dropInItem, bool probe, Farmer who, bool returnFalseIfItemConsumed = false)",
+    "mp-insensitive",
+    "swaps outfit items on the shared mannequin object; the body reads no multiplayer token",
+  ],
+  set_sign_display: [
+    "StardewValley.Objects/Sign.cs",
+    "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+    "mp-insensitive",
+    "sets displayItem on the shared sign; the body reads no multiplayer token",
+  ],
+  deposit_silo_hay: [
+    "StardewValley/GameLocation.cs",
+    "public int tryToAddHay(int num)",
+    "mp-insensitive",
+    "writes piecesOfHay on the shared farm; the body reads no multiplayer token",
+  ],
+  toggle_tool_light: [
+    "StardewValley.Tools/Lantern.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+    "flips the local lantern light source and removes/readds it; on is a per-tool local bool and the body reads no multiplayer token",
+  ],
+  use_raft: [
+    "StardewValley.Tools/Raft.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+    "sets the local Farmer.isRafting flag; the flag is per-actor local state, no shared write",
+  ],
+  mount_transport: [
+    "StardewValley.Characters/Horse.cs",
+    "public override bool checkAction(Farmer who, GameLocation l)",
+    "mp-observational",
+    "rides/dismounts one shared Horse under the horse mutex; the mutex serialises cross-player mounts on the same horse",
+  ],
+  enter_mine: [
+    "StardewValley/Game1.cs",
+    "public static void enterMine(int whatLevel, int? forceLayout = null)",
+    "mp-insensitive",
+    "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
+  ],
+  toggle_mine_lamp: [
+    "StardewValley/GameLocation.cs",
+    "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
+    "mp-observational",
+    "flips the shared location lightLevel through the Lamp action; players on both sides see the light change",
+  ],
 };
 
 const MP_REJECT_PATTERN =

@@ -1495,6 +1495,26 @@
         }
       },
       {
+        "actionId": "dismiss_modal",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "modal_dismissed"
+        }
+      },
+      {
         "actionId": "advance_day",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -1576,7 +1596,8 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "cut_grass"
+      "cut_grass",
+      "dismiss_modal"
     ]
   },
   "protocol": {
