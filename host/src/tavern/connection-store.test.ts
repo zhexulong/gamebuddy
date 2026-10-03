@@ -9,6 +9,7 @@ import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-recl
 import {
   connectionAuthPath,
   connectionDocumentPath,
+  connectionKeysPath,
   normalizePlayerBaseUrl,
   TavernConnectionInputError,
   TavernConnectionRevisionConflict,
@@ -98,6 +99,43 @@ test("the escape hatch accepts the player's own base URL and model id and reads 
     assert.equal(connection.modelId, "qwen2.5-coder:7b");
     const credentials = JSON.parse(await readFile(connectionAuthPath(root), "utf8"));
     assert.deepEqual(credentials, { [TAVERN_ESCAPE_HATCH_PROVIDER_ID]: { type: "api_key", key: "ollama" } });
+  });
+});
+
+test("same-provider escape-hatch connections keep their own credential, not the provider slot's last write", async () => {
+  await withRoot(async (root, store) => {
+    const first = await store.create({
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: "sk-first-key",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      modelId: "qwen2.5-coder:7b",
+    });
+    const firstId = first.connections[0]!.connectionId;
+    const second = await store.create({
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: "sk-second-key",
+      baseUrl: "http://127.0.0.1:9999/v1",
+      modelId: "qwen2.5-coder:7b",
+    });
+    const secondId = second.connections[1]!.connectionId;
+    assert.notEqual(firstId, secondId);
+
+    // Each connection probes with the key the player typed for IT, even though
+    // the Pi provider slot now holds the second connection's key. The per-
+    // connection key file is the Host-owned authority; the provider slot is
+    // the runtime's single view and must not leak across connections.
+    assert.equal(await store.credentialFor(second.connections[0]!), "sk-first-key");
+    assert.equal(await store.credentialFor(second.connections[1]!), "sk-second-key");
+
+    // Removing one connection drops only its key; the other connection's key
+    // and credential survive.
+    await store.remove(secondId, 2);
+    const after = await store.read();
+    assert.equal(after.connections.length, 1);
+    assert.equal(after.connections[0]!.connectionId, firstId);
+    assert.equal(await store.credentialFor(after.connections[0]!), "sk-first-key");
+    const keys = JSON.parse(await readFile(connectionKeysPath(root), "utf8"));
+    assert.deepEqual(Object.keys(keys), [firstId]);
   });
 });
 
