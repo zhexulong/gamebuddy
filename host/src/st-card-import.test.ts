@@ -490,3 +490,21 @@ test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with 
     { numRuns: 100 },
   );
 });
+test("preview folds first_mes into a reviewed example row when mes_example is missing (voice anchor fallback)", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Anchor Rae",
+      description: "Quiet, attentive.",
+      first_mes: "{{char}} glances up from the amethyst and smiles—\"you're back.\"",
+    },
+  });
+  const profile = candidateToIdentityProfile(preview, 1);
+  // The greeting is folded into one reviewable example, macro-rendered.
+  assert.deepEqual(profile.examples, [
+    { user: "(starts the journey)", companion: "Anchor Rae glances up from the amethyst and smiles—\"you're back.\"" },
+  ]);
+  const prompt = buildChatCompanionSystemPrompt(profile);
+  assert.match(prompt, /\[Dialogue Examples\]/);
+  assert.match(prompt, /Anchor Rae glances up/);
+});

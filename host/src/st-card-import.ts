@@ -172,7 +172,20 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const greeting =
     boundedMultilineText(data.first_mes, ST_CARD_DECODER_LIMITS_V1.textBytes) ??
     boundedMultilineText(data.first_message, ST_CARD_DECODER_LIMITS_V1.textBytes);
-  const examples = parseExamples(boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes));
+  const parsedExamples = parseExamples(
+    boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes),
+  );
+  // Voice-anchor fallback: many ecosystem cards hand-write a first_mes but no
+  // mes_example. Without few-shot teaching the dialogue style drifts once the
+  // opening message slides out of context. Fold the greeting into one reviewed
+  // example row instead (same schema, same review gate, same [Dialogue
+  // Examples] renderer) - the anchor then never ages out of the Tier 1 prefix.
+  const examples =
+    parsedExamples.length > 0 || greeting === undefined
+      ? parsedExamples
+      : Object.freeze([
+          Object.freeze({ user: "(starts the journey)", companion: greeting }),
+        ]);
   const persona =
     description === undefined && personality === undefined
       ? undefined
