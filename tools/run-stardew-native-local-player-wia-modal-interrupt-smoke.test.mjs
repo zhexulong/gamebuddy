@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runWiaModalInterruptSmoke } from "./run-stardew-native-local-wia-modal-interrupt-smoke.mjs";
+import { runWiaModalInterruptSmoke } from "./run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs";
 
 const config = {
   SaveId: "save",
