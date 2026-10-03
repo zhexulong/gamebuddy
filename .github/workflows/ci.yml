@@ -37,6 +37,14 @@ jobs:
       - run: pnpm test:host-windows-test-preflight
       - name: Check Knip reachability
         run: pnpm check:knip
+      # Orphan-script and complexity-ratchet gates (Phase 4 of the workspace
+      # governance task): any package.json script entry pointing at a missing
+      # file, any core-file line-count ceiling breach, and any leftover
+      # untracked debris fail CI. (knip itself already covers unreferenced
+      # files; these three add the reverse directions.)
+      - run: pnpm check:script-entries
+      - run: pnpm check:complexity-gate
+      - run: pnpm check:workspace-debris
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check:host-module-graph
