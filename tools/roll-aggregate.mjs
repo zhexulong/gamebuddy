@@ -105,9 +105,110 @@ function valueOf(entry, metric) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Regularized incomplete beta I_x(a, b) via the continued-fraction (Lentz)
+ * method. This is the numeric backbone of the Student-t CDF, kept dependency-free
+ * so the aggregator's critical values are exact and testable (~0.001 relative
+ * error at the 95%% quantile for df>=2).
+ */
+function regularizedBeta(x, a, b) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  if (x < (a + 1) / (a + b + 2)) {
+    return bt * betacf(x, a, b) / a;
+  }
+  return 1 - bt * betacf(1 - x, b, a) / b;
+}
+
+/** Lanczos approximation of ln(Gamma(z)) for z > 0 (g=7, n=9). */
+function lgamma(z) {
+  if (z <= 0) return NaN;
+  const g = 7;
+  const c = [
+    0.9999999999998099,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.3234287776531,
+    -176.6150291621406,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.984369578019572e-6,
+    1.5056327351493116e-7,
+  ];
+  if (z < 0.5) {
+    // Reflection formula: Gamma(z) = pi / (sin(pi z) Gamma(1 - z))
+    return Math.log(Math.PI) - Math.log(Math.abs(Math.sin(Math.PI * z))) - lgamma(1 - z);
+  }
+  z -= 1;
+  let x = c[0];
+  for (let i = 1; i < c.length; i += 1) x += c[i] / (z + i);
+  const t = z + g + 0.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+
+function betacf(x, a, b) {
+  const MAXIT = 200;
+  const EPS = 3e-12;
+  const FPMIN = 1e-300;
+  const qab = a + b;
+  const qap = a + 1;
+  const qam = a - 1;
+  let c = 1;
+  let d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= MAXIT; m += 1) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c;
+    if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+/** Two-sided Student-t critical value for alpha=0.05 (i.e. t_{0.975, df}). */
+function tCritical975(df) {
+  if (!(df > 0)) return 1.96;
+  const a = df / 2;
+  // t CDF: F(t) = 1 - 0.5 * I_{x}(a, 0.5) with x = df/(df+t^2). So solve
+  // I_x(a, 0.5) = 0.05 for x, then t = sqrt(df * (1-x)/x).
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 200; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (regularizedBeta(mid, a, 0.5) < 0.05) lo = mid;
+    else hi = mid;
+  }
+  const x = (lo + hi) / 2;
+  return Math.sqrt((df * (1 - x)) / x);
+}
+
+/** Welch–Satterthwaite degrees of freedom for two sample means. */
+function welchDf(a, b) {
+  const va = a.stddev ** 2 / a.n;
+  const vb = b.stddev ** 2 / b.n;
+  const numerator = (va + vb) ** 2;
+  const denominator = va ** 2 / (a.n - 1) + vb ** 2 / (b.n - 1);
+  return denominator === 0 ? 0 : numerator / denominator;
+}
+
 function summarize(group) {
   const values = {};
-  let count = 0;
   for (const metric of METRICS) {
     const samples = group.runs.map((entry) => valueOf(entry, metric)).filter((v) => v !== null);
     if (samples.length === 0) {
@@ -119,10 +220,13 @@ function summarize(group) {
       samples.length > 1
         ? samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (samples.length - 1)
         : 0;
-    values[metric.name] = { n: samples.length, mean, stddev: Math.sqrt(variance) };
-    count = samples.length;
+    // Float-accumulation noise: three equal 0.2 samples produce a mean 1e-16 off
+    // 0.2 and a variance ~1e-32. Treat anything below 1e-9 as exact zero so the
+    // degenerate-variance guard (se===0) actually fires on constant groups.
+    const stddev = Math.sqrt(variance);
+    values[metric.name] = { n: samples.length, mean, stddev: stddev < 1e-9 ? 0 : stddev };
   }
-  return { key: group.key, ladder: group.ladder, promptSha256: group.promptSha256, count, values };
+  return { key: group.key, ladder: group.ladder, promptSha256: group.promptSha256, count: group.runs.length, values };
 }
 
 function compareGroups(base, changed) {
@@ -141,7 +245,30 @@ function compareGroups(base, changed) {
     }
     const se = Math.sqrt((a.stddev ** 2) / a.n + (b.stddev ** 2) / b.n);
     const diff = b.mean - a.mean;
-    const halfWidth = 1.96 * se;
+    // NOTE 7 (audit): zero within-group variance in BOTH groups (se===0) makes
+    // the noise window collapse to zero and every non-zero diff "significant".
+    // Real sampling never produces exact zeros, so this only means the data is
+    // degenerate (e.g. a synthetic fixture) or the sample is too small to
+    // estimate spread. A zero diff remains no_conclusion either way; only a
+    // NON-zero diff on a degenerate pair is flagged instead of claimed.
+    if (se === 0 || !Number.isFinite(se)) {
+      verdicts.push({
+        metric: metric.name,
+        direction: metric.direction,
+        verdict: diff === 0 ? "no_conclusion" : "degenerate_variance",
+        diff: round(diff),
+        baseN: a.n,
+        changedN: b.n,
+      });
+      continue;
+    }
+    // Welch t critical value instead of z=1.96: at the minimum comparable
+    // sample size (n=3 each side, Satterthwaite df≈4) t_{0.975}≈2.78, so a
+    // z-based interval would understate the noise window by ~1.4x and declare
+    // improvements the t-interval would call no_conclusion. Denominator fallback
+    // (df=0, e.g. both stddevs are exact zero) keeps the high-df limit 1.96.
+    const df = welchDf(a, b);
+    const halfWidth = (df > 0 ? tCritical975(df) : 1.96) * se;
     // A statistically distinguishable difference is only an improvement when it
     // moves in the metric's good direction; a neutral metric reports the delta
     // without claiming a win.

@@ -625,6 +625,7 @@ try {
     contextAssembled,
     worldBookAssembled,
     presentedSummary: presentedSummary ?? null,
+    runManifestModel: personaWorldBook.model,
   });
   const result = {
     state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && interactionPassed ? "passed" : "blocked",
@@ -687,6 +688,7 @@ try {
       contextAssembled: null,
       worldBookAssembled: null,
       presentedSummary: presentedSummary ?? null,
+      runManifestModel: personaWorldBook?.model,
     }),
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
@@ -753,6 +755,16 @@ async function readAssembledContextEvidence(runtimePaths) {
     mountedWorldBookId: mountedWorldBook?.worldBookId ?? null,
     mountedWorldBookRevision: mountedWorldBook?.revision ?? null,
     manifestPresent: manifest !== null,
+    // Model identity the runtime recorded in its own run manifest (M5). Absent
+    // on a disposable root; non-null only when the runtime actually wrote it.
+    model:
+      manifest?.model === undefined || manifest?.model === null
+        ? undefined
+        : Object.freeze({
+            provider: manifest.model.provider ?? null,
+            modelId: manifest.model.modelId ?? null,
+            thinkingLevel: manifest.model.thinkingLevel ?? null,
+          }),
   });
 }
 
@@ -792,8 +804,19 @@ function splitSpeakableSentenceChunks(text) {
  * A single run's text output is a random draw; only the aggregate across runs
  * (tools/roll-aggregate.mjs) decides whether a prompt/context change beats its
  * baseline beyond the roll noise. Grouping key: promptSha256 + ladder.
+ *
+ * Audit M4/M5 discipline:
+ * - receiptCount counts RAW bridge-fact rows (each terminal receipt appears via
+ *   the fact route AND the execute response), so `receiptsDeduped` reports the
+ *   executionId-unique count alongside; the raw number is never presented as
+ *   "independent receipts".
+ * - model is read from the runtime's own run manifest when present (a
+ *   disposable root has none); provider sampling parameters (temperature/seed)
+ *   are NOT observable at this layer and are left as `samplingParameters: null`
+ *   — grouping cannot separate sampling drift, so cross-run comparison must
+ *   hold model constant and treat sampling changes as a system-level change.
  */
-function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, factLog, contextAssembled, worldBookAssembled, presentedSummary }) {
+function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, factLog, contextAssembled, worldBookAssembled, presentedSummary, runManifestModel }) {
   let promptSha256 = null;
   if (typeof prompt === "string" && prompt.length > 0) {
     promptSha256 = createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 16);
@@ -803,12 +826,41 @@ function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, fac
     return state === "rejected" || state === "uncertain" || state === "failed";
   });
   const terminalReceipts = (factLog ?? []).filter((fact) => fact?.type === "execution_receipt" && fact?.reasonCode !== undefined);
+  const dedupedReceiptIds = new Set();
+  for (const fact of terminalReceipts) {
+    if (typeof fact?.executionId === "string" && fact.executionId.length > 0) dedupedReceiptIds.add(fact.executionId);
+  }
+  // Compact action trace (audit M4): enough to arbitrate identical-retry and
+  // assertion claims without bloating the result with raw args.
+  const actionTraceSummary = (actionTrace ?? []).map((entry) => ({
+    action: entry?.action ?? "unknown",
+    state: entry?.state ?? "unknown",
+    ...(typeof entry?.reasonCode === "string" && entry.reasonCode.length > 0 ? { reasonCode: entry.reasonCode } : {}),
+    argsDigest:
+      entry?.args === undefined
+        ? null
+        : createHash("sha256").update(JSON.stringify(entry.args), "utf8").digest("hex").slice(0, 12),
+  }));
   return Object.freeze({
     schema: "game_ladder_observation/v1",
     // Grouping keys: the exact prompt text (overridden or default) and the rung.
     promptSha256,
     promptOverridden: process.env.GAMEBUDDY_AGENT_PROMPT !== undefined,
     ladder: String(ladder),
+    // Model identity read from the runtime's own run manifest (M5): null on a
+    // disposable root.
+    model:
+      runManifestModel === undefined || runManifestModel === null
+        ? null
+        : Object.freeze({
+            provider: runManifestModel.provider ?? null,
+            modelId: runManifestModel.modelId ?? null,
+            thinkingLevel: runManifestModel.thinkingLevel ?? null,
+          }),
+    // Provider sampling parameters are NOT observable at this layer (the runner
+    // does not construct the model session). Keep the field explicit rather than
+    // pretending: cross-run grouping must hold model constant.
+    samplingParameters: null,
     // Deterministic assembly facts (L0) — single-run truth, no averaging needed.
     contextAssembled: contextAssembled ?? false,
     worldBookAssembled: worldBookAssembled ?? false,
@@ -816,8 +868,15 @@ function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, fac
     turnMs: turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs,
     actionCount: (actionTrace ?? []).length,
     rejectionCount: rejections.length,
+    // M4: the rejection definition behind the count (uncertain/failed are
+    // included too, unlike systemFindings which counts only rejected).
+    rejectionCountIncludes: Object.freeze(["rejected", "uncertain", "failed"]),
     rejectionRate: (actionTrace ?? []).length === 0 ? null : rejections.length / (actionTrace ?? []).length,
     receiptCount: terminalReceipts.length,
+    // M4: executionId-unique receipt count (dedupes the fact-route + execute
+    // response double delivery); always <= receiptCount.
+    receiptsDeduped: dedupedReceiptIds.size,
     summaryChars: typeof presentedSummary === "string" ? presentedSummary.length : null,
+    actionTraceSummary: Object.freeze(actionTraceSummary),
   });
 }

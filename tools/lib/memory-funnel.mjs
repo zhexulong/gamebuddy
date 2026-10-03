@@ -15,13 +15,16 @@ export function renderedMemoryIdsFromMarkers(markers) {
   const ids = new Set();
   let observed = false;
   for (const line of markers) {
-    // Exactly three whitespace-separated tokens; anything else is not our marker and
-    // must not be read as one (a partially-written line stays a gap, not an empty set).
-    const match = /^\S+\s+(\S+)\s+(\S+)$/u.exec(String(line).trim());
+    // PREFIX-ANCHORED: only our marker may set observed=true. A 3-token garbage
+    // stderr line ("refreshed 7 memories" etc.) must not flip the set from
+    // "we never saw it" to "we saw an empty set" — that would let an unrelated
+    // log line masquerade as a real rendered-memory report.
+    const match = /^\[probe:m0_memory_ids\]\s+(\S+)\s+(\S+)\s*$/u.exec(String(line).trim());
     if (match === null) continue;
     observed = true;
     if (match[2] === "-") continue;
     for (const part of match[2].split(",")) {
+      if (part.length === 0) continue; // trailing/empty segment, never id 0
       const value = Number(part);
       if (Number.isSafeInteger(value) && value >= 0) ids.add(value);
     }
@@ -45,7 +48,9 @@ export function renderedChaptersFromMarkers(markers) {
   let count = null;
   let digest = undefined;
   for (const line of markers) {
-    const match = /^\S+\s+(\S+)\s+(\S+)\s+(\S+)$/u.exec(String(line).trim());
+    // PREFIX-ANCHORED, same discipline as renderedMemoryIdsFromMarkers: a
+    // 4-token non-marker line must not set observed.
+    const match = /^\[probe:m0_chapters\]\s+(\S+)\s+(\S+)\s+(\S+)\s*$/u.exec(String(line).trim());
     if (match === null) continue;
     observed = true;
     count = Number(match[2]);
@@ -81,6 +86,8 @@ export function foldCommittedRenderedIdsFromMarkers(markers) {
   for (const line of markers) {
     const match = /^\[probe:fold_committed\]\s+(\S+)\s*$/u.exec(String(line).trim());
     if (match === null) continue;
+    // Multiple real folds in one session: the LATEST fold-commit wins, because
+    // its post-fold set is the one that describes the current m[0] baseline.
     foldRevision = match[1];
   }
   if (foldRevision === undefined) return undefined;
@@ -152,21 +159,28 @@ const STAGE_LABELS = Object.freeze({
  * readiness, §3.3 evidence classes) is that an unobserved fact must be reported
  * as a gap so a missing producer can never masquerade as a product defect.
  */
-function gap(stage, reason) {
+function gap(stage, reason, evidenceClass) {
   return Object.freeze({
     stage,
     component: STAGE_LABELS[stage],
     status: "observability_gap",
     reason,
+    ...(evidenceClass === undefined ? {} : { l3Evidence: evidenceClass }),
   });
 }
 
-function stage(stageId, status, detail) {
+function stage(stageId, status, detail, evidenceClass) {
   return Object.freeze({
     stage: stageId,
     component: STAGE_LABELS[stageId],
     status,
     ...(detail === undefined ? {} : { detail }),
+    // M1 (audit): which evidence class produced this stage — fold_commit (real
+    // vendor fold marker, revision-bound) vs restart_substitute (P-restart
+    // successor mount, no actual fold happened). Defaults to undefined so other
+    // stages stay unchanged; L3_decay sets it on EVERY durable outcome so the
+    // report JSON is self-describing without reading the README.
+    ...(evidenceClass === undefined ? {} : { l3Evidence: evidenceClass }),
   });
 }
 
@@ -226,22 +240,23 @@ function stageAssembly({ renderedMemoryIdsObserved, seedIdRendered }) {
 function stageDecay({ distance, foldObserved, postFoldAssembly, realFold }) {
   if (distance !== "fold" && distance !== "session") return undefined;
   const useRealFold = distance === "fold";
-  if (useRealFold && realFold === undefined) return gap("L3_decay", "fold_not_observed");
-  if (!useRealFold && foldObserved !== true) return gap("L3_decay", "fold_not_observed");
+  if (useRealFold && realFold === undefined) return gap("L3_decay", "fold_not_observed", "fold_commit");
+  if (!useRealFold && foldObserved !== true) return gap("L3_decay", "fold_not_observed", "restart_substitute");
   if (useRealFold) {
-    if (realFold.revision === undefined) return gap("L3_decay", "fold_commit_revision_unobserved");
-    if (realFold.postFoldRenderedIds === undefined) return gap("L3_decay", "fold_post_render_unobserved");
+    if (realFold.revision === undefined) return gap("L3_decay", "fold_commit_revision_unobserved", "fold_commit");
+    if (realFold.postFoldRenderedIds === undefined) return gap("L3_decay", "fold_post_render_unobserved", "fold_commit");
     // The fold-commit marker and the memory-ids line share ONE revision; the ids
     // observed at that revision ARE the post-fold rendered set.
-    if (realFold.seedId === undefined) return gap("L3_decay", "fold_seed_id_unobserved");
+    if (realFold.seedId === undefined) return gap("L3_decay", "fold_seed_id_unobserved", "fold_commit");
     const retained = realFold.postFoldRenderedIds.has(realFold.seedId);
     return retained
-      ? stage("L3_decay", "passed", "seed id retained in the fold-commit revision rendered set")
-      : stage("L3_decay", "broken", "seed id dropped by the fold commit");
+      ? stage("L3_decay", "passed", "seed id retained in the fold-commit revision rendered set", "fold_commit")
+      : stage("L3_decay", "broken", "seed id dropped by the fold commit", "fold_commit");
   }
-  if (postFoldAssembly === undefined) return gap("L3_decay", "post_fold_assembly_unobserved");
-  if (postFoldAssembly === "present") return stage("L3_decay", "passed", "seed id still rendered after the fold");
-  return stage("L3_decay", "broken", "seed id dropped across the fold");
+  if (postFoldAssembly === undefined) return gap("L3_decay", "post_fold_assembly_unobserved", "restart_substitute");
+  if (postFoldAssembly === "present")
+    return stage("L3_decay", "passed", "seed id still rendered after the restart", "restart_substitute");
+  return stage("L3_decay", "broken", "seed id dropped across the restart", "restart_substitute");
 }
 
 /**

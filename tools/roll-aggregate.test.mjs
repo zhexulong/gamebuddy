@@ -136,6 +136,77 @@ test("flags group mismatch and excludes old runs without an observation block", 
   }
 });
 
+test("group count is the run count, not the last non-empty metric sample count (audit M2)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "roll-count-"));
+  try {
+    await writeRuns(dir, {
+      // summaryChars is null in both runs: the old code would count=0 (last
+      // metric empty); the fixed code must still report the run count.
+      "a.json": makeRun({ observationOverrides: { summaryChars: null, turnMs: 100000 } }),
+      "b.json": makeRun({ observationOverrides: { summaryChars: null, turnMs: 120000, rejectionRate: null } }),
+    });
+    const { code, stdout } = await runAggregate(["--runs", dir]);
+    assert.equal(code, 0);
+    const out = JSON.parse(stdout);
+    assert.equal(out.groups[0].count, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("t-based noise window is wider than z at small n (audit M3)", async () => {
+  // n=3 each side with SMALL but non-zero within-group variance: z=1.96 would
+  // call a small diff "improved"; the Welch t interval (df≈4, t≈2.78) must stay
+  // inside no_conclusion for the same diff.
+  const base = await mkdtemp(join(tmpdir(), "roll-tbase-"));
+  const changed = await mkdtemp(join(tmpdir(), "roll-tchanged-"));
+  try {
+    const baseFiles = {};
+    const changedFiles = {};
+    for (let i = 0; i < 3; i += 1) {
+      baseFiles[`b${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.2 + i * 0.01, turnMs: 100000 + i * 1000 } });
+      changedFiles[`c${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.18 + i * 0.01, turnMs: 98000 + i * 1000 } });
+    }
+    await writeRuns(base, baseFiles);
+    await writeRuns(changed, changedFiles);
+    const { code, stdout } = await runAggregate(["--base", base, "--changed", changed]);
+    assert.equal(code, 0);
+    const out = JSON.parse(stdout);
+    for (const v of out.verdicts) {
+      if (v.metric === "rejectionRate" || v.metric === "turnMs") {
+        assert.equal(v.verdict, "no_conclusion");
+      }
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(changed, { recursive: true, force: true });
+  }
+});
+
+test("degenerate zero-variance pairs are flagged, never declared significant (audit NOTE 7)", async () => {
+  const base = await mkdtemp(join(tmpdir(), "roll-degen-b-"));
+  const changed = await mkdtemp(join(tmpdir(), "roll-degen-c-"));
+  try {
+    const baseFiles = {};
+    const changedFiles = {};
+    for (let i = 0; i < 3; i += 1) {
+      baseFiles[`b${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.2, turnMs: 100000 } });
+      changedFiles[`c${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.18, turnMs: 98000 } });
+    }
+    await writeRuns(base, baseFiles);
+    await writeRuns(changed, changedFiles);
+    const { code, stdout } = await runAggregate(["--base", base, "--changed", changed]);
+    assert.equal(code, 0);
+    const out = JSON.parse(stdout);
+    const degen = out.verdicts.filter((v) => v.verdict === "degenerate_variance");
+    assert.ok(degen.length >= 2, `expected degenerate_variance for spread metrics, got: ${JSON.stringify(out.verdicts)}`);
+    assert.equal(out.verdicts.some((v) => v.verdict === "improved"), false);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await rm(changed, { recursive: true, force: true });
+  }
+});
+
 test("usage error exits 2", async () => {
   const { code, stderr } = await runAggregate([]);
   assert.equal(code, 2);

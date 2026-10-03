@@ -237,6 +237,15 @@ test("parses fold-commit markers bound to the same materialization revision", ()
     "[probe:m0_chapters] rev_fold 1 abc",
   ]);
   assert.deepEqual(folded, { revision: "rev_fold", postFoldRenderedIds: new Set([2, 3, 4]) });
+  // The LATEST fold wins when a session folded twice: its post-fold set describes
+  // the current baseline.
+  const doubleFold = foldCommittedRenderedIdsFromMarkers([
+    "[probe:fold_committed] rev_a",
+    "[probe:m0_memory_ids] rev_a 1",
+    "[probe:fold_committed] rev_b",
+    "[probe:m0_memory_ids] rev_b 2,3",
+  ]);
+  assert.deepEqual(doubleFold, { revision: "rev_b", postFoldRenderedIds: new Set([2, 3]) });
   // A fold-commit marker whose revision has NO memory-ids line is a gap: the
   // pass folded but we cannot see what it rendered.
   const noRender = foldCommittedRenderedIdsFromMarkers(["[probe:fold_committed] rev_x"]);
@@ -248,6 +257,48 @@ test("parses fold-commit markers bound to the same materialization revision", ()
     "[probe:m0_memory_ids] rev_z -",
   ]);
   assert.deepEqual(emptyFold, { revision: "rev_z", postFoldRenderedIds: new Set() });
+});
+
+test("non-marker 3-token lines never set rendered-memory observed (audit NOTE anchor)", () => {
+  // A "refreshed 7 memories"-style line must NOT flip the rendered set from
+  // "we never saw a marker" (undefined) to "we saw an empty set" (a set).
+  assert.equal(
+    renderedMemoryIdsFromMarkers(["[buddy] refreshed 7 memories", "[buddy] other junk here"]),
+    undefined,
+  );
+  assert.equal(renderedChaptersFromMarkers(["some line with 3 tokens here", "another 1 2 3"]), undefined);
+  // A trailing comma in the id list is not an id 0 (Number("")===0 would parse
+  // "1,2," as {1,2,0} on a non-anchored regex; the anchored one drops it).
+  assert.deepEqual(renderedMemoryIdsFromMarkers(["[probe:m0_memory_ids] rev_1 1,2,"]), new Set([1, 2]));
+});
+
+test("L3 reports its evidence class: restart_substitute for session, fold_commit for real folds", () => {
+  const sessionPass = attributeMemoryFunnel({
+    distance: "session",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+    foldObserved: true,
+    postFoldAssembly: "present",
+  });
+  const l3 = sessionPass.stages.find((row) => row.stage === "L3_decay");
+  assert.equal(l3.status, "passed");
+  assert.equal(l3.l3Evidence, "restart_substitute");
+  assert.equal(l3.detail, "seed id still rendered after the restart");
+
+  const foldGap = attributeMemoryFunnel({ distance: "fold", seedRequired: true, seedPresentInReadback: true });
+  assert.equal(foldGap.stages.find((row) => row.stage === "L3_decay").l3Evidence, "fold_commit");
+
+  const foldPass = attributeMemoryFunnel({
+    distance: "fold",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+    realFold: { revision: "rev_fold", postFoldRenderedIds: new Set([2]), seedId: 2 },
+  });
+  assert.equal(foldPass.stages.find((row) => row.stage === "L3_decay").l3Evidence, "fold_commit");
 });
 
 test("summarize counts per stage independently and carries no overall verdict", () => {
