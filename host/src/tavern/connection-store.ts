@@ -83,8 +83,12 @@ type TavernConnectionMutation = Readonly<{
   document: TavernConnectionDocument;
   /** Provider-store entry to write, when this mutation submitted a credential. */
   credentials?: Readonly<{ piProviderId: string; apiKey: string }>;
+  /** Per-connection key to write, when this mutation submitted a credential. */
+  connectionKey?: Readonly<{ connectionId: string; apiKey: string }>;
   /** Provider-store entry to drop, when this mutation removed a connection. */
   removeCredential?: string;
+  /** Per-connection key to drop, when this mutation removed a connection. */
+  removeConnectionKey?: string;
 }>;
 
 export class TavernConnectionRevisionConflict extends Error {
@@ -116,6 +120,7 @@ export type TavernConnectionInputReason =
 
 const SCHEMA_VERSION = 1;
 const CONNECTION_DOCUMENT_FILE = "tavern-connections.json";
+const CONNECTION_KEYS_FILE = "tavern-connection-keys.json";
 const AUTH_FILE = "auth.json";
 const CONNECTION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_CONNECTIONS = 16;
@@ -127,6 +132,9 @@ export function connectionDocumentPath(agentDir: string): string {
 }
 export function connectionAuthPath(agentDir: string): string {
   return join(agentDir, AUTH_FILE);
+}
+export function connectionKeysPath(agentDir: string): string {
+  return join(agentDir, CONNECTION_KEYS_FILE);
 }
 
 /**
@@ -186,7 +194,17 @@ export class TavernConnectionStore {
       });
       return {
         document: { ...current, connections: [...current.connections, record] },
-        ...(apiKey === null ? {} : { credentials: { piProviderId: provider.piProviderId, apiKey } }),
+        ...(apiKey === null
+          ? {}
+          : {
+              // Pi's provider store keeps its single provider-key slot; the
+              // per-connection key file keeps every connection's own key so two
+              // escape-hatch records for the same provider do not overwrite
+              // each other's credential (design/28 §5.3: each player-supplied
+              // endpoint has its own credential).
+              connectionKey: { connectionId, apiKey },
+              credentials: { piProviderId: provider.piProviderId, apiKey },
+            }),
       };
     });
   }
@@ -276,7 +294,10 @@ export class TavernConnectionStore {
           document: { ...current, connections },
           ...(provider === null || provider.environmentVariable !== null
             ? {}
-            : { removeCredential: provider.piProviderId }),
+            : {
+                removeCredential: provider.piProviderId,
+                removeConnectionKey: connectionId,
+              }),
         };
       },
       expectedRevision,
@@ -297,6 +318,12 @@ export class TavernConnectionStore {
       const value = process.env[provider.environmentVariable];
       return typeof value === "string" && value.length > 0 ? value : null;
     }
+    // Per-connection key first: two escape-hatch connections for the same
+    // catalog provider must probe with their own credential, not the Pi
+    // provider slot's single key (which the last create overwrote).
+    const keys = await this.loadConnectionKeys();
+    const ownKey = keys[record.connectionId];
+    if (typeof ownKey === "string" && ownKey.length > 0) return ownKey;
     const credentials = await this.loadCredentials();
     const entry = credentials[provider.piProviderId];
     if (entry === null || typeof entry !== "object") return null;
@@ -354,8 +381,18 @@ export class TavernConnectionStore {
         throw new TavernConnectionRevisionConflict();
       const result = change(current);
       const next: TavernConnectionDocument = Object.freeze({ ...result.document, revision: current.revision + 1 });
-      if (result.credentials !== undefined || result.removeCredential !== undefined) {
-        await this.updateCredentials(result.credentials, result.removeCredential);
+      if (
+        result.credentials !== undefined ||
+        result.removeCredential !== undefined ||
+        result.connectionKey !== undefined ||
+        result.removeConnectionKey !== undefined
+      ) {
+        await this.updateCredentials(
+          result.credentials,
+          result.removeCredential,
+          result.connectionKey,
+          result.removeConnectionKey,
+        );
       }
       await writeAtomically(this.documentPath, serialize(next));
       const readBack = await this.load();
@@ -367,6 +404,8 @@ export class TavernConnectionStore {
   private async updateCredentials(
     write: Readonly<{ piProviderId: string; apiKey: string }> | undefined,
     removeProviderId: string | undefined,
+    connectionKey: Readonly<{ connectionId: string; apiKey: string }> | undefined,
+    removeConnectionKey: string | undefined,
   ): Promise<void> {
     const path = connectionAuthPath(this.agentDir);
     const credentials = await this.loadCredentials();
@@ -374,6 +413,26 @@ export class TavernConnectionStore {
     if (removeProviderId !== undefined) delete next[removeProviderId];
     if (write !== undefined) next[write.piProviderId] = { type: "api_key", key: write.apiKey };
     await atomicWriteFile(path, JSON.stringify(next, null, 2));
+    // The per-connection key file is Host-owned: one entry per connection, so
+    // same-provider connections keep their own credential regardless of the
+    // Pi provider slot (which is intentionally a single key for the runtime).
+    const keysPath = connectionKeysPath(this.agentDir);
+    const keys = await this.loadConnectionKeys();
+    const nextKeys: Record<string, unknown> = { ...keys };
+    if (removeConnectionKey !== undefined) delete nextKeys[removeConnectionKey];
+    if (connectionKey !== undefined) nextKeys[connectionKey.connectionId] = connectionKey.apiKey;
+    await atomicWriteFile(keysPath, JSON.stringify(nextKeys, null, 2));
+  }
+
+  private async loadConnectionKeys(): Promise<Record<string, unknown>> {
+    try {
+      const value = await readStrictJsonFile(connectionKeysPath(this.agentDir));
+      if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid_tavern_connection_keys");
+      return value as Record<string, unknown>;
+    } catch (error) {
+      if (isNotFound(error)) return {};
+      throw new Error("invalid_tavern_connection_keys");
+    }
   }
 
   private async loadCredentials(): Promise<Record<string, unknown>> {
