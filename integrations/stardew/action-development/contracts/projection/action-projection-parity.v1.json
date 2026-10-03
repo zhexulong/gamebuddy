@@ -1315,6 +1315,39 @@
         }
       },
       {
+        "actionId": "cut_grass",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
         "actionId": "scythe_crop",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -1542,7 +1575,9 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": []
+    "experimentalActionIds": [
+      "cut_grass"
+    ]
   },
   "protocol": {
     "schemas": [
