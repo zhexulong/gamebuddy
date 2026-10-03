@@ -18,6 +18,16 @@ internal sealed class StardewBodyController
     private int lastProgressTick;
     private bool hasEmittedRunning;
 
+    /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
+    /// (freezePause, tool animation) keeps the execution running while inside it
+    /// and only falls through to the regular rulings once it expires.</summary>
+    private const int TransientWindowMs = 2000;
+
+    /// <summary>WIA §4.4 wall-clock anchor (Unix ms) of the transient window. 0 =
+    /// not armed; every non-transient frame resets it, so a fresh lock starts a
+    /// fresh window. Only the transient window logic reads or writes it.</summary>
+    private long transientSinceMs;
+
     public StardewBodyController(Action<ExecutionState, string, string?> transition)
     {
         this.transition = transition;
@@ -90,6 +100,7 @@ internal sealed class StardewBodyController
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
         this.hasEmittedRunning = false;
+        this.transientSinceMs = 0;
         reasonCode = "accepted";
         return true;
     }
@@ -97,6 +108,13 @@ internal sealed class StardewBodyController
     public void Cancel(string reasonCode) => this.Stop(ExecutionState.Cancelled, reasonCode, "local_controller_halted");
 
     public void Invalidate(string reasonCode) => this.Stop(ExecutionState.Invalidated, reasonCode, "lifecycle_or_world_change");
+
+    /// <summary>
+    /// World-change interruption with its own evidence (e.g. the WIA intent
+    /// breakpoint). The single-argument overload keeps the generic lifecycle
+    /// marker for callers that have no further facts to attach.
+    /// </summary>
+    public void Invalidate(string reasonCode, string evidence) => this.Stop(ExecutionState.Invalidated, reasonCode, evidence);
 
     public void Halt()
     {
@@ -109,6 +127,7 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.hasEmittedRunning = false;
+        this.transientSinceMs = 0;
     }
 
     public void Update(int tick)
@@ -125,17 +144,77 @@ internal sealed class StardewBodyController
             this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}");
         }
 
-        if (tick > specification.DeadlineTick || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= specification.DeadlineMs)
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (tick > specification.DeadlineTick || nowMs >= specification.DeadlineMs)
         {
             this.Expire("deadline_expired", "authoritative deadline reached");
             return;
         }
 
-        if (Game1.activeClickableMenu is not null)
+        // WIA §4.1: the body state is projected ONCE per tick and every ruling
+        // below consumes that projection; no branch re-checks the menu/event/
+        // movement trio itself. The projection is currently this class's local
+        // equivalent of Lane A's WorldModel.ComputeDisposition (wia-contract
+        // frozen type), computed here until WorldModel.cs lands.
+        // TODO(WIA): 换用 WorldModel.ComputeDisposition(Game1.player)（Lane A 契约
+        // 类型已冻结；落地后删除本地等价判定并消费 ActorDisposition）。
+        LocalDispositionKind disposition = ClassifyLocalDisposition(
+            Game1.eventUp,
+            Game1.activeClickableMenu is not null,
+            Game1.timeOfDay,
+            localPlayer.Stamina,
+            localPlayer.freezePause > 0,
+            localPlayer.UsingTool);
+
+        switch (disposition)
         {
-            this.Invalidate("menu_opened");
-            return;
+            case LocalDispositionKind.Transient:
+                // WIA §4.4: a transient body lock keeps the execution running and
+                // reports no new reasonCode while inside the window; a lock that
+                // outlives the window falls through to the regular rulings below
+                // (modal/event/pass-out/non-actionable) instead of earning a
+                // transient-specific terminal of its own.
+                if (this.KeepRunningWithinTransientWindow(nowMs))
+                    return;
+                break;
+            case LocalDispositionKind.Modal:
+                // WIA §1.1/§4.1 ② -- world-change interruption: an external modal
+                // (DialogueBox/LetterViewer/ReadyCheck/GameMenu) interrupts the
+                // action and fully releases the body lease. The receipt carries the
+                // intent breakpoint the Agent needs to replan -- interrupted_by /
+                // target_tile / interrupted_at / remaining_distance -- plus the
+                // request-bound revision. (The receipt's authoritative Revision
+                // field, stamped by ExecutionManager after this transition, carries
+                // the post-disposition-change revision per the WIA planning-revision
+                // binding; the controller cannot read the manager's live counter.)
+                this.Invalidate("modal_interrupted",
+                    FormatModalInterruptedEvidence(
+                        Game1.activeClickableMenu?.GetType().Name ?? "menu",
+                        specification.TargetTile,
+                        localPlayer.Tile,
+                        Vector2.Distance(localPlayer.Tile, specification.TargetTile),
+                        specification.RouteRevision));
+                return;
+            case LocalDispositionKind.Event:
+                // WIA §4.3 world-change family: a cutscene absorbs the actor, so
+                // the action terminates with the existing event_started
+                // classification rather than an action fault.
+                this.Invalidate("event_started");
+                return;
+            case LocalDispositionKind.PassOut:
+                // WIA §2-6/§4.3 world-change family: timeOfDay>=2600 or stamina<=-15
+                // (imminent native pass-out) is a world fact, not an action fault.
+                // The receipt carries the body facts -- stamina / time / tile -- so
+                // the Agent schedules the eat/rest recovery instead of treating this
+                // as a retryable failure.
+                this.Invalidate("pass_out",
+                    FormatPassOutEvidence(localPlayer.Stamina, Game1.timeOfDay, localPlayer.Tile, specification.RouteRevision));
+                return;
+            default:
+                this.transientSinceMs = 0;
+                break;
         }
+
         if (!ReferenceEquals(localPlayer.controller, pathController))
         {
             bool exactArrival = Vector2.DistanceSquared(localPlayer.Tile, specification.TargetTile) <= 0.04f;
@@ -152,11 +231,6 @@ internal sealed class StardewBodyController
             {
                 this.Fail("native_path_ended", $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)}");
             }
-            return;
-        }
-        if (Game1.eventUp)
-        {
-            this.Invalidate("event_started");
             return;
         }
         Vector2 currentTile = localPlayer.Tile;
@@ -210,6 +284,7 @@ internal sealed class StardewBodyController
         this.active = null;
         this.pathController = null;
         this.hasEmittedRunning = false;
+        this.transientSinceMs = 0;
         this.transition(state, reasonCode, evidence);
     }
 
@@ -289,6 +364,95 @@ internal sealed class StardewBodyController
     /// </summary>
     internal static bool IsChebyshevAdjacent(int deltaX, int deltaY) =>
         (deltaX != 0 || deltaY != 0) && IsArrivalDelta(deltaX, deltaY, allowAdjacentArrival: true);
+
+    // ---- WIA disposition projection and rulings (Lane B) ----------------------
+
+    /// <summary>
+    /// Goal-agnostic body frame classification consumed by <see cref="Update"/>.
+    /// Delegated to the single authority (<see cref="WorldModel.Classify"/>) so
+    /// admission, the body loop and the world model can never drift apart; this
+    /// wrapper only narrows the kind set (the body loop has no Warped ruling — a
+    /// walking body changes tiles by design) and keeps the existing behavioural
+    /// pins working.
+    /// </summary>
+    internal enum LocalDispositionKind
+    {
+        Idle,
+        Modal,
+        Event,
+        PassOut,
+        Transient,
+    }
+
+    /// <summary>
+    /// The disposition precedence, delegated to the single authority
+    /// (<see cref="WorldModel.Classify"/>).
+    /// </summary>
+    internal static LocalDispositionKind ClassifyLocalDisposition(
+        bool eventUp, bool menuOpen, int timeOfDay, float stamina, bool freezePaused, bool usingTool)
+    {
+        ActorDisposition disposition = WorldModel.Classify(
+            new ActorWorldFacts(
+                EventUp: eventUp,
+                MenuType: menuOpen ? "menu" : null,
+                DialogueUp: false,
+                TimeOfDay: timeOfDay,
+                Stamina: stamina,
+                FreezePaused: freezePaused,
+                Eating: false,
+                UsingTool: usingTool,
+                ToolCharged: false));
+        return disposition.Kind switch
+        {
+            ActorDispositionKind.Event => LocalDispositionKind.Event,
+            ActorDispositionKind.Modal => LocalDispositionKind.Modal,
+            ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
+            ActorDispositionKind.Transient => LocalDispositionKind.Transient,
+            _ => LocalDispositionKind.Idle,
+        };
+    }
+
+    /// <summary>
+    /// WIA §4.4 transient window as pure arithmetic so its crossing behaviour is
+    /// pinned directly. Returns the frame's window anchor while the lock may still
+    /// self-heal (window just opened, or still inside); null once the window
+    /// expired and the regular rulings must apply. A zero anchor opens the window
+    /// at the current frame.
+    /// </summary>
+    internal static long? AssessTransientWindow(long transientSinceMs, long nowMs, int windowMs)
+    {
+        if (transientSinceMs <= 0)
+            return nowMs;
+        return nowMs - transientSinceMs >= windowMs ? null : transientSinceMs;
+    }
+
+    /// <summary>Applies the WIA §4.4 transient window for one frame. True while
+    /// the frame stays inside the window (keep running, no new reasonCode); false
+    /// once the window expired, so the caller falls through to the regular rulings.</summary>
+    private bool KeepRunningWithinTransientWindow(long nowMs)
+    {
+        long? anchor = AssessTransientWindow(this.transientSinceMs, nowMs, TransientWindowMs);
+        this.transientSinceMs = anchor ?? 0;
+        return anchor is not null;
+    }
+
+    /// <summary>
+    /// WIA §4.1 ② intent-breakpoint evidence for <c>modal_interrupted</c>: what
+    /// interrupted, where the body was, how far from the target, on which
+    /// (request-bound) revision. The Agent replans from this as a fresh request on
+    /// a new revision -- never a replay of the terminated execution.
+    /// </summary>
+    internal static string FormatModalInterruptedEvidence(
+        string interruptedBy, Vector2 targetTile, Vector2 interruptedAt, float remainingDistance, long revision)
+        => $"interrupted_by={interruptedBy};target_tile={FormatTile(targetTile)};interrupted_at={FormatTile(interruptedAt)};remaining_distance={remainingDistance.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)};revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// WIA §4.3 body facts for <c>pass_out</c>: the stamina/time/position the
+    /// Agent needs to schedule the eat/rest recovery instead of treating the faint
+    /// as a retryable action fault.
+    /// </summary>
+    internal static string FormatPassOutEvidence(float stamina, int timeOfDay, Vector2 tile, long revision)
+        => $"stamina={stamina.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)};time_of_day={timeOfDay.ToString(System.Globalization.CultureInfo.InvariantCulture)};tile={FormatTile(tile)};revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
     private static string FormatTile(Vector2 tile) => $"{tile.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{tile.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}";
 }
