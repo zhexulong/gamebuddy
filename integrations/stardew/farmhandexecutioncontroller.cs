@@ -58,9 +58,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private LocalMoveSpec? active;
     private LocalTravelSpec? activeTravel;
     private LocalPettingSpec? activePet;
+    private LocalMountTransportSpec? activeMountTransport;
     private LocalAnimalProductCollectionSpec? activeAnimalProduct;
     private LocalItemUseSpec? activeItemUse;
     private LocalItemPickupSpec? activeItemPickup;
+    private LocalPedestalTakingSpec? activePedestalTaking;
     private LocalApproachSpec? activeToolApproach;
     private BridgeWoodFenceResultTarget? woodFenceResultTarget;
     private string? woodFenceResultExecutionId;
@@ -629,7 +631,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
         if (profile is not AdmissionActionabilityProfile.Modal
-            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution))
+            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
         return null;
@@ -748,6 +750,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.activeAnimalProduct = null;
         this.activeItemUse = null;
         this.activeItemPickup = null;
+        if (this.activePedestalTaking is not null)
+            this.SettlePedestalTakingUncertain("pedestal_take_halted_after_native_start");
         this.activeToolApproach = null;
     }
 
@@ -840,9 +844,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if ((this.active is not null && (this.active.RequestId != requestId || this.active.ExecutionId != executionId))
             || (this.activeTravel is not null && (this.activeTravel.RequestId != requestId || this.activeTravel.ExecutionId != executionId))
             || (this.activePet is not null && (this.activePet.RequestId != requestId || this.activePet.ExecutionId != executionId))
+            || (this.activeMountTransport is not null && (this.activeMountTransport.RequestId != requestId || this.activeMountTransport.ExecutionId != executionId))
             || (this.activeAnimalProduct is not null && (this.activeAnimalProduct.RequestId != requestId || this.activeAnimalProduct.ExecutionId != executionId))
             || (this.activeItemUse is not null && (this.activeItemUse.RequestId != requestId || this.activeItemUse.ExecutionId != executionId))
             || (this.activeItemPickup is not null && (this.activeItemPickup.RequestId != requestId || this.activeItemPickup.ExecutionId != executionId))
+            || (this.activePedestalTaking is not null && (this.activePedestalTaking.RequestId != requestId || this.activePedestalTaking.ExecutionId != executionId))
             || (this.activeToolApproach is not null && (this.activeToolApproach.RequestId != requestId || this.activeToolApproach.ExecutionId != executionId))
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
@@ -917,9 +923,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return petReceipt;
         }
 
+        if (this.activeMountTransport is not null)
+        {
+            LocalMountTransportSpec mountSpec = this.activeMountTransport;
+            this.activeMountTransport = null;
+            this.revision++;
+            LocalExecutionReceipt mountReceipt = new(mountSpec.ExecutionId, mountSpec.RequestId, ExecutionState.Uncertain, "horse_mount_cancelled_after_native_start", this.revision, $"target={mountSpec.TargetId};mounting_or_mounted=true");
+            this.Remember(mountReceipt);
+            this.AddTrace(mountReceipt);
+            this.PublishIdleAfterRelease(mountSpec.ExecutionId, mountSpec.RequestId);
+            return mountReceipt;
+        }
+
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach that has not yet executed anything native: the
+            // A tool-family approach that has not yet executed anything native:
             // walk is abandoned and the action reports the cancellation with the
             // target it was walking toward, so the caller knows nothing changed in
             // the world.
@@ -934,6 +952,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.AddTrace(toolApproachCancelled);
             this.PublishIdleAfterRelease(toolApproachSpec.ExecutionId, toolApproachSpec.RequestId);
             return toolApproachCancelled;
+        }
+
+        if (this.activePedestalTaking is not null)
+        {
+            this.SettlePedestalTakingUncertain("pedestal_take_cancelled_after_native_start");
+            return this.receiptsByRequestId[requestId];
         }
 
         if (this.activeItemPickup is not null)
@@ -991,6 +1015,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (this.activeNavigate is not null)
             return this.Cancel(this.activeNavigate.RequestId, this.activeNavigate.ExecutionId, reasonCode);
+        if (this.activeMountTransport is not null)
+            return this.Cancel(this.activeMountTransport.RequestId, this.activeMountTransport.ExecutionId, reasonCode);
         if (this.activeTravel is not null)
             return this.Cancel(this.activeTravel.RequestId, this.activeTravel.ExecutionId, reasonCode);
         if (this.activePet is not null)
@@ -1133,6 +1159,37 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 }
             }
         }
+        if (this.activePedestalTaking is not null)
+        {
+            LocalPedestalTakingSpec specification = this.activePedestalTaking;
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            GameLocation? location = Game1.player.currentLocation;
+            bool sameLocation = location is not null && string.Equals(location.NameOrUniqueName, specification.Location, StringComparison.Ordinal);
+            bool pedestalEmpty = sameLocation && location!.objects.TryGetValue(new Vector2(specification.TargetX, specification.TargetY), out StardewValley.Object? pedestalObject)
+                && pedestalObject is StardewValley.Objects.ItemPedestal pedestal && pedestal.heldObject.Value is null;
+            int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
+            bool laterTick = this.tick > specification.StartedTick;
+            if (laterTick && pedestalEmpty && inventoryAfter >= specification.InventoryBefore + specification.StackBefore)
+            {
+                this.activePedestalTaking = null;
+                this.revision++;
+                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "pedestal_item_taken", this.revision,
+                    $"location={specification.Location};target={specification.TargetId};item={specification.QualifiedItemId};stack={specification.StackBefore};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};held_object_empty=true");
+                this.Remember(receipt);
+                this.AddTrace(receipt);
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            }
+            else if (laterTick)
+            {
+                this.activePedestalTaking = null;
+                this.revision++;
+                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "pedestal_take_postcondition_unavailable", this.revision,
+                    $"location={specification.Location};target={specification.TargetId};held_object_empty={pedestalEmpty.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
+                this.Remember(receipt);
+                this.AddTrace(receipt);
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            }
+        }
         if (this.activeItemPickup is not null)
         {
             LocalItemPickupSpec specification = this.activeItemPickup;
@@ -1264,6 +1321,29 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     this.activeAnimalProduct = specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_postcondition_unavailable" };
             }
         }
+        if (this.activeMountTransport is not null)
+        {
+            LocalMountTransportSpec specification = this.activeMountTransport;
+            Horse? horse = Game1.player.currentLocation?.characters.OfType<Horse>().FirstOrDefault(candidate => candidate.HorseId == specification.HorseId);
+            if (horse?.rider == Game1.player && Game1.player.mount == horse && !horse.mounting.Value)
+            {
+                this.activeMountTransport = null;
+                this.revision++;
+                LocalExecutionReceipt mountReceipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "horse_mounted", this.revision, $"target={specification.TargetId};horse_id={specification.HorseId};mounted=true;mounting=false");
+                this.Remember(mountReceipt);
+                this.AddTrace(mountReceipt);
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            }
+            else if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > specification.DeadlineMs)
+            {
+                this.activeMountTransport = null;
+                this.revision++;
+                LocalExecutionReceipt mountReceipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_postcondition_unavailable", this.revision, $"target={specification.TargetId};mounted={(Game1.player.mount is not null).ToString().ToLowerInvariant()};mounting={horse?.mounting.Value.ToString().ToLowerInvariant() ?? "unknown"}");
+                this.Remember(mountReceipt);
+                this.AddTrace(mountReceipt);
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            }
+        }
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
@@ -1320,7 +1400,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
-            || this.activeItemPickup is not null || this.activeToolApproach is not null)
+            || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
         {
             switch (this.disposition.Kind)
             {
@@ -1348,6 +1428,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.InvalidateArtifactSpotResult();
         if (this.active is not null)
             this.controller.Invalidate(reasonCode);
+        if (this.activeMountTransport is not null)
+        {
+            LocalMountTransportSpec specification = this.activeMountTransport;
+            this.activeMountTransport = null;
+            this.revision++;
+            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", this.revision, $"target={specification.TargetId};mounting_or_mounted=true");
+            this.Remember(receipt);
+            this.AddTrace(receipt);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        }
         if (this.activeTravel is not null)
         {
             LocalTravelSpec specification = this.activeTravel;
@@ -1396,6 +1486,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.activeAnimalProduct = specification with { DeferredTerminalState = ExecutionState.Invalidated, DeferredTerminalReason = reasonCode };
             }
         }
+        if (this.activeMountTransport is not null)
+        {
+            LocalMountTransportSpec specification = this.activeMountTransport;
+            this.activeMountTransport = null;
+            this.revision++;
+            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", this.revision, $"target={specification.TargetId};mounting_or_mounted=true");
+            this.Remember(receipt);
+            this.AddTrace(receipt);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        }
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
@@ -1421,6 +1521,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
         }
+        if (this.activePedestalTaking is not null)
+            this.SettlePedestalTakingUncertain("pedestal_take_invalidated_after_native_start", reasonCode);
         if (this.activeItemPickup is not null)
         {
             LocalItemPickupSpec specification = this.activeItemPickup;
@@ -1525,12 +1627,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.receiptsByRequestId.TryGetValue(this.activeTravel.RequestId, out activeReceipt);
         else if (this.activePet is not null)
             this.receiptsByRequestId.TryGetValue(this.activePet.RequestId, out activeReceipt);
+        else if (this.activeMountTransport is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeMountTransport.RequestId, out activeReceipt);
         else if (this.activeAnimalProduct is not null)
             this.receiptsByRequestId.TryGetValue(this.activeAnimalProduct.RequestId, out activeReceipt);
         else if (this.activeItemUse is not null)
             this.receiptsByRequestId.TryGetValue(this.activeItemUse.RequestId, out activeReceipt);
         else if (this.activeItemPickup is not null)
             this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
+        else if (this.activePedestalTaking is not null)
+            this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
         BridgeActiveExecution? activeExecution = this.activeNavigate is not null
             ? new(
                 this.activeNavigate.ExecutionId,
@@ -1555,6 +1661,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                     activeReceipt?.ReasonCode ?? "accepted",
                     new Dictionary<string, string> { ["source"] = $"{this.activeTravel.SourceLocation}:{this.activeTravel.SourceX},{this.activeTravel.SourceY}", ["target"] = $"{this.activeTravel.TargetLocation}:{this.activeTravel.TargetX},{this.activeTravel.TargetY}" })
+                : this.activeMountTransport is not null
+                    ? new(this.activeMountTransport.ExecutionId, this.activeMountTransport.RequestId, "mount_transport", (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted", new Dictionary<string, string> { ["target"] = this.activeMountTransport.TargetId, ["tile"] = $"{this.activeMountTransport.TargetX},{this.activeMountTransport.TargetY}" })
                 : this.activePet is not null
                     ? new(
                         this.activePet.ExecutionId,
@@ -1587,15 +1695,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                                 activeReceipt?.ReasonCode ?? "accepted",
                                 new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" })
-                            : this.activeItemPickup is not null
-                                ? new(
-                                    this.activeItemPickup.ExecutionId,
-                                    this.activeItemPickup.RequestId,
-                                    "pickup_item",
-                                    (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                                    activeReceipt?.ReasonCode ?? "accepted",
-                                    new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" })
-                                : null;
+                             : this.activeItemPickup is not null
+                                 ? new(
+                                     this.activeItemPickup.ExecutionId,
+                                     this.activeItemPickup.RequestId,
+                                     "pickup_item",
+                                     (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                                     activeReceipt?.ReasonCode ?? "accepted",
+                                     new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" })
+                                 : this.activePedestalTaking is not null
+                                     ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
+                                         (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
+                                         new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" })
+                                 : null;
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -1650,6 +1762,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
             advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? DiscoverWeedTargets(player) : null,
             advertisedCapabilities.Contains("cut_grass", StringComparer.Ordinal) ? DiscoverGrassTargets(player) : null,
+            advertisedCapabilities.Contains("clear_cask", StringComparer.Ordinal) ? DiscoverCaskTargets(player) : null,
+            advertisedCapabilities.Contains("dress_mannequin", StringComparer.Ordinal) ? DiscoverMannequinTargets(player) : null,
+            advertisedCapabilities.Contains("set_sign_display", StringComparer.Ordinal) ? DiscoverSignTargets(player) : null,
+            advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) ? DiscoverSiloTargets(player) : null,
+            advertisedCapabilities.Contains("toggle_tool_light", StringComparer.Ordinal) ? DiscoverLanternSlots(player) : null,
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
             DiscoverVillagerWhereabouts(),
@@ -1666,6 +1783,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
             advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
+            advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
+            advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
+            advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
+            advertisedCapabilities.Contains("take_pedestal_item", StringComparer.Ordinal) ? DiscoverPedestalTargets(player) : null,
+            advertisedCapabilities.Contains("toggle_fence_gate", StringComparer.Ordinal) ? DiscoverFenceGateTargets(player) : null,
             // Macro time context. Game1.Date/Game1.timeOfDay are the same values the
             // native behaviour code reads, so publishing them lets the companion
             // reason about time without the Mod interpreting it for them.
@@ -1674,7 +1796,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             SeasonIndex: Game1.Date?.SeasonIndex ?? 0,
             Year: Game1.Date?.Year ?? 0,
             Weather: ProjectWeather(),
-            PresentationLocale: string.Empty);
+            PresentationLocale: string.Empty,
+            RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
+            HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
+            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
+            MineLampTargets: advertisedCapabilities.Contains("toggle_mine_lamp", StringComparer.Ordinal) ? DiscoverMineLampTargets(player) : null);
     }
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
@@ -1691,15 +1817,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
-        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null,
+        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty);
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, MineLampTargets: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)
@@ -2153,6 +2279,67 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// (grassType 1/7) or drops rare items (grassType 6) via the native
     /// <c>Grass.performToolAction</c> → <c>TryDropItemsOnCut</c> chain.
     /// </summary>
+    private static IReadOnlyList<BridgeCaskTarget> DiscoverCaskTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeCaskTarget>();
+        List<BridgeCaskTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
+        {
+            if (pair.Value is not StardewValley.Objects.Cask cask
+                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                continue;
+            result.Add(new BridgeCaskTarget(BuildCaskTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, cask), location.NameOrUniqueName,
+                (int)pair.Key.X, (int)pair.Key.Y, cask.heldObject.Value is not null, cask.heldObject.Value?.QualifiedItemId));
+            if (result.Count >= 16) break;
+        }
+        return result;
+    }
+
+    private static string BuildCaskTargetId(GameLocation location, int x, int y, StardewValley.Objects.Cask cask)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:cask:{cask.QualifiedItemId}:{cask.heldObject.Value?.QualifiedItemId ?? "empty"}:{cask.MinutesUntilReady}";
+        return $"cask_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeMannequinTarget> DiscoverMannequinTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Mannequin && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
+            .Select(pair => new BridgeMannequinTarget(BuildMannequinTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y)).ToArray() ?? Array.Empty<BridgeMannequinTarget>();
+    }
+
+    private static string BuildMannequinTargetId(GameLocation location, int x, int y) => $"mannequin_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:mannequin"))).ToLowerInvariant()[..16]}";
+
+    private static IReadOnlyList<BridgeSignTarget> DiscoverSignTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Sign && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
+            .Select(pair => { StardewValley.Objects.Sign sign = (StardewValley.Objects.Sign)pair.Value; return new BridgeSignTarget(BuildSignTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, sign), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, sign.displayItem.Value is not null, sign.displayItem.Value?.QualifiedItemId); }).ToArray() ?? Array.Empty<BridgeSignTarget>();
+    }
+
+    private static string BuildSignTargetId(GameLocation location, int x, int y, StardewValley.Objects.Sign sign) => $"sign_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:sign:{sign.displayItem.Value?.QualifiedItemId ?? "empty"}"))).ToLowerInvariant()[..16]}";
+
+    private static IReadOnlyList<BridgeSiloTarget> DiscoverSiloTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeSiloTarget>();
+        List<BridgeSiloTarget> result = new();
+        foreach (StardewValley.Buildings.Building building in location.buildings.Where(building => building.buildingType.Value == "Silo").Take(16))
+        {
+            Vector2 tile = new(building.tileX.Value, building.tileY.Value);
+            Point door = building.getPointForHumanDoor();
+            if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
+            result.Add(new BridgeSiloTarget(BuildSiloTargetId(location, building), location.NameOrUniqueName, door.X, door.Y, location.piecesOfHay.Value));
+        }
+        return result;
+    }
+
+    private static string BuildSiloTargetId(GameLocation location, StardewValley.Buildings.Building building) => $"silo_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{building.tileX.Value},{building.tileY.Value}:silo"))).ToLowerInvariant()[..16]}";
+
+    private static IReadOnlyList<BridgeLanternSlot> DiscoverLanternSlots(Farmer player) => player.Items.Select((item, slot) => (item, slot)).Where(pair => pair.item is StardewValley.Tools.Lantern).Take(16)
+        .Select(pair => { StardewValley.Tools.Lantern lantern = (StardewValley.Tools.Lantern)pair.item!; return new BridgeLanternSlot(pair.slot, lantern.on, lantern.fuelLeft); }).ToArray();
+
     private static IReadOnlyList<BridgeGrassTarget> DiscoverGrassTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
@@ -4025,6 +4212,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         || this.activeAnimalProduct?.ExecutionId == executionId
         || this.activeItemUse?.ExecutionId == executionId
         || this.activeItemPickup?.ExecutionId == executionId
+        || this.activePedestalTaking?.ExecutionId == executionId
         || this.activeNavigate?.ExecutionId == executionId
         || this.controller.ActiveExecutionId == executionId;
 

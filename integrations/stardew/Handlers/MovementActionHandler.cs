@@ -32,6 +32,33 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
             // ride_minecart is its own action: x,y is the minecart STATION tile
             // and the declared expectedTargetId names one advertised ride. `travel`
             // keeps its two-argument wire and never rides a minecart.
+            "use_raft" => this.executions.RequestLocalUseRaft(
+                request.RequestId,
+                request.Args.Slot ?? -1,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.DeadlineMs),
+
+            "mount_transport" => this.executions.RequestLocalMountTransport(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "enter_mine" => this.executions.RequestLocalEnterMine(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "toggle_mine_lamp" => this.executions.RequestLocalToggleMineLamp(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.DeadlineMs),
+
             "ride_minecart" => this.executions.RequestLocalMinecartRide(
                 request.RequestId,
                 (int)(request.Args.X ?? 0),

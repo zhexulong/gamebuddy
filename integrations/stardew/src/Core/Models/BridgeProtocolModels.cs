@@ -303,6 +303,11 @@ public sealed record BridgeMinecartTarget(
     int TargetTileX,
     int TargetTileY);
 
+public sealed record BridgeRaftTarget(string TargetId, int X, int Y);
+public sealed record BridgeHorseTarget(string TargetId, int X, int Y, string Name);
+public sealed record BridgeMineEntranceTarget(string TargetId, int X, int Y);
+public sealed record BridgeMineLampTarget(string TargetId, int X, int Y, float LightLevel);
+
 public sealed record BridgePetBowlTarget(string TargetId, int X, int Y);
 
 public sealed record BridgeSlimeHutchTroughTarget(string TargetId, int X, int Y);
@@ -330,6 +335,16 @@ public sealed record BridgeWeedTarget(string TargetId, string Location, int X, i
 /// Carries the tuft identity so admission can re-validate before swinging.
 /// </summary>
 public sealed record BridgeGrassTarget(string TargetId, string Location, int X, int Y, int GrassType, int NumberOfWeeds);
+public sealed record BridgeBushTarget(string TargetId, string Location, int X, int Y);
+public sealed record BridgeFruitTreeTarget(string TargetId, string Location, int X, int Y);
+public sealed record BridgeShakeTreeTarget(string TargetId, string Location, int X, int Y);
+public sealed record BridgePedestalTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, int Stack);
+public sealed record BridgeFenceGateTarget(string TargetId, string Location, int X, int Y, bool IsOpen);
+public sealed record BridgeCaskTarget(string TargetId, string Location, int X, int Y, bool HasHeldObject, string? HeldQualifiedItemId);
+public sealed record BridgeMannequinTarget(string TargetId, string Location, int X, int Y);
+public sealed record BridgeSignTarget(string TargetId, string Location, int X, int Y, bool HasDisplayItem, string? DisplayQualifiedItemId);
+public sealed record BridgeSiloTarget(string TargetId, string Location, int X, int Y, int Hay);
+public sealed record BridgeLanternSlot(int Slot, bool IsOn, int FuelLeft);
 public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
 public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
@@ -407,6 +422,11 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeTreeSaplingTarget>? TreeSaplingTargets,
     IReadOnlyList<BridgeWeedTarget>? WeedTargets,
     IReadOnlyList<BridgeGrassTarget>? GrassTargets,
+    IReadOnlyList<BridgeCaskTarget>? CaskTargets,
+    IReadOnlyList<BridgeMannequinTarget>? MannequinTargets,
+    IReadOnlyList<BridgeSignTarget>? SignTargets,
+    IReadOnlyList<BridgeSiloTarget>? SiloTargets,
+    IReadOnlyList<BridgeLanternSlot>? LanternSlots,
     IReadOnlyList<BridgeScytheCropTarget>? ScytheCropTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgeVillagerWhereabouts>? VillagerWhereabouts,
@@ -423,6 +443,11 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeRecipeTarget>? CookingRecipeTargets,
     IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
     IReadOnlyList<BridgeMinecartTarget>? MinecartTargets,
+    IReadOnlyList<BridgeBushTarget>? BushTargets,
+    IReadOnlyList<BridgeFruitTreeTarget>? FruitTreeTargets,
+    IReadOnlyList<BridgeShakeTreeTarget>? ShakeTreeTargets,
+    IReadOnlyList<BridgePedestalTarget>? PedestalTargets,
+    IReadOnlyList<BridgeFenceGateTarget>? FenceGateTargets,
     // Macro time context. Native behaviour is time-driven -- a Pet sleeps from
     // 20:00, villagers follow schedules, shops close, crops advance -- but the
     // snapshot previously published no time at all, so the companion could not
@@ -436,7 +461,11 @@ public sealed record BridgeSnapshot(
     // isDebrisWeather) projected as a single stable token. Same macro-context
     // rule as the date fields: plain native reads, no interpretation.
     string Weather,
-    string PresentationLocale
+    string PresentationLocale,
+    IReadOnlyList<BridgeRaftTarget>? RaftTargets = null,
+    IReadOnlyList<BridgeHorseTarget>? HorseTargets = null,
+    IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null,
+    IReadOnlyList<BridgeMineLampTarget>? MineLampTargets = null
     );
 
 public sealed record BridgeActiveExecution(

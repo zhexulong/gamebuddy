@@ -73,6 +73,23 @@ const TARGET_FIELD = Object.freeze({
   cook_recipe: "CookingRecipeTargets",
   collect_crab_pot_output: "CrabPotCollectTargets",
   ship_item: "ShippingBinTargets",
+  // Loop-closure wave (2026-10-04): the 14 lane actions each advertise a
+  // target/destination field in the Mod snapshot (and the corresponding Host
+  // union + schema entry).
+  harvest_bush: "BushTargets",
+  harvest_fruit_tree: "FruitTreeTargets",
+  shake_tree: "ShakeTreeTargets",
+  take_pedestal_item: "PedestalTargets",
+  toggle_fence_gate: "FenceGateTargets",
+  clear_cask: "CaskTargets",
+  dress_mannequin: "MannequinTargets",
+  set_sign_display: "SignTargets",
+  deposit_silo_hay: "SiloTargets",
+  toggle_tool_light: "LanternSlots",
+  use_raft: "RaftTargets",
+  mount_transport: "HorseTargets",
+  enter_mine: "MineEntranceTargets",
+  toggle_mine_lamp: "MineLampTargets",
   // Added by the minecart lane after this table was written; the audit caught the
   // omission rather than letting the action ship with an unverified discovery leg.
   ride_minecart: "MinecartTargets",
@@ -110,7 +127,7 @@ export function auditDiscoveryChannels({
   gameTools = read(TOOLS),
 } = {}) {
   const modFields = new Set(
-    [...models.matchAll(/IReadOnlyList<Bridge\w+>\??\s+(\w+),/g)].map((m) =>
+    [...models.matchAll(/IReadOnlyList<Bridge\w+>\??\s+(\w+)\b/g)].map((m) =>
       m[1].toLowerCase(),
     ),
   );
@@ -129,10 +146,20 @@ export function auditDiscoveryChannels({
   const toolVisible = new Set(
     [
       ...gameTools.matchAll(
-        /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
+        /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g,
       ),
     ].map((m) => m[1]),
   );
+  // Loop-mounted families (e.g. the facility actions built with a
+  // for (const action of [...] as const) header) repeat the id through the loop
+  // variable rather than a string literal next to the mount; expand them.
+  for (const loop of gameTools.matchAll(
+    /for \(const action of (\[[a-z0-9_"\s,]+\]) as const\) \{[\s\S]*?makeGameActionTool\(\{/g,
+  )) {
+    for (const id of [...loop[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1])) {
+      toolVisible.add(id);
+    }
+  }
 
   // The snapshot list each tool description actually tells the Agent to read.
   //
@@ -150,10 +177,30 @@ export function auditDiscoveryChannels({
       /description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/,
     );
     const text = desc ? desc[1] : "";
-    const named = [...text.matchAll(/\b([a-zA-Z]+Targets)\b/g)].map(
-      (x) => x[1],
-    );
+    const named = [
+      ...text.matchAll(/\b([a-zA-Z]+Targets)\b/g),
+      ...text.matchAll(/\b([a-zA-Z]+Slots)\b/g),
+    ].map((x) => x[1]);
     describedFields.set(visible[1], [...new Set(named)]);
+  }
+  // Loop-mounted families mount several tools from one for-of header; the
+  // description names the snapshot field through a per-action literal table
+  // (labels / targetKey) rather than a literal in the description string. The
+  // promotion checker and toolVisible already expand these; do the same here so
+  // the discovery audit does not false-positive the loop family tools.
+  const loopChunks = gameTools.split(/for \(const action of (\[[a-z0-9_"\s,]+\]) as const\)/).slice(1);
+  for (let i = 0; i + 1 < loopChunks.length; i += 2) {
+    const header = loopChunks[i];
+    const body = loopChunks[i + 1] ?? "";
+    const ids = [...(header?.matchAll(/"([a-z0-9_]+)"/g) ?? [])].map((m) => m[1]);
+    const targets = [...body.matchAll(/\b([a-zA-Z]+Targets)\b/g)].map((m) => m[1]);
+    if (ids.length === 0) continue;
+    ids.forEach((id, idx) => {
+      if (targets[idx]) {
+        const existing = describedFields.get(id) ?? [];
+        describedFields.set(id, [...new Set([...existing, targets[idx]])]);
+      }
+    });
   }
 
   const rows = [];
@@ -204,7 +251,11 @@ export function auditDiscoveryChannels({
       const wrong = row.describedAs.filter(
         (n) => n.toLowerCase() !== row.field.toLowerCase(),
       );
-      if (wrong.length > 0)
+      // A description legitimately names several snapshot fields (e.g.
+      // toolSlots AND the target list): only the absence of the target field
+      // itself is a gap. Naming a different field instead of the target one
+      // (real empty, wrong non-empty) is the real misdirection.
+      if (real.length === 0 && wrong.length > 0)
         gaps.push({ ...row, gap: `tool_names_wrong_field:${wrong.join(",")}` });
       else if (real.length === 0)
         gaps.push({ ...row, gap: "tool_does_not_name_target_field" });

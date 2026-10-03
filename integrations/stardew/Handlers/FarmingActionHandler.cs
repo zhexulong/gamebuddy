@@ -56,6 +56,27 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "harvest_bush" => this.executions.RequestLocalHarvestBush(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "harvest_fruit_tree" => this.executions.RequestLocalHarvestFruitTree(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "shake_tree" => this.executions.RequestLocalShakeTree(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "fertilize_tile" => this.executions.RequestLocalFertilizeTile(
                 request.RequestId,
                 request.Args.Slot ?? 0,
