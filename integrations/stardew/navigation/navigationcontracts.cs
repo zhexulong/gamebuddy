@@ -36,6 +36,27 @@ internal sealed record NavigationDestinationBinding(
     long ObservationSequence
 );
 
+/// <summary>
+/// A native world fact that gates one private connectivity edge. The key is an
+/// internal diagnostic identity only; <see cref="IsSatisfied"/> is the value read
+/// from the game's current state and is never inferred by the planner.
+/// </summary>
+internal sealed record NavigationConnectivityGate(string Key, bool IsSatisfied);
+
+/// <summary>
+/// A transport-backed connectivity edge. Its transition carries the station
+/// coordinates as the source tile and the native destination as the target; the
+/// edge itself never performs the transport action. It is kept separate from
+/// ordinary warp legs so ordinary-leg consumers cannot count it as a warp.
+/// </summary>
+internal sealed record NavigationVirtualConnectivityLeg(
+    NavigationTransitionLeg Transition,
+    string DepartureLocation,
+    string TransportAction,
+    string NetworkId,
+    string DestinationId,
+    NavigationConnectivityGate Gate);
+
 internal sealed record NavigationDestinationSelector(string Kind, string? Label, string? Ref)
 {
     internal static bool TryCreate(string kind, string? label, string? reference, out NavigationDestinationSelector? selector)
