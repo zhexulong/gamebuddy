@@ -6,6 +6,7 @@ import {
   MEMORY_FUNNEL_STAGES,
   attributeMemoryFunnel,
   foldCommittedRenderedIdsFromMarkers,
+  m0DigestsFromMarkers,
   renderedMemoryIdsFromMarkers,
   renderedChaptersFromMarkers,
   summarizeMemoryFunnel,
@@ -438,3 +439,46 @@ test("a marker-observed render feeds L2 instead of leaving it a gap", () => {
 function renderedMemoryMarker(revision, ids) {
   return `[probe:m0_memory_ids] ${revision} ${ids}`;
 }
+test("m0DigestsFromMarkers distinguishes an absent digest marker from a stable render", () => {
+  assert.equal(m0DigestsFromMarkers([]), undefined);
+  assert.equal(m0DigestsFromMarkers(["refreshed 7 memories", "another 1 2 3"]), undefined);
+  // Same revision, same digest across passes -> stable (the prefix-cache contract).
+  const stable = m0DigestsFromMarkers([
+    "[probe:m0_digest] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rev_1",
+    "[probe:m0_digest] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa rev_1",
+  ]);
+  assert.equal(stable.observed, true);
+  assert.equal(stable.passes.length, 2);
+  assert.equal(stable.revisionCount, 1);
+  assert.equal(stable.stable, true);
+});
+
+test("m0DigestsFromMarkers flags a same-revision digest change as unstable and allows a fold revision change", () => {
+  const digestA = "a".repeat(64);
+  const digestB = "b".repeat(64);
+  const unstable = m0DigestsFromMarkers([
+    `[probe:m0_digest] ${digestA} rev_1`,
+    `[probe:m0_digest] ${digestB} rev_1`,
+  ]);
+  assert.equal(unstable.stable, false);
+  // A legitimate fold advances the revision; each revision is internally stable.
+  const folded = m0DigestsFromMarkers([
+    `[probe:m0_digest] ${digestA} rev_1`,
+    `[probe:m0_digest] ${digestA} rev_1`,
+    `[probe:m0_digest] ${digestB} rev_2`,
+    `[probe:m0_digest] ${digestB} rev_2`,
+  ]);
+  assert.equal(folded.revisionCount, 2);
+  assert.equal(folded.stable, true);
+});
+
+test("m0DigestsFromMarkers ignores malformed digest lines (junk tails, wrong length)", () => {
+  assert.equal(
+    m0DigestsFromMarkers(["[probe:m0_digest] short-not-a-hash rev_1"]),
+    undefined,
+  );
+  assert.equal(
+    m0DigestsFromMarkers(["[probe:m0_digest] zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz rev_1"]),
+    undefined,
+  );
+});
