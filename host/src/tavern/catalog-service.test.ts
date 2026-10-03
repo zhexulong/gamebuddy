@@ -6,7 +6,12 @@ import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { canonicalHash, TavernArtifactStore } from "./artifact-store.js";
-import { materializeTavernAuthoredStableCatalog, materializeTavernAuthoredContextCatalog } from "./catalog-service.js";
+import {
+  buildGameSurfaceAuthoredCatalog,
+  materializeTavernAuthoredStableCatalog,
+  materializeTavernAuthoredContextCatalog,
+} from "./catalog-service.js";
+import { validateWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
@@ -199,4 +204,92 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   assert.match(catalog.canonicalHash, /^[a-f0-9]{64}$/);
   await assert.rejects(() => materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, { ...scope, threadId: "foreign" }), /binding_mismatch/);
   threads.close?.();
+});
+test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBook as a lorebook_constant m[0] source", async () => {
+  const root = await canonicalTestRoot("gamebuddy-game-catalog-");
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "deepseek-chan",
+    revision: 3,
+    alwaysOnPremise: "This is the player-reviewed companion backdrop.",
+    entries: [
+      {
+        entryId: "deepseek-entry-10",
+        title: "不懂艺术的肥鱼",
+        content: "鲸鱼娘自己没有任何艺术特长。",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "deepseek-entry-1",
+        title: "喜欢帅哥",
+        content: "鲸鱼娘其实喜欢帅气男生。",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const binding = { metadata: worldBookMetadata(worldBook), book: worldBook };
+  const catalog = buildGameSurfaceAuthoredCatalog(
+    {
+      continuityId: "continuity",
+      sessionId: "pi-session",
+      surface: "game",
+      threadId: "game-session",
+      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+    },
+    binding,
+  );
+  assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
+  const source = catalog.stableSources[0];
+  assert.equal(source?.sourceId, "deepseek-chan");
+  assert.equal(source?.revision, "3");
+  // always-on premise renders, the constant entry renders, keyword-gated entry does not.
+  assert.match(source?.content ?? "", /player-reviewed companion backdrop/);
+  assert.match(source?.content ?? "", /不懂艺术的肥鱼/);
+  assert.doesNotMatch(source?.content ?? "", /喜欢帅哥/);
+  assert.deepEqual(catalog.volatileSources, []);
+  // Canonical hash is deterministic: same input -> same catalog.
+  const again = buildGameSurfaceAuthoredCatalog(
+    {
+      continuityId: "continuity",
+      sessionId: "pi-session",
+      surface: "game",
+      threadId: "game-session",
+      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+    },
+    binding,
+  );
+  assert.equal(again.canonicalHash, catalog.canonicalHash);
+  // Budget is bounded by the 2K stable-context ceiling.
+  assert.ok(source.budgetTokens > 0);
+});
+
+test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
+  const root = await canonicalTestRoot("gamebuddy-game-catalog-surface-");
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "wb",
+    revision: 1,
+    alwaysOnPremise: "backdrop",
+    entries: [],
+  });
+  const binding = { metadata: worldBookMetadata(worldBook), book: worldBook };
+  assert.throws(
+    () =>
+      buildGameSurfaceAuthoredCatalog(
+        {
+          continuityId: "continuity",
+          sessionId: "pi-session",
+          surface: "tavern",
+          threadId: "thread",
+          profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+        },
+        binding,
+      ),
+    /game_authored_context_surface_mismatch/,
+  );
 });

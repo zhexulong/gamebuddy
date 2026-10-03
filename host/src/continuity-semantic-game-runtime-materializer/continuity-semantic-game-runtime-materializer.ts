@@ -34,6 +34,8 @@ import type {
 } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
 import type { RuntimeSession } from "../runtime.js";
+import { identityProfileMetadata } from "../identity-profile.js";
+import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
 import {
   validateBodyProgramCandidateRequest,
@@ -404,7 +406,11 @@ export function createHostGameRuntimeMaterializer(
           retainedPolicyIdentity,
         );
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
-        let constructed: Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>;
+        let constructed: Readonly<{
+          runtime: RuntimeSession;
+          turnTracker: GameTurnLineageTracker;
+          clearAuthoredContext?: () => Promise<void>;
+        }>;
         try {
           constructed = await createMaterializedGameRuntime(
             execution.principal,
@@ -553,6 +559,9 @@ export function createHostGameRuntimeMaterializer(
             : { operationalGateEvidence }),
            closeRecoveryJournal: () => recoveryJournal.close(),
            closeFixedTools,
+           ...(constructed.clearAuthoredContext === undefined
+             ? {}
+             : { clearAuthoredContext: constructed.clearAuthoredContext }),
           connected: Object.freeze({
             host,
             lifecycleSnapshot: () => lifecycle.snapshot(),
@@ -804,7 +813,48 @@ async function createMaterializedGameRuntime(
       ...(assembledWorldBook === undefined ? {} : { worldBook: assembledWorldBook }),
     }),
   );
-  return Object.freeze({ runtime, turnTracker });
+  // The Game surface carries the same reviewed companion the Chat surface
+  // does. Its reviewed always-on WorldBook is a Tier 2 m[0] stable source
+  // (typed `lorebook_constant`), not a system-prompt blob and not a lookup the
+  // model must remember: it shares the prefix cache with the rest of m[0].
+  // Publication is process-local and keyed by the exact Pi session; the
+  // returned clear is registered with the runtime disposal so a closed Game
+  // session leaves no authored materialization behind.
+  const clearAuthoredContext =
+    assembledWorldBook === undefined
+      ? undefined
+      : await (async (): Promise<() => Promise<void>> => {
+          const profileMetadata = identityProfileMetadata(runtime.profile);
+          const scope = Object.freeze({
+            continuityId: identity.continuityId,
+            sessionId: runtime.piSessionId,
+            surface: "game" as const,
+            threadId: /^[A-Za-z0-9._-]{1,128}$/u.test(gameSessionId) ? gameSessionId : identity.companionId,
+            profile: Object.freeze({
+              profileId: profileMetadata.profileId,
+              revision: profileMetadata.revision,
+              canonicalHash: profileMetadata.canonicalHash,
+            }),
+          });
+          const catalog = buildGameSurfaceAuthoredCatalog(scope, assembledWorldBook);
+          const { publishGameBuddyAuthoredStableCatalog } = await import(
+            "@cortexkit/pi-magic-context/tavern"
+          );
+          try {
+            const capability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
+            return () => capability.clear();
+          } catch (error) {
+            // A failed publication must not leave a live runtime behind: the
+            // caller only receives a runtime from a successful mount.
+            runtime.session.dispose();
+            throw error;
+          }
+        })();
+  return Object.freeze({
+    runtime,
+    turnTracker,
+    ...(clearAuthoredContext === undefined ? {} : { clearAuthoredContext }),
+  });
 }
 
 function isFarmhandPresentationBridge(value: unknown): value is FarmhandPresentationBridge {

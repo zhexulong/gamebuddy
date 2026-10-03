@@ -44,8 +44,10 @@ test("WorldBook catalog/query are bounded and current-world scoped", async () =>
     { metadata: worldBookMetadata(book), book },
     { integrationId: "stardew", saveId: "save_b", worldId: "world_b" },
   );
-  const execute = (tool: typeof catalog, params: unknown) =>
-    tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+  const execute = (tool: typeof catalog, params: unknown) => {
+    assert.ok(tool);
+    return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+  };
   const catalogResult = await execute(catalog, {});
   assert.deepEqual(
     JSON.parse((catalogResult.content[0]! as { text: string }).text).entries.map(

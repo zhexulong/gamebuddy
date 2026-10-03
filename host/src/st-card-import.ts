@@ -333,6 +333,12 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldB
         scope: "setting" as const,
         provenance: "st-card-import" as const,
         tokenBudget: "small" as const,
+        // The card's own always-on flag survives the projection: a card author
+        // who wrote `constant: true` means "the companion always carries this",
+        // and that review-visible membership is what the Game surface later
+        // materializes into the m[0] lorebook_constant source. Keyword-gated
+        // entries (constant false) stay behind the lookup tools.
+        ...(raw.constant === true ? { constant: true } : {}),
       }),
     ];
   });

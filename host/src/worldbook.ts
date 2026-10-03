@@ -16,6 +16,14 @@ export type WorldBookEntry = Readonly<{
   scope: WorldBookScope;
   provenance: WorldBookProvenance;
   tokenBudget: "small" | "medium";
+  /**
+   * Reviewed always-on membership (from an imported card's `constant` flag).
+   * Constant entries are background the companion always carries and are the
+   * only entry class eligible for the m[0] `lorebook_constant` stable source;
+   * keyword-gated entries stay behind the worldbook lookup tools. Absent means
+   * false: an entry must be explicitly reviewed as always-on to earn it.
+   */
+  constant?: boolean;
   integrationId?: string;
   saveId?: string;
   worldId?: string;
@@ -152,7 +160,8 @@ function validateEntry(value: unknown): WorldBookEntry {
     !isText(value.content, 4_000) ||
     !isScope(value.scope) ||
     !isProvenance(value.provenance) ||
-    (value.tokenBudget !== "small" && value.tokenBudget !== "medium")
+    (value.tokenBudget !== "small" && value.tokenBudget !== "medium") ||
+    (value.constant !== undefined && typeof value.constant !== "boolean")
   )
     throw new Error("invalid_worldbook");
   const worldScoped = value.scope === "world";
@@ -171,6 +180,7 @@ function validateEntry(value: unknown): WorldBookEntry {
     scope: value.scope,
     provenance: value.provenance,
     tokenBudget: value.tokenBudget,
+    ...(value.constant === undefined ? {} : { constant: value.constant as boolean }),
     ...(value.integrationId === undefined ? {} : { integrationId: value.integrationId }),
     ...(value.saveId === undefined ? {} : { saveId: value.saveId }),
     ...(value.worldId === undefined ? {} : { worldId: value.worldId }),
