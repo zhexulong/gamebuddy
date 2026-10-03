@@ -378,3 +378,48 @@ export function summarizeMemoryFunnel(observations = []) {
   }
   return Object.freeze({ counts: Object.freeze(counts), findings: Object.freeze(findings) });
 }
+/**
+ * Parse Magic Context's m[0] digest marker lines into per-revision digests.
+ *
+ * The vendor emits `[probe:m0_digest] <sha256> <revision>` at EVERY
+ * materialization boundary with the SHA-256 of the m[0] bytes presented to the
+ * provider that pass (vendor probe-materialization-marker.ts). The digest is
+ * what "prefix-cache byte stability" actually judges: a re-render of the same
+ * materialization revision MUST carry the same digest, while a legitimate fold
+ * advances the revision and is allowed a new digest.
+ *
+ * Same Class B discipline as the sibling parsers: returns `undefined` when NO
+ * marker was present (producer gap), never a fabricated `{stable: true}` for a
+ * run that reported nothing.
+ */
+export function m0DigestsFromMarkers(markers) {
+	let observed = false;
+	const passes = [];
+	for (const line of markers) {
+		const match = /^\[probe:m0_digest\]\s+([a-f0-9]{64})\s+(\S+)\s*$/u.exec(
+			String(line).trim(),
+		);
+		if (match === null) continue;
+		observed = true;
+		passes.push(Object.freeze({ digest: match[1], revision: match[2] }));
+	}
+	if (!observed) return undefined;
+	if (passes.length === 0)
+		return Object.freeze({ observed: true, passes: Object.freeze([]), stable: null });
+	// Stability is judged PER REVISION: every pass that rendered the same
+	// materialization must have produced the same m[0] bytes (that is the
+	// prefix-cache contract). A revision change is a fold, not a defect.
+	const byRevision = new Map();
+	for (const pass of passes) {
+		const set = byRevision.get(pass.revision) ?? new Set();
+		set.add(pass.digest);
+		byRevision.set(pass.revision, set);
+	}
+	const stable = [...byRevision.values()].every((digests) => digests.size === 1);
+	return Object.freeze({
+		observed: true,
+		revisionCount: byRevision.size,
+		passes: Object.freeze(passes),
+		stable,
+	});
+}

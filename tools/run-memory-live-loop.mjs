@@ -39,16 +39,16 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, copyFile } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
+import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
 
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
@@ -112,7 +112,7 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>]";
+  return "usage: node tools/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>]";
 }
 
 function parseArguments(argv) {
@@ -121,6 +121,7 @@ function parseArguments(argv) {
     ["--seed", undefined],
     ["--question", undefined],
     ["--manifest", undefined],
+    ["--card", undefined],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -139,6 +140,7 @@ function parseArguments(argv) {
     help: false,
     reportPath: resolve(reportPath),
     manifestPath: flags.get("--manifest"),
+    cardPath: flags.get("--card"),
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -263,6 +265,116 @@ async function readMemory(origin, client) {
   });
   if (!response.ok) throw new Error(`memory_read_failed:${response.status}`);
   return response.json();
+}
+
+/**
+ * Install the character card into the disposable runtime root BEFORE any
+ * surface launches, so the S1/S2/S3 prompt/worldbook effects are exercised by
+ * the real product instead of fixtures. Consumes the same frozen Host import
+ * path as run-live-chat-card-e2e.mjs (host/dist-test, built by the host
+ * pipeline): preview -> candidate -> IdentityProfile, then writes the
+ * canonical identity-profile.json the runtime reads at construction. A
+ * worldbook.json next to the card (deepseek-chan preset) becomes the reviewed
+ * world book whose constant entries earn the m[0] lorebook_constant seat (S3).
+ *
+ * The card's profile deliberately does NOT carry the reviewed-import
+ * provenance dance: this is a disposable harness root, the reviewer gate is
+ * the live-run commit itself, and the runtime treats the on-disk profile as
+ * the approved one (readOrCreateIdentityProfile).
+ */
+async function installCharacterCard(root, identity, cardPath) {
+  const cardDir = new URL("../host/dist-test/", import.meta.url);
+  const { candidateToIdentityProfile, previewStCard } = await import(new URL("st-card-import.js", cardDir));
+  const { identityProfileMetadata, validateIdentityProfile } = await import(new URL("identity-profile.js", cardDir));
+  const { resolveRuntimePaths } = await import(new URL("runtime.js", cardDir));
+  const card = JSON.parse(await readFile(cardPath, "utf8"));
+  const preview = previewStCard(card);
+  const profile = candidateToIdentityProfile(preview, 1);
+  // Identity-profile write limits are the product's own (persona fields <=1024
+  // chars, <=4 examples, example lines <=512): a preview may legitimately exceed
+  // them (review fails closed later), but THIS harness writes the file the
+  // runtime reads as the approved profile, so it must land in-bounds. Bound it
+  // explicitly so a long card cannot produce a silently-boarded child.
+  const boundsB = {
+    core: 1_024,
+    interactionStyle: 1_024,
+    expressionStyle: 1_024,
+    exampleUser: 512,
+    exampleCompanion: 512,
+    examples: 4,
+  };
+  const bound = profile.persona === undefined ? undefined : {
+    core: profile.persona.core.slice(0, boundsB.core),
+    interactionStyle: profile.persona.interactionStyle.slice(0, boundsB.interactionStyle),
+    expressionStyle: profile.persona.expressionStyle.slice(0, boundsB.expressionStyle),
+  };
+  const boundExamples = (profile.examples ?? []).slice(0, boundsB.examples).map((example) => ({
+    user: example.user.slice(0, boundsB.exampleUser),
+    companion: example.companion.slice(0, boundsB.exampleCompanion),
+  }));
+  const bounded = Object.freeze({
+    ...profile,
+    ...(bound === undefined ? {} : { persona: Object.freeze(bound) }),
+    ...(boundExamples.length === 0 ? {} : { examples: Object.freeze(boundExamples) }),
+  });
+  validateIdentityProfile(bounded); // fail loudly, never ship an invalid profile
+  const paths = resolveRuntimePaths(identity, root);
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const metadata = identityProfileMetadata(bounded);
+  await writeFile(
+    join(paths.runtimeCwd, "identity-profile.json"),
+    `${JSON.stringify({ ...bounded, canonicalHash: metadata.canonicalHash }, null, 2)}\n`,
+    "utf8",
+  );
+  const worldbookPath = join(dirname(cardPath), "worldbook.json");
+  if (existsSync(worldbookPath)) {
+    await copyFile(worldbookPath, join(paths.runtimeCwd, "worldbook.json"));
+  }
+  return Object.freeze({
+    profileId: metadata.profileId,
+    canonicalHash: metadata.canonicalHash,
+    coreChars: bound === undefined ? null : bound.core.length,
+    ...(profile.persona !== undefined && bound !== undefined &&
+      (profile.persona.core.length > boundsB.core ||
+        profile.persona.interactionStyle.length > boundsB.interactionStyle ||
+        profile.persona.expressionStyle.length > boundsB.expressionStyle)
+      ? { boundedTruncation: true }
+      : {}),
+    ...(profile.examples !== undefined && boundExamples.length !== profile.examples.length
+      ? { examplesTruncated: true }
+      : {}),
+  });
+}
+
+/**
+ * Lightweight reply observations for the S1/S2/S3 effects (NOT probe scoring
+ * — that stays in the frozen kernel): language script of the committed reply,
+ * first-person framing, expressive stage direction, assistant-shell
+ * boilerplate. The reviewer sees raw signals, never a machine opinion about
+ * "liveliness". Returns null when no companion text committed this turn.
+ */
+function observeCompanionReply(committedText) {
+  const text = typeof committedText === "string" ? committedText : "";
+  if (text.trim().length === 0) return null;
+  const cjk = (text.match(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/gu) ?? []).length;
+  const letters = (text.match(/\p{L}/gu) ?? []).length;
+  const cjkRatio = letters > 0 ? cjk / letters : 0;
+  const primaryScript = cjkRatio >= 0.5 ? "cjk" : cjkRatio >= 0.05 ? "mixed" : "latin";
+  const firstPerson = /我/u.test(text) || /(?:^|[^A-Za-z])[Ii]\b/u.test(text);
+  const expressive = /（[^（）\n]{1,10}）|\*[^*\n]+\*/u.test(text);
+  const assistantShell = /(?:as an AI|语言模型|人工智能|AI assistant|作为一个AI)/iu.test(text);
+  const signals = [];
+  if (firstPerson) signals.push("first_person");
+  if (expressive) signals.push("expressive_stage_direction");
+  if (!assistantShell) signals.push("no_assistant_shell");
+  return Object.freeze({
+    committedChars: text.length,
+    cjkRatio: Number(cjkRatio.toFixed(3)),
+    primaryScript,
+    chineseEffective: cjkRatio >= 0.5,
+    signals: Object.freeze(signals),
+    ...(assistantShell ? { assistantShell: true } : {}),
+  });
 }
 
 /**
@@ -715,7 +827,7 @@ function verdict_gap(reason) {
   return Object.freeze({ event: "observability_gap", reason });
 }
 
-export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question } = {}) {
+export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question, cardPath } = {}) {
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error("report_path_required");
   const scenario = await resolveScenario({ manifestPath, seed, question });
   const identity = createIdentity();
@@ -729,6 +841,14 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // child stderr narration, the runtime root's own evidence, and the report
     // travel together so a reviewer can see what actually reached the model.
     const capture = await openLiveRunCapture({ kind: "memory-loop", label: scenario.probeId, root: LIVE_RUN_ROOT });
+    // Optional character-card install (S1/S2/S3 effects): the deepseek-chan
+    // whale preset is the reference card; installing it BEFORE any surface
+    // launch means the runtime constructs with the reviewed persona, the
+    // voice-anchor examples and the always-on world book (lorebook_constant).
+    const installedCard =
+      cardPath === undefined
+        ? undefined
+        : await installCharacterCard(root, identity, cardPath);
     // ONE deployment manifest and ONE bootstrap operation for the whole loop. The
     // authority marker records the bootstrap operation, and `known` open validates it
     // exactly - so writing a second manifest with a fresh bootstrapOperationId made
@@ -830,14 +950,17 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       });
       const report = Object.freeze({
         schema: "memory_live_loop/v1",
-        identity: Object.freeze({ continuityId: identity.continuityId }),
-        runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
-        scenario: Object.freeze({
-          ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
-          ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
-          dimension: scenario.dimension,
-        }),
-        seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
+      identity: Object.freeze({ continuityId: identity.continuityId }),
+      runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
+      scenario: Object.freeze({
+        ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
+        ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
+        dimension: scenario.dimension,
+      }),
+      ...(installedCard === undefined
+        ? {}
+        : { card: Object.freeze({ profileId: installedCard.profileId, canonicalHash: installedCard.canonicalHash }) }),
+      seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
         chat: Object.freeze({
           attempted: true,
           launched: false,
@@ -852,6 +975,12 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
 
     const chat = chatResult.result;
     const verdict = scoreReply({ committedText: chat.committedText, scenario, chat });
+
+    // S1/S2/S3 live observations (never probe scoring): prefix-cache byte
+    // stability (vendor m[0] digest per materialization revision), reply
+    // language effectiveness, and persona-liveness signals.
+    const m0Digests = m0DigestsFromMarkers(chatResult.markers);
+    const replyObservation = observeCompanionReply(chat.committedText);
 
     // L2 (assembly): did the fact reach the context the model was given? The vendor
     // reports which memory ids it rendered into m[0]; we compare that against the id
@@ -900,6 +1029,45 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
         dimension: scenario.dimension,
       }),
+      ...(installedCard === undefined
+        ? {}
+        : {
+            card: Object.freeze({
+              profileId: installedCard.profileId,
+              canonicalHash: installedCard.canonicalHash,
+              coreChars: installedCard.coreChars,
+              ...(installedCard.boundedTruncation === true ? { boundedTruncation: true } : {}),
+              ...(installedCard.examplesTruncated === true ? { examplesTruncated: true } : {}),
+            }),
+          }),
+      // S1/S2/S3 effect observations: prefix-cache stability, reply language,
+      // persona liveness. All content-free or signal-level; the committed reply
+      // text itself is still scored and never persisted.
+      observations: Object.freeze({
+        // The vendor emits [probe:m0_digest] at EVERY materialization boundary;
+        // identical m[0] bytes per revision is the prefix-cache contract. A
+        // revision change is a fold (legit new baseline), never a defect.
+        prefixCache: Object.freeze({
+          markerObserved: m0Digests?.observed === true,
+          passCount: m0Digests?.passes?.length ?? null,
+          revisionCount: m0Digests?.revisionCount ?? null,
+          digestStablePerRevision: m0Digests?.stable ?? null,
+        }),
+        ...(replyObservation === null
+          ? {}
+          : {
+              replyLanguage: Object.freeze({
+                cjkRatio: replyObservation.cjkRatio,
+                primaryScript: replyObservation.primaryScript,
+                chineseEffective: replyObservation.chineseEffective,
+              }),
+              persona: Object.freeze({
+                committedChars: replyObservation.committedChars,
+                signals: replyObservation.signals,
+                ...(replyObservation.assistantShell === true ? { assistantShell: true } : {}),
+              }),
+            }),
+      }),
       seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
       // The L2 comparison facts, content-free but auditable: which side of the
       // comparison was even available. Without these a `broken` L2 is not
@@ -946,6 +1114,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       manifestPath: parsed.manifestPath,
       seed: parsed.seed,
       question: parsed.question,
+      cardPath: parsed.cardPath,
     });
     process.stdout.write(
       `${JSON.stringify({
