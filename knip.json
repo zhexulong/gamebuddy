@@ -87,5 +87,14 @@
         "scenarios/**/*.mjs"
       ]
     }
-  }
+  },
+  "ignore": [
+    "host/src/composition/desktop-host-composition-drain-fixture-worker.ts",
+    "host/src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
+    "host/src/test-fixtures/desktop-presentation-admission-management-worker.ts",
+    "host/src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
+    "integrations/stardew/action-development/src/devkit-local/**",
+    "tools/lib/voice-final-gate-server.mjs",
+    "tools/fixtures/chat-run-audit/memory-probes/**"
+  ]
 }

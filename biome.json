@@ -10,6 +10,15 @@
       "host/src/**/*.ts",
       "voice-gateway/src/**/*.ts",
       "dialogue-web/src/**/*.{ts,tsx,css}"
+    ],
+    "experimentalScannerIgnores": [
+      ".worktrees",
+      "ref",
+      "node_modules",
+      "vendor",
+      "dist",
+      ".git",
+      "voice-gateway/node_modules"
     ]
   },
   "linter": {
