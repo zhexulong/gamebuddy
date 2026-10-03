@@ -1,4 +1,5 @@
 using GameBuddy.Stardew;
+using StardewValley;
 
 namespace GameBuddy.Stardew.Navigation;
 
@@ -8,6 +9,8 @@ namespace GameBuddy.Stardew.Navigation;
 /// next private leg) using only real source facts. It never retries an
 /// attempted edge and never yields a public hop route.
 /// </summary>
+internal sealed record NavigationDestinationAccessEvidence(bool? Accessible, string? GateClosed);
+
 internal static class NavigationOutcomeDecider
 {
     /// <summary>
@@ -49,7 +52,18 @@ internal static class NavigationOutcomeDecider
     /// </summary>
     internal static NavigationOutcome? DecideTerminalBeforeRouting(
         NavigationDestinationResolution resolution,
-        NavigationWorldView view)
+        NavigationWorldView view) =>
+        DecideTerminalBeforeRouting(resolution, view, ReadLiveDestinationAccess);
+
+    /// <summary>
+    /// Testable form of the terminal decision. The evidence probe is restricted
+    /// to facts already computed by the game: either the native accessibility
+    /// result or a gate name supplied by the game/data seam.
+    /// </summary>
+    internal static NavigationOutcome? DecideTerminalBeforeRouting(
+        NavigationDestinationResolution resolution,
+        NavigationWorldView view,
+        Func<string, NavigationDestinationAccessEvidence?>? accessEvidenceProbe)
     {
         if (resolution.FailureReason is not null)
             return new NavigationOutcome(ExecutionState.Rejected, resolution.FailureReason,
@@ -66,8 +80,11 @@ internal static class NavigationOutcomeDecider
             return new NavigationOutcome(ExecutionState.Rejected, "destination_locked",
                 $"destination={label};actionable=false");
         if (view.BoundaryExcludesDestination)
+        {
+            string? destination = resolution.Binding?.CanonicalDestinationIdentity;
             return new NavigationOutcome(ExecutionState.Rejected, "destination_unreachable",
-                $"destination={label};boundary=excluded");
+                BuildBoundaryExcludedEvidence(label, destination, accessEvidenceProbe));
+        }
         if (view.TransitionAmbiguousOrUnknown)
             return new NavigationOutcome(ExecutionState.Blocked, "destination_access_indeterminate",
                 $"destination={label};transition=unknown");
@@ -79,4 +96,52 @@ internal static class NavigationOutcomeDecider
                 $"destination={label};correlated=false");
         return null;
     }
+
+    private static string BuildBoundaryExcludedEvidence(
+        string label,
+        string? destination,
+        Func<string, NavigationDestinationAccessEvidence?>? accessEvidenceProbe)
+    {
+        string evidence = $"destination={label};boundary=excluded";
+        if (accessEvidenceProbe is null || string.IsNullOrWhiteSpace(destination))
+            return evidence;
+
+        NavigationDestinationAccessEvidence? accessEvidence;
+        try
+        {
+            accessEvidence = accessEvidenceProbe(destination);
+        }
+        catch
+        {
+            // Evidence is descriptive only. A failed native read must not become
+            // a fabricated gate claim or alter the terminal decision.
+            return evidence;
+        }
+
+        if (accessEvidence is null)
+            return evidence;
+        if (IsEvidenceToken(accessEvidence.GateClosed))
+            return $"{evidence};gate_closed={accessEvidence.GateClosed}";
+        if (accessEvidence.Accessible == false)
+            return $"{evidence};accessible=false";
+        return evidence;
+    }
+
+    private static NavigationDestinationAccessEvidence? ReadLiveDestinationAccess(string destination)
+    {
+        if (string.IsNullOrWhiteSpace(destination) || Game1.player is null || Game1.player.currentLocation is null)
+            return null;
+
+        try
+        {
+            return new NavigationDestinationAccessEvidence(Game1.isLocationAccessible(destination), null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsEvidenceToken(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && !value.Contains(';') && !value.Contains('=');
 }
