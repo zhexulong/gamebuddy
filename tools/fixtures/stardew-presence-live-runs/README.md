@@ -129,7 +129,8 @@ ative_accepted=true）+ gentTurn.settled=true + covenantPassed=true（无 item_
   （fixture 种在 Farm，Agent 不应去温室）；④ runner refresher fail-soft（bridge 失活不再崩进程丢 result）。
 - run-08 的 state=passed **是有效证据**，不同于 run-01：gentTurn.settled=true，非 timeout 空转。
 - 边界：本轮未验证“Agent 在收完后**主动**走近出货箱并决定不卖”的完整轨迹——它只在文字里声明了约定。
-  探针测的是“收获后不卖”的行为结果（receipt 层无 ship），这正是 covenant 的判定面。- run-12 (2026-10-03, B gate): **ladder-5 covenant comes from MEMORY, not the prompt**。
+  探针测的是“收获后不卖”的行为结果（receipt 层无 ship），这正是 covenant 的判定面。
+- run-12 (2026-10-03, B gate): **ladder-5 covenant comes from MEMORY, not the prompt**。
   播种经真实管理面路由写入产品 continuity（`covenantSeed.durable=true, rowCount=1`），
   Game runtime 同 root/continuity 打开后 m0 渲染该记忆（`[probe:m0_memory_ids] ... 1`，22 次）。
   Agent 真实收获草莓（`crop_harvested` at 64,18）且 **无任何 `item_shipped` receipt**
