@@ -583,6 +583,7 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
 
   let stderr = "";
+  const pendingAppends = [];
   // Marker channel (Class B, owner decision D-1): Magic Context reports its own
   // materialization facts on stderr, including which memory ids it assembled into
   // m[0]. We collect the lines here instead of only keeping a bounded diagnostic
@@ -606,7 +607,7 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  				// (git-ignored, local only), so a reviewer can see the real
  				// materialization narration instead of only the marker lines.
  				if (capture !== undefined && capture !== null)
- 					capture.append(`child-${surface}.stderr.log`, String(chunk)).catch(() => {});
+ 					pendingAppends.push(capture.append(`child-${surface}.stderr.log`, String(chunk)).catch(() => {}));
  				for (const line of String(chunk).split("\n")) {
  					// Strictly prefixed and parsed: an unrelated stderr line can never be
  					// mistaken for a materialization fact.
@@ -629,6 +630,10 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
     const result = await run(origin, client);
+    // Drain pending stderr appends BEFORE returning: the report branch closes the
+    // capture right after, and a late stderr flush must not land after the
+    // summary was written (audit NOTE-5).
+    await Promise.allSettled(pendingAppends);
     return Object.freeze({ result, markers: Object.freeze([...markers]) });
   } catch (error) {
     const diagnostic = stderr.trim();

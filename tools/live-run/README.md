@@ -37,6 +37,26 @@ at the repo root, override with `GAMEBUDDY_LIVE_RUN_ROOT`) containing:
    under `tools/fixtures/` for cross-run comparison is a separate, deliberate,
    bounded act (content-free digests where possible).
 
+**Timing semantics** (audit NOTE-4): the capture happens while the game
+runtime is still alive, so `context.db` and session JSONL are
+as-of-capture snapshots, not transactional backups — a session line may be
+truncated mid-write. Treat captured transcripts as "what the harness could
+see at teardown", never as proof a message was absent.
+
+**Self-reference** (audit NOTE-1): the `result.json` inside a run directory
+is written by `closeCapture` BEFORE the `capture` field is attached to the
+returned result, so the inside copy has no `capture` field. The sibling
+`capture-summary.json` (written at close) is the authority for what was
+captured; older captures may also lack brand-new gates (`contentGate`,
+`worldBookGate`, `steerObserved`) — do not read them as evidence of those
+facts, only of what was recorded at the time.
+
+**Content gates** (audit MEDIUM-2): `worldBookGate` distinguishes "product
+has no world book configured" (`expected: false`, nothing to assert) from
+"a world book WAS expected but nothing mounted" (`expected: true,
+assembled: false` → the run blocks). Absence-as-pass is only valid for the
+former.
+
 ## Layout
 
 ```

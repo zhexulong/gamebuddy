@@ -58,7 +58,7 @@ test("the runner enforces a companion-interaction gate for ladder-3 summaries", 
   // did" closing line blocks the run instead of passing silently.
   assert.match(RUNNER_SOURCE, /assessCompanionInteraction/);
   assert.match(RUNNER_SOURCE, /interactionPassed = interactionAssessment === null \|\| interactionAssessment\.passed/);
-  assert.match(RUNNER_SOURCE, /contextPassed && contentPassed && interactionPassed/);
+  assert.match(RUNNER_SOURCE, /contextPassed && contentPassed && worldBookPassed && interactionPassed/);
 });
 
 test("the runner emits system findings as a first-class health signal", () => {
@@ -88,6 +88,19 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /contentGate: canonicalProfile === null \? null : assessIdentityProfile\(canonicalProfile\),/);
   assert.match(RUNNER_SOURCE, /const contentGate = personaWorldBook\.contentGate \?\? null;/);
   assert.match(RUNNER_SOURCE, /contentGate\.personaPresent && contentGate\.macroResidue\.length === 0/);
+  // Audit MEDIUM-3: a settled-but-never-delivered turn must be distinguishable
+  // from a real (possibly quiet) turn — steerObserved is an observed fact.
+  assert.match(RUNNER_SOURCE, /worldBookGate/);
+  assert.match(RUNNER_SOURCE, /worldBookPassed/);
+  assert.match(RUNNER_SOURCE, /turn\.steerObserved =/);
+  assert.match(RUNNER_SOURCE, /steer_may_have_been_silently_dropped/);
+  // Audit NOTE-7: the Windows double-drive capture-root bug must not regress —
+  // neither runner may resolve its live-run root from a URL pathname.
+  assert.doesNotMatch(
+    RUNNER_SOURCE,
+    /resolveLiveRunRoot\(\{[^}]*new URL\([^)]*\)\.pathname/,
+    "live-run root must not come from a URL pathname (Windows double-drive bug)",
+  );
 });
 
 test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {
