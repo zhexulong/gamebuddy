@@ -95,3 +95,13 @@ neutral rows).
   `artifact.generation` / `artifact.inventoryDigest` neutral row appears) but
   still allowed — the tool's purpose is comparing across a system change.
 
+## memory-loop-05 · fold collection + observation (2026-10-03)
+
+P-restart probe on the CURRENT dev generation, after the L3 real-fold
+observation landed (foldCommittedRenderedIdsFromMarkers binds the vendor
+`[probe:fold_committed]` revision to the same-revision m0_memory_ids
+line). Result: L1/L2/L3/L4 all passed, verdict needle.hit, 0 findings;
+assembly.seededIdResolved=true, seedIdRendered=true. Session distance uses
+the P-restart substitute for L3 (real fold markers do not fire in a short
+session run — the fold-quality path is code-complete and unit-tested but
+needs a run that actually folds to produce its first real observation).
