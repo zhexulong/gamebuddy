@@ -29,6 +29,8 @@ export type StCardImportReport = Readonly<{
   source: "json" | "png";
   format?: "st-v2" | "st-v3";
   candidate?: StCardImportCandidate;
+  /** Soft hints for a frontend notice (never a gate) - see StCardImportPreview. */
+  softHints: readonly Readonly<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }>[];
   dispositions: readonly StCardImportDisposition[];
 }>;
 
@@ -45,6 +47,9 @@ export type StCardImportPreview = Readonly<{
   scenario?: string;
   worldBookCandidates: readonly WorldBookEntry[];
   unsupportedFields: readonly string[];
+  /** Soft hints for a frontend notice (never a gate): unusually long persona
+   *  fields that may raise per-turn token use. The player decides. */
+  softHints: readonly Readonly<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }>[];
 }>;
 
 /**
@@ -157,6 +162,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
       ...(preview.scenario === undefined ? {} : { scenario: preview.scenario }),
       worldBookCandidates: preview.worldBookCandidates,
     }),
+    softHints: preview.softHints,
     dispositions: Object.freeze(dispositions),
   });
 }
@@ -196,6 +202,22 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
         });
   const worldBookCandidates = extractCharacterBook(data.character_book, format);
   const unsupportedFields = Object.keys(data).filter(isUnsupported).sort();
+  // Product policy: limits only prevent physical blowup, never the player's
+  // choices. Description text loads losslessly. A soft hint (not a gate) is
+  // surfaced for unusually long persona fields so a frontend can show a brief
+  // "this description is long (N chars), it may raise per-turn token use"
+  // notice; the player decides and continues.
+  const LONG_FIELD_SOFT_HINT_CHARS = 4_000;
+  const longPersonaFields: Array<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }> =
+    persona === undefined
+      ? []
+      : ([
+          ["core", persona.core.length],
+          ["interactionStyle", persona.interactionStyle.length],
+          ["expressionStyle", persona.expressionStyle.length],
+        ] as const)
+          .filter(([, length]) => length > LONG_FIELD_SOFT_HINT_CHARS)
+          .map(([field, length]) => Object.freeze({ field, chars: length }));
   return Object.freeze({
     format,
     profileCandidate: Object.freeze({
@@ -209,6 +231,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       examples: Object.freeze(examples),
       ...(greeting === undefined ? {} : { firstGreeting: greeting }),
     }),
+    softHints: Object.freeze(longPersonaFields),
     ...(scenario === undefined ? {} : { scenario }),
     worldBookCandidates: Object.freeze(worldBookCandidates),
     unsupportedFields: Object.freeze(unsupportedFields),
@@ -312,7 +335,11 @@ function hasSafeJsonShape(text: string): boolean {
   return !quoted && depth === 0;
 }
 function rejected(source: "json" | "png", field: string, reason: string): StCardImportReport {
-  return Object.freeze({ source, dispositions: Object.freeze([disposition(field, "rejected_invalid", reason)]) });
+  return Object.freeze({
+    source,
+    softHints: Object.freeze([]),
+    dispositions: Object.freeze([disposition(field, "rejected_invalid", reason)]),
+  });
 }
 function disposition(
   field: string,

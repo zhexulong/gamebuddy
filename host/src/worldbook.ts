@@ -6,6 +6,11 @@ import { Type } from "typebox";
 const WORLDBOOK_SCHEMA_VERSION = 1 as const;
 const MAX_ENTRIES = 128;
 const MAX_QUERY_RESULTS = 4;
+/** Product policy: limits only prevent physical blowup, never the player's
+ * choices. A worldbook entry loads losslessly up to an anti-blowup ceiling
+ * (64 KiB chars); smaller per-entry caps would silently truncate long setting
+ * text the player explicitly wrote into their world book. */
+const WORLD_BOOK_ENTRY_CONTENT_MAX_CHARS = 65_536;
 
 type WorldBookScope = "companion" | "setting" | "integration" | "world";
 type WorldBookProvenance = "authored" | "st-card-import" | "reviewed-import";
@@ -157,7 +162,7 @@ function validateEntry(value: unknown): WorldBookEntry {
     !isRecord(value) ||
     !isId(value.entryId) ||
     !isText(value.title, 256) ||
-    !isText(value.content, 4_000) ||
+    !isText(value.content, WORLD_BOOK_ENTRY_CONTENT_MAX_CHARS) ||
     !isScope(value.scope) ||
     !isProvenance(value.provenance) ||
     (value.tokenBudget !== "small" && value.tokenBudget !== "medium") ||
