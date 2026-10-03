@@ -128,6 +128,47 @@ async function emittedFiles(root, prefix = "") {
   return result.sort();
 }
 
+/**
+ * Remove stale staging/closure trees whose owning build process no longer
+ * exists. Called at the start of every production build so an interrupted
+ * build self-heals on the next run; a live build in another lane keeps its
+ * own trees because the <pid> embedded in each directory name is still alive.
+ */
+export async function cleanupStaleStagingDirectories({ hostRoot, browserStagingParent }) {
+  const livePid = process.pid;
+  const candidates = [];
+  for (const parent of [resolve(hostRoot, ".tmp", "build-staging"), browserStagingParent]) {
+    let names = [];
+    try {
+      names = await readdir(parent);
+    } catch {
+      continue; // parent does not exist yet
+    }
+    for (const name of names) {
+      const m = /^\.dist-production-(?:emitted|closure)-(\d+)-/.exec(name);
+      if (!m) continue;
+      const ownerPid = Number(m[1]);
+      if (ownerPid === livePid) continue; // our own rm below handles these
+      const path = resolve(parent, name);
+      candidates.push({ path, ownerPid });
+    }
+  }
+  for (const { path, ownerPid } of candidates) {
+    if (pidIsAlive(ownerPid)) continue; // another concurrent build owns it
+    await rm(path, { recursive: true, force: true });
+  }
+}
+
+/** True when a process with this PID exists (ESRCH = gone). */
+function pidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function retainEntrypointClosure({ emittedRoot, closureRoot, entryRoots }) {
   const emitted = await emittedFiles(emittedRoot);
   const reachable = await reachableProductionModules({ artifactRoot: emittedRoot, artifactFiles: emitted, entryRoots });
@@ -403,13 +444,19 @@ async function buildComposedProductionArtifact({
   // Every build owns fresh private roots. A canonical output is published only
   // after this complete composition verifies; no platform gets a reusable
   // mutable emit directory that another producer can observe or overwrite.
-  const stagingRoot = resolve(hostRoot, `.dist-production-emitted-${process.pid}-${buildId}`);
-  const closureRoot = resolve(hostRoot, `.dist-production-closure-${process.pid}-${buildId}`);
+  //
+  // Staging lives under host/.tmp/build-staging/ (gitignored, GC'd on the next
+  // build start) instead of the host root, so an interrupted build cannot
+  // leave a closure tree in the developer's face; the stale-PID sweep below
+  // removes any orphan left by a killed process.
+  const stagingRoot = resolve(hostRoot, ".tmp", "build-staging", `.dist-production-emitted-${process.pid}-${buildId}`);
+  const closureRoot = resolve(hostRoot, ".tmp", "build-staging", `.dist-production-closure-${process.pid}-${buildId}`);
   const browserStagingRoot = resolve(browserStagingParent, buildId);
   await rm(stagingRoot, { recursive: true, force: true });
   await rm(closureRoot, { recursive: true, force: true });
   await rm(browserStagingRoot, { recursive: true, force: true });
   try {
+    await cleanupStaleStagingDirectories({ hostRoot, browserStagingParent });
     await verifyMagicContext();
     const compositionConfig = await readArtifactConfig(hostRoot);
     // The voice gateway artifact participates only when the release config

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
-const script = resolve(root, "tools", "verify-stardew-scaffold.ps1");
+const script = resolve(root, "integrations", "stardew", "action-development", "scripts", "verify-stardew-scaffold.ps1");
 
 async function runChecker(projectRoot) {
   return await new Promise((resolveRun, rejectRun) => {
@@ -33,6 +33,7 @@ async function withStardewFixture(mutate, verify) {
     await cp(resolve(root, "integrations", "stardew"), resolve(fixtureRoot, "integrations", "stardew"), {
       recursive: true,
       verbatimSymlinks: true,
+      filter: (source) => !/node_modules/.test(source) && !/\\(obj|bin)\\/.test(source),
     });
     await mutate(resolve(fixtureRoot, "integrations", "stardew"));
     await verify(await runChecker(fixtureRoot));
