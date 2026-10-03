@@ -53,6 +53,13 @@ import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
 import { seedMemoriesViaManagementSurface } from "./run-memory-live-loop.mjs";
+// Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
+// the assembly gate only proves hash consistency; this proves the assembled
+// profile actually has persona content and no unrendered SillyTavern macros.
+// A configured-root run whose captured profile is a hollow default (no persona)
+// is an explicit context failure, never a silent pass. A read GAP (no profile
+// captured) stays a gap: nothing to assert.
+import { assessIdentityProfile } from "./live-run/core/content-gate.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
@@ -548,6 +555,15 @@ try {
   // proves the persona/world book reached the Game surface rather than trusting
   // a script-side claim. A disposable root legitimately has neither file.
   const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
+  // Content gate over the SAME canonical profile the assembly gate hashes: an
+  // empty default card (no persona) or unrendered SillyTavern macros is a
+  // content defect that assembly-only gates cannot see. A disposable root
+  // (expectedProfile null) stays a gap, never an assertion.
+  const contentGate = personaWorldBook.contentGate ?? null;
+  const contentPassed =
+    contentGate === null || contentGate.profileRead !== true
+      ? true
+      : contentGate.personaPresent && contentGate.macroResidue.length === 0;
   const contextAssembled = personaWorldBook.expectedProfile === null
     ? true
     : personaWorldBook.mountedProfileId === personaWorldBook.expectedProfile.profileId
@@ -579,8 +595,7 @@ try {
   const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
-  const contextPassed = contextAssembled && worldBookAssembled;
-  // Companion-quality gate (ladder-3/4): the spoken closing line must be
+  const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
   // receipts never recorded. The offer receipt carries showed_response, so an
@@ -642,7 +657,7 @@ try {
     runManifestModel: personaWorldBook.model,
   });
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && interactionPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && contentPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
     presentation,
     presenceProjection,
@@ -661,6 +676,8 @@ try {
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
+    contentGate,
+    contentPassed,
     interactionAssessment,
     systemFindings,
     observation,
@@ -759,6 +776,9 @@ async function readAssembledContextEvidence(runtimePaths) {
             revision: canonicalProfile.revision ?? null,
             canonicalHash: canonicalProfile.canonicalHash ?? null,
           }),
+    // Content facts from the same canonical profile (persona present? macro
+    // residue?) — the assembly gate cannot see these; the content gate can.
+    contentGate: canonicalProfile === null ? null : assessIdentityProfile(canonicalProfile),
     expectedWorldBook:
       canonicalWorldBook === null
         ? null
