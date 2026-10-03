@@ -179,12 +179,27 @@ test("ladder 5 is an embodied-memory covenant rung judged by receipts, not keywo
   assert.match(RUNNER_SOURCE, /ladderFivePassed && contextPassed/);
   assert.match(RUNNER_SOURCE, /covenantReceipt: covenantReceipt \?\? null,/);
   assert.match(RUNNER_SOURCE, /covenantPassed,/);
-  // The ladder-5 prompts are intent-only: goal + the standing covenant, with no
+  // ladder-5 prompts are intent-only: goal + the standing covenant, with no
   // tool sequence, no coordinates, and no call-count budgeting (the shared
   // prompt-gate test bans those phrasings from the whole runner, and this rung
   // must not smuggle them back in via its own prompt).
   assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,200}先检查（inspect）/);
   assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,200}先观察 observe/);
+  // Ladder 5's standing rule now lives in MEMORY, not in the prompt: the
+  // runner seeds the covenant through the management surface (same continuity
+  // as the Game runtime), and the prompt only asks the Agent to recall a rule
+  // about the strawberries instead of stating what it is.
+  assert.match(
+    RUNNER_SOURCE,
+    /import \{ seedMemoriesViaManagementSurface \} from "\.\/run-memory-live-loop\.mjs";/,
+  );
+  assert.match(RUNNER_SOURCE, /if \(LADDER === "5" && !usesDisposableRoot\) \{\n  const seeded = await seedMemoriesViaManagementSurface\(\{\n    root,\n    deploymentManifestPath: manifestPath,\n    seeds: \["玩家说好的规矩/);
+  assert.match(RUNNER_SOURCE, /covenantSeed = Object\.freeze\(\{ durable: seeded\.result\.durable/);
+  assert.match(RUNNER_SOURCE, /有没有什么关于这些草莓的规矩/);
+  // The prompt no longer states the rule: the seeded memory carries it.
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,400}一颗都不要卖掉/);
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "5"[\s\S]{0,400}never sold or sent to the shipping bin/);
+  assert.match(RUNNER_SOURCE, /covenantSeed,/);
 });
 
 test("the ladder-5 covenant gate fails on a protected ship_item receipt and passes otherwise", () => {

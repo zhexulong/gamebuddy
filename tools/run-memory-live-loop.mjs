@@ -257,7 +257,7 @@ async function readMemory(origin, client) {
  * 200 whose body contains the row IS the durability evidence - no second query and
  * no direct SQLite read is needed or wanted.
  */
-async function seedMemory(origin, client, seedTexts, supersedeText) {
+export async function seedMemory(origin, client, seedTexts, supersedeText) {
   let projectionRevision;
   let last;
   let firstHandle;
@@ -400,6 +400,50 @@ async function readTurnOutcome(origin, client, streamTerminal) {
 }
 
 const noopRecorder = Object.freeze({ record() {} });
+
+/**
+ * Seed memory facts through a REAL management-surface child and return the
+ * same durability evidence `runMemoryLiveLoop` uses, without running any
+ * chat turn. This lets other live carriers (the Stardew ladder runner) plant
+ * a fact under a product continuity and then observe whether a Game runtime
+ * on the SAME root/continuity renders it into m[0] — the cross-surface
+ * embodiment path that a chat-only memory loop cannot close by itself.
+ */
+export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs }) {
+  const markers = [];
+  const launch = await launchDesktopCompositionGateChild({
+    outputRoot: outputRoot ?? OUTPUT_ROOT,
+    root,
+    surface: "management",
+    nonceSha256: createHash("sha256").update(randomBytes(32)).digest("hex"),
+    manifestPath: deploymentManifestPath,
+    readyTimeoutMs: readyTimeoutMs ?? START_TIMEOUT_MS,
+    gameSessionMode: "fresh",
+    spawnImpl: (command, args, options) => {
+      const child = spawn(command, args, options);
+      child.stderr?.setEncoding?.("utf8");
+      child.stderr?.on?.("data", (chunk) => {
+        for (const line of String(chunk).split("\n")) {
+          if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX)) markers.push(line.trim());
+        }
+      });
+      return child;
+    },
+  });
+  try {
+    const launchUrl = await launch.waitForReady();
+    const url = new URL(launchUrl);
+    const origin = `${url.protocol}//${url.host}`;
+    const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
+    if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
+    const client = await bootstrap(origin, bootstrapToken);
+    const result = await seedMemory(origin, client, seeds, supersedes);
+    return Object.freeze({ result, markers: Object.freeze([...markers]) });
+  } finally {
+    launch.dispose?.();
+    await stopChildGracefully(launch.child);
+  }
+}
 
 async function withSurface({ surface, run, root, deploymentManifestPath, gameSessionMode = "fresh" }) {
   if (typeof root !== "string" || root.length === 0) throw new Error("runtime_root_required");
