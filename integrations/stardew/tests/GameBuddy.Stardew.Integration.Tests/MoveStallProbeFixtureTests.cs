@@ -41,7 +41,27 @@ public class MoveStallProbeFixtureTests
 
     private static string ModEntrySource()
     {
-        return File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.cs")));
+        // ModEntry is a partial class: the fixture/automation methods these pins
+        // inspect live in ModEntry.Fixtures.cs since the mechanical split. The
+        // pins protect source facts in the merged type, so the source under pin
+        // is the concatenation of both partial files, in declaration order.
+        string entry = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.cs")));
+        string fixturesPath = Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs");
+        string fixtures = File.Exists(RepositorySourcePath(fixturesPath))
+            ? File.ReadAllText(RepositorySourcePath(fixturesPath))
+            : string.Empty;
+        // MethodBody/IndexOf scans only need the containing file; duplicating the
+        // usings/namespace header is harmless for substring matching but would break
+        // brace-balance extraction, so strip the fixtures header, keeping only the
+        // partial-class body between its first '{' and last '}'.
+        if (fixtures.Length > 0)
+        {
+            int open = fixtures.IndexOf('{');
+            int close = fixtures.LastIndexOf('}');
+            if (open >= 0 && close > open)
+                fixtures = fixtures.Substring(open + 1, close - open - 1);
+        }
+        return entry + "\n" + fixtures;
     }
 
     /// <summary>

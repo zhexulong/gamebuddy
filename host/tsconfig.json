@@ -17,5 +17,5 @@
     "rootDir": "src"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/test-fixtures/**", "src/**/*.test-support.ts", "src/**/**/*fixture-worker.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/test-fixtures/**", "src/**/*.test-support.ts", "src/**/*.test-fixtures.ts", "src/**/**/*fixture-worker.ts"]
 }
