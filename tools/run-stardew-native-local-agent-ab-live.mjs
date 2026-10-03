@@ -52,6 +52,14 @@ import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
 import { seedMemoriesViaManagementSurface } from "./run-memory-live-loop.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
+
+// Live-run evidence root: every run writes its own local directory with the
+// runtime root's OWN evidence (identity-profile.json, worldbook.json, the
+// Magic Context database + log, session logs). This is what makes a content
+// defect (e.g. an empty default persona) visible to a reviewer — the harness
+// is an external tool and is not bound by the Host's write-ownership rule.
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: new URL("../..", import.meta.url).pathname });
 
 const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
@@ -408,6 +416,11 @@ const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
 await mkdir(runtimePaths.agentDir, { recursive: true });
 if (!process.env.CPA_OAI_API_KEY) throw new Error("CPA_OAI_API_KEY_missing");
 await writeFile(join(runtimePaths.agentDir, "auth.json"), JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }), "utf8");
+// Capture the run's evidence into a dedicated local directory (git-ignored).
+// The summary lands in the result JSON so a failed capture is visible, never
+// silent — a capture that broke would recreate exactly the blind spot this
+// mechanism exists to remove.
+const capture = await openLiveRunCapture({ kind: "game-ladder", label: `ladder-${LADDER}`, root: LIVE_RUN_ROOT });
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
@@ -657,6 +670,9 @@ try {
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
   };
+  // Close the capture: keep the runtime root's evidence, record the result
+  // JSON itself, and surface any capture failure on the result.
+  result.capture = await closeCapture(capture, runtimeRoot, result);
   // Write the machine-readable result to a dedicated file so stdout logs (e.g.
   // native chat ingress traces) can never corrupt JSON parsing of the result.
   const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
@@ -701,6 +717,7 @@ try {
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
   };
+  partialResult.capture = await closeCapture(capture, runtimeRoot, partialResult);
   const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
   await writeFile(resultFile, JSON.stringify(partialResult, null, 2), "utf8").catch(() => {});
   console.error("RUNNER_CRASH", JSON.stringify({ error: partialResult.error }));
@@ -796,6 +813,36 @@ function splitSpeakableSentenceChunks(text) {
   }
   if (cursor < normalized.length) chunks.push(normalized.slice(cursor));
   return chunks;
+}
+
+/**
+ * Close the run capture and return a bounded summary for the result JSON.
+ *
+ * The result object is recorded inside its own capture directory before
+ * closing, so evidence and verdict travel together. Never throws: a broken
+ * capture surfaces as `failures` on the summary instead of failing the run —
+ * but a broken capture is never silent.
+ */
+async function closeCapture(capture, runtimeRoot, into) {
+  if (capture === null || capture === undefined) return null;
+  try {
+    await capture.record("result.json", into);
+    await capture.captureRuntimeRoot(runtimeRoot);
+    const summary = await capture.close();
+    return Object.freeze({
+      schema: "gamebuddy_live_run_capture/v1",
+      dir: summary.dir,
+      filesWritten: summary.filesWritten,
+      skipped: summary.skipped,
+      failures: summary.failures,
+    });
+  } catch (error) {
+    return Object.freeze({
+      schema: "gamebuddy_live_run_capture/v1",
+      dir: capture.dir ?? null,
+      failures: [{ op: "capture_close", error: String(error instanceof Error ? error.message : error) }],
+    });
+  }
 }
 
 /**
