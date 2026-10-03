@@ -163,15 +163,44 @@ public sealed class NavigationRoutePlannerTests
     public void Result_ExposesNoPublicRouteGraphOrTraversalState()
     {
         // The private result is a steel box for the planner: it may expose only
-        // the exclusive kind, the terminal reason and the single next leg. No
-        // route, graph, intermediate identity, traversal state, edge/hop/replan
-        // count or quota may be observable.
+        // the exclusive kind, terminal reason, and one next edge. No route,
+        // graph, intermediate identity, traversal state, edge/hop/replan count,
+        // or quota may be observable.
         string[] exposed = typeof(NavigationRoutePlanResult).GetProperties()
             .Select(property => property.Name)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 
-        exposed.Should().BeEquivalentTo(new[] { "Kind", "NextLeg", "ReasonCode" });
+        exposed.Should().BeEquivalentTo(new[] { "Kind", "NextLeg", "NextVirtualLeg", "ReasonCode" });
+    }
+
+    [Fact]
+    public void VirtualNextLeg_ExposesOnlyOneEdgeAndNativeGateFact_NotTraversalState()
+    {
+        // The virtual result may carry the one edge identity needed by the private
+        // execution handoff: its transition, departure/transport identity, and
+        // the native gate fact. It must not turn into a route or BFS dump.
+        string[] virtualLegProperties = typeof(NavigationVirtualConnectivityLeg).GetProperties()
+            .Select(property => property.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        virtualLegProperties.Should().BeEquivalentTo(new[]
+        {
+            "DepartureLocation", "DestinationId", "Gate", "NetworkId", "TransportAction", "Transition",
+        });
+        virtualLegProperties.Should().NotContain(name =>
+            name.Contains("Route", StringComparison.Ordinal)
+            || name.Contains("Graph", StringComparison.Ordinal)
+            || name.Contains("Visited", StringComparison.Ordinal)
+            || name.Contains("Predecessor", StringComparison.Ordinal)
+            || name.Contains("Count", StringComparison.Ordinal)
+            || name.Contains("Hop", StringComparison.Ordinal)
+            || name.Contains("Replan", StringComparison.Ordinal));
+
+        typeof(NavigationConnectivityGate).GetProperties()
+            .Select(property => property.Name)
+            .Should().BeEquivalentTo(new[] { "IsSatisfied", "Key" });
     }
 
     private static NavigationTransitionLeg First = Leg("Mountain", 10, 10, 20, 20);

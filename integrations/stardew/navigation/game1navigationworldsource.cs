@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.GameData.Minecarts;
 using StardewValley.Locations;
 
 namespace GameBuddy.Stardew.Navigation;
@@ -122,17 +123,156 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             return false;
         }
         // The live game may retain ordinary warps for locations that are not in
-        // the currently loaded subgraph. Keep only loaded endpoints; the planner
-        // will fail closed when the accepted destination is not reachable.
+        // the currently loaded subgraph. Keep only loaded and natively accessible
+        // endpoints; the planner will fail closed when the accepted destination is
+        // not reachable. `isLocationAccessible` is the game's own gate authority.
+        IReadOnlyDictionary<string, IReadOnlyList<NavigationVirtualConnectivityLeg>> virtualLegs =
+            BuildVirtualConnectivityLegs(locations, sourceIds);
         NavigationOrdinaryWarpLegs[] filteredSources = sources
             .Select(source => new NavigationOrdinaryWarpLegs(
                 source.SourceId,
-                source.OutgoingOrdinaryLegs.Where(leg => sourceIds.Contains(leg.TargetLocation)).ToArray()))
+                source.OutgoingOrdinaryLegs
+                    .Where(leg => sourceIds.Contains(leg.TargetLocation) && IsLocationAccessible(leg.TargetLocation))
+                    .ToArray(),
+                virtualLegs.TryGetValue(source.SourceId, out IReadOnlyList<NavigationVirtualConnectivityLeg>? outgoing)
+                    ? outgoing
+                    : Array.Empty<NavigationVirtualConnectivityLeg>()))
             .ToArray();
 
         topology = new NavigationOrdinaryWarpTopology(currentSource, filteredSources);
         reasonCode = "accepted";
         return true;
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<NavigationVirtualConnectivityLeg>> BuildVirtualConnectivityLegs(
+        IList<GameLocation> locations,
+        HashSet<string> sourceIds)
+    {
+        Dictionary<string, IReadOnlyList<NavigationVirtualConnectivityLeg>> result = new(StringComparer.Ordinal);
+        IReadOnlyDictionary<string, MinecartNetworkData>? networks = TryLoadMinecartNetworks();
+        if (networks is null)
+            return result;
+
+        foreach (GameLocation location in locations)
+        {
+            string sourceId = location.NameOrUniqueName;
+            if (!sourceIds.Contains(sourceId) || location.map is null)
+                continue;
+
+            List<NavigationVirtualConnectivityLeg> legs = new();
+            foreach ((int stationX, int stationY, string networkId) in DiscoverMinecartStations(location))
+            {
+                if (!networks.TryGetValue(networkId, out MinecartNetworkData? network)
+                    || network.Destinations is null
+                    || !IsMinecartNetworkUnlocked(network, location))
+                    continue;
+
+                foreach (MinecartDestinationData? destination in network.Destinations)
+                {
+                    if (destination is null
+                        || string.IsNullOrWhiteSpace(destination.Id)
+                        || string.IsNullOrWhiteSpace(destination.TargetLocation)
+                        || !sourceIds.Contains(destination.TargetLocation)
+                        || !IsLocationAccessible(destination.TargetLocation)
+                        || !IsMinecartDestinationAvailable(destination, location))
+                        continue;
+
+                    NavigationTransitionLeg transition = new(
+                        destination.TargetLocation,
+                        stationX,
+                        stationY,
+                        destination.TargetTile.X,
+                        destination.TargetTile.Y,
+                        IsDoor: false);
+                    legs.Add(new NavigationVirtualConnectivityLeg(
+                        transition,
+                        sourceId,
+                        "ride_minecart",
+                        networkId,
+                        destination.Id,
+                        new NavigationConnectivityGate(
+                            $"minecart:{networkId}:{destination.Id}",
+                            true)));
+                }
+            }
+
+            if (legs.Count > 0)
+                result[sourceId] = legs;
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<(int X, int Y, string NetworkId)> DiscoverMinecartStations(GameLocation location)
+    {
+        int width = location.map!.Layers[0].LayerWidth;
+        int height = location.map.Layers[0].LayerHeight;
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                string? action = location.doesTileHaveProperty(x, y, "Action", "Buildings");
+                if (action is null || !action.StartsWith("MinecartTransport", StringComparison.Ordinal))
+                    continue;
+                string[] parts = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                string networkId = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1])
+                    ? parts[1]
+                    : "Default";
+                yield return (x, y, networkId);
+            }
+        }
+    }
+
+    private static IReadOnlyDictionary<string, MinecartNetworkData>? TryLoadMinecartNetworks()
+    {
+        try
+        {
+            return DataLoader.Minecarts(Game1.content);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsMinecartNetworkUnlocked(MinecartNetworkData network, GameLocation location)
+    {
+        if (string.IsNullOrWhiteSpace(network.UnlockCondition))
+            return true;
+        try
+        {
+            return GameStateQuery.CheckConditions(network.UnlockCondition, location);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsMinecartDestinationAvailable(MinecartDestinationData destination, GameLocation location)
+    {
+        if (string.IsNullOrWhiteSpace(destination.Condition))
+            return true;
+        try
+        {
+            return GameStateQuery.CheckConditions(destination.Condition, location);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLocationAccessible(string locationName)
+    {
+        try
+        {
+            return Game1.isLocationAccessible(locationName);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool InRange(int x, int y, int targetX, int targetY) =>

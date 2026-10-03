@@ -3,12 +3,14 @@ using GameBuddy.Stardew;
 namespace GameBuddy.Stardew.Navigation;
 
 /// <summary>
-/// One source node's outgoing ordinary (non-door) warp legs. Nested inside the
-/// topology only; never projected to a Host/Agent surface.
+/// One source node's outgoing ordinary (non-door) warp legs and private
+/// transport-backed connectivity legs. Nested inside the topology only; never
+/// projected to a Host/Agent surface.
 /// </summary>
 internal sealed record NavigationOrdinaryWarpLegs(
     string SourceId,
-    IReadOnlyList<NavigationTransitionLeg> OutgoingOrdinaryLegs);
+    IReadOnlyList<NavigationTransitionLeg> OutgoingOrdinaryLegs,
+    IReadOnlyList<NavigationVirtualConnectivityLeg>? OutgoingVirtualLegs = null);
 
 /// <summary>
 /// A private, deterministic ordinary-warp connectivity topology. It fixes the
@@ -36,10 +38,14 @@ internal enum NavigationRoutePlanKind
 internal sealed record NavigationRoutePlanResult(
     NavigationRoutePlanKind Kind,
     string ReasonCode,
-    NavigationTransitionLeg? NextLeg = null)
+    NavigationTransitionLeg? NextLeg = null,
+    NavigationVirtualConnectivityLeg? NextVirtualLeg = null)
 {
     internal static NavigationRoutePlanResult NextEdge(NavigationTransitionLeg leg) =>
         new(NavigationRoutePlanKind.NextEdge, "accepted", leg);
+
+    internal static NavigationRoutePlanResult NextVirtualEdge(NavigationVirtualConnectivityLeg leg) =>
+        new(NavigationRoutePlanKind.NextEdge, "accepted", leg.Transition, leg);
 
     internal static NavigationRoutePlanResult Arrived() =>
         new(NavigationRoutePlanKind.Arrived, "navigation_completed");
@@ -67,6 +73,9 @@ internal sealed class NavigationRoutePlanner
     /// <paramref name="destination"/>. The supplied current source must match
     /// <paramref name="topology"/>.CurrentSourceIdentity. Invalid/duplicate
     /// source keys, door/empty/invalid edges and missing endpoints fail closed.
+    /// Virtual edges are traversed by the same BFS as ordinary edges, but their
+    /// native transport metadata remains private and they never enter the
+    /// ordinary-leg collection.
     /// </summary>
     internal NavigationRoutePlanResult Plan(
         NavigationOrdinaryWarpTopology? topology,
@@ -105,13 +114,19 @@ internal sealed class NavigationRoutePlanner
                 return NavigationRoutePlanResult.Terminal("route_topology_invalid");
 
             foreach (NavigationTransitionLeg? leg in source.OutgoingOrdinaryLegs)
-        {
-            if (leg is null || leg.IsDoor)
-                return NavigationRoutePlanResult.Terminal("route_topology_invalid");
-            if (string.IsNullOrEmpty(leg.TargetLocation))
-                return NavigationRoutePlanResult.Terminal("route_topology_invalid");
-            if (!sources.ContainsKey(leg.TargetLocation))
-                return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+            {
+                if (leg is null || leg.IsDoor)
+                    return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+                if (string.IsNullOrEmpty(leg.TargetLocation))
+                    return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+                if (!sources.ContainsKey(leg.TargetLocation))
+                    return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+            }
+
+            foreach (NavigationVirtualConnectivityLeg? virtualLeg in source.OutgoingVirtualLegs ?? Array.Empty<NavigationVirtualConnectivityLeg>())
+            {
+                if (!IsValidVirtualLeg(virtualLeg, source.SourceId, sources))
+                    return NavigationRoutePlanResult.Terminal("route_topology_invalid");
             }
         }
 
@@ -119,6 +134,24 @@ internal sealed class NavigationRoutePlanner
             return NavigationRoutePlanResult.Arrived();
 
         return Search(sources, topologySource, destinationIdentity);
+    }
+
+    private static bool IsValidVirtualLeg(
+        NavigationVirtualConnectivityLeg? virtualLeg,
+        string sourceId,
+        Dictionary<string, NavigationOrdinaryWarpLegs> sources)
+    {
+        if (virtualLeg is null || virtualLeg.Transition is null || virtualLeg.Gate is null
+            || string.IsNullOrWhiteSpace(virtualLeg.Gate.Key)
+            || !string.Equals(virtualLeg.DepartureLocation, sourceId, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(virtualLeg.TransportAction)
+            || string.IsNullOrWhiteSpace(virtualLeg.NetworkId)
+            || string.IsNullOrWhiteSpace(virtualLeg.DestinationId))
+            return false;
+        NavigationTransitionLeg leg = virtualLeg.Transition;
+        return !leg.IsDoor
+            && !string.IsNullOrWhiteSpace(leg.TargetLocation)
+            && sources.ContainsKey(leg.TargetLocation);
     }
 
     private static NavigationRoutePlanResult Search(
@@ -130,7 +163,7 @@ internal sealed class NavigationRoutePlanner
         {
             sourceIdentity,
         };
-        var predecessor = new Dictionary<string, (string From, NavigationTransitionLeg Leg)>(StringComparer.Ordinal);
+        var predecessor = new Dictionary<string, (string From, NavigationRouteEdge Edge)>(StringComparer.Ordinal);
         var queue = new Queue<string>();
         queue.Enqueue(sourceIdentity);
 
@@ -145,7 +178,25 @@ internal sealed class NavigationRoutePlanner
                 if (!visited.Add(target))
                     continue;
 
-                predecessor[target] = (current, leg);
+                predecessor[target] = (current, NavigationRouteEdge.Ordinary(leg));
+                if (target == destinationIdentity)
+                    return FirstEdgeFromSource(predecessor, sourceIdentity, destinationIdentity);
+
+                queue.Enqueue(target);
+            }
+
+            foreach (NavigationVirtualConnectivityLeg virtualLeg in node.OutgoingVirtualLegs ?? Array.Empty<NavigationVirtualConnectivityLeg>())
+            {
+                // A locked edge is absent from the effective graph. The live source
+                // omits it before construction; this check also makes synthetic
+                // topologies observe the same gate semantics.
+                if (!virtualLeg.Gate.IsSatisfied)
+                    continue;
+                string target = virtualLeg.Transition.TargetLocation;
+                if (!visited.Add(target))
+                    continue;
+
+                predecessor[target] = (current, NavigationRouteEdge.Virtual(virtualLeg));
                 if (target == destinationIdentity)
                     return FirstEdgeFromSource(predecessor, sourceIdentity, destinationIdentity);
 
@@ -162,18 +213,31 @@ internal sealed class NavigationRoutePlanner
     /// exposed.
     /// </summary>
     private static NavigationRoutePlanResult FirstEdgeFromSource(
-        Dictionary<string, (string From, NavigationTransitionLeg Leg)> predecessor,
+        Dictionary<string, (string From, NavigationRouteEdge Edge)> predecessor,
         string sourceIdentity,
         string destinationIdentity)
     {
         string cursor = destinationIdentity;
-        (string From, NavigationTransitionLeg Leg) entry = predecessor[cursor];
+        (string From, NavigationRouteEdge Edge) entry = predecessor[cursor];
         while (entry.From != sourceIdentity)
         {
             cursor = entry.From;
             entry = predecessor[cursor];
         }
 
-        return NavigationRoutePlanResult.NextEdge(entry.Leg);
+        return entry.Edge.IsVirtual
+            ? NavigationRoutePlanResult.NextVirtualEdge(entry.Edge.VirtualLeg!)
+            : NavigationRoutePlanResult.NextEdge(entry.Edge.OrdinaryLeg!);
+    }
+
+    private sealed record NavigationRouteEdge(
+        NavigationTransitionLeg? OrdinaryLeg,
+        NavigationVirtualConnectivityLeg? VirtualLeg)
+    {
+        internal bool IsVirtual => this.VirtualLeg is not null;
+
+        internal static NavigationRouteEdge Ordinary(NavigationTransitionLeg leg) => new(leg, null);
+
+        internal static NavigationRouteEdge Virtual(NavigationVirtualConnectivityLeg leg) => new(null, leg);
     }
 }
