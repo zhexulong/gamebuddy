@@ -44,6 +44,13 @@ import { loadHostDeploymentManifest } from "../host/dist-test/deployment-manifes
 import { resolveRuntimePaths } from "../host/dist-test/runtime-identity.js";
 import { bindWindowsStaleLockReclaimer } from "../host/dist-test/path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-stale-lock-reclaimer/index.js";
+// Ladder 5 (embodied-memory covenant): the covenant FACT is planted through the
+// real management surface under the product continuity, then the Game runtime on
+// the SAME root/continuity must render it into m[0] — the Agent reads the rule
+// from memory, never from a prompt line. When no configured root/continuity is
+// given (disposable-root runs), seeding is skipped and the covenant is not
+// asserted: a disposable root has no persisted memory by construction.
+import { seedMemoriesViaManagementSurface } from "./run-memory-live-loop.mjs";
 
 const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
@@ -405,6 +412,25 @@ await writeFile(join(runtimePaths.agentDir, "auth.json"), JSON.stringify({ "cpa-
 // the same file the runtime wrote.
 const gameSessionId = `game-${Date.now()}`;
 const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionId);
+// Ladder 5 covenant seeding: the standing rule is PLANTED through the real
+// management surface under the product continuity (the same path a player
+// writing a memory in the Tavern takes), before the Game runtime opens the
+// same root. The covenant then arrives in m[0] as a memory fact, and the
+// Agent-facing prompt below never names the rule — the probe measures whether
+// a memory-driven covenant changes harvest/ship behaviour without any prompt
+// coaching. Seeding is skipped for disposable roots (no persisted memory
+// exists there by construction), and the covenant gate only runs when a seed
+// was actually planted.
+let covenantSeed = null;
+if (LADDER === "5" && !usesDisposableRoot) {
+  const seeded = await seedMemoriesViaManagementSurface({
+    root,
+    deploymentManifestPath: manifestPath,
+    seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
+  });
+  covenantSeed = Object.freeze({ durable: seeded.result.durable, rowCount: seeded.result.rowCount, markerCount: seeded.markers.length });
+  if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
+}
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: await loadHostDeploymentManifest(manifestPath), launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
 let runtime;
 // Declared before the try so the failure path can report the same facts instead
@@ -424,7 +450,7 @@ try {
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
     ? (LADDER === "5"
-      ? "今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来。不过要记得玩家早就和你说好的约定：这些草莓全都是要留着酿酒的，一颗都不要卖掉，也不要送进出货箱。收好之后，把草莓留好等之后酿酒用。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
+      ? "今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "4"
       ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "3"
@@ -433,7 +459,7 @@ try {
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。"
       : "你现在是星露谷里的 AI 伴侣。你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。")
     : (LADDER === "5"
-      ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them. But remember the rule the player told you long ago: every single strawberry is kept for making wine, so none of them may ever be sold or sent to the shipping bin. After harvesting, keep the strawberries for making wine later. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
+      ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
       : LADDER === "4"
       ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
       : LADDER === "3"
@@ -535,7 +561,7 @@ try {
   // participates. Ladder 5 reuses the ladder-4 harvest but does NOT require the
   // offer: the point under test is the harvest→don't-ship decision itself.
   const covenantReceipt = findProtectedCovenantShipment(receipts, PROTECTED_COVENANT_ITEM_ID);
-  const covenantPassed = covenantReceipt === undefined;
+  const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const contextPassed = contextAssembled && worldBookAssembled;
@@ -605,6 +631,7 @@ try {
     offerReceipt: offerReceipt ?? null,
     covenantReceipt: covenantReceipt ?? null,
     covenantPassed,
+    covenantSeed,
     personaWorldBook,
     contextAssembled,
     worldBookAssembled,
@@ -638,6 +665,7 @@ try {
     harvestReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
     offerReceipt: factLog.find((fact) => fact.type === "execution_receipt" && (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered")) ?? null,
     covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
+    covenantSeed,
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
       LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
