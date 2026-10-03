@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   MEMORY_FUNNEL_STAGES,
   attributeMemoryFunnel,
+  foldCommittedRenderedIdsFromMarkers,
   renderedMemoryIdsFromMarkers,
   renderedChaptersFromMarkers,
   summarizeMemoryFunnel,
@@ -98,25 +99,59 @@ test("a downstream PASS still stands even with an upstream gap", () => {
 });
 
 test("a broken stage makes every downstream stage not_reached rather than wrong", () => {
-  // The write landed and the fact was rendered, but the fold dropped it. L4 must
-  // not be scored: the run never legitimately exercised expression.
+  // The write landed and the fact was rendered, but the REAL fold commit dropped
+  // it. L4 must not be scored: the run never legitimately exercised expression.
   const attributed = attributeMemoryFunnel({
     distance: "fold",
     seedRequired: true,
     seedPresentInReadback: true,
     renderedMemoryIdsObserved: true,
     seedIdRendered: true,
-    foldObserved: true,
-    postFoldAssembly: "absent",
+    realFold: {
+      revision: "rev_1",
+      postFoldRenderedIds: new Set([1, 3]),
+      seedId: 2,
+    },
     probeEvent: "needle.hit",
   });
   assert.equal(statusOf(attributed, "L3_decay"), "broken");
+  assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").detail, "seed id dropped by the fold commit");
   assert.equal(statusOf(attributed, "L4_expression"), "not_reached");
   assert.equal(attributed.stages.find((row) => row.stage === "L4_expression").reason, "upstream_L3_decay_broken");
   assert.deepEqual(
     attributed.findings.map((finding) => finding.component),
     ["consolidation"],
   );
+});
+
+test("a REAL fold that retains the seed passes L3 with the fold-commit revision evidence", () => {
+  const attributed = attributeMemoryFunnel({
+    distance: "fold",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+    realFold: {
+      revision: "rev_fold",
+      postFoldRenderedIds: new Set([2, 7]),
+      seedId: 2,
+    },
+    probeEvent: "needle.hit",
+  });
+  assert.equal(statusOf(attributed, "L3_decay"), "passed");
+  assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").detail, "seed id retained in the fold-commit revision rendered set");
+  assert.equal(statusOf(attributed, "L4_expression"), "passed");
+});
+
+test("a fold-distance probe whose fold-commit marker lacks a rendered set is a gap, not a pass or break", () => {
+  const attributed = attributeMemoryFunnel({
+    distance: "fold",
+    seedRequired: true,
+    seedPresentInReadback: true,
+    realFold: { revision: "rev_fold", postFoldRenderedIds: undefined, seedId: 2 },
+  });
+  assert.equal(statusOf(attributed, "L3_decay"), "observability_gap");
+  assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").reason, "fold_post_render_unobserved");
 });
 
 test("a write that did not survive budget trimming is attributed to assembly, not to recall", () => {
@@ -185,6 +220,36 @@ test("a fold-distance probe that never saw a marker does report a gap", () => {
   assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").reason, "fold_not_observed");
 });
 
+test("parses fold-commit markers bound to the same materialization revision", () => {
+  // A pass WITHOUT a fold: only memory-ids markers, no fold-commit line.
+  assert.equal(
+    foldCommittedRenderedIdsFromMarkers([
+      "[probe:m0_memory_ids] rev_1 1,2",
+      "[probe:m0_chapters] rev_1 0 -",
+    ]),
+    undefined,
+  );
+  // A real fold pass: the fold-commit marker and the post-fold ids share rev_fold.
+  const folded = foldCommittedRenderedIdsFromMarkers([
+    "[probe:m0_memory_ids] rev_1 1,2",
+    "[probe:fold_committed] rev_fold",
+    "[probe:m0_memory_ids] rev_fold 2,3,4",
+    "[probe:m0_chapters] rev_fold 1 abc",
+  ]);
+  assert.deepEqual(folded, { revision: "rev_fold", postFoldRenderedIds: new Set([2, 3, 4]) });
+  // A fold-commit marker whose revision has NO memory-ids line is a gap: the
+  // pass folded but we cannot see what it rendered.
+  const noRender = foldCommittedRenderedIdsFromMarkers(["[probe:fold_committed] rev_x"]);
+  assert.deepEqual(noRender, { revision: "rev_x", postFoldRenderedIds: undefined });
+  // An empty rendered set at the fold revision is observed (the fold COMMIT saw
+  // nothing) - different from the absent marker above, which stays a gap.
+  const emptyFold = foldCommittedRenderedIdsFromMarkers([
+    "[probe:fold_committed] rev_z",
+    "[probe:m0_memory_ids] rev_z -",
+  ]);
+  assert.deepEqual(emptyFold, { revision: "rev_z", postFoldRenderedIds: new Set() });
+});
+
 test("summarize counts per stage independently and carries no overall verdict", () => {
   const summary = summarizeMemoryFunnel([
     { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
@@ -207,7 +272,7 @@ test("every broken stage ships an actionable recommendation", () => {
   for (const observation of [
     { seedRequired: true, conflictObserved: true },
     { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
-    { distance: "fold", seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, foldObserved: true, postFoldAssembly: "absent" },
+    { distance: "fold", seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, realFold: { revision: "rev_fold", postFoldRenderedIds: new Set([1]), seedId: 2 } },
     { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, probeEvent: "needle.miss" },
   ]) {
     const attributed = attributeMemoryFunnel(observation);

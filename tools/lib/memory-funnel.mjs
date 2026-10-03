@@ -60,13 +60,55 @@ export function renderedChaptersFromMarkers(markers) {
 }
 
 /**
+ * Parse Magic Context's fold-commit marker lines and bind them to the
+ * rendered-memory set of the SAME materialization revision (vendor
+ * probe-materialization-marker.ts).
+ *
+ * The vendor emits `[probe:fold_committed] <revision>` only after the
+ * materialize transaction COMMIT that advanced m[0] coverage — i.e. a REAL fold
+ * happened, not a cache-invalid repair or a model-change re-render. Every
+ * materialization pass (folded or not) also emits `[probe:m0_memory_ids]
+ * <revision> <ids>`. Because both carry the SAME revision, the ids seen at the
+ * fold-commit revision ARE the post-fold rendered set.
+ *
+ * Returns `undefined` when NO fold-commit marker was present (producer gap /
+ * this pass never folded) — never a fabricated fold. Returns the observed
+ * post-fold rendered set only when a fold-commit revision was seen AND a
+ * memory-ids line with that revision exists.
+ */
+export function foldCommittedRenderedIdsFromMarkers(markers) {
+  let foldRevision = undefined;
+  for (const line of markers) {
+    const match = /^\[probe:fold_committed\]\s+(\S+)\s*$/u.exec(String(line).trim());
+    if (match === null) continue;
+    foldRevision = match[1];
+  }
+  if (foldRevision === undefined) return undefined;
+  let observed = false;
+  const ids = new Set();
+  for (const line of markers) {
+    const match = /^\[probe:m0_memory_ids\]\s+(\S+)\s+(\S+)\s*$/u.exec(String(line).trim());
+    if (match === null || match[1] !== foldRevision) continue;
+    observed = true;
+    if (match[2] === "-") continue;
+    for (const part of match[2].split(",")) {
+      const value = Number(part);
+      if (Number.isSafeInteger(value) && value >= 0) ids.add(value);
+    }
+  }
+  return Object.freeze({
+    revision: foldRevision,
+    postFoldRenderedIds: observed ? ids : undefined,
+  });
+}
+
+/**
  * The four-stage memory funnel (design §10.3):
  *
  *   L1 write      did the fact reach durable storage?
  *   L2 assembly   was it rendered into the context the model actually got?
  *   L3 decay      is it still there after a fold / restart?
- *   L4 expression did the model act on it?
- *
+ *   L4 expression did the model act on it? *
  * This module is a pure attributor: it consumes already-observed facts and
  * reports, per stage, whether that stage was observed, passed, or broke. It never
  * reads a product, never opens a socket, and never guesses a stage from a later
@@ -167,8 +209,13 @@ function stageAssembly({ renderedMemoryIdsObserved, seedIdRendered }) {
 /**
  * L3: did it survive a fold or a restart?
  *
- * Evidence is the fold marker's own revision binding plus a re-read of the L2 fact
- * after the fold.
+ * Evidence for a REAL fold is the vendor's fold-commit marker bound to the
+ * rendered-memory set of the SAME materialization revision: the marker and the
+ * memory-ids line are emitted from the same pass, so folding preserves/removes
+ * a seed if and only if it is present in that revision's rendered set. A
+ * `distance: "fold"` probe REQUIRES this real marker; a `session` probe
+ * (P-restart) accepts the product's own successor-mount statement as a
+ * substitute because a restart re-renders m[0] from scratch in a new process.
  *
  * `not_applicable` vs `observability_gap` matters here and is easy to conflate: a
  * turn-distance probe never crosses a fold, so L3 was not exercised at all
@@ -176,9 +223,22 @@ function stageAssembly({ renderedMemoryIdsObserved, seedIdRendered }) {
  * missing one is a genuine gap. Reporting the first as a gap would claim we tried
  * to observe a fold we never asked for.
  */
-function stageDecay({ distance, foldObserved, postFoldAssembly }) {
+function stageDecay({ distance, foldObserved, postFoldAssembly, realFold }) {
   if (distance !== "fold" && distance !== "session") return undefined;
-  if (foldObserved !== true) return gap("L3_decay", "fold_not_observed");
+  const useRealFold = distance === "fold";
+  if (useRealFold && realFold === undefined) return gap("L3_decay", "fold_not_observed");
+  if (!useRealFold && foldObserved !== true) return gap("L3_decay", "fold_not_observed");
+  if (useRealFold) {
+    if (realFold.revision === undefined) return gap("L3_decay", "fold_commit_revision_unobserved");
+    if (realFold.postFoldRenderedIds === undefined) return gap("L3_decay", "fold_post_render_unobserved");
+    // The fold-commit marker and the memory-ids line share ONE revision; the ids
+    // observed at that revision ARE the post-fold rendered set.
+    if (realFold.seedId === undefined) return gap("L3_decay", "fold_seed_id_unobserved");
+    const retained = realFold.postFoldRenderedIds.has(realFold.seedId);
+    return retained
+      ? stage("L3_decay", "passed", "seed id retained in the fold-commit revision rendered set")
+      : stage("L3_decay", "broken", "seed id dropped by the fold commit");
+  }
   if (postFoldAssembly === undefined) return gap("L3_decay", "post_fold_assembly_unobserved");
   if (postFoldAssembly === "present") return stage("L3_decay", "passed", "seed id still rendered after the fold");
   return stage("L3_decay", "broken", "seed id dropped across the fold");

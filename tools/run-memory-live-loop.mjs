@@ -48,7 +48,7 @@ import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
+import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
 
 /**
  * The Class B marker Magic Context emits with the ids it assembled into m[0]
@@ -61,6 +61,7 @@ import { attributeMemoryFunnel, renderedMemoryIdsFromMarkers, renderedChaptersFr
  */
 const PROBE_M0_MEMORY_IDS_PREFIX = "[probe:m0_memory_ids]";
 const PROBE_M0_CHAPTERS_PREFIX = "[probe:m0_chapters]";
+const PROBE_FOLD_COMMITTED_PREFIX = "[probe:fold_committed]";
 
 function assertMarkerContract() {
   const source = resolve(
@@ -79,6 +80,9 @@ function assertMarkerContract() {
     throw new Error("memory_loop_probe_marker_contract_drift");
   }
   if (!declared.includes(`export const PROBE_M0_CHAPTERS_PREFIX = "${PROBE_M0_CHAPTERS_PREFIX}"`)) {
+    throw new Error("memory_loop_probe_marker_contract_drift");
+  }
+  if (!declared.includes(`export const PROBE_FOLD_COMMITTED_PREFIX = "${PROBE_FOLD_COMMITTED_PREFIX}"`)) {
     throw new Error("memory_loop_probe_marker_contract_drift");
   }
 }
@@ -428,7 +432,11 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on?.("data", (chunk) => {
       		for (const line of String(chunk).split("\n")) {
-			if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) || line.startsWith(PROBE_M0_CHAPTERS_PREFIX))
+			if (
+				line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
+				line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+				line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+			)
 				markers.push(line.trim());
 		}
       });
@@ -480,7 +488,11 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
 				for (const line of String(chunk).split("\n")) {
 					// Strictly prefixed and parsed: an unrelated stderr line can never be
 					// mistaken for a materialization fact.
-					if (line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) || line.startsWith(PROBE_M0_CHAPTERS_PREFIX))
+					if (
+						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
+						line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+						line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+					)
 						markers.push(line.trim());
 				}
 			});
@@ -803,6 +815,12 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     const chapters = renderedChaptersFromMarkers(chatResult.markers);
 
     const renderedIds = renderedIdsForRun(chatResult.markers);
+    // Real-fold evidence for a `fold`-distance probe: the vendor's fold-commit
+    // marker shares its revision with the rendered-memory marker of the SAME
+    // materialization, so the ids observed at that revision ARE the post-fold
+    // rendered set. A session-distance probe keeps using the restart substitute
+    // (postFoldAssembly) below; a fold probe passes the real commit evidence.
+    const realFold = foldCommittedRenderedIdsFromMarkers(chatResult.markers);
     const attributed = attributeMemoryFunnel({
       ...observation,
       renderedMemoryIdsObserved: renderedIds !== undefined && seededMemoryId !== undefined,
@@ -813,6 +831,12 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       // a gap ("we could not compare") instead of claiming the fact was dropped.
       ...(scenario.distance === "session" && seededMemoryId !== undefined && renderedIds !== undefined
         ? { postFoldAssembly: renderedIds.has(seededMemoryId) ? "present" : "absent" }
+        : {}),
+      // L3 for a `fold`-distance probe: the REAL fold-commit evidence (revision +
+      // post-fold rendered set) when the vendor actually reported a fold this run;
+      // absent otherwise so L3 reports a gap instead of a fabricated fold.
+      ...(scenario.distance === "fold" && realFold !== undefined
+        ? { realFold: { ...realFold, ...(seededMemoryId === undefined ? {} : { seedId: seededMemoryId }) } }
         : {}),
       probeEvent: verdict.event,
       ...(verdict.reason === undefined ? {} : { probeReason: verdict.reason }),
