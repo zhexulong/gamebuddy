@@ -323,9 +323,27 @@ export class CompanionLoop {
       // settlement notification. Drain it before closing the lineage so the
       // bridge's source/epoch admission remains current through its only
       // native-content presentation write.
-      await nativeContentObserver?.close();
+      try {
+        await nativeContentObserver?.close();
+      } catch (error) {
+        if (!isSettledTailPresentationFailure(error)) throw error;
+      }
       nativeContentObserver = undefined;
-      await nativeContentFinal;
+      try {
+        await nativeContentFinal;
+      } catch (error) {
+        // This drain runs ONLY after the turn settled (accepted + agent_settled
+        // observed above). The final native-content presentation is a tail
+        // delivery, not the turn's authority: a stale epoch / revoked lineage /
+        // rejected native write here means the runtime admission was already
+        // closed by STOP, transport loss, or teardown AFTER settlement. The
+        // presenter recorded that uncertain delivery through
+        // closeForUncertainCommit before propagating; failing the settled turn
+        // for it would fabricate a failure for a completed gameplay/receipt
+        // cycle. Only this settled-turn tail is downgraded - in-turn
+        // presentation errors still surface through the observer chain.
+        if (!isSettledTailPresentationFailure(error)) throw error;
+      }
     } finally {
       if (this.#cancelQueuedDelivery === resolveCancelled) this.#cancelQueuedDelivery = undefined;
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
@@ -357,8 +375,7 @@ export class CompanionLoop {
   }
 }
 
-function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {
-  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
   const record = message as Readonly<{ role?: unknown; content?: unknown }>;
   if (record.role !== "user") return false;
   // Pi's `sendUserMessage(string)` canonicalizes its payload to exactly this
@@ -431,4 +448,26 @@ function isSalientSensoryKind(kind: string | undefined): boolean {
 
 function isOpaqueSource(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+/**
+ * Failure classes that mean "the turn already settled and this native-content
+ * presentation is only a tail delivery": the runtime epoch was revoked (STOP /
+ * transport loss / teardown -> stale_interruption_admission), the source lineage
+ * was revoked or closed (stale_presentation_lineage / uncertain lineage), or the
+ * bridge refused a stale presentation (bridge_rejected / snapshot unavailable).
+ * None of them can undo the settled gameplay/receipt cycle; downgrading them
+ * keeps a completed turn from being reported as failed because its final text
+ * did not land after settlement. Everything else (programming errors) still
+ * propagates.
+ */
+function isSettledTailPresentationFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message === "stale_interruption_admission" ||
+    message === "stale_presentation_lineage" ||
+    message === "farmhand_presentation_snapshot_unavailable" ||
+    message.startsWith("bridge_rejected:") ||
+    message === "native_presentation_lineage_mismatch"
+  );
 }
