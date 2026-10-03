@@ -58,7 +58,7 @@ test("the runner enforces a companion-interaction gate for ladder-3 summaries", 
   // did" closing line blocks the run instead of passing silently.
   assert.match(RUNNER_SOURCE, /assessCompanionInteraction/);
   assert.match(RUNNER_SOURCE, /interactionPassed = interactionAssessment === null \|\| interactionAssessment\.passed/);
-  assert.match(RUNNER_SOURCE, /contextPassed && interactionPassed/);
+  assert.match(RUNNER_SOURCE, /contextPassed && contentPassed && interactionPassed/);
 });
 
 test("the runner emits system findings as a first-class health signal", () => {
@@ -81,6 +81,13 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /import \{ openLiveRunCapture, resolveLiveRunRoot \} from "\.\/live-run\/core\/capture\.mjs";/);
   assert.match(RUNNER_SOURCE, /result\.capture = await closeCapture\(capture, runtimeRoot, result\);/);
   assert.match(RUNNER_SOURCE, /partialResult\.capture = await closeCapture\(capture, runtimeRoot, partialResult\);/);
+  // Content gate: the same canonical profile the assembly gate hashes is
+  // assessed for persona presence and macro residue; a hollow default card or
+  // unrendered macros fails the run loudly instead of passing silently.
+  assert.match(RUNNER_SOURCE, /import \{ assessIdentityProfile \} from "\.\/live-run\/core\/content-gate\.mjs";/);
+  assert.match(RUNNER_SOURCE, /contentGate: canonicalProfile === null \? null : assessIdentityProfile\(canonicalProfile\),/);
+  assert.match(RUNNER_SOURCE, /const contentGate = personaWorldBook\.contentGate \?\? null;/);
+  assert.match(RUNNER_SOURCE, /contentGate\.personaPresent && contentGate\.macroResidue\.length === 0/);
 });
 
 test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {
