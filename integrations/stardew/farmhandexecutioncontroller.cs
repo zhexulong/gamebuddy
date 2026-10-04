@@ -1427,7 +1427,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
-            || this.activeBusRide is not null)
         {
             switch (this.disposition.Kind)
             {
