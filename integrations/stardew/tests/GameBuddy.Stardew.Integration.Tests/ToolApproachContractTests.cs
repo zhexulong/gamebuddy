@@ -230,6 +230,22 @@ public sealed class ToolApproachContractTests
         invalidate.Should().Contain("ExecutionState.Invalidated");
         invalidate.Should().Contain("PublishIdleAfterRelease");
 
+        // World-change invalidation mints its terminal through the body controller's
+        // transition path, and the evidence must agree with the state it ships in:
+        // WIA §4.3 freezes modal_interrupted / event_started / pass_out as their own
+        // class, so an Invalidated receipt stamped `approach=failed` would contradict
+        // the terminal one field away (found live 2026-10-04 when the modal-interrupt
+        // approach run reported approach=failed next to ExecutionState.Invalidated).
+        // Sliced rather than BlockContaining: the owning guard's `is { } toolApproach`
+        // pattern defeats brace balancing, which would return the empty pattern.
+        int outcomeStart = controller.IndexOf("string approachOutcome", StringComparison.Ordinal);
+        outcomeStart.Should().BeGreaterThanOrEqualTo(0, "the approach evidence must be derived, not hard-coded");
+        controller
+            .Substring(outcomeStart, 160)
+            .Should()
+            .Contain("ExecutionState.Invalidated ? \"invalidated\" : \"failed\"");
+        controller.Should().NotContain("reach=1;approach=failed", "no receipt may hard-code the failed stamp");
+
         // Fixture cancellation routes through the same Cancel.
         MethodBody(controller, "public LocalExecutionReceipt CancelActiveForFixture(")
             .Should().Contain("this.activeToolApproach.RequestId");
