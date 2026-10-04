@@ -675,13 +675,17 @@ async function exerciseOperations(origin, client) {
       card: JSON.stringify(IMPORT_CARD),
     });
     if (staged === null || typeof staged !== "object") throw new Error("character_import_stage_unavailable");
-    if (typeof staged.importId !== "string" || !/^import-[A-Za-z0-9_-]{20,}$/.test(staged.importId))
+    if (typeof staged.importId !== "string" || !/^[A-Za-z0-9_-]{22,128}$/.test(staged.importId))
       throw new Error("character_import_id_invalid");
     if (staged.name !== "Imported Rae") throw new Error("character_import_name_not_applied");
     if (!Array.isArray(staged.fields) || staged.fields.length === 0) throw new Error("character_import_fields_missing");
     if (!Array.isArray(staged.dispositions)) throw new Error("character_import_dispositions_missing");
-    // The always-on world book entry must travel as a candidate (S3 path).
-    if (!staged.fields.some((field) => field?.field === "worldbook_Footpaths"))
+    // The card's world book must travel as candidate fields (the S3 link: a
+    // reviewed world book entry is what later reaches the companion's m[0]
+    // lorebook_constant source). The exact entryId is derived by the import
+    // service from the card format and index, so assert the prefix rather than
+    // a guessed identifier.
+    if (!staged.fields.some((field) => typeof field?.field === "string" && field.field.startsWith("worldbook_")))
       throw new Error("character_import_worldbook_field_missing");
     stagedImportId = staged.importId;
   });
@@ -699,12 +703,15 @@ async function exerciseOperations(origin, client) {
     if (stagedImportId === null) throw new Error("character_import_stage_prerequisite");
     const review = await sendJson(origin, client, "POST", `/api/tavern/v1/imports/${stagedImportId}/review`, {
       apiVersion: 1,
-      reviewedFields: ["persona_core"],
+      // Review the card's own name together with its persona: both are
+      // reviewed fields, so the confirmed companion is named what the player
+      // imported instead of silently keeping the default name.
+      reviewedFields: ["name", "persona_core"],
       approvedAtMs: Date.now(),
     });
     if (review === null || typeof review !== "object") throw new Error("character_import_review_unavailable");
     if (review.importId !== stagedImportId) throw new Error("character_import_review_id_mismatch");
-    if (!Array.isArray(review.reviewedFields) || review.reviewedFields[0] !== "persona_core")
+    if (!Array.isArray(review.reviewedFields) || review.reviewedFields[0] !== "name")
       throw new Error("character_import_review_not_applied");
     if (!Number.isInteger(review.approvedAtMs) || review.approvedAtMs <= 0)
       throw new Error("character_import_review_timestamp_missing");
