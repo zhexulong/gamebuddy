@@ -631,6 +631,18 @@ internal sealed class HostFarmhandProvisioner
         return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
     }
 
+    /// <summary>
+    /// Canonical observed physical save-slot basename, exactly as the game names
+    /// a save folder (<c>SaveGame.cs:448</c>): <see cref="SaveGame.FilterFileName"/>
+    /// of the native save name plus the game's own unique ID. It mirrors
+    /// <see cref="WorldCreationBootstrap"/>'s observation (same filter, same
+    /// shape), so the slot the Mod published for the world it created and the
+    /// slot the manifest reports cannot diverge. It is a basename only: never a
+    /// path, a PID or a token.
+    /// </summary>
+    internal static string ComposeObservedSaveSlot(string logicalSaveName, ulong uniqueId) =>
+        $"{SaveGame.FilterFileName(logicalSaveName)}_{uniqueId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
     private FarmhandProvisioningResult IssueManifestForPersistedBinding(FarmhandAttachmentRequest request, long now, FarmhandBindingStore bindings, out string? manifestPath)
     {
         manifestPath = null;
@@ -638,6 +650,10 @@ internal sealed class HostFarmhandProvisioner
             return new("uncertain", "manifest_publication_failed");
         string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
         string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        // The observed physical slot is derived next to the save/world identity it
+        // belongs to, from the game's own save name plus its unique ID, so the
+        // manifest publishes exactly the slot the native create/load path observed.
+        string observedSaveSlot = ComposeObservedSaveSlot(Game1.GetSaveGameName(set_value: false), Game1.uniqueIDForThisGame);
         FarmhandBinding? binding = bindings.Bindings.FirstOrDefault(candidate => candidate.CompanionId == request.CompanionId && candidate.SaveId == saveId && candidate.WorldId == worldId && candidate.CabinId == request.CabinId);
         Farmer? farmhand = binding is null ? null : Game1.GetPlayer(binding.FarmhandId, onlyOnline: false);
         Cabin? cabin = this.FindCabin(request.CabinId);
@@ -669,6 +685,7 @@ internal sealed class HostFarmhandProvisioner
             RequestId = request.RequestId,
             SaveId = saveId,
             WorldId = worldId,
+            ObservedSaveSlot = observedSaveSlot,
             CompanionId = request.CompanionId,
             FarmhandId = farmhand.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
             CabinId = request.CabinId,

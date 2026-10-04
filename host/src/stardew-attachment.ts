@@ -74,6 +74,15 @@ export type StardewJoinManifest = Readonly<{
   endpoint: string;
   saveId: string;
   worldId: string;
+  /**
+   * Physical save-slot basename the Mod observed for the bound world
+   * (`{filteredSaveName}_{uniqueIDForThisGame}`), exposed so the Stardew
+   * integration seam can consume the world the game itself created as an opaque
+   * binding ref. It is redacted to a basename: no path, PID or token. The Mod
+   * always writes it into the signed bytes; it stays optional here only because
+   * the pre-existing handoff fixtures publish manifests without it.
+   */
+  observedSaveSlot?: string;
   companionId: string;
   farmhandId: string;
   cabinId: string;
@@ -442,6 +451,7 @@ function validateManifest(value: unknown): StardewJoinManifest {
     !isEndpoint(value.endpoint) ||
     !isOpaque(value.saveId) ||
     !isOpaque(value.worldId) ||
+    (value.observedSaveSlot !== undefined && !isObservedSaveSlot(value.observedSaveSlot)) ||
     !isOpaque(value.companionId) ||
     !isNativeId(value.farmhandId) ||
     !isOpaque(value.cabinId) ||
@@ -474,6 +484,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function isOpaque(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+/**
+ * Physical save-slot basename shape: the native save identity the game assigned
+ * plus its unique ID. Stricter than the generic opaque alphabet on purpose so a
+ * path separator, a space, punctuation or a leading '-' can never be smuggled
+ * through the redacted slot channel.
+ */
+function isObservedSaveSlot(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9]{1,64}_[0-9]{1,32}$/.test(value);
 }
 function isNativeId(value: unknown): value is string {
   if (typeof value !== "string" || !/^-?[0-9]{1,19}$/.test(value)) return false;

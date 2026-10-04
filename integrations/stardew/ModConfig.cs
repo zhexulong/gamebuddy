@@ -70,6 +70,15 @@ public sealed class ModConfig
     /// <summary>Opt-in test fixture: load a dedicated save through the native game API without UI input.</summary>
     public HostAutomationConfig? HostAutomation { get; init; }
 
+    /// <summary>
+    /// Formal Player Host native world creation. The private bootstrap composer
+    /// stages this in the Player Host profile's config.json; at the main menu the
+    /// Mod drives the game's own new-game entry exactly once and observes the
+    /// physical slot basename the game assigned. It is a production config,
+    /// deliberately decoupled from every fixture-only save-name gate.
+    /// </summary>
+    public WorldCreationConfig? WorldCreation { get; init; }
+
     /// <summary>Formal AI-client provisioning adapter. It reads only a signed manifest.</summary>
     public FarmhandProvisionerConfig? FarmhandProvisioner { get; init; }
 
@@ -195,6 +204,58 @@ public sealed class NativeLocalPlayerFixtureConfig
         string suffix = slot[(filtered.Length + 1)..];
         return suffix.Length is >= 1 and <= 32 && suffix.All(char.IsDigit);
     }
+}
+
+/// <summary>
+/// Frozen formal world-creation request staged into the Player Host profile's
+/// config.json by the private bootstrap composer. The Mod creates one world
+/// from this form and observes the slot the game assigned; the Host never names
+/// or writes the slot. Unlike <see cref="NativeLocalPlayerFixtureBootstrapConfig"/>
+/// it carries no fixture save-name prefix and is a legitimate production config.
+/// </summary>
+public sealed class WorldCreationConfig
+{
+    public bool Enable { get; init; }
+    public string FarmName { get; init; } = string.Empty;
+    public string PlayerName { get; init; } = string.Empty;
+    public string FavoriteThing { get; init; } = string.Empty;
+    public bool CreateOnce { get; init; }
+
+    /// <summary>
+    /// A world is created once per request. The Mod refuses to arm when the
+    /// request does not pin that intent, so a staged form can never silently
+    /// become a repeated new-game driver.
+    /// </summary>
+    internal bool IsValid => Enable
+        && CreateOnce
+        && FarmName.Length is >= 1 and <= 32
+        && FarmName.All(IsSlotSafeFarmNameText)
+        && PlayerName.Length is >= 1 and <= 64
+        && PlayerName.All(IsPlayerNameText)
+        && FavoriteThing.Length is >= 1 and <= 32
+        && FavoriteThing.All(IsDisplayText);
+
+    /// <summary>
+    /// The farm name is the only creation field that reaches the world identity:
+    /// the observed slot basename is the name's letters and digits plus the game's
+    /// unique id. That slot travels inside the signed join manifest, which the
+    /// Host re-serializes and verifies with its own JSON encoder, so a non-ASCII
+    /// character would be escaped on one side and written literally on the other
+    /// and the HMAC could never match. Restricting the staged farm name to ASCII
+    /// keeps the cross-language signature stable instead of adding a
+    /// normalization pass for display text the Host itself chooses. Spaces are
+    /// accepted for display and are dropped when the slot basename is derived.
+    /// </summary>
+    private static bool IsSlotSafeFarmNameText(char character) =>
+        (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == ' ';
+
+    /// <summary>Display text the native new-game setup accepts: letters, digits and ordinary name punctuation.</summary>
+    private static bool IsDisplayText(char character) =>
+        char.IsLetterOrDigit(character) || character is ' ' or '-' or '\'' or '.';
+
+    /// <summary>The same bounded native player-name alphabet the fixture bootstrap already enforces.</summary>
+    private static bool IsPlayerNameText(char character) =>
+        char.IsLetterOrDigit(character) || character is '_' or '-';
 }
 
 public sealed class NativeLocalPlayerFixtureBootstrapConfig
