@@ -3621,13 +3621,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            // The walk itself failed or was cancelled. Nothing native ran, so this is
-            // the action's terminal, and it reports the actor's real position so the
-            // caller can tell "could not get there" from "target changed".
+            // The walk itself failed, or a world change (modal / event / pass-out)
+            // invalidated it before anything native ran. Either way nothing native
+            // ran, so this is the action's terminal, and it reports the actor's real
+            // position so the caller can tell "could not get there" from "target
+            // changed".
+            //
+            // The evidence must agree with the terminal it ships in: WIA §4.3 freezes
+            // world-change interruptions as their own class (modal_interrupted /
+            // event_started / pass_out), so stamping `approach=failed` onto an
+            // Invalidated receipt would contradict the state one field away and tell
+            // the Agent the walk failed when the world actually moved.
+            string approachOutcome = state == ExecutionState.Invalidated ? "invalidated" : "failed";
             this.activeToolApproach = null;
             this.revision++;
             LocalExecutionReceipt approachFailed = new(toolApproach.ExecutionId, toolApproach.RequestId, state, reasonCode, this.revision,
-                $"location={toolApproach.Location};target={toolApproach.ExpectedTargetId};tile={toolApproach.TargetX},{toolApproach.TargetY};reach=1;approach=failed;body_evidence={evidence ?? "none"}");
+                $"location={toolApproach.Location};target={toolApproach.ExpectedTargetId};tile={toolApproach.TargetX},{toolApproach.TargetY};reach=1;approach={approachOutcome};body_evidence={evidence ?? "none"}");
             this.Remember(approachFailed);
             this.AddTrace(approachFailed);
             this.PublishIdleAfterRelease(toolApproach.ExecutionId, toolApproach.RequestId);
