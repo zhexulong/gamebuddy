@@ -210,12 +210,30 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // the 700ms freezePause window rather than sampling once; publication review
   // is still owed (design/10 3.1.1).
   gate("ride_minecart", 1, "run-stardew-native-local-player-ride-minecart-smoke.mjs", "minecart_ride_completed", "native_ride_minecart_v1"),
-
   // The bus is a typed transport action over the game's own ticket interaction,
   // not a fixture-authored warp: the runner proves the native terminal
   // (bus_arrived), the fare actually deducted, and the world moving the actor to
   // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
   gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
+  // Promoted to live_verified (2026-10-04): each of these produced a real
+  // target-version native-local run with its own receipt and fresh postcondition
+  // in the loop-closure wave. Publication review is a separate, optional marker
+  // (architecture/game-action-model.md 'lifecycle 与发布终点'), so live_verified is
+  // the release endpoint and these are now part of the published set.
+  gate("cut_grass", 1, "run-stardew-native-local-player-cut-grass-smoke.mjs", "grass_cut", "native_cut_grass_v1"),
+  gate("harvest_bush", 1, "run-stardew-native-local-player-harvest-bush-smoke.mjs", "bush_harvested", "native_harvest_bush_v1"),
+  gate("harvest_fruit_tree", 1, "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs", "fruit_tree_harvested", "native_harvest_fruit_tree_v1"),
+  gate("shake_tree", 1, "run-stardew-native-local-player-shake-tree-smoke.mjs", "tree_shaken", "native_shake_tree_v1"),
+  gate("take_pedestal_item", 1, "run-stardew-native-local-player-take-pedestal-item-smoke.mjs", "pedestal_item_taken", "native_take_pedestal_item_v1"),
+  gate("toggle_fence_gate", 1, "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs", "fence_gate_toggled", "native_toggle_fence_gate_v1"),
+  gate("clear_cask", 1, "run-stardew-native-local-player-clear-cask-smoke.mjs", "cask_cleared", "native_clear_cask_v1"),
+  gate("dress_mannequin", 1, "run-stardew-native-local-player-dress-mannequin-smoke.mjs", "mannequin_dressed", "native_dress_mannequin_v1"),
+  gate("set_sign_display", 1, "run-stardew-native-local-player-set-sign-display-smoke.mjs", "sign_display_set", "native_set_sign_display_v1"),
+  gate("deposit_silo_hay", 1, "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs", "silo_hay_deposited", "native_deposit_silo_hay_v1"),
+  gate("toggle_tool_light", 1, "run-stardew-native-local-player-toggle-tool-light-smoke.mjs", "tool_light_toggled", "native_toggle_tool_light_v1"),
+  gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
+  gate("mount_transport", 1, "run-stardew-native-local-player-mount-transport-smoke.mjs", "horse_mounted", "native_mount_transport_v1"),
+  gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
 ]);
 
 /**
@@ -232,7 +250,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // The loop-closure pilot: cut grass tufts (TerrainFeature Grass) through the
   // native scythe seam. Registered as Experimental in the Mod catalog until its
   // live gate passes; the runner is the scythe-family contract shape.
-  cut_grass: "run-stardew-native-local-player-cut-grass-smoke.mjs",
   // Promoted actions (clear_debris, npc_relationship, water_pet_bowl,
   // water_slime_hutch_trough, chest_store, chest_retrieve, chop_stump,
   // plant_sapling, cut_weeds, scythe_crop, craft_item, cook_recipe,
@@ -315,19 +332,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
-  harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
-  harvest_fruit_tree: "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
-  shake_tree: "run-stardew-native-local-player-shake-tree-smoke.mjs",
-  take_pedestal_item: "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
-  toggle_fence_gate: "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
-  clear_cask: "run-stardew-native-local-player-clear-cask-smoke.mjs",
-  dress_mannequin: "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
-  set_sign_display: "run-stardew-native-local-player-set-sign-display-smoke.mjs",
-  deposit_silo_hay: "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
-  toggle_tool_light: "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
-  use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
-  mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
-  enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

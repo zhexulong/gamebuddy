@@ -126,12 +126,20 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // (public MinecartWarp behind a menu) a real action. It is therefore a missing
   // primitive: choosing an already-reached level is not expressible by entering
   // the mine at deepestLevel + 1.
+  // Menu-owned, not a missing primitive. I first read this as a candidate because
+  // MineElevatorMenu.receiveLeftClick performs the transition through public
+  // Game1.enterMine(level); the loop-closure gate refused that reading, and it is
+  // right: the *choice* only exists inside MineElevatorMenu (its only public
+  // selection entry is receiveLeftClick(x, y)), so a level-selecting action could
+  // only be built by driving that menu or by reproducing its three statements as a
+  // shadow of native logic. Game1.enterMine(level) alone bypasses the player's
+  // choice, which is what enter_mine already does for the descent.
   MineElevator: {
     at: "GameLocation",
-    group: "new_primitive_needed",
-    actionId: "use_mine_elevator",
+    group: "explicit_exclusion",
+    boundary: "B1_menu_owned_transaction",
     reason:
-      "MineElevatorMenu.receiveLeftClick sets Game1.player.ridingMineElevator = true and calls public Game1.enterMine(chosenLevel); the case body only opens the menu, but the transition itself has a public non-menu entry and a distinct intent (level selection)",
+      "the case only mounts MineElevatorMenu, and the level choice exists only inside that menu (MineElevatorMenu.receiveLeftClick is its public entry, x/y-driven); the transition it performs is public, but binding the action would require the menu stack or input ingress",
     anchor: "GameLocation.cs:9797 + MineElevatorMenu.cs receiveLeftClick",
   },
   // Both of these case bodies exist but shipped content cannot reach them: the
@@ -146,25 +154,29 @@ export const SELECTOR_VERDICTS = Object.freeze({
       "the case body is a real gameplay write (consumes a held item with Price >= 60 and sets team.sharedDailyLuck to +/-0.12), but the action string exists only as this case: no map declares a SpiritAltar tile and no source writes the property, so there is no native entry to bind",
     anchor: "GameLocation.cs:9972 (case only)",
   },
-  // The B6 claim that used to live here was WRONG, and the way it was wrong matters:
-  // it scanned map tiles, but this entry is not a map tile. The action string comes
-  // from Data/Buildings ActionTiles (a mill's Input/Output chests), reached through
+  // The B6 claim that used to live here was WRONG, and the reason is instructive:
+  // it scanned maps, and this entry is not a map tile. The action string comes from
+  // `Data/Buildings` ActionTiles (mill Input/Output etc.), reached through
   // Building.doAction -> BuildingData.GetActionAtTile -> GameLocation.performAction.
-  // The seam exists (Building.PerformBuildingChestAction, Building.cs:746).
+  // So the selector IS reachable in shipped content.
   //
-  // It is still not a new action SHAPE — the reachable branch is a container
-  // transaction — so it is a PARTIAL merge, with the shortfall stated rather than
-  // hidden: the Load branch's conversion gate plus RequiredCount quantisation, and
-  // the Collect branch's >=2-stack ItemGrabMenu fallback, are not covered by
-  // chest_store/chest_retrieve. This table rejects unregistered action ids, so a
-  // future load_building_chest / collect_building_chest_output pair must register
-  // before it can appear here.
+  // It still is not a new public action *shape*: the reachable branch delegates to
+  // Building.PerformBuildingChestAction, a container transaction. But the merge is
+  // partial and the shortfall is real, so it is recorded rather than hidden: the
+  // Load branch runs Building.IsValidObjectForChest / GetItemConversionForItem and
+  // quantises by RequiredCount, and the Collect branch is UI-free only while the
+  // output holds exactly one stack — at two or more it opens ItemGrabMenu. Neither
+  // chest_store/chest_retrieve (ordinary owned Chests and fridges, via Chest.addItem
+  // and GetItemsForPlayer) nor machine_load (pinned to a specific machine) covers
+  // that. A future load_building_chest / collect_building_chest_output pair would
+  // have to register first, because this table rejects unregistered action ids
+  // (see the unknown_action_id assertion).
   BuildingChest: {
     at: "GameLocation",
     group: "merge_into_existing",
     actionIds: ["chest_store", "chest_retrieve"],
     reason:
-      "reachable via Data/Buildings ActionTiles (Building.doAction -> GameLocation.cs:10128); terminal is Building.PerformBuildingChestAction, a container transaction already owned by chest_store/chest_retrieve, BUT the Load branch's conversion gate + RequiredCount quantisation and the Collect branch's >=2-stack ItemGrabMenu fallback are not covered",
+      "reachable via Data/Buildings ActionTiles (Building.doAction -> GameLocation.cs:10128) and its terminal is Building.PerformBuildingChestAction; the container intent is already owned by chest_store/chest_retrieve, but the Load branch's conversion gate + RequiredCount quantisation and the Collect branch's >=2-stack ItemGrabMenu fallback are NOT covered by them",
     anchor: "GameLocation.cs:10128 -> Building.cs:746 (PerformBuildingChestAction)",
   },
 
