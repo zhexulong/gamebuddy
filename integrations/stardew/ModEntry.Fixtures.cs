@@ -307,7 +307,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_admission_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_toggle_mine_lamp_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -385,6 +385,24 @@ public sealed partial class ModEntry : Mod
         if (fixture.FixtureScenario == "native_wia_answer_question_v1")
         {
             InstallWiaAnswerQuestionFixture(player, farm);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_tool_approach_interrupt_v1")
+        {
+            InstallWiaToolApproachInterruptionFixture(player, farm);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_animal_product_interrupt_v1")
+        {
+            InstallWiaAnimalProductInterruptionFixture(player, farm);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_item_pickup_interrupt_v1")
+        {
+            InstallWiaItemPickupInterruptionFixture(player, farm);
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
