@@ -102,6 +102,12 @@ internal static class Program
                 VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
             };
             await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
+            // The authenticated Host broker session is the only thing that may
+            // ask for a recovery, and the image admitted for this generation is
+            // the only image it may launch. Mounting binds those two; it has to
+            // happen before the resident Guardian starts the broker's command
+            // loop, which is what serves a recovery request.
+            host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));
             GuardianSupervisorLease? resident = null;
             try
             {

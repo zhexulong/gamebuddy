@@ -21,7 +21,12 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     // that Desktop places in the matching bootstrap frame.
     private readonly CurrentUserRootLayout layout;
     private readonly NamedPipeServerStream server;
-    private readonly Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery;
+    // Not readonly: the recovery launch belongs to the assembler that owns the
+    // admitted Guardian image, and the broker exists before that assembler can
+    // hand it over. Mounting after construction is safe because the command
+    // loop that can ask for a recovery does not start until
+    // AttachResidentGuardianAsync, and AttachRecoveryLaunch refuses late mounts.
+    private Func<CancellationToken, Task<GuardianRecoverySupervisorLease>>? startRecovery;
     private GuardianSupervisorLease? guardian;
     private bool accepted;
     private bool closed;
@@ -36,8 +41,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     {
         this.bootstrapId = bootstrapId;
         this.layout = layout;
-        this.startRecovery = startRecovery;
-        generation = selection.Generation;
+        this.startRecovery = startRecovery;        generation = selection.Generation;
         inventoryDigest = selection.InventoryDigest;
         runtimeAdmissionSha256 = selection.RuntimeAdmissionSha256;
         server = new NamedPipeServerStream($"GameBuddy.HostGuardian.{bootstrapId}", PipeDirection.InOut, 1,
@@ -72,6 +76,20 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             generation, inventoryDigest, runtimeAdmissionSha256,
         }, cancellationToken).ConfigureAwait(false);
         accepted = true;
+    }
+
+    /// <summary>
+    /// Mounts the recovery launch the authenticated Host may ask this session to
+    /// perform. The assembler that holds the admitted Guardian image supplies it
+    /// after the Host is authenticated and before the command loop starts; a late
+    /// mount would leave a window where a recovery request fails closed, so it is
+    /// refused once the loop is serving.
+    /// </summary>
+    internal void AttachRecoveryLaunch(Func<CancellationToken, Task<GuardianRecoverySupervisorLease>> startRecovery)
+    {
+        ArgumentNullException.ThrowIfNull(startRecovery);
+        if (closed || commandLoop is not null || this.startRecovery is not null) throw new GuardianLaunchUnavailableException();
+        this.startRecovery = startRecovery;
     }
 
     internal Task AttachResidentGuardianAsync(GuardianSupervisorLease lease, CancellationToken cancellationToken)

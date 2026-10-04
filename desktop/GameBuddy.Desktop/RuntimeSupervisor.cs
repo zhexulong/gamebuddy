@@ -517,6 +517,29 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         finally { guardianGate.Release(); }
     }
 
+    /// <summary>
+    /// Mounts the assembler-owned recovery launch on the authenticated Host
+    /// broker. It must arrive before the resident Guardian starts the broker's
+    /// command loop, because that loop is what may ask for a recovery; a late
+    /// mount is refused by the broker instead of silently leaving a request
+    /// unservable.
+    /// </summary>
+    internal void AttachRecoveryLaunch(RecoveryLaunchTrigger trigger)
+    {
+        ArgumentNullException.ThrowIfNull(trigger);
+        guardianGate.Wait();
+        try
+        {
+            var child = process;
+            if (Volatile.Read(ref closed) != 0 || child is null ||
+                !WindowsNative.GetExitCodeProcess(child, out _) || WindowsNative.WaitForSingleObject(child, 0) != WindowsNative.WaitTimeout)
+                throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            var currentBroker = broker ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            currentBroker.AttachRecoveryLaunch(trigger.Start);
+        }
+        finally { guardianGate.Release(); }
+    }
+
     /// <summary>Waits for the exact admitted Host child to exit.</summary>
     internal async Task<bool> WaitForExitAsync(CancellationToken cancellationToken)
     {
