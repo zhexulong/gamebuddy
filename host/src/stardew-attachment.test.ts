@@ -419,6 +419,140 @@ test("Stardew attachment flow accepts the Host fixed manifest filename only afte
 });
 
 
+// A manifest exactly as the Mod writes it: camelCase keys in the C# record's
+// declaration order, with `observedSaveSlot` between `worldId` and `companionId`.
+// The signature is over this exact serialized object, so the slot is inside the
+// signed bytes on both sides.
+function modShapedManifest(input: Readonly<{
+  session: Readonly<{ saveId: string; worldId: string; nonce: string }>;
+  observedSaveSlot?: string;
+}>) {
+  return signed({
+    schemaVersion: 1,
+    requestId: "request_01",
+    integrationId: "stardew",
+    integrationVersion: "0.1.0",
+    gameVersion: "1.6.15",
+    gameBuildNumber: 24356,
+    smapiVersion: "4.5.2",
+    multiplayerProtocol: "1.6.15",
+    endpoint: "127.0.0.1:24642",
+    saveId: input.session.saveId,
+    worldId: input.session.worldId,
+    observedSaveSlot: input.observedSaveSlot,
+    companionId: "companion_01",
+    farmhandId: "123456789",
+    cabinId: "cabin_01",
+    sessionNonce: input.session.nonce,
+    issuedAtUnixMs: 2_000,
+    expiresAtUnixMs: 19_000,
+    signature: "",
+  });
+}
+
+test("Stardew attachment flow exposes the observed save slot from inside the signed manifest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    const session = signed({
+      ...baseSession,
+      cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
+    });
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(session));
+    const manifest = modShapedManifest({ session, observedSaveSlot: "GameBuddyFarm_445094166" });
+    await writeFile(join(directory, "stardew-farmhand-manifest.json"), JSON.stringify(manifest));
+
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+
+    const result = await flow.readIssuedManifest("stardew-farmhand-manifest.json", "request_01");
+    assert.equal(result.observedSaveSlot, "GameBuddyFarm_445094166");
+
+    // The slot is part of the signed bytes: changing it without re-signing the
+    // manifest must fail authentication, not silently change the binding ref.
+    await writeFile(
+      join(directory, "stardew-farmhand-manifest.json"),
+      JSON.stringify({ ...manifest, observedSaveSlot: "OtherFarm_445094166" }),
+    );
+    await assert.rejects(
+      () => flow.readIssuedManifest("stardew-farmhand-manifest.json", "request_01"),
+      /stardew_manifest_authentication_failed/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Stardew attachment flow rejects an observed save slot that is not a redacted basename", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    const session = signed({
+      ...baseSession,
+      cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
+    });
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(session));
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+
+    for (const slot of [
+      "C:/Users/player/AppData/Roaming/StardewValley/Saves/GameBuddyFarm_1",
+      "GameBuddy Farm_1",
+      "GameBuddyFarm",
+      "GameBuddyFarm_445094166.json",
+      "",
+    ]) {
+      await writeFile(
+        join(directory, "stardew-farmhand-manifest.json"),
+        JSON.stringify(modShapedManifest({ session, observedSaveSlot: slot })),
+      );
+      await assert.rejects(
+        () => flow.readIssuedManifest("stardew-farmhand-manifest.json", "request_01"),
+        /invalid_stardew_manifest/,
+        `slot ${JSON.stringify(slot)} must not be accepted`,
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Stardew attachment flow still accepts a manifest published without the observed save slot", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    const session = signed({
+      ...baseSession,
+      cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
+    });
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(session));
+    // `JSON.stringify` drops the undefined key, so the Mod-less fixture and its
+    // signature cover the same bytes: a manifest without the field is valid.
+    const withoutSlot = modShapedManifest({ session });
+    await writeFile(join(directory, "stardew-farmhand-manifest.json"), JSON.stringify(withoutSlot));
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+
+    const result = await flow.readIssuedManifest("stardew-farmhand-manifest.json", "request_01");
+    assert.equal(result.observedSaveSlot, undefined);
+    assert.equal(result.farmhandId, "123456789");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Stardew attachment sole verifier requires exact player-host runtime role and generation", async () => {
   const validDirectory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
   try {

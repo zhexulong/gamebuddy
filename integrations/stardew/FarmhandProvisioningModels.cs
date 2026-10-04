@@ -152,6 +152,17 @@ internal sealed record FarmhandJoinManifest
     public string Endpoint { get; init; } = string.Empty;
     public string SaveId { get; init; } = string.Empty;
     public string WorldId { get; init; } = string.Empty;
+    /// <summary>
+    /// Physical save-slot basename the Player Host observed for the bound world
+    /// (<c>{filteredSaveName}_{Game1.uniqueIDForThisGame}</c>). It is
+    /// Stardew-integration-private and redacted: a basename only, never an
+    /// absolute path, a PID, a pipe/token or any other native launch fact.
+    /// It is published inside the manifest so the Host can consume the world the
+    /// game itself created as an opaque binding ref, and it sits inside the signed
+    /// bytes because the Host verifies the manifest exactly as the Mod wrote it
+    /// (declaration order here is the canonical signed key order).
+    /// </summary>
+    public string ObservedSaveSlot { get; init; } = string.Empty;
     public string CompanionId { get; init; } = string.Empty;
     public string FarmhandId { get; init; } = string.Empty;
     public string CabinId { get; init; } = string.Empty;

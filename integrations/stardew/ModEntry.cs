@@ -110,6 +110,7 @@ public sealed partial class ModEntry : Mod
     private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
     private bool nativeLocalPlayerFixtureBootstrapInvoked;
     private bool nativeLocalPlayerFixtureBootstrapTerminal;
+    private WorldCreationBootstrap? worldCreationBootstrap;
     private NativeLocalFeedFixturePending? nativeLocalFeedFixturePending;
     private NativeLocalCollectAnimalProductFixturePending? nativeLocalCollectAnimalProductFixturePending;
     private NativeLocalClearHoeDirtFixturePending? nativeLocalClearHoeDirtFixturePending;
@@ -253,6 +254,20 @@ public sealed partial class ModEntry : Mod
             this.provisioningConfigurationRejected = true;
             this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: DeniedActions/DeniedActionFamilies must name registrations the Mod catalog defines, and ExperimentalActions may only name registrations whose lifecycle is experimental.", LogLevel.Error);
             return;
+        }
+        // Formal Player Host world creation is a production path and is armed
+        // before (and independently of) any fixture branch: it is never gated by
+        // the fixture-only GameBuddyFixture save-name checks.
+        if (this.config.WorldCreation?.Enable == true)
+        {
+            if (this.config.WorldCreation is not { IsValid: true })
+            {
+                this.provisioningConfigurationRejected = true;
+                this.Monitor.Log("GameBuddy rejected the formal Player Host WorldCreation configuration: a non-empty farm/player/favorite identity and CreateOnce are required.", LogLevel.Error);
+                return;
+            }
+            this.worldCreationBootstrap = new WorldCreationBootstrap(this.config.WorldCreation, this.Monitor);
+            this.Monitor.Log("GameBuddy formal Player Host world creation armed: the Mod will drive the native new-game entry once at the main menu and observe the physical slot it assigns.", LogLevel.Info);
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
@@ -605,6 +620,14 @@ public sealed partial class ModEntry : Mod
         // Configuration rejection is terminal for this load.
         if (this.provisioningConfigurationRejected)
             return;
+        if (this.worldCreationBootstrap is not null && !this.worldCreationBootstrap.TryComplete())
+        {
+            // The staged creation request exists but this loaded world is not the
+            // world it produced. Fail closed: never report an existing save as a
+            // created one, and never begin host attachment on an unobserved world.
+            this.Monitor.Log("GameBuddy refused the loaded world because formal Player Host world creation was not observed.", LogLevel.Error);
+            return;
+        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             if (this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true })
@@ -1109,6 +1132,15 @@ public sealed partial class ModEntry : Mod
         }
         if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
             return;
+        if (this.worldCreationBootstrap is { IsArmed: true })
+        {
+            // Drive the one native creation request while the title menu owns the
+            // screen, and start no host/provisioning work until the created world
+            // has been observed (or the attempt failed closed).
+            this.worldCreationBootstrap.TryCreate();
+            if (this.worldCreationBootstrap.IsArmed)
+                return;
+        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             this.TryInitializeNativeLocalPlayerFixture();
@@ -1513,6 +1545,7 @@ public sealed partial class ModEntry : Mod
     {
         this.salientEventFilter.Reset();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
+        this.worldCreationBootstrap?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
         this.farmhandProvisioner = null;
