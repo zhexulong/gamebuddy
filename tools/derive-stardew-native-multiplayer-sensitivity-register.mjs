@@ -321,6 +321,24 @@ const TABLE = {
       "getShippingBin(who) returns who.personalShippingBin instead of the shared bin when Game1.player.team.useSeparateWallets is set, so the settlement target depends on the world's wallet mode",
     ],
   ],
+  // The bus is driven through two native entry points: the ticket-machine
+  // interaction that raises the game's own question, and the dispatcher that
+  // consumes the answer. Neither is re-implemented by the Mod (see
+  // farmhandexecutioncontroller.busactions.cs), so both seams are recorded.
+  ride_bus: [
+    [
+      "StardewValley.Locations/BusStop.cs",
+      "public override bool checkAction(Location tileLocation, xTile.Dimensions.Rectangle viewport, Farmer who)",
+      "mp-insensitive",
+      "checkAction's ticket branch is decided by the local player's mail flags, whether the local player rides a horse, and the local passenger list; the shared canDriveYourselfToday write lives in a different BusStop method, so this seam itself reads no multiplayer-scoped state",
+    ],
+    [
+      "StardewValley.Locations/BusStop.cs",
+      "public override bool answerDialogue(Response answer)",
+      "mp-semantic",
+      "answerDialogue deducts Game1.player.Money and arms forceWarpTimer/PathFindController for the local player, but it also clears the shared Game1.netWorldState canDriveYourselfToday flag and reads Desert.warpedToDesert, so the verdict is world-mode dependent, not local-only",
+    ],
+  ],
   // collect_crab_pot_output uses the native CrabPot.checkAction path; the read of
   // crabPot.owner.Value is the Mod's own admission guard and the native branch that
   // gates on who.IsLocalPlayer only controls the pickup sound/animation.
