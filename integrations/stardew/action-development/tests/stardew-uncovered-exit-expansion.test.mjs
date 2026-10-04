@@ -71,21 +71,17 @@ function expansion() {
   return artifactPromise;
 }
 
-test("只展开未覆盖的 gameplay 出口（6 个）", async () => {
+test("只展开未覆盖的 gameplay 出口（4 个）", async () => {
   const a = await expansion();
   assert.equal(a.artifactKind, "stardew_uncovered_exit_expansion");
   // `canBePlacedHere` 在 2e9e13e 之前因 place_wood_fence 的错误 seam 引用被算作已覆盖；
-  // 修正为真实变异点 placementAction 后，它诚实地回到未覆盖集（见 reconcile 测试里的同类注释）。
-  assert.equal(a.counts.uncoveredExits, 6);
+  // 修正为真实变异点 placementAction 后，它诚实地回到未覆盖集。
+  //
+  // 6 → 4：`checkForAction` 与 `performObjectDropInAction` 已随其他 lane 的 action 注册
+  // （register 里的 seam 现在能承载这两个出口）退出未覆盖集，而不是被静默丢弃。
+  assert.equal(a.counts.uncoveredExits, 4);
   const names = a.expansions.map((e) => e.nativeMember).sort();
-  assert.deepEqual(names, [
-    "animateSpecialMove",
-    "canBePlacedHere",
-    "checkForAction",
-    "performAction",
-    "performObjectDropInAction",
-    "rotate",
-  ]);
+  assert.deepEqual(names, ["animateSpecialMove", "canBePlacedHere", "performAction", "rotate"]);
 });
 
 test("单实现出口 vs 多实现出口被区分", async () => {
@@ -94,14 +90,15 @@ test("单实现出口 vs 多实现出口被区分", async () => {
   assert.equal(byName.get("rotate").shape, "single_implementor");
   assert.equal(byName.get("rotate").implementorCount, 1);
   assert.equal(byName.get("animateSpecialMove").shape, "single_implementor");
-  assert.equal(byName.get("performObjectDropInAction").shape, "multi_implementor");
-  assert.ok(byName.get("performObjectDropInAction").implementorCount >= 9);
+  assert.equal(byName.get("canBePlacedHere").shape, "multi_implementor");
+  assert.ok(byName.get("canBePlacedHere").implementorCount >= 4);
 });
 
 test("解释器形态被识别（selector 数超阈值）", async () => {
   const a = await expansion();
   const byName = new Map(a.expansions.map((e) => [e.nativeMember, e]));
-  assert.equal(byName.get("checkForAction").shape, "interpreter");
+  // `checkForAction` 已随其他 lane 的 action 注册退出未覆盖集（见上一个测试的注释），
+  // `performAction` 仍是在场最强的解释器证据。
   assert.equal(byName.get("performAction").shape, "interpreter");
   const performAction = byName.get("performAction");
   const big = performAction.units.find((u) => u.selectorCount >= 100);
@@ -109,16 +106,22 @@ test("解释器形态被识别（selector 数超阈值）", async () => {
   assert.equal(big.class, "GameLocation");
 });
 
-test("checkForAction 的 17 个实现里只有少数产出候选", async () => {
+test("多实现出口不把实现数当成 action 数", async () => {
   const a = await expansion();
-  const e = a.expansions.find((x) => x.nativeMember === "checkForAction");
-  assert.equal(e.implementorCount, 17);
+  // `performObjectDropInAction` 已退出未覆盖集，`canBePlacedHere` 接手同一命题。
+  // 实测 4 个实现（Item / Object / Furniture / Wallpaper）里只有 Furniture 产出候选：
+  // 一个出口有 N 个实现，不等于 N 个 action。
+  const e = a.expansions.find((x) => x.nativeMember === "canBePlacedHere");
+  assert.equal(e.shape, "multi_implementor");
+  assert.equal(e.implementorCount, 4);
+  assert.equal(e.candidateUnitCount, 1);
   assert.ok(
-    e.candidateUnitCount > 0 && e.candidateUnitCount < e.implementorCount,
+    e.candidateUnitCount < e.implementorCount,
     `候选实现数应严格小于实现总数：${e.candidateUnitCount}/${e.implementorCount}`,
   );
-  // 每个实现都必须有被拒谓词或候选分支之一，不能两者皆空
-  for (const u of e.units) {
+  // 非空实现必须给出判决（候选分支或有名的拒绝谓词）。`Item.canBePlacedHere` 是
+  // 空实现，既无分支也无拒绝谓词——那是诚实的“这里无东西可判”，不是缺失证据。
+  for (const u of e.units.filter((unit) => unit.candidateCount > 0 || unit.branchCount > 0)) {
     const hasVerdict = u.candidateCount > 0 || u.rejectedBy.length > 0 || u.extractionError !== null;
     assert.ok(hasVerdict, `${u.class} 必须有候选分支或被拒谓词`);
   }
