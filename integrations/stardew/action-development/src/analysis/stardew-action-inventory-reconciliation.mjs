@@ -120,6 +120,41 @@ const contentFromSelector = (reason, ref) => ({ group: "content_operation", reas
  * 且完备性由断言保证。`at` 用于同名跨类 selector（如 BananaShrine）。
  */
 export const SELECTOR_VERDICTS = Object.freeze({
+  // MineElevator is reachable (a MineElevator action tile on Maps/Mine) and its
+  // selection path performs the transition through PUBLIC Game1.enterMine(level)
+  // plus Farmer.ridingMineElevator — the same shape that made MinecartTransport
+  // (public MinecartWarp behind a menu) a real action. It is therefore a missing
+  // primitive: choosing an already-reached level is not expressible by entering
+  // the mine at deepestLevel + 1.
+  MineElevator: {
+    at: "GameLocation",
+    group: "new_primitive_needed",
+    actionId: "use_mine_elevator",
+    reason:
+      "MineElevatorMenu.receiveLeftClick sets Game1.player.ridingMineElevator = true and calls public Game1.enterMine(chosenLevel); the case body only opens the menu, but the transition itself has a public non-menu entry and a distinct intent (level selection)",
+    anchor: "GameLocation.cs:9797 + MineElevatorMenu.cs receiveLeftClick",
+  },
+  // Both of these case bodies exist but shipped content cannot reach them: the
+  // action string occurs exactly once in the whole tree (the case itself), no map
+  // declares the tile, and no source file writes it dynamically (unlike
+  // BedFurniture's Sleep TouchAction). Same class as Lamp (B6).
+  SpiritAltar: {
+    at: "GameLocation",
+    group: "explicit_exclusion",
+    boundary: "B6_unreachable_in_shipped_content",
+    reason:
+      "the case body is a real gameplay write (consumes a held item with Price >= 60 and sets team.sharedDailyLuck to +/-0.12), but the action string exists only as this case: no map declares a SpiritAltar tile and no source writes the property, so there is no native entry to bind",
+    anchor: "GameLocation.cs:9972 (case only)",
+  },
+  BuildingChest: {
+    at: "GameLocation",
+    group: "explicit_exclusion",
+    boundary: "B6_unreachable_in_shipped_content",
+    reason:
+      "the case delegates to Building.PerformBuildingChestAction(string, who), whose only invoker is this case: no map declares a BuildingChest tile and no source writes the property, so the only reachable part is the container semantics already owned by chest_store/chest_retrieve",
+    anchor: "GameLocation.cs:10128 (case only)",
+  },
+
   // ---- 新 primitive（方法层看不到的 selector 级发现）-----------------------
   Lamp: {
     at: "GameLocation",
@@ -186,29 +221,6 @@ export const SELECTOR_VERDICTS = Object.freeze({
     actionIds: ["travel", "enter_exit"],
     reason: "same farm-obelisk warp intent on IslandWest; terminal Game1.warpFarmer after a fade",
     anchor: "IslandWest.cs:186",
-  },
-
-  // ---- 待裁定（selector 层暴露的新问题，每项一个问题）-------------------
-  BuildingChest: {
-    at: "GameLocation",
-    group: "needs_adjudication",
-    question:
-      "Building.PerformBuildingChestAction has a Chest branch that opens ItemGrabMenu and a Load branch that converts depot items with no menu; does the Load branch's transaction equal the ordinary chest store/retrieve transaction (target extension) or is it a separate primitive?",
-    anchor: "GameLocation.cs:10128 -> Building.cs:746",
-  },
-  SpiritAltar: {
-    at: "GameLocation",
-    group: "needs_adjudication",
-    question:
-      "4.4 excluded the 14 predicate-passing buckets as mail/quest-gated content, but SpiritAltar's body gates only on sharedDailyLuck != +-0.12 and held-item price, then writes Game1.player.team.sharedDailyLuck.Value deterministically; is this a player operation (new primitive) or content?",
-    anchor: "GameLocation.cs:9972",
-  },
-  MineElevator: {
-    at: "GameLocation",
-    group: "needs_adjudication",
-    question:
-      "MinecartTransport became a real action because its payload MinecartWarp is a public non-menu method; MineElevator's level pick only exists inside MineElevatorMenu.receiveLeftClick (a menu input handler), so the same precedent does not obviously apply. Does floor selection get a primitive (as archived M8 `select_mine_elevator_floor` implied) or is it B1?",
-    anchor: "GameLocation.cs:9797 -> MineElevatorMenu.cs receiveLeftClick",
   },
 
   // ---- plain-world-effect 里属内容操作的（分类默认只覆盖对话/菜单/传送）----
@@ -306,13 +318,13 @@ export const METHOD_VERDICTS = Object.freeze({
   "SlimeHutch.performToolAction@154": implemented("water_slime_hutch_trough (live 2026-09-28)", "4.3"),
   "Mannequin.performToolAction@358": newPrimitive("dress_mannequin", "place/dress/undress are the same intent", "Mannequin.cs:358", "4.3"),
   "Mannequin.checkForAction@400": newPrimitive("dress_mannequin", "same intent (cursed <0.001 branch counted here)", "Mannequin.cs:400", "4.3"),
-  "Child.checkAction@737": pending(
-    "hat swap + talkToFriend + doEmote mixed; whether it is an independent action depends on dress-up vs social product intent",
-    "Child.cs:737",
+  "Child.checkAction@737": contentFromSelector(
+    "family/social flavour on the player's own child: friendship bookkeeping, talkToFriend + doEmote, or a hat swap when Age >= 3; no catalog intent and no gameplay loop the companion plans",
+    "4.5",
   ),
-  "JojaMart.checkAction@61": pending(
-    "Morris dialogue answerQuestionBehavior; only becomes an action after the event trigger is verified",
-    "JojaMart.cs:61",
+  "JojaMart.checkAction@61": contentFromSelector(
+    "gated on the JoinJoja tile action: Morris dialogue leading into the Joja membership story event (611439), the same mail/event content class as 4.4's other exclusions",
+    "4.5",
   ),
   "IslandEast.performAction@290": contentFromSelector("selector `BananaShrine`: banana offering -> event", "4.4"),
   "IslandSecret.performAction@145": contentFromSelector("selector `BananaShrine`: shrine animation + reduceActiveItemByOne", "4.4"),
