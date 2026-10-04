@@ -324,8 +324,17 @@ async function deriveCompanionWorldBookBinding(
  * mirroring the managed World Info hash gate.
  *
  * `constant: true` entries are reviewed always-on background and ride in the
- * stable lorebook_constant source (Tier 2 m[0]); keyword-gated entries stay
- * out of the stable prefix and become volatile selection candidates.
+ * stable lorebook_constant source (Tier 2 m[0]) - the whole point of binding the
+ * companion's own book here, and the same thing the Game surface compiles.
+ *
+ * Keyword-gated entries are deliberately NOT forwarded as volatile candidates.
+ * The volatile channel requires a per-turn binding (Magic Context resolves the
+ * turn's eligible subset and refuses when a bound source is absent from the
+ * catalog's volatile set), and this construction registers a catalog once per
+ * Pi session rather than per turn - so publishing entry-keyed candidates here
+ * leaves the renderer and the turn binding unable to agree, and every turn after
+ * the first fails. Chat keeps the always-on baseline only; the keyword channel
+ * belongs to the path that owns the per-turn projection.
  */
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
@@ -345,11 +354,9 @@ async function resolveBoundWorldBookSource(
   )
     throw new Error("chat_runtime_exact_content_unavailable");
   const constantEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant === true);
-  const keywordEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant !== true);
   return Object.freeze({
     binding,
     alwaysOnPremise: book.alwaysOnPremise,
     ...(constantEntries.length > 0 ? { constantEntries } : {}),
-    ...(keywordEntries.length > 0 ? { keywordEntries } : {}),
   });
 }

@@ -302,12 +302,15 @@ test("Chat construction binds the companion's own reviewed world book when the t
     const catalog = await prepared.materializeStableContextForPiSession("pi_session_companion_book");
     assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
     assert.equal(catalog.stableSources[0]?.sourceId, "gamebuddy-worldbook-companion_01");
-    // The always-on entry and the premise ride the stable source; the keyword-gated
-    // entry stays out of the prefix and becomes a volatile candidate.
+    // The always-on entry and the premise ride the stable source.
     assert.match(catalog.stableSources[0]?.content ?? "", /valley breathes/);
     assert.match(catalog.stableSources[0]?.content ?? "", /every footpath/);
+    // Keyword-gated entries do NOT ride the stable prefix, and are not published
+    // as volatile candidates either: Chat registers its catalog once per Pi
+    // session while the volatile channel binds per turn, so candidates published
+    // here could never agree with a turn binding.
     assert.doesNotMatch(catalog.stableSources[0]?.content ?? "", /quiet morning/);
-    assert.deepEqual(catalog.volatileSources.map((source) => source.content), ["Fond of a quiet morning."]);
+    assert.deepEqual(catalog.volatileSources, []);
   } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
