@@ -1,7 +1,7 @@
 {
   "schema": "chat_memory_probe_manifest/v1",
   "manifestId": "man-restart-01",
-  "manifestDigest": "42fd195503e7340c2a1c48a7078214ee7c0165d1060e1491359c2ddfb0c42a94",
+  "manifestDigest": "ece63794c4237c572dce64290ca48e24f37bdafb469b6176b706269f32bafb41",
   "continuityTopology": "single",
   "probes": [
     {
@@ -13,7 +13,7 @@
         {
           "kind": "seed",
           "role": "player",
-          "text": "I have a calico cat called Sesame who adores grilled saury. She is mine, she lives at my place.",
+          "text": "I have a calico cat called Sesame（芝麻）, and she adores grilled saury. She is mine, she lives at my place.",
           "persistVia": "conversation"
         },
         {
@@ -33,13 +33,14 @@
           "role": "player",
           "text": "By the way - do you remember the cat I keep at home?",
           "requiredKeywords": [
-            "sesame"
+            "sesame",
+            "芝麻"
           ],
           "forbiddenKeywords": [
             "ginger",
             "innkeeper"
           ],
-          "minHitRate": 1
+          "minHitRate": 0.5
         }
       ]
     }

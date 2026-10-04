@@ -29,7 +29,11 @@ const probe = {
     {
       kind: "seed",
       role: "player",
-      text: "I have a calico cat called Sesame who adores grilled saury. She is mine, she lives at my place.",
+      // The pet's name is given in both spellings the player might use, because
+      // the reply language follows the player's and the scorer matches text, not
+      // meaning: a Chinese reply says 芝麻 for Sesame, and a fixture that only
+      // carries the Latin spelling scores that delivered memory as a miss.
+      text: "I have a calico cat called Sesame（芝麻）, and she adores grilled saury. She is mine, she lives at my place.",
       persistVia: "conversation",
     },
     { kind: "filler", role: "player", text: "The innkeeper's ginger cat keeps sleeping on the porch.", persistVia: "conversation" },
@@ -38,11 +42,21 @@ const probe = {
       kind: "probe",
       role: "player",
       text: "By the way - do you remember the cat I keep at home?",
-      // The pet's own name, which only the stored fact carries.
-      requiredKeywords: ["sesame"],
-      // The other cat in the world. Naming it is the wrong-owner failure.
+      // The pet's own name, which only the stored fact carries. The player may be
+      // answered in either language (the companion replies in the player's own),
+      // so every keyword carries its Chinese equivalent: matching only the Latin
+      // spelling reports a delivered memory as a miss purely because the reply
+      // was in Chinese.
+      requiredKeywords: ["sesame", "芝麻"],
+      // The other cat in the world. Naming it is the wrong-owner failure. The
+      // forbidden set deliberately stays in the seed's own spelling: the authoring
+      // rule is that a CORRECT reply must never contain it, and a correct reply is
+      // free to mention the neighbour while denying the rumour.
       forbiddenKeywords: ["ginger", "innkeeper"],
-      minHitRate: 1,
+      // The two required spellings are ONE fact, not two: the reply language
+      // follows the player's, so either spelling proves the cat was remembered and
+      // demanding both would score every correct monolingual reply as a miss.
+      minHitRate: 0.5,
     },
   ],
 };
