@@ -4,14 +4,6 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
-      "defect": "unverified_scope",
-      "actions": [
-        "ride_bus"
-      ],
-      "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. These actions are pinned here only until their own shared-world live run lands; that run is the evidence, so reaching `live_verified` retires the pin.",
-      "owner": "stardew-integration"
-    },
-    {
       "defect": "unverified_mechanism_scope",
       "mechanisms": [
         "sleep"
@@ -189,7 +181,7 @@
     },
     {
       "actionId": "ride_bus",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -213,7 +205,7 @@
     },
     {
       "actionId": "use_raft",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -230,7 +222,7 @@
     },
     {
       "actionId": "mount_transport",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -247,7 +239,7 @@
     },
     {
       "actionId": "enter_mine",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -908,7 +900,7 @@
     },
     {
       "actionId": "cut_grass",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -925,7 +917,7 @@
     },
     {
       "actionId": "clear_cask",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -942,7 +934,7 @@
     },
     {
       "actionId": "dress_mannequin",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -959,7 +951,7 @@
     },
     {
       "actionId": "set_sign_display",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -976,7 +968,7 @@
     },
     {
       "actionId": "deposit_silo_hay",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -993,7 +985,7 @@
     },
     {
       "actionId": "toggle_tool_light",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1027,7 +1019,7 @@
     },
     {
       "actionId": "harvest_bush",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1044,7 +1036,7 @@
     },
     {
       "actionId": "harvest_fruit_tree",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1061,7 +1053,7 @@
     },
     {
       "actionId": "shake_tree",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1078,7 +1070,7 @@
     },
     {
       "actionId": "take_pedestal_item",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1095,7 +1087,7 @@
     },
     {
       "actionId": "toggle_fence_gate",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

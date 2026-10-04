@@ -1472,3 +1472,60 @@ Retry evidence: `item=(O)388`, `native_auto_collect=true`,
 `chunk_removed=true`, `inventory 0 -> 1`, and the target is gone from the fresh
 snapshot. No magnet race occurred (`native_auto_collect_pending=false` at
 interruption), which is exactly what the placement fix bought.
+
+## 35. ride_bus live proof: the game's own bus interaction, driven end to end
+
+Scenario `native_ride_bus_v1`, runner
+`run-stardew-native-local-player-ride-bus-smoke.mjs`, 2026-10-05. First pass,
+14094 ms.
+
+This action deliberately does NOT re-implement the bus. The fare, the driver
+check, the eight-second control freeze, the walk to the door and the cutscene all
+live inside `BusStop.answerDialogue("Bus_Yes")`, so the Mod verifies the native
+facts itself (so a refusal carries a named reason) and then drives the **game's
+own** ticket interaction: `BusStop.checkAction` raises the question and
+`GameLocation.answerDialogue(Response("Yes"))` answers it. The Mod only observes
+the arrival the world produces.
+
+```
+bus_departure_started (revision 1)   <- admission is instantaneous
+Warping to Desert                    <- the native cutscene
+bus_arrived          (revision 2)
+```
+
+Receipt evidence:
+
+```
+origin=BusStop;destination=Desert;fare=500;money_before=5500;money_after=5000
+```
+
+Three things the receipt alone could not have proven, all independently checked by
+the runner:
+
+1. the native terminal is `bus_arrived` (not a fixture-authored warp);
+2. the fare was **actually deducted** — `money_after == money_before - fare`
+   (5500 -> 5000 with fare 500);
+3. the world really moved the actor — the fresh post-terminal snapshot reports
+   `location: Desert`.
+
+The fixture establishes only the declared Given (vault complete, Pam on the native
+on-duty tile 21,10 **and in the BusStop character list**, fare affordable, actor
+beside the ticket machine at 16,10 which the Buildings-layer index 1057
+identifies) and emits no receipt.
+
+Promoted to `live_verified` on this evidence
+(`FarmhandActionLifecycle.LiveVerified`, with its gate moved into
+`STARDEW_PUBLISHED_ACTION_GATES`).
+
+### Three environment failures this gate had to get past (all diagnosable now)
+
+- **Fixture transaction contention.** Other lanes hold the same single fixture
+  transaction; the runner backs off and retries rather than preempting.
+- **SMAPI crash data.** A previously killed run leaves crash data, and the next
+  launch stops at "Press any key to delete the crash data and continue playing" —
+  unsatisfiable headless, so the bridge never becomes ready and the failure looks
+  like a pipe timeout. The runner clears it before each attempt.
+- **Stale release dir.** The fixture preparer validates a COMPLETE bundle
+  (`manifest.json` included), so staging only the DLLs fails with
+  `release_bundle_missing`. Both that code and the underlying error are now
+  published instead of collapsing into `native_local_fixture_preparation_failed`.

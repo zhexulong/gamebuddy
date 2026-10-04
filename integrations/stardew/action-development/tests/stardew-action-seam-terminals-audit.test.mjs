@@ -85,15 +85,19 @@ async function audit() {
   return cached;
 }
 
-test("审计 14 个「已注册但九谓词全拒」的 seam", async () => {
+test("审计 15 个「已注册但九谓词全拒」的 seam", async () => {
   const a = await audit();
   assert.equal(a.artifactKind, "stardew_action_seam_terminal_audit");
-  assert.equal(a.counts.audited, 14);
+  // 15 而非 14：ride_bus 注册了两条 seam，其中 BusStop.checkAction 是入口
+  // （弹问句，不写终态），真正终态在 answerDialogue -> playerReachedBusDoor ->
+  // busDriveOff -> Game1.warpFarmer，比审计看得见的一层深。本条与 ship_item
+  // （getShippingBin 取句柄）同类，是诚实的 suspect 而非接线错误。
+  assert.equal(a.counts.audited, 15);
   assert.equal(
     a.counts.byKind.terminal_in_delegate +
       a.counts.byKind.seam_not_terminal +
       a.counts.byKind.seam_writes_but_no_terminal,
-    14,
+    15,
   );
 });
 
@@ -113,9 +117,9 @@ test("6 个工具类 DoFunction 的 seam 引用正确（终态在委托目标）
   for (const x of deleg) assert.ok(x.evidence.delegates.length > 0, `${x.actionId} 必须有委托目标`);
 });
 
-test("8 个 seam 引用指向非终态位置（可疑）", async () => {
+test("9 个 seam 引用指向非终态位置（可疑）", async () => {
   const a = await audit();
-  assert.equal(a.counts.suspectSeamReferences, 8);
+  assert.equal(a.counts.suspectSeamReferences, 9);
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
   /**
    * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
@@ -125,8 +129,12 @@ test("8 个 seam 引用指向非终态位置（可疑）", async () => {
    * 这种 mutator 调用，纯赋值提取看不到，故被归为 seam_not_terminal。
    * `advance_day` 是 register 新增的第十二个 seam（GameLocation.startSleep），
    * 与 switch_section 作用域修正无关，见文件头注记。
+   * `ride_bus` 是第十五个：它的入口 seam `BusStop.checkAction` 只弹问句，
+   * 终态在 `answerDialogue` -> `playerReachedBusDoor` -> `busDriveOff` ->
+   * `Game1.warpFarmer`，比审计展开的一层深；与 `ship_item` 同类，
+   * 是诚实的 suspect（该 action 自己的收据 + live 已证明它确实到达）。
    */
-  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "harvest_fruit_tree", "scythe_crop", "shake_tree", "ship_item"]);
+  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "harvest_fruit_tree", "ride_bus", "scythe_crop", "shake_tree", "ship_item"]);
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {
