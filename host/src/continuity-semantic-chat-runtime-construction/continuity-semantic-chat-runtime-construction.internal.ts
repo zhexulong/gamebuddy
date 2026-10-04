@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatRuntimeBindingExecution } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
@@ -15,8 +14,8 @@ import {
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
-import { readWorldBook, worldBookMetadata, type WorldBook, type WorldBookEntry } from "../worldbook.js";
-import { createChatThreadStore, type ChatThreadStore, type TavernStableWorldBookBinding } from "../tavern/chat-thread-store.js";
+import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
+import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
 /**
@@ -142,36 +141,19 @@ async function buildExactChatRuntimeConstruction(
         freshState.thread.profileCanonicalHash !== freshProfileMetadata.canonicalHash
       )
         throw new Error("chat_runtime_exact_content_unavailable");
-      // A companion's own reviewed world book is not a "desired change": it is the
-      // baseline the companion was provisioned with, and the Game surface has
-      // compiled it since the day it was imported. Deriving it only as a DESIRED
-      // binding would leave the mounted catalog empty forever, because `mounted`
-      // materializes what is already APPLIED - the exact Chat/Game asymmetry this
-      // fixes. A derived book therefore stands in for both sides.
-      const derivedCompanionBook =
-        freshState.thread.worldBookBinding === undefined &&
-        freshState.thread.appliedWorldBookBinding === undefined
-          ? await deriveCompanionWorldBookBinding(paths.runtimeCwd)
-          : undefined;
-      const desiredBinding = freshState.thread.worldBookBinding ?? derivedCompanionBook;
-      const appliedBinding = freshState.thread.appliedWorldBookBinding ?? derivedCompanionBook;
+      const desiredBinding = freshState.thread.worldBookBinding;
       const effectiveBinding =
-        mode === "desired" || sameWorldInfoBinding(desiredBinding, appliedBinding)
+        mode === "desired" || sameWorldInfoBinding(desiredBinding, freshState.thread.appliedWorldBookBinding)
           ? desiredBinding
-          : appliedBinding;
-      // The materialization thread must actually CARRY the effective binding: the
-      // derived companion book is not on the stored thread, so reusing the stored
-      // thread unchanged would hand the catalog a thread with no world book while
-      // the source carries one - a mismatch the catalog refuses.
-      const materializationThread = sameWorldInfoBinding(
-        effectiveBinding,
-        freshState.thread.worldBookBinding,
-      )
-        ? freshState.thread
-        : Object.freeze({
-            ...freshState.thread,
-            ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
-          });
+          : freshState.thread.appliedWorldBookBinding;
+      const materializationThread =
+        sameWorldInfoBinding(effectiveBinding, desiredBinding) &&
+        sameWorldInfoBinding(effectiveBinding, freshState.thread.appliedWorldBookBinding)
+          ? freshState.thread
+          : Object.freeze({
+              ...freshState.thread,
+              ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
+            });
       return await materializeTavernAuthoredStableCatalog(
         tavernPaths,
         artifactStore,
@@ -282,40 +264,6 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
     throw new Error("chat_runtime_construction_permit_rejected");
 }
 /**
- * The companion's own reviewed world book, for a thread that names no other one.
- *
- * The Game surface compiles `<runtimeCwd>/worldbook.json` into its Tier 2 m[0]
- * automatically. The Chat surface materializes only what the thread binds, so a
- * companion provisioned from a card carried its world book on the Game surface
- * and silently lost it in Chat. With no explicit binding, the book the reviewed
- * import wrote IS the companion's own background: bind it here (id, revision and
- * hash read from the file; the existing hash gate re-verifies them against the
- * bytes), so both surfaces materialize the same companion common sense.
- *
- * A missing book is ordinary - a companion need not have one - and yields
- * nothing to bind. A present but unreadable book fails closed, exactly like a
- * drifted managed binding: the backdrop must never be silently emptied.
- */
-async function deriveCompanionWorldBookBinding(
-  runtimeCwd: string,
-): Promise<TavernStableWorldBookBinding | undefined> {
-  const worldBookPath = join(runtimeCwd, "worldbook.json");
-  if (!existsSync(worldBookPath)) return undefined;
-  let book: WorldBook;
-  try {
-    book = await readWorldBook(worldBookPath);
-  } catch {
-    throw new Error("chat_runtime_exact_content_unavailable");
-  }
-  const metadata = worldBookMetadata(book);
-  return Object.freeze({
-    worldBookId: metadata.worldBookId,
-    revision: metadata.revision,
-    canonicalHash: metadata.canonicalHash,
-    provenance: "reviewed-import" as const,
-  });
-}
-/**
  * Resolves a native (non-managed) WorldBookBinding — the bound worldbook.json
  * the reviewed import wrote into the runtime root — into the always-on
  * `lorebook_constant` materialization input. The on-disk book must EXACTLY
@@ -324,17 +272,11 @@ async function deriveCompanionWorldBookBinding(
  * mirroring the managed World Info hash gate.
  *
  * `constant: true` entries are reviewed always-on background and ride in the
- * stable lorebook_constant source (Tier 2 m[0]) - the whole point of binding the
- * companion's own book here, and the same thing the Game surface compiles.
- *
- * Keyword-gated entries are deliberately NOT forwarded as volatile candidates.
- * The volatile channel requires a per-turn binding (Magic Context resolves the
- * turn's eligible subset and refuses when a bound source is absent from the
- * catalog's volatile set), and this construction registers a catalog once per
- * Pi session rather than per turn - so publishing entry-keyed candidates here
- * leaves the renderer and the turn binding unable to agree, and every turn after
- * the first fails. Chat keeps the always-on baseline only; the keyword channel
- * belongs to the path that owns the per-turn projection.
+ * stable lorebook_constant source (Tier 2 m[0]). The keyword-gated entries are
+ * deliberately NOT forwarded: see the note in the assembly ledger
+ * (design/tasks/active/p9-assembly-slice.md, row A13) — Magic Context binds the
+ * volatile channel per turn, so publishing entry-keyed candidates from a
+ * per-session catalog makes every turn refuse.
  */
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
