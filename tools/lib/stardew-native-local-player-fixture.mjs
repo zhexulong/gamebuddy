@@ -546,7 +546,6 @@ export function fixtureActions(action) {
   if (action === "use_raft") return ["use_raft"];
   if (action === "mount_transport") return ["mount_transport"];
   if (action === "enter_mine") return ["enter_mine"];
-  if (action === "toggle_mine_lamp") return ["toggle_mine_lamp"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
   // a pass-out or a modal mid-move; travel is needed only if the actor starts
@@ -556,6 +555,11 @@ export function fixtureActions(action) {
   if (action === "wia_modal_dismiss_chain") return ["move_to_tile", "dismiss_modal", "travel"];
   if (action === "wia_eat_interrupt") return ["use_item", "dismiss_modal"];
   if (action === "wia_answer_question") return ["move_to_tile", "answer_dialogue"];
+  // The three non-movement/non-navigation WIA slots each own a body-holding
+  // execution whose interruption must be measured while the slot is live.
+  if (action === "wia_tool_approach_interrupt") return ["equip_tool", "chop_tree_source", "dismiss_modal"];
+  if (action === "wia_animal_product_interrupt") return ["collect_animal_product", "dismiss_modal"];
+  if (action === "wia_item_pickup_interrupt") return ["pickup_item", "dismiss_modal"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
   // a pass-out or a modal mid-move; travel is needed only if the actor starts
@@ -646,6 +650,9 @@ export function fixtureScenario(actions, action) {
   if (action === "wia_modal_dismiss_chain") return "native_wia_modal_dismiss_chain_v1";
   if (action === "wia_eat_interrupt") return "native_wia_eat_interrupt_v1";
   if (action === "wia_answer_question") return "native_wia_answer_question_v1";
+  if (action === "wia_tool_approach_interrupt") return "native_wia_tool_approach_interrupt_v1";
+  if (action === "wia_animal_product_interrupt") return "native_wia_animal_product_interrupt_v1";
+  if (action === "wia_item_pickup_interrupt") return "native_wia_item_pickup_interrupt_v1";
   // Action-specific ids take precedence over the includes() fallbacks below:
   // a WIA chain whose action set contains use_item (wia_eat_interrupt) must
   // not be captured by the generic use_item scenario (#regression 2026-10-04,
@@ -703,7 +710,6 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("use_raft")) return "native_use_raft_v1";
   if (actions.includes("mount_transport")) return "native_mount_transport_v1";
   if (actions.includes("enter_mine")) return "native_enter_mine_v1";
-  if (actions.includes("toggle_mine_lamp")) return "native_toggle_mine_lamp_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
   if (actions.includes("craft_item")) return "native_craft_item_v1";
