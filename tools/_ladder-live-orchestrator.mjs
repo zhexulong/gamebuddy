@@ -45,7 +45,7 @@ try {
   console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid }));
 
   // 2. Now run the ladder runner against the live bridge.
-  const runner = spawn(process.execPath, ["tools/run-stardew-native-local-agent-ab-live.mjs"], {
+  const runner = spawn(process.execPath, ["tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"], {
     cwd: process.cwd(),
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],

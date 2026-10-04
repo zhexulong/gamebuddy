@@ -65,7 +65,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   // Every live run must yield a system health report (findings with component
   // attribution + counts), not just pass/blocked — that report is the feedback
   // signal of the system-level RL loop.
-  assert.match(RUNNER_SOURCE, /import \{ summarizeSystemFindings \} from "\.\/lib\/system-findings\.mjs"/);
+  assert.match(RUNNER_SOURCE, /import \{ summarizeSystemFindings \} from "\.\.\/\..\/lib\/system-findings\.mjs"/);
   assert.match(RUNNER_SOURCE, /const actionTrace = \[\]/);
   assert.match(RUNNER_SOURCE, /actionTrace\.push\(entry\)/);
   assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace\)/);
@@ -78,13 +78,13 @@ test("the runner emits system findings as a first-class health signal", () => {
   // own local directory with the runtime root's evidence and the result, and
   // the result JSON surfaces the capture summary so a broken capture is never
   // silent.
-  assert.match(RUNNER_SOURCE, /import \{ openLiveRunCapture, resolveLiveRunRoot \} from "\.\/live-run\/core\/capture\.mjs";/);
+  assert.match(RUNNER_SOURCE, /import \{ openLiveRunCapture, resolveLiveRunRoot \} from "\.\.\/core\/capture\.mjs";/);
   assert.match(RUNNER_SOURCE, /result\.capture = await closeCapture\(capture, runtimeRoot, result\);/);
   assert.match(RUNNER_SOURCE, /partialResult\.capture = await closeCapture\(capture, runtimeRoot, partialResult\);/);
   // Content gate: the same canonical profile the assembly gate hashes is
   // assessed for persona presence and macro residue; a hollow default card or
   // unrendered macros fails the run loudly instead of passing silently.
-  assert.match(RUNNER_SOURCE, /import \{ assessIdentityProfile \} from "\.\/live-run\/core\/content-gate\.mjs";/);
+  assert.match(RUNNER_SOURCE, /import \{ assessIdentityProfile \} from "\.\.\/core\/content-gate\.mjs";/);
   assert.match(RUNNER_SOURCE, /contentGate: canonicalProfile === null \? null : assessIdentityProfile\(canonicalProfile\),/);
   assert.match(RUNNER_SOURCE, /const contentGate = personaWorldBook\.contentGate \?\? null;/);
   assert.match(RUNNER_SOURCE, /contentGate\.personaPresent && contentGate\.macroResidue\.length === 0/);
@@ -161,7 +161,7 @@ test("the run computes the deterministic claim-fulfillability presence projectio
   // Mechanism-B / audit-dimension §3: spoken promises are compared against the
   // same-turn receipts and the live capability face. The vocabulary is scenario
   // data; the parser applies the first-person guardrail.
-  assert.match(RUNNER_SOURCE, /import \{ buildPresenceProjection \} from "\.\/lib\/stardew-companion-presence-projection\.mjs"/);
+  assert.match(RUNNER_SOURCE, /import \{ buildPresenceProjection \} from "\.\.\/\..\/lib\/stardew-companion-presence-projection\.mjs"/);
   assert.match(RUNNER_SOURCE, /PRESENCE_ACTION_VOCABULARY/);
   assert.match(RUNNER_SOURCE, /const presenceProjection = presentationPieces\.length > 0/);
   assert.match(RUNNER_SOURCE, /visibleActionIds/);
@@ -222,7 +222,7 @@ test("ladder 5 is an embodied-memory covenant rung judged by receipts, not keywo
   // about the strawberries instead of stating what it is.
   assert.match(
     RUNNER_SOURCE,
-    /import \{ seedMemoriesViaManagementSurface \} from "\.\/run-memory-live-loop\.mjs";/,
+    /import \{ seedMemoriesViaManagementSurface \} from "\.\.\/memory\/run-memory-live-loop\.mjs";/,
   );
   assert.match(RUNNER_SOURCE, /if \(LADDER === "5" && !usesDisposableRoot\) \{\n  const seeded = await seedMemoriesViaManagementSurface\(\{\n    root,\n    deploymentManifestPath: manifestPath,\n    seeds: \["玩家说好的规矩/);
   assert.match(RUNNER_SOURCE, /covenantSeed = Object\.freeze\(\{ durable: seeded\.result\.durable/);

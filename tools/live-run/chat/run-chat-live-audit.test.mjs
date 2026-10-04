@@ -12,7 +12,7 @@ import {
   CHAT_RUN_AUDIT_PROBE_DIMENSIONS,
   CHAT_RUN_AUDIT_PROBE_DISTANCES,
   validateChatRunAudit,
-} from "./lib/chat-run-audit.mjs";
+} from "../../lib/chat-run-audit.mjs";
 import {
   AUDIT_KINDS,
   AUDIT_META_KEYS,
@@ -749,7 +749,7 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(source, /node:sqlite|DatabaseSync|sqlite3/i);
   assert.doesNotMatch(source, /page\.route|autoPromote|auto_promote\s*:\s*true/i);
-  assert.match(source, /from "\.\/desktop-composition-launch\.mjs"/);
+  assert.match(source, /from "\.\.\/\..\/desktop-composition-launch\.mjs"/);
   assert.match(source, /launchDesktopCompositionGateChild\(/);
   assert.match(source, /surface: AUDIT_SURFACE/);
   assert.match(source, /const AUDIT_SURFACE = "chat-only";/);

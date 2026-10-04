@@ -1,9 +1,9 @@
 # Stardew 临场感 live run 证据（机制 A + 机制 B）
 
-这些 JSON 是 `tools/run-stardew-native-local-agent-ab-live.mjs` 的真实产物，不是手工构造的 fixture。
+这些 JSON 是 `tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs` 的真实产物，不是手工构造的 fixture。
 五次 run 依次暴露了四类真实缺陷，最终 run-05 才第一次真正 `passed`；run-06 又把“玩家静默期”从 81s 降到 3.5s。
 
-通道：`tools/_ladder-live-orchestrator.mjs` → `tools/run-stardew-native-local-agent-ab-live.mjs`
+通道：`tools/_ladder-live-orchestrator.mjs` → `tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs`
 （single SMAPI + `--mods-path`），fixture `native_jodi_harvest_deliver_v1`（ladder 4），`zh-CN`。
 环境变量是 `GAMEBUDDY_AGENT_LADDER` / `GAMEBUDDY_RESULT_FILE`（写错会静默跑成 ladder 1）。
 

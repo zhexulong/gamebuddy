@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { loadProbeManifest, evaluateProbeReply, probeVerdict } from "../../../run-chat-live-audit.mjs";
+import { loadProbeManifest, evaluateProbeReply, probeVerdict } from "../../../live-run/chat/run-chat-live-audit.mjs";
 
 const run = promisify(execFile);
 const PROBE_DIR = new URL("./", import.meta.url);

@@ -65,21 +65,32 @@ tools/live-run/
   core/
     capture.mjs        <- run-directory capture (record / append / copyTree / captureRuntimeRoot)
     capture.test.mjs
+    content-gate.mjs   <- persona/macro content facts (personaPresent, macroResidue)
+    content-gate.test.mjs
+  game/
+    run-stardew-native-local-agent-ab-live.mjs  <- Stardew ladder (LADDER=0..N)
+    run-stardew-native-local-agent-ab-live.test.mjs
+  chat/
+    run-chat-live-audit.mjs   <- Chat live audit harness
+    run-chat-live-audit.test.mjs
+  memory/
+    run-memory-live-loop.mjs  <- Memory funnel loop (management seed -> chat recall)
 ```
 
-The runners currently live at `tools/run-*.mjs` (game ladder,
-`run-memory-live-loop.mjs`, `run-chat-live-audit.mjs`) and are wired to
-`core/capture.mjs`. Splitting them *into* this tree is a mechanical later step;
-the capture wiring is the behavior that matters.
+The runners live under this tree (`game/`, `chat/`, `memory/`) and share
+`core/capture.mjs` and `core/content-gate.mjs`. The chat runner is also
+imported by the memory loop (event stream / probe verdict helpers), and the
+memory loop by the game ladder (management-surface seeding); those imports
+stay within `tools/live-run/` so the harness family is one movable unit.
 
 ## Consumers
 
-- Game ladder: `tools/run-stardew-native-local-agent-ab-live.mjs` opens a
+- Game ladder: `tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs` opens a
   `game-ladder` capture; the result JSON's `capture` field points at it.
-- Memory loop: `tools/run-memory-live-loop.mjs` opens a `memory-loop` capture;
+- Memory loop: `tools/live-run/memory/run-memory-live-loop.mjs` opens a `memory-loop` capture;
   its report carries the same `capture` field.
-- Chat audit: same pattern to be applied when the chat runner next touches the
-  harness core.
+- Chat audit: `tools/live-run/chat/run-chat-live-audit.mjs` (capture wiring follows the
+  same pattern when it next touches the harness core).
 
 Reviewers (auditing-runs) should read `capture.dir` from the run artifact to
 see *what actually reached the model* before judging claims about content.
