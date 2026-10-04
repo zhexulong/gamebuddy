@@ -119,6 +119,21 @@ test("the runner emits system findings as a first-class health signal", () => {
   // production_authority_artifact_present; only that refusal is retried.
   assert.match(RUNNER_SOURCE, /production_authority_artifact_present/);
   assert.match(RUNNER_SOURCE, /gameSessionMode: "known"/);
+  // The authority marker binds the bootstrapOperationId that provisioned the
+  // root, so a repeat run must reuse the stored deployment manifest - minting a
+  // new id makes BOTH fresh and known refuse with
+  // production_authority_artifact_present (verified by a real repeat run).
+  assert.match(RUNNER_SOURCE, /const storedManifest = await readFile\(manifestPath, "utf8"\)/);
+  assert.match(RUNNER_SOURCE, /if \(storedManifest === null\) \{/);
+  assert.match(RUNNER_SOURCE, /runtime_root_principal_mismatch/);
+  // When BOTH modes are refused, name the two ids that disagree: the authority
+  // marker binds the operation id that provisioned the root
+  // (real run evidence: marker agent-ab-1791121825880 vs manifest
+  // agent-ab-1791122324799 -> production_authority_artifact_present).
+  assert.match(RUNNER_SOURCE, /import \{ explainAuthorityIdentityMismatch \} from "\.\.\/core\/authority-identity\.mjs";/);
+  assert.match(RUNNER_SOURCE, /function withAuthorityIdentityMismatch\(error, root, manifest\) \{\n  return explainAuthorityIdentityMismatch\(error, root, manifest\);/);
+  assert.match(RUNNER_SOURCE, /throw withAuthorityIdentityMismatch\(knownError, root, deploymentManifest\);/);
+  assert.match(RUNNER_SOURCE, /const deploymentManifest = await loadHostDeploymentManifest\(manifestPath\);/);
   // Audit NOTE-7: the Windows double-drive capture-root bug must not regress —
   // neither runner may resolve its live-run root from a URL pathname.
   assert.doesNotMatch(
