@@ -27,6 +27,8 @@ const PUBLIC_ERROR_CODES = new Set([
   "native_local_fixture_path_missing",
   "native_local_fixture_preparation_failed",
   "native_local_fixture_recovery_required",
+  "release_bundle_missing",
+  "release_bundle_mismatch",
   "native_local_fixture_restore_failed",
   "native_local_fixture_save_root_required",
   "native_local_fixture_template_invalid",
@@ -39,8 +41,13 @@ const PUBLIC_ERROR_CODES = new Set([
 ]);
 
 function redactPublicFailure(error, fallbackCode) {
-  const code = error instanceof Error && PUBLIC_ERROR_CODES.has(error.message) ? error.message : fallbackCode;
-  return new Error(code);
+  if (!(error instanceof Error)) return new Error(fallbackCode);
+  // Some public codes carry a detail suffix (release_bundle_missing:<path>), so the
+  // whitelist is matched on the code prefix. Without this, exactly the failures a
+  // gate reader needs (a missing bundle file, a mismatched bundle entry) collapsed
+  // into the blanket preparation_failed and were undiagnosable.
+  const code = error.message.split(":", 1)[0];
+  return new Error(PUBLIC_ERROR_CODES.has(code) ? error.message : fallbackCode);
 }
 
 export async function validateNativeLocalPlayerFixturePreparation(options) {
