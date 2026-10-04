@@ -1392,3 +1392,59 @@ live gate `wia_answer_question` on `GameBuddyFixtureStable_445936768`:
 0.5 s total, teardown restored profile and removed backup/lock and working save.
 Domain 7.4.2 question-answer closes with the Modal admission family: dismiss
 (informational) and answer (question) are both live-proven.
+
+## 34. WIA activeToolApproach live proof: the tool-approach leg is interruptible and resumable
+
+Scenario `native_wia_tool_approach_interrupt_v1`, runner
+`run-stardew-native-local-player-wia-tool-approach-smoke.mjs` (gate action
+`wia_tool_approach_interrupt`), 2026-10-05. The slot under test is
+**`activeToolApproach`** — the walk leg the tool family holds while it closes
+on its target (a different slot from `activeNavigate`: the approach spec and the
+body controller are BOTH owned, so its release runs through the manager's
+`RecordControllerTransition` path rather than the body loop's own evidence).
+
+Three phases, one journal, contiguous revisions:
+
+```
+interrupt  chop_tree_source  accepted(r2) -> invalidated/modal_interrupted(r4)
+dismiss    dismiss_modal     succeeded/modal_dismissed(r5)
+retry      chop_tree_source  accepted(r6) -> succeeded/tree_source_chopped(r8)
+```
+
+The interrupt evidence is the slot's honest shape — the approach's frozen
+vocabulary plus the wrapped intent breakpoint:
+
+```
+location=Farm;target=tree_chop_source_db2e14e373c76083;tile=64,17;reach=1;
+approach=invalidated;                                  <- derived from the terminal state
+body_evidence=interrupted_by=DialogueBox;target_tile=64,17;
+              interrupted_at=62,17;remaining_distance=2;revision=2
+```
+
+`approach=invalidated` (not `failed`) is the live confirmation of the fix in
+`2c10b0a`: a world-change interruption must not be stamped as an action fault
+one field away from `ExecutionState.Invalidated`.
+
+Release is clean (`activeExecution=null` at revision 4, the tree still published
+as a source target), and the retry completes the action natively:
+
+```
+health 1 -> 5, stump false -> true, source_transformed=true,
+stamina 270 -> 268, expected_stamina_cost=2,
+after: treeChopSourceTargets 1 -> 0, treeChopResultTargets 0 -> 1
+```
+
+Duration 802 ms, teardown restored + cleaned, no residual process.
+
+**Not yet proven (honest status).** The sibling slots
+`wia_animal_product_interrupt` and `wia_item_pickup_interrupt` are implemented
+with runners and offline tests but their first live attempts did NOT pass:
+`native_fresh_snapshot_timeout` (the dismissal succeeded at revision 3 and the
+post-dismiss snapshot never reached an actionable revision) and
+`no_fresh_live_item_target` (the first observe already had an empty
+`itemTargets`, i.e. the pickup fixture's debris was not there to be seen).
+Both are fixture/runner defects to be fixed, not product findings yet — and the
+pickup lane's source-level finding stands independently: `Debris.updateChunks`
+only homes chunks onto a farmer inside `Farmer.GetAppliedMagneticRadius()`
+(max(128, radius) px), so the fixture must place the debris ~3 tiles (192 px)
+away or a standing actor cannot magnetize it.
