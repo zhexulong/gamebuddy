@@ -25,7 +25,8 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,47 @@ const OUTPUT_ROOT = process.env.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT
   : join(HOST_ROOT, "dist");
 const REQUEST_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
+/** Bounded wait for the launched Host child to exit before the root is removed. */
+const GATE_CHILD_EXIT_TIMEOUT_MS = 20_000;
+/** Bounded removal attempts; the Host can hold a handle briefly after exit. */
+const GATE_ROOT_REMOVE_ATTEMPTS = 10;
+const GATE_ROOT_REMOVE_RETRY_MS = 200;
+
+/**
+ * Bounded wait for the launched Host child to actually exit. Node reports the
+ * exit through an event, so a caller that only sent `kill()` has no synchronous
+ * signal that the process - and the file handles it holds inside the gate root -
+ * is gone.
+ */
+function waitForChildExit(child, timeoutMs) {
+  if (child === undefined || child === null) return Promise.resolve();
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+/**
+ * Remove the disposable gate root, retrying while the Host releases its
+ * handles. Returns null on success, or the path that could not be removed so
+ * the caller can report it instead of leaving a gigabyte behind silently.
+ */
+async function removeGateRoot(root) {
+  for (let attempt = 0; attempt < GATE_ROOT_REMOVE_ATTEMPTS; attempt += 1) {
+    try {
+      await rm(root, { recursive: true, force: true });
+      return null;
+    } catch {
+      await sleep(GATE_ROOT_REMOVE_RETRY_MS);
+    }
+  }
+  return root;
+}
 
 const IDENTITY = Object.freeze({
   playerId: "chat_audit_player",
@@ -822,6 +864,23 @@ export async function runManagementOperationEvidence({ outcomesPath, reportPath 
   } finally {
     launch.dispose?.();
     launch.child?.kill?.();
+    // The gate root is a full install of the generation (runtime tree, staged
+    // dependency closure and the SQLite databases the evidence run creates), so
+    // it is roughly a gigabyte per run; fifteen runs filled the machine's temp
+    // volume. It is disposable by construction - the composition mounts it
+    // fresh each run and every durable output the caller asked for already went
+    // to `outcomesPath`/`reportPath` - so the run owns its removal.
+    //
+    // Order matters on Windows: `dispose()` only tears down the launcher's IPC
+    // peer and `kill()` is asynchronous, while the Host runtime keeps the
+    // SQLite/WAL handles inside the root open until the process has really
+    // exited. Removing the root before that races the shutdown and leaves the
+    // whole install behind, which is how the leak stayed invisible. Wait for
+    // the exit, then retry the removal, and report a failure rather than
+    // swallowing it.
+    await waitForChildExit(launch.child, GATE_CHILD_EXIT_TIMEOUT_MS);
+    const leakedRoot = await removeGateRoot(root);
+    if (leakedRoot !== null) process.stderr.write(`gate_root_not_removed:${leakedRoot}\n`);
   }
 }
 
