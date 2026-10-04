@@ -60,6 +60,7 @@ import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop
 // is an explicit context failure, never a silent pass. A read GAP (no profile
 // captured) stays a gap: nothing to assert.
 import { assessIdentityProfile } from "../core/content-gate.mjs";
+import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
@@ -341,6 +342,14 @@ async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦�
   if (observation === null) throw new Error("voice_playback_observation_timeout");
   return { promiseVoiceObservation: Promise.resolve(observation) };
 }
+/**
+ * Explain an authority refusal that comes from a bootstrapOperationId mismatch
+ * (see core/authority-identity.mjs for the mechanism and the live evidence).
+ */
+function withAuthorityIdentityMismatch(error, root, manifest) {
+  return explainAuthorityIdentityMismatch(error, root, manifest);
+}
+
 function randomToken(len = 32) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let out = "";
@@ -419,7 +428,33 @@ const manifestPath = join(root, "manifest.json");
 // runner joins the companion's existing continuity (so the persona/world book
 // assembled under that identity are the ones under test). Only a disposable root
 // falls back to a run-scoped continuity id.
-await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot, principal: { continuityId: identity.continuityId, companionId: identity.companionId, playerId: identity.playerId }, bootstrapOperationId: `agent-ab-${Date.now()}`, authorityGeneration: 1 }), "utf8");
+//
+// ONE runtime root = ONE deployment identity. The product's authority marker binds
+// the `bootstrapOperationId` (and `authorityGeneration`) that provisioned the root
+// and refuses ANY later launch whose manifest does not match it — including one
+// that asks to open the existing authority as "known". So a second run on a real
+// continuity must reuse the stored manifest instead of minting a fresh id; a new
+// id is written only when the root has none yet. A stored manifest for a
+// DIFFERENT principal is refused loudly rather than silently re-provisioned.
+const storedManifest = await readFile(manifestPath, "utf8").then(
+  (text) => JSON.parse(text),
+  () => null,
+);
+if (storedManifest === null) {
+  await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot, principal: { continuityId: identity.continuityId, companionId: identity.companionId, playerId: identity.playerId }, bootstrapOperationId: `agent-ab-${Date.now()}`, authorityGeneration: 1 }), "utf8");
+} else {
+  const stored = storedManifest?.principal;
+  const samePrincipal =
+    stored?.continuityId === identity.continuityId &&
+    stored?.companionId === identity.companionId &&
+    stored?.playerId === identity.playerId;
+  if (!samePrincipal) {
+    throw new Error(
+      `runtime_root_principal_mismatch: the runtime root was provisioned for continuity ${String(stored?.continuityId)} / companion ${String(stored?.companionId)} / player ${String(stored?.playerId)}; refusing to reuse it for ${identity.continuityId} (use a separate runtime root per principal)`,
+    );
+  }
+}
+const deploymentManifest = await loadHostDeploymentManifest(manifestPath);
 const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
 await mkdir(runtimePaths.agentDir, { recursive: true });
 if (!process.env.CPA_OAI_API_KEY) throw new Error("CPA_OAI_API_KEY_missing");
@@ -464,12 +499,20 @@ if (LADDER === "5" && !usesDisposableRoot) {
       deploymentManifestPath: manifestPath,
       seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
       gameSessionMode: "known",
+    }).catch((knownError) => {
+      // Both modes were refused. The authority marker binds the
+      // bootstrapOperationId that provisioned the root, so when the stored
+      // manifest carries a DIFFERENT id the product correctly refuses — but the
+      // bare reason code hides which two ids disagree (a real run this session
+      // burned three diagnoses on exactly that). Name the ids when both files
+      // are readable; keep the original error otherwise.
+      throw withAuthorityIdentityMismatch(knownError, root, deploymentManifest);
     });
   });
   covenantSeed = Object.freeze({ durable: seeded.result.durable, rowCount: seeded.result.rowCount, markerCount: seeded.markers.length });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
 }
-const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: await loadHostDeploymentManifest(manifestPath), launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
+const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: deploymentManifest, launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
 let runtime;
 // Declared before the try so the failure path can report the same facts instead
 // of losing them when a later stage throws.

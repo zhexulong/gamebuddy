@@ -160,3 +160,20 @@ ative_accepted=true）+ gentTurn.settled=true + covenantPassed=true（无 item_
   - contextAssembled=true、worldBookAssembled=true(L0 装配事实,单 run 定论)
   - turnMs=206464 · actionCount=21 · rejectionCount=8 · rejectionRate=0.38 · receiptCount=67
 - 单 run 的 rejectionRate 是随机抽样,不作判定(tools/roll-aggregate.mjs 跨 run 对比才有"improved/no_conclusion"结论)。
+
+---
+
+## run-15:content gate 正向路径实机点亮(2026-10-04)
+
+第一个`contentGate.personaPresent = true` 的真实 run——即"装配的 canonical profile 确实有
+persona"这条正向路径在真机上成立(此前 run-14 及更早的 run 都是默认空卡 → contentPassed=false)。
+
+- 重要背景:首次跑正向路径必须用**新建的 generation**(persona 基线进 bundle)与**全新 continuity**
+  (runtime root 里已有的 identity-profile.json 本身就是一个 authority artifact,"fresh" 会拒绝)。
+- state: passed;ladder: 5;agentTurn.settled: true(steerObserved: true,即玩家指令确实送达)
+- contentGate: profileRead=true · personaPresent=true · personaComplete=true(core/interactionStyle/
+  expressionStyle 三字段齐全)· macroResidue=[] · isDefaultProfile=true
+- contentPassed: true ← 与 run-14 的 false 构成正反两向实机证据
+- harvestReceipt=crop_harvested;covenantPassed=true;covenantReceipt=null(守约:收获但未出货)
+- capture: .live-runs/game-ladder/...(12 files,0 failures)——捕获根已回到仓库根
+- m0 marker `[probe:m0_memory_ids] ... 1` 全程出现:播种的约定确实渲染进了 m[0]

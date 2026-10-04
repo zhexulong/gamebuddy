@@ -1,0 +1,749 @@
+{
+  "state": "passed",
+  "ladder": "5",
+  "presentation": {
+    "pieces": [],
+    "pieceCount": 0,
+    "firstPieceTtfbMs": null,
+    "chunked": false
+  },
+  "presenceProjection": null,
+  "programStatus": null,
+  "walkReceipt": null,
+  "inspectReceipt": null,
+  "loadReceipt": null,
+  "tillReceipt": null,
+  "plantReceipt": null,
+  "waterReceipt": null,
+  "harvestReceipt": {
+    "type": "execution_receipt",
+    "reasonCode": "crop_harvested",
+    "requestId": "4c79dce9-1f66-41c9-af88-69685193b2d9",
+    "executionId": "9ba49005a5114c60ab31c5b00eb0356e",
+    "evidence": {
+      "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+    }
+  },
+  "offerReceipt": null,
+  "covenantReceipt": null,
+  "covenantPassed": true,
+  "covenantSeed": {
+    "durable": true,
+    "rowCount": 1,
+    "markerCount": 0
+  },
+  "personaWorldBook": {
+    "expectedProfile": {
+      "profileId": "gamebuddy.companion.default",
+      "revision": 1,
+      "canonicalHash": "3849ae1edfd2e909da3378a85c52b6cdb39b867215f840e3979111616d2e6f6c"
+    },
+    "contentGate": {
+      "profileRead": true,
+      "personaPresent": true,
+      "personaComplete": true,
+      "personaFields": {
+        "core": true,
+        "interactionStyle": true,
+        "expressionStyle": true
+      },
+      "macroResidue": [],
+      "identityName": "GameBuddy Companion",
+      "isDefaultProfile": true
+    },
+    "expectedWorldBook": null,
+    "mountedProfileId": "gamebuddy.companion.default",
+    "mountedProfileRevision": 1,
+    "mountedProfileHash": "3849ae1edfd2e909da3378a85c52b6cdb39b867215f840e3979111616d2e6f6c",
+    "mountedWorldBookId": null,
+    "mountedWorldBookRevision": null,
+    "manifestPresent": true,
+    "model": {
+      "provider": "cpa-oai",
+      "modelId": "deepseek-v4-flash",
+      "thinkingLevel": "high"
+    }
+  },
+  "contextAssembled": true,
+  "worldBookAssembled": true,
+  "worldBookGate": {
+    "expected": false,
+    "mounted": false
+  },
+  "contentGate": {
+    "profileRead": true,
+    "personaPresent": true,
+    "personaComplete": true,
+    "personaFields": {
+      "core": true,
+      "interactionStyle": true,
+      "expressionStyle": true
+    },
+    "macroResidue": [],
+    "identityName": "GameBuddy Companion",
+    "isDefaultProfile": true
+  },
+  "contentPassed": true,
+  "interactionAssessment": null,
+  "systemFindings": {
+    "findings": [
+      {
+        "id": "identical_retry",
+        "component": "orchestration",
+        "severity": "medium",
+        "action": "move_to_tile",
+        "count": 2,
+        "detail": "the exact same rejected request was re-issued — the agent saw no new information between attempts",
+        "recommendation": "rejected requests should carry actionable next-step hints so a retry is never information-free"
+      },
+      {
+        "id": "rejection_observed",
+        "component": "observation",
+        "severity": "medium",
+        "action": null,
+        "count": 2,
+        "detail": "2 of 10 actions were rejected (no_native_path x2) across observation",
+        "recommendation": "read each reason code above; a rejection is information, not noise",
+        "sampleCodes": [
+          "no_native_path"
+        ]
+      }
+    ],
+    "reasonSummaries": {
+      "no_native_path": 2
+    },
+    "rejectedCount": 2,
+    "acceptedCount": 8,
+    "totalCount": 10
+  },
+  "observation": {
+    "schema": "game_ladder_observation/v1",
+    "promptSha256": "25457151f0cd8310",
+    "promptOverridden": false,
+    "ladder": "5",
+    "model": {
+      "provider": "cpa-oai",
+      "modelId": "deepseek-v4-flash",
+      "thinkingLevel": "high"
+    },
+    "samplingParameters": null,
+    "contextAssembled": true,
+    "worldBookAssembled": true,
+    "turnMs": 154766,
+    "actionCount": 10,
+    "rejectionCount": 2,
+    "rejectionCountIncludes": [
+      "rejected",
+      "uncertain",
+      "failed"
+    ],
+    "rejectionRate": 0.2,
+    "receiptCount": 40,
+    "receiptsDeduped": 10,
+    "summaryChars": null,
+    "actionTraceSummary": [
+      {
+        "action": "move_to_tile",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "5ad95300fd1f"
+      },
+      {
+        "action": "enter_exit",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "5ad95300fd1f"
+      },
+      {
+        "action": "move_to_tile",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "969c03acb196"
+      },
+      {
+        "action": "harvest_crop",
+        "state": "succeeded",
+        "reasonCode": "crop_harvested",
+        "argsDigest": "d5de0f50a6ae"
+      },
+      {
+        "action": "move_to_tile",
+        "state": "rejected",
+        "reasonCode": "no_native_path",
+        "argsDigest": "c4ce616906b0"
+      },
+      {
+        "action": "move_to_tile",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "239e69dd10c7"
+      },
+      {
+        "action": "move_to_tile",
+        "state": "rejected",
+        "reasonCode": "no_native_path",
+        "argsDigest": "c4ce616906b0"
+      },
+      {
+        "action": "move_to_tile",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "51b70a4b6bc1"
+      },
+      {
+        "action": "enter_exit",
+        "state": "accepted",
+        "reasonCode": "accepted",
+        "argsDigest": "c4ce616906b0"
+      },
+      {
+        "action": "express_emote",
+        "state": "succeeded",
+        "reasonCode": "emote_started",
+        "argsDigest": "7aee7d5f8b00"
+      }
+    ]
+  },
+  "presentedSummary": null,
+  "voiceResult": null,
+  "agentTurn": {
+    "settled": true,
+    "steerObserved": true
+  },
+  "bridgeFacts": [
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "route_revision=1;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "route_revision=1;target=3,12"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "target=3,12"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=8,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=7,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=6,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=5,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=4,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=3,9;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=3,10;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "8277d2a4-6b82-4864-9e87-a70d6fb5d7be",
+      "executionId": "f86073388bcc437bbf703fb95dd63ddd",
+      "evidence": {
+        "detail": "tile=3,11;target=3,12;arrival=warp_adjacent;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "d8a5da3a-cbb5-483b-8b0f-aad65f0fe9be",
+      "executionId": "30b38bcf454d4eef9d1c4ec75c7962ba",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "d8a5da3a-cbb5-483b-8b0f-aad65f0fe9be",
+      "executionId": "30b38bcf454d4eef9d1c4ec75c7962ba",
+      "evidence": {
+        "detail": "source=FarmHouse:3,12;target=Farm:64,15;entry=resolved_warp_fallback"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "enter_exit_completed",
+      "requestId": "d8a5da3a-cbb5-483b-8b0f-aad65f0fe9be",
+      "executionId": "30b38bcf454d4eef9d1c4ec75c7962ba",
+      "evidence": {
+        "detail": "expected=Farm:64,15;actual=Farm:64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "78689db9-c2f8-41e5-bcb6-9aea5282545f",
+      "executionId": "8b70ce98455b480a947d8331a47c123f",
+      "evidence": {
+        "detail": "route_revision=13;target=64,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "78689db9-c2f8-41e5-bcb6-9aea5282545f",
+      "executionId": "8b70ce98455b480a947d8331a47c123f",
+      "evidence": {
+        "detail": "route_revision=13;target=64,17"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "78689db9-c2f8-41e5-bcb6-9aea5282545f",
+      "executionId": "8b70ce98455b480a947d8331a47c123f",
+      "evidence": {
+        "detail": "target=64,17"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "78689db9-c2f8-41e5-bcb6-9aea5282545f",
+      "executionId": "8b70ce98455b480a947d8331a47c123f",
+      "evidence": {
+        "detail": "tile=64,16;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "78689db9-c2f8-41e5-bcb6-9aea5282545f",
+      "executionId": "8b70ce98455b480a947d8331a47c123f",
+      "evidence": {
+        "detail": "tile=64,17;target=64,17;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "4c79dce9-1f66-41c9-af88-69685193b2d9",
+      "executionId": "9ba49005a5114c60ab31c5b00eb0356e",
+      "evidence": {
+        "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "crop_harvested",
+      "requestId": "4c79dce9-1f66-41c9-af88-69685193b2d9",
+      "executionId": "9ba49005a5114c60ab31c5b00eb0356e",
+      "evidence": {
+        "detail": "location=Farm;target=crop_48c3ae707d6c3349;tile=64,18;crop=745;item=(O)400;native_path_return=true;native_accepted=true;regrows=true;phase_before=5;phase_after=5;day_of_phase_before=0;day_of_phase_after=4;regrow_advanced=true;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=true"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "e272cd1f-af39-4c5a-b02b-5801d62e9c41",
+      "executionId": "16b7e8cd0a0b455d8a6fe756b12f3143",
+      "evidence": {
+        "detail": "from=64,17;to=64,14;location=Farm;target_enclosed=false;derived=true;probe=reachable_flood"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "e272cd1f-af39-4c5a-b02b-5801d62e9c41",
+      "executionId": "16b7e8cd0a0b455d8a6fe756b12f3143",
+      "evidence": {
+        "detail": "from=64,17;to=64,14;location=Farm;target_enclosed=false;derived=true;probe=reachable_flood"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "route_revision=19;target=63,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "route_revision=19;target=63,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "target=63,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "tile=63,17;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "tile_advanced",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "tile=63,16;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "24577885-0365-4adc-84b0-0c147dcffb9b",
+      "executionId": "7f56140098d14640b2c759d874ee8f60",
+      "evidence": {
+        "detail": "tile=63,15;target=63,15;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "107806f8-9551-4f47-b236-da55d157d2fa",
+      "executionId": "15d8dd38160d4e4aaad14e9183a76be6",
+      "evidence": {
+        "detail": "from=63,15;to=64,14;location=Farm;target_enclosed=false;derived=true;probe=reachable_flood"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "no_native_path",
+      "requestId": "107806f8-9551-4f47-b236-da55d157d2fa",
+      "executionId": "15d8dd38160d4e4aaad14e9183a76be6",
+      "evidence": {
+        "detail": "from=63,15;to=64,14;location=Farm;target_enclosed=false;derived=true;probe=reachable_flood"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "1b4680fc-01fd-45aa-8b21-2dcff3d0c022",
+      "executionId": "f7be9e78bd87431baac304c596d053b1",
+      "evidence": {
+        "detail": "route_revision=25;target=64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "1b4680fc-01fd-45aa-8b21-2dcff3d0c022",
+      "executionId": "f7be9e78bd87431baac304c596d053b1",
+      "evidence": {
+        "detail": "route_revision=25;target=64,15"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "controller_started",
+      "requestId": "1b4680fc-01fd-45aa-8b21-2dcff3d0c022",
+      "executionId": "f7be9e78bd87431baac304c596d053b1",
+      "evidence": {
+        "detail": "target=64,15"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "target_reached",
+      "requestId": "1b4680fc-01fd-45aa-8b21-2dcff3d0c022",
+      "executionId": "f7be9e78bd87431baac304c596d053b1",
+      "evidence": {
+        "detail": "tile=64,15;target=64,15;arrival=exact;path=stardew_native"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "4f07546f-ea7f-43c2-b9d1-165054d1e910",
+      "executionId": "2aad417e0eef48ff9631a15417ae0104",
+      "evidence": {
+        "detail": "source=Farm:64,14;target=FarmHouse:3,11;entry=building_do_action"
+      }
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "accepted",
+      "requestId": "4f07546f-ea7f-43c2-b9d1-165054d1e910",
+      "executionId": "2aad417e0eef48ff9631a15417ae0104",
+      "evidence": {
+        "detail": "source=Farm:64,14;target=FarmHouse:3,11;entry=building_do_action"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "enter_exit_completed",
+      "requestId": "4f07546f-ea7f-43c2-b9d1-165054d1e910",
+      "executionId": "2aad417e0eef48ff9631a15417ae0104",
+      "evidence": {
+        "detail": "expected=FarmHouse:3,11;actual=FarmHouse:3,11"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "warped",
+      "evidence": null
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "emote_started",
+      "requestId": "730b6059-f2b1-4c68-98ea-752a68713fa0",
+      "executionId": "2abfdcbfe2bb4fcc854a290851a9e2ac",
+      "evidence": {
+        "detail": "emote=note;native_dispatched=true"
+      }
+    },
+    {
+      "type": "semantic_event",
+      "reasonCode": "body_trace",
+      "evidence": null
+    },
+    {
+      "type": "execution_receipt",
+      "reasonCode": "emote_started",
+      "requestId": "730b6059-f2b1-4c68-98ea-752a68713fa0",
+      "executionId": "2abfdcbfe2bb4fcc854a290851a9e2ac",
+      "evidence": {
+        "detail": "emote=note;native_dispatched=true"
+      }
+    }
+  ],
+  "authenticated": true,
+  "revision": 30,
+  "capture": {
+    "schema": "gamebuddy_live_run_capture/v1",
+    "dir": "E:\\projects\\ai-game-companion\\.live-runs\\game-ladder\\2026-10-04T13-50-25-884Z-ladder-5",
+    "filesWritten": 12,
+    "skipped": [],
+    "failures": []
+  }
+}
