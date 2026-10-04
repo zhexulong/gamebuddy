@@ -130,23 +130,24 @@ test("R3：catalog 只作为参考列，且仅在未覆盖的 gameplay 出口上
       assert.ok(typeof i.coveredByRegisteredAction === "boolean", `${i.intentVariantId} 缺 coveredByRegisteredAction`);
 });
 
-test("未覆盖的 gameplay 出口是 6 个，且每个都有源码锚点", async () => {
+test("未覆盖的 gameplay 出口是 4 个，且每个都有源码锚点", async () => {
   const a = await reconcile();
   const uncovered = a.rows.filter((r) => r.domain === "gameplay_mutation" && r.coverage.kind === "uncovered");
-  // `canBePlacedHere` 在 2e9e13e 之前被误认为是 place_wood_fence 的 seam，因而被算作“已覆盖”。
+  // `canBePlacedHere` 在 2e9e13e 之前被误认为是 place_wood_fence 的 seam，因而被算作"已覆盖"。
   // 该引用就是纯判断方法（0 写入），修正为真实变异点 placementAction 后，它诚实地
   // 回到未覆盖集。数量从 5 变 6 是修复的结果，不是新增缺口。
-  assert.equal(uncovered.length, 6, `实测未覆盖应为 6，得到 ${uncovered.length}`);
+  //
+  // 6 → 4（2026-10-05）：`checkForAction` 与 `performObjectDropInAction` 随其他 lane 的
+  // action 注册被承载，于是退出未覆盖集。它们是**被覆盖**而不是被丢弃：保留两条出口
+  // 的源码锚点断言，以证明剩下这四个仍然可追。
+  assert.equal(uncovered.length, 4, `实测未覆盖应为 4，得到 ${uncovered.length}`);
   const names = uncovered.map((r) => r.nativeMember).sort();
-  assert.deepEqual(names, [
-    "animateSpecialMove",
-    "canBePlacedHere",
-    "checkForAction",
-    "performAction",
-    "performObjectDropInAction",
-    "rotate",
-  ]);
+  assert.deepEqual(names, ["animateSpecialMove", "canBePlacedHere", "performAction", "rotate"]);
   for (const r of uncovered) assert.ok(r.definedIn.length > 0, `${r.nativeMember} 必须有源码锚点`);
+  // 已覆盖的两条仍然在场（只是不再未覆盖），否则它们就是被静默丢掉了。
+  const all = a.rows.filter((r) => r.domain === "gameplay_mutation").map((r) => r.nativeMember);
+  assert.ok(all.includes("checkForAction"), "checkForAction 应仍在出口集合里");
+  assert.ok(all.includes("performObjectDropInAction"), "performObjectDropInAction 应仍在出口集合里");
 });
 
 test("产物声明 catalog 不是发现输入，且菜单判定不是 UI 排他性证明", async () => {

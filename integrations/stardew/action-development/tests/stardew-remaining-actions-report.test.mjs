@@ -68,7 +68,7 @@ test("三档计数之和等于未匹配候选总数", async () => {
     counts.tierA_catalogIntentExists + counts.tierB_noCatalogIntent + counts.tierC_nonGameplayWrites,
     counts.unmatchedCandidateUnits,
   );
-  assert.equal(counts.unmatchedCandidateUnits, 67);
+  assert.equal(counts.unmatchedCandidateUnits, 64);
   // 2026-09-30 switch_section 作用域修正（见 action-inventory-method.md §三）：
   // case 是兄弟作用域，不再被外层 if 吞掉。原先被 `if (who.IsLocalPlayer)` 吞掉的
   // GameLocation.performAction 的 case 桶恢复为 113 个独立分支，其中 14 个通过九谓词；
@@ -82,12 +82,18 @@ test("三档计数之和等于未匹配候选总数", async () => {
   // C 档（只写 NeedsUpdate）浮出，按 catalog intent 进 A 档（23→26）；
   // frameCounter（Chest 箱盖动画计时器）加入非 gameplay 名单后
   // Chest.checkForAction 回落 C 档，C 档净 16→13。
-  assert.equal(counts.tierA_catalogIntentExists, 26);
+  //
+  // 2026-10-05：67 → 64。三个单元退出候选池：`ride_bus` 注册它的两条 native seam
+  // （本轮的 bus action）；`BuildingChest` 从「B6 不可达」改为 partial merge（它的入口
+  // 是 Data/Buildings 的 ActionTile，不是地图瓦片——原 B6 判据扫错了层）；以及另一条
+  // lane 的 action 注册所覆盖的出口。A 档 26→28、B 档 28→23 是同一批退出在分档上的
+  // 落点，不是重新分类。
+  assert.equal(counts.tierA_catalogIntentExists, 28);
   // 字段分类修正:Shears.DoFunction 已登记为 collect_animal_product 的第二个 seam(handler 本就覆盖 MilkPail/Shears),
   // kickProgress/localKickStartTile(Chest 踢动画)、lastTentTouchedByPlayer(Tent 交互辅助静态)、
   // HitTimerInstance.Milliseconds(Chest 命中计时)、boulderKnockTimer/boulderKnocksLeft/
   // doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)从 gameplay 移至非 gameplay
-  assert.equal(counts.tierB_noCatalogIntent, 28);
+  assert.equal(counts.tierB_noCatalogIntent, 23);
   assert.equal(counts.tierC_nonGameplayWrites, 13);
 });
 
