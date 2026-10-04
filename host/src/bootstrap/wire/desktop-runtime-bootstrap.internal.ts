@@ -1,7 +1,15 @@
 import { createConnection, type Socket } from "node:net";
 import { win32 } from "node:path";
 
-import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
+import type {
+  DesktopGuardianRecovery,
+  DesktopGuardianRecoveryTransport,
+  DesktopGuardianSession,
+  GuardianAck,
+  GuardianRecoveryAck,
+  GuardianRecoveryClassification,
+  GuardianRecoveryRole,
+} from "../../containment/auth/desktop-guardian-session.internal.js";
 import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
@@ -41,6 +49,16 @@ const bootstrapSchema = "gamebuddy-desktop-host-bootstrap/v1";
 const rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
 const sha256 = /^[a-f0-9]{64}$/;
 const generation = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+// The native recovery ingress parses the recovery actor and the binding
+// revision as exact GUIDs, so a recovery actor that is not one can never be
+// acknowledged as a recovery of this attempt.
+const opaqueGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// One bounded wait budget for arm/contain/recovery. A launch deadline is
+// deliberately not reusable as a generic operation horizon.
+const MAX_GUARDIAN_OPERATION_WAIT_BUDGET_MS = 300_000;
+// The recovery wire answers four acknowledgements with one identical key set, and
+// a recovery ack identifies the recovery actor instead of a containment role.
+const recoveryAcknowledgementKeys = ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"] as const;
 
 type DesktopRootLayout = Readonly<{
   programRoot: string;
@@ -394,7 +412,8 @@ async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardia
 }
 
 type GuardianRole = "player_host" | "ai_client";
-type GuardianOperation = "arm_attempt" | "launch_role" | "contain_role";
+type GuardianCommandOperation = "arm_attempt" | "launch_role" | "contain_role";
+type GuardianRecoveryOperation = "recover_attempt" | "recovery_post_cas" | "recovery_role_cas_ack" | "recovery_finalize_ack" | "release";
 type GuardianInput = Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs?: number; operationWaitBudgetMs?: number; role?: GuardianRole; privateFrame?: Uint8Array }>;
 type PendingResponse = { resolve(value: Record<string, unknown>): void; reject(reason: Error): void; timer?: ReturnType<typeof setTimeout> };
 
@@ -414,6 +433,24 @@ class GuardianSessionClient implements DesktopGuardianSession {
   async arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("arm_attempt", input); }
   async launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: GuardianRole; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("launch_role", input); }
   async contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; role: GuardianRole }>): Promise<GuardianAck> { return await this.command("contain_role", input); }
+  /**
+   * Recovery is a conversation rather than one command: the broker answers two
+   * written frames with a single acknowledgement and answers a role
+   * classification only after the durable step it belongs to has run, so it
+   * needs the multi-acknowledgement read path below instead of the single
+   * request/acknowledgement helper the three commands use.
+   */
+  async recover(input: DesktopGuardianRecovery): Promise<GuardianRecoveryAck> {
+    return await this.serialize(async () => {
+      try {
+        if (this.#closed) throw unavailable();
+        return await driveGuardianRecoveryConversation({
+          write: (frame) => { this.writeFrame(frame); },
+          receive: () => this.awaitAcknowledgement(input.operationWaitBudgetMs),
+        }, this.binding, input);
+      } catch (error) { this.fail(); throw error; }
+    });
+  }
   async close(): Promise<void> { this.fail(); }
 
   async hello(): Promise<void> {
@@ -421,30 +458,57 @@ class GuardianSessionClient implements DesktopGuardianSession {
     if (!validHelloAcknowledgement(acknowledgement, this.binding)) throw unavailable();
   }
 
-  private async command(operation: GuardianOperation, input: GuardianInput): Promise<GuardianAck> {
-    const run = async (): Promise<GuardianAck> => {
+  private async command(operation: GuardianCommandOperation, input: GuardianInput): Promise<GuardianAck> {
+    return await this.serialize(async () => {
       try {
         if (this.#closed || !validGuardianInput(operation, input)) throw unavailable();
-        const request: Record<string, unknown> = { schema: guardianSessionSchema, protocolVersion: 1, operation, ...this.binding, ...input };
-        if (input.privateFrame !== undefined) request.privateFrame = Buffer.from(input.privateFrame).toString("base64url");
-        const acknowledgement = await this.request(request, operation === "launch_role" ? input.deadlineUnixMs! - Date.now() : input.operationWaitBudgetMs!);
+        const acknowledgement = await this.request(guardianCommandFrame(operation, this.binding, input), operation === "launch_role" ? input.deadlineUnixMs! - Date.now() : input.operationWaitBudgetMs!);
         if (!validCommandAcknowledgement(acknowledgement, operation, input, this.binding)) throw unavailable();
         return acknowledgement;
       } catch (error) { this.fail(); throw error; }
-    };
-    const result = this.#serial.then(run, run);
+    });
+  }
+
+  /** Operations run one at a time; a refusal must never interleave with a live conversation. */
+  private serialize<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.#serial.then(task, task);
     this.#serial = result.then(() => undefined, () => undefined);
-    return await result;
+    return result;
   }
 
   private request(message: Record<string, unknown>, waitBudgetMs?: number): Promise<Record<string, unknown>> {
-    if (this.#closed || this.#waiter !== undefined || (waitBudgetMs !== undefined && (!Number.isSafeInteger(waitBudgetMs) || waitBudgetMs < 1 || waitBudgetMs > 2_147_483_647))) return Promise.reject(unavailable());
+    if (this.#closed || this.#waiter !== undefined || (waitBudgetMs !== undefined && !validWaitBudget(waitBudgetMs))) return Promise.reject(unavailable());
     const bytes = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
     if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(unavailable());
+    return this.awaitWaiter(bytes, waitBudgetMs);
+  }
+
+  /**
+   * Installs the next acknowledgement waiter without writing anything. The
+   * waiter must exist before the frames it answers are written: `receive` fails
+   * the session closed on an acknowledgement that arrives with no waiter, and the
+   * recovery conversation answers two written frames with one acknowledgement.
+   */
+  private awaitAcknowledgement(waitBudgetMs: number): Promise<Record<string, unknown>> {
+    if (this.#closed || this.#waiter !== undefined || !validWaitBudget(waitBudgetMs)) return Promise.reject(unavailable());
+    return this.awaitWaiter(undefined, waitBudgetMs);
+  }
+
+  /** Writes one already-ordered frame the broker does not answer on its own. */
+  private writeFrame(frame: Readonly<Record<string, unknown>>): void {
+    if (this.#closed) return;
+    const bytes = Buffer.from(`${JSON.stringify(frame)}\n`, "utf8");
+    if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return this.fail();
+    this.socket.write(bytes, (error) => { if (error != null) this.fail(); });
+  }
+
+  /** Installs the waiter first and writes the pending frame second, so a reply can never arrive unowned. */
+  private awaitWaiter(bytes: Buffer | undefined, waitBudgetMs: number | undefined): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
       const waiter: PendingResponse = { resolve, reject };
       if (waitBudgetMs !== undefined) waiter.timer = setTimeout(() => this.fail(), waitBudgetMs);
       this.#waiter = waiter;
+      if (bytes === undefined) return;
       this.socket.write(bytes, (error) => { if (error != null) this.fail(); });
     });
   }
@@ -492,7 +556,7 @@ function validHelloAcknowledgement(value: Record<string, unknown>, binding: Desk
   return exactKeys(value, ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256"]) && value.schema === guardianSessionSchema && value.protocolVersion === 1 && value.operation === "hello" && value.status === "accepted" && matchesBinding(value, binding);
 }
 
-function validGuardianInput(operation: GuardianOperation, input: GuardianInput): boolean {
+function validGuardianInput(operation: GuardianCommandOperation, input: GuardianInput): boolean {
   if (!validOpaque(input.guardianInstanceId) || !Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1 || !validOpaque(input.attemptId)) return false;
   if (operation === "launch_role") {
     if (Object.hasOwn(input, "operationWaitBudgetMs")) return false;
@@ -501,12 +565,12 @@ function validGuardianInput(operation: GuardianOperation, input: GuardianInput):
   } else {
     if (Object.hasOwn(input, "deadlineUnixMs")) return false;
     const operationWaitBudgetMs = input.operationWaitBudgetMs;
-    if (typeof operationWaitBudgetMs !== "number" || !Number.isSafeInteger(operationWaitBudgetMs) || operationWaitBudgetMs < 1 || operationWaitBudgetMs > 300_000) return false;
+    if (typeof operationWaitBudgetMs !== "number" || !Number.isSafeInteger(operationWaitBudgetMs) || operationWaitBudgetMs < 1 || operationWaitBudgetMs > MAX_GUARDIAN_OPERATION_WAIT_BUDGET_MS) return false;
   }
   return operation === "contain_role" ? validRole(input.role) && input.privateFrame === undefined : (operation === "arm_attempt" || validRole(input.role)) && input.privateFrame instanceof Uint8Array && input.privateFrame.byteLength <= MAX_PRIVATE_FRAME_BYTES;
 }
 
-function validCommandAcknowledgement(value: Record<string, unknown>, operation: GuardianOperation, input: GuardianInput, binding: DesktopGuardianSessionBinding): value is GuardianAck {
+function validCommandAcknowledgement(value: Record<string, unknown>, operation: GuardianCommandOperation, input: GuardianInput, binding: DesktopGuardianSessionBinding): value is GuardianAck {
   const role = operation === "arm_attempt" ? undefined : input.role;
   const expected = role === undefined ? ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "guardianInstanceId", "guardianEpoch", "attemptId"] : ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "guardianInstanceId", "guardianEpoch", "attemptId", "role"];
   const status = operation === "arm_attempt" ? "armed" : operation === "launch_role" ? "role_active" : "role_contained";
@@ -516,6 +580,148 @@ function validCommandAcknowledgement(value: Record<string, unknown>, operation: 
 function matchesBinding(value: Record<string, unknown>, binding: DesktopGuardianSessionBinding): boolean { return value.bootstrapId === binding.bootstrapId && value.generation === binding.generation && value.inventoryDigest === binding.inventoryDigest && value.runtimeAdmissionSha256 === binding.runtimeAdmissionSha256; }
 function validOpaque(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= 1024; }
 function validRole(value: unknown): value is GuardianRole { return value === "player_host" || value === "ai_client"; }
+function validWaitBudget(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 2_147_483_647; }
+
+/**
+ * Builds one guardian command frame in the exact ordinal key order
+ * `DesktopHostBootstrapBroker.ExactObject` validates it by. The Desktop compares
+ * the key sequence, not only the key set, so the bounded wait (or the launch
+ * deadline) precedes the Guardian correlation and the role precedes the private
+ * frame; a differently ordered frame is refused outright and closes the session.
+ */
+function guardianCommandFrame(operation: GuardianCommandOperation, binding: DesktopGuardianSessionBinding, input: GuardianInput): Record<string, unknown> {
+  return Object.freeze({
+    schema: guardianSessionSchema,
+    protocolVersion: 1,
+    operation,
+    bootstrapId: binding.bootstrapId,
+    generation: binding.generation,
+    inventoryDigest: binding.inventoryDigest,
+    runtimeAdmissionSha256: binding.runtimeAdmissionSha256,
+    ...(operation === "launch_role" ? { deadlineUnixMs: input.deadlineUnixMs! } : { operationWaitBudgetMs: input.operationWaitBudgetMs! }),
+    guardianInstanceId: input.guardianInstanceId,
+    guardianEpoch: input.guardianEpoch,
+    attemptId: input.attemptId,
+    ...(operation === "arm_attempt" ? {} : { role: input.role as GuardianRole }),
+    ...(input.privateFrame === undefined ? {} : { privateFrame: Buffer.from(input.privateFrame).toString("base64url") }),
+  });
+}
+
+/** Builds one recovery frame in the same exact ordinal key order. */
+function guardianRecoveryFrame(operation: GuardianRecoveryOperation, binding: DesktopGuardianSessionBinding, input: DesktopGuardianRecovery, extra: Readonly<{ privateFrame?: Uint8Array; role?: GuardianRecoveryRole }> = {}): Record<string, unknown> {
+  return Object.freeze({
+    schema: guardianSessionSchema,
+    protocolVersion: 1,
+    operation,
+    bootstrapId: binding.bootstrapId,
+    generation: binding.generation,
+    inventoryDigest: binding.inventoryDigest,
+    runtimeAdmissionSha256: binding.runtimeAdmissionSha256,
+    operationWaitBudgetMs: input.operationWaitBudgetMs,
+    guardianInstanceId: input.guardianInstanceId,
+    guardianEpoch: input.guardianEpoch,
+    attemptId: input.attemptId,
+    recoveryInstanceId: input.recoveryInstanceId,
+    ...(extra.privateFrame === undefined ? {} : { privateFrame: Buffer.from(extra.privateFrame).toString("base64url") }),
+    ...(extra.role === undefined ? {} : { role: extra.role }),
+  });
+}
+
+function validRecoveryInput(input: DesktopGuardianRecovery): boolean {
+  if (!validOpaque(input.guardianInstanceId) || !Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1 || !validOpaque(input.attemptId)) return false;
+  if (typeof input.recoveryInstanceId !== "string" || !opaqueGuid.test(input.recoveryInstanceId)) return false;
+  if (!validWaitBudget(input.operationWaitBudgetMs) || input.operationWaitBudgetMs > MAX_GUARDIAN_OPERATION_WAIT_BUDGET_MS) return false;
+  if (!(input.preCasFrame instanceof Uint8Array) || input.preCasFrame.byteLength === 0 || input.preCasFrame.byteLength > MAX_PRIVATE_FRAME_BYTES) return false;
+  return typeof input.beginRecovery === "function" && typeof input.roleContained === "function";
+}
+
+/**
+ * The recovery wire answers four acknowledgements with one identical key set, so
+ * the accepted statuses are a function of the position the conversation reached
+ * rather than of the frame: the broker reports `unavailable` both for a gate it
+ * refused to open and for a role it could not classify as contained.
+ */
+function recoveryAcknowledgementStatus(value: Record<string, unknown>, input: DesktopGuardianRecovery, binding: DesktopGuardianSessionBinding, expectedStatuses: readonly string[]): string | undefined {
+  if (
+    !exactKeys(value, recoveryAcknowledgementKeys) ||
+    value.schema !== guardianSessionSchema ||
+    value.protocolVersion !== 1 ||
+    value.operation !== "recover_attempt" ||
+    typeof value.status !== "string" ||
+    !expectedStatuses.includes(value.status) ||
+    !matchesBinding(value, binding) ||
+    value.guardianInstanceId !== input.guardianInstanceId ||
+    value.guardianEpoch !== input.guardianEpoch ||
+    value.attemptId !== input.attemptId ||
+    value.recoveryInstanceId !== input.recoveryInstanceId
+  ) return undefined;
+  return value.status;
+}
+
+function isRecoveryClassification(value: string): value is GuardianRecoveryClassification {
+  return value === "unavailable" || value === "quarantined";
+}
+
+function roleClassified(role: GuardianRecoveryRole, classification: string | undefined): GuardianRecoveryAck {
+  if (classification === undefined || !isRecoveryClassification(classification)) throw unavailable();
+  return Object.freeze({ outcome: "role_classified", role, classification });
+}
+
+/**
+ * Drives the complete bounded recovery conversation the Desktop broker serves.
+ *
+ * The broker answers two written frames with one acknowledgement (the post-CAS
+ * binding and the native recover attempt both precede the first role
+ * classification) and it only writes a role classification once the durable step
+ * it belongs to has run, so the waiter for each acknowledgement is installed
+ * before the frames it answers are written. A conversation that does not reach
+ * its exact terminal acknowledgement fails closed: an uncertain native recovery
+ * is never reported as containment.
+ *
+ * Exported for the focused protocol test; the frame order above only exists here.
+ */
+export async function driveGuardianRecoveryConversation(transport: DesktopGuardianRecoveryTransport, binding: DesktopGuardianSessionBinding, input: DesktopGuardianRecovery): Promise<GuardianRecoveryAck> {
+  if (!validRecoveryInput(input)) throw unavailable();
+  // Gate. The broker injects the native recovery token into this one frame, and
+  // it opens the gate only while it holds the exact recorded lease binding.
+  const gate = transport.receive();
+  transport.write(guardianRecoveryFrame("recover_attempt", binding, input, { privateFrame: input.preCasFrame }));
+  const gateStatus = recoveryAcknowledgementStatus(await gate, input, binding, ["recovery_accepted", "unavailable"]);
+  // `unavailable` at this position is the gate refusing to open: nothing
+  // downstream ran, no durable CAS may run, and the previous lease stays
+  // authority.
+  if (gateStatus === undefined) throw unavailable();
+  if (gateStatus === "unavailable") return Object.freeze({ outcome: "gate_held" as const });
+  // The durable recovering CAS may only run while the gate is held, and the
+  // post-CAS binding it produces is validated against that exact gate, so it
+  // cannot be an input.
+  const postCasFrame = await input.beginRecovery();
+  if (!(postCasFrame instanceof Uint8Array) || postCasFrame.byteLength === 0 || postCasFrame.byteLength > MAX_PRIVATE_FRAME_BYTES) throw unavailable();
+  // One acknowledgement answers these two frames: the post-CAS binding and the
+  // native recover attempt the broker rebuilds from the correlation alone.
+  const player = transport.receive();
+  transport.write(guardianRecoveryFrame("recovery_post_cas", binding, input, { privateFrame: postCasFrame }));
+  transport.write(guardianRecoveryFrame("recover_attempt", binding, input));
+  const playerStatus = recoveryAcknowledgementStatus(await player, input, binding, ["player_contained", "unavailable", "quarantined"]);
+  if (playerStatus === undefined) throw unavailable();
+  if (playerStatus !== "player_contained") return roleClassified("playerHost", playerStatus);
+  await input.roleContained("playerHost");
+  const ai = transport.receive();
+  transport.write(guardianRecoveryFrame("recovery_role_cas_ack", binding, input, { role: "playerHost" }));
+  const aiStatus = recoveryAcknowledgementStatus(await ai, input, binding, ["ai_contained", "unavailable", "quarantined"]);
+  if (aiStatus === undefined) throw unavailable();
+  if (aiStatus !== "ai_contained") return roleClassified("aiClient", aiStatus);
+  await input.roleContained("aiClient");
+  const settled = transport.receive();
+  transport.write(guardianRecoveryFrame("recovery_role_cas_ack", binding, input, { role: "aiClient" }));
+  transport.write(guardianRecoveryFrame("recovery_finalize_ack", binding, input));
+  // The release closes the native control pipe and the recovery gate, so it is
+  // the last frame this conversation ever writes.
+  transport.write(guardianRecoveryFrame("release", binding, input));
+  const settledStatus = recoveryAcknowledgementStatus(await settled, input, binding, ["contained"]);
+  if (settledStatus !== "contained") throw unavailable();
+  return Object.freeze({ outcome: "contained" as const });
+}
 
 async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<void> {
   const acknowledgement = Buffer.from(`${JSON.stringify({

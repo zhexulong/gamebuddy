@@ -17,11 +17,12 @@ import { randomUUID } from "node:crypto";
 
 import type { DesktopGuardianSession } from "../../containment/auth/desktop-guardian-session.internal.js";
 import type { ContainedGameRuntimePlatform } from "../../containment/runtime/core/contained-game-runtime.js";
-import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
+import type { TypedPrivateGameFact, TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
   settleOwnedPlayerHostContainedRuntimeAttempt,
+  type StardewBootstrapOwnerRecoveryDrive,
   type StardewPlayerHostRuntimeLaunchCollaborator,
 } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { StardewOwnedPlayerHostBootstrap } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
@@ -135,6 +136,98 @@ function encodeNativeRoleLaunchPlan(plan: NativeRoleLaunchPlan): Uint8Array {
   return new TextEncoder().encode(encoded);
 }
 
+/** Native `GuardianRecoveryIngress` opaque-correlation shape (GUID "D"). */
+const RECOVERY_OPAQUE_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Native `GuardianRecoveryIngress` lease/Job name shape (`Local\` + opaque leaf). */
+const RECOVERY_GUARDIAN_NAME = /^Local\\[A-Za-z0-9_-]{1,128}$/;
+/** Native `GuardianRecoveryIngress` role-state vocabulary. */
+const RECOVERY_ROLE_STATES = new Set(["reserved", "armed", "active", "closing", "contained"]);
+
+/**
+ * Reads one typed recovery fact. The recovery bodies are exact key sets rather
+ * than arbitrary bags, so a missing fact fails closed here instead of reaching
+ * the authenticated session as a frame the native parser would reject.
+ */
+function requireRecoveryFact(facts: TypedPrivateGameFacts, key: string): TypedPrivateGameFact {
+  const value = facts[key];
+  if (value === undefined) throw new Error(`contained game runtime: recovery facts are missing ${key}`);
+  return value;
+}
+
+function requireRecoveryOpaqueGuid(facts: TypedPrivateGameFacts, key: string): string {
+  const value = requireRecoveryFact(facts, key);
+  if (typeof value !== "string" || !RECOVERY_OPAQUE_GUID.test(value)) throw new Error(`contained game runtime: recovery fact ${key} is not an opaque guid`);
+  return value;
+}
+
+function requireRecoveryPositiveInteger(facts: TypedPrivateGameFacts, key: string): number {
+  const value = requireRecoveryFact(facts, key);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new Error(`contained game runtime: recovery fact ${key} is not a positive integer`);
+  return value;
+}
+
+function requireRecoveryGuardianName(facts: TypedPrivateGameFacts, key: string): string {
+  const value = requireRecoveryFact(facts, key);
+  if (typeof value !== "string" || !RECOVERY_GUARDIAN_NAME.test(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a guardian name`);
+  return value;
+}
+
+function requireRecoveryRoleState(facts: TypedPrivateGameFacts, key: string): string {
+  const value = requireRecoveryFact(facts, key);
+  if (typeof value !== "string" || !RECOVERY_ROLE_STATES.has(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a role state`);
+  return value;
+}
+
+/** Encodes one recovery body with the exact ordinal key order the native parser reads. */
+function encodeRecoveryBody(body: Readonly<Record<string, string | number>>, name: string): Uint8Array {
+  const encoded = JSON.stringify(body);
+  if (encoded === undefined) throw new Error(`contained game runtime: ${name} encoding failed`);
+  return new TextEncoder().encode(encoded);
+}
+
+/**
+ * Tokenless pre-CAS gate body. The Desktop supervisor injects the recovery token
+ * into this one frame (`InjectRecoveryToken`) and the broker accepts only these
+ * five keys, so a token of the Host's own can never appear here.
+ */
+function encodeRecoveryPreCasFrame(
+  correlation: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string }>,
+  gateFacts: TypedPrivateGameFacts,
+): Uint8Array {
+  return encodeRecoveryBody({
+    guardianInstanceId: correlation.guardianInstanceId,
+    guardianEpoch: correlation.guardianEpoch,
+    attemptId: correlation.attemptId,
+    bindingRevision: requireRecoveryOpaqueGuid(gateFacts, "bindingRevision"),
+    leaseName: requireRecoveryGuardianName(gateFacts, "leaseName"),
+  }, "recovery gate frame");
+}
+
+/**
+ * Post-CAS binding body of the durable recovering successor. It is written to
+ * the native pipe unchanged, so it carries exactly the keys `ParsePostCas`
+ * reads; the native parser remains the authority on the gate correlation it must
+ * still match.
+ */
+function encodeRecoveryPostCasFrame(
+  correlation: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; recoveryInstanceId: string }>,
+  successorFacts: TypedPrivateGameFacts,
+): Uint8Array {
+  return encodeRecoveryBody({
+    guardianInstanceId: correlation.guardianInstanceId,
+    guardianEpoch: correlation.guardianEpoch,
+    attemptId: correlation.attemptId,
+    recoveryInstanceId: correlation.recoveryInstanceId,
+    bindingRevision: requireRecoveryOpaqueGuid(successorFacts, "bindingRevision"),
+    ownerRecordRevision: requireRecoveryPositiveInteger(successorFacts, "ownerRecordRevision"),
+    leaseName: requireRecoveryGuardianName(successorFacts, "leaseName"),
+    playerJobName: requireRecoveryGuardianName(successorFacts, "playerJobName"),
+    aiJobName: requireRecoveryGuardianName(successorFacts, "aiJobName"),
+    playerHostState: requireRecoveryRoleState(successorFacts, "playerHostState"),
+    aiClientState: requireRecoveryRoleState(successorFacts, "aiClientState"),
+  }, "recovery post-CAS frame");
+}
+
 /**
  * Builds the composition-owned contained launch seam for both roles. The
  * runtime binding uses the Stardew owner's Guardian correlation
@@ -154,6 +247,21 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   // after a pre-claim failure reuses the exact bound runtime, while a post-
   // claim failure is terminal in the coordinator and never calls back here.
   const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof createContainedGameRuntime>>();
+  // The arm frame the contained runtime needs and the durable transition port a
+  // recovery drive needs are two halves of the same one-shot binding, so it is
+  // consumed exactly once here and both halves are read from that single
+  // consumption. That keeps one owner path, one durable read/write seam, and
+  // makes the recovery drive reachable before any launch.
+  const ownerBindings = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding>>();
+  const ownerBindingFor = (owner: StardewOwnedPlayerHostBootstrap): ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding> => {
+    let binding = ownerBindings.get(owner);
+    if (binding === undefined) {
+      binding = consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+      ownerBindings.set(owner, binding);
+    }
+    return binding;
+  };
+  const recoveryDrives = new WeakMap<StardewOwnedPlayerHostBootstrap, StardewBootstrapOwnerRecoveryDrive>();
   // Roles this attempt actually launched. Settlement must catch the durable
   // record up from `armed` through exactly these roles, never an invented one.
   const launchedRolesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, Set<"playerHost" | "aiClient">>();
@@ -168,16 +276,16 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   const runtimeFor = (owner: StardewOwnedPlayerHostBootstrap) => {
     let runtime = runtimesByOwner.get(owner);
     if (runtime === undefined) {
-      const binding = createStardewBootstrapGuardianOwnerBinding(owner);
-      // Consume the binding here so this composition seam — the only layer that
-      // holds the exact owner — owns both the native correlation and the durable
-      // owner-record transitions. The retired game-layer Guardian owner seam did
-      // the same work from the wrong layer and had no production consumer.
-      const arm = consumeStardewBootstrapGuardianOwnerBinding(binding).armFrame;
+      // The consumed binding is this composition seam's, and this seam is the
+      // only layer that holds the exact owner, so it owns both the native
+      // correlation and the durable owner-record transitions. The retired
+      // game-layer Guardian owner seam did the same work from the wrong layer
+      // and had no production consumer.
+      const { armFrame } = ownerBindingFor(owner);
       runtime = createContainedGameRuntime(platform, Object.freeze({
-        guardianInstanceId: arm.guardianInstanceId,
-        guardianEpoch: arm.guardianEpoch,
-        attemptId: arm.attemptId,
+        guardianInstanceId: armFrame.guardianInstanceId,
+        guardianEpoch: armFrame.guardianEpoch,
+        attemptId: armFrame.attemptId,
         operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
       }));
       runtimesByOwner.set(owner, runtime);
@@ -209,6 +317,23 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       return requireRuntime(owner).containRole("ai_client");
     },
     /**
+     * The exact owner's durable recovery drive, projected from the same one-shot
+     * Guardian owner binding the contained runtime consumes. Reaching it needs
+     * no launch, and a later launch on the same owner reuses the exact same
+     * binding, so recovery and launch never open two owner paths or two durable
+     * seams. The native recovery attempt itself stays with whoever holds the
+     * Guardian recovery gate; this drive only owns the durable transitions.
+     */
+    recovery(owner: StardewOwnedPlayerHostBootstrap): StardewBootstrapOwnerRecoveryDrive {
+      let drive = recoveryDrives.get(owner);
+      if (drive === undefined) {
+        const { recoveryGateBinding, transitions } = ownerBindingFor(owner);
+        drive = Object.freeze({ recoveryGateBinding, transitions });
+        recoveryDrives.set(owner, drive);
+      }
+      return drive;
+    },
+    /**
      * Protected terminal settlement for the exact owner. The platform session is
      * released exactly once, then the durable Stardew owner attempt is advanced
      * to `contained` and the matching Guardian settlement proof releases the
@@ -233,7 +358,10 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
  *
  * Arm frames use simple JSON encoding for the arm schema; launch frames use
  * the native Stardew role-launch-plan encoder ("ParseLaunch" schema) so the
- * native Guardian receives the exact 10-key plan it expects.
+ * native Guardian receives the exact 10-key plan it expects. Recovery frames use
+ * the two exact bodies `GuardianRecoveryIngress` parses: a tokenless pre-CAS gate
+ * body (the Desktop supervisor injects the recovery token) and the post-CAS
+ * binding body of the durable recovering successor.
  */
 export function createDesktopGuardianGameRuntimePlatform(
   session: DesktopGuardianSession,
@@ -320,6 +448,24 @@ export function createDesktopGuardianGameRuntimePlatform(
     },
     async contain(input) {
       await session.contain(input);
+    },
+    /**
+     * One bounded recovery conversation. The Host owns only the two native
+     * bodies; the Desktop supervisor injects the recovery token into the gate
+     * frame and the session/broker keep every frame order, correlation check and
+     * durable CAS acknowledgement, so no recovery ordering decision is made here.
+     */
+    async recover(input) {
+      const { gateFacts, beginRecovery, roleContained, ...correlation } = input;
+      const preCasFrame = encodeRecoveryPreCasFrame(correlation, gateFacts);
+      return await session.recover({
+        ...correlation,
+        preCasFrame,
+        // The durable recovering CAS may only run while the gate is held, so the
+        // post-CAS body is produced inside the conversation, never supplied to it.
+        beginRecovery: async () => encodeRecoveryPostCasFrame(correlation, await beginRecovery()),
+        roleContained,
+      });
     },
     /**
      * Terminal settlement. The durable Stardew meaning of a settlement (owner

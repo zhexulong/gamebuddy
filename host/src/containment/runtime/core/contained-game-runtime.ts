@@ -11,6 +11,8 @@ import type {
 import type {
   ContainmentCorrelation,
   ContainmentOperationWaitBudget,
+  GuardianRecoveryAck,
+  GuardianRecoveryRole,
 } from "../../auth/desktop-guardian-session.internal.js";
 
 type RuntimeBinding = ContainmentCorrelation & ContainmentOperationWaitBudget;
@@ -42,6 +44,30 @@ export type ContainedGameRuntimePlatform = Readonly<{
     readonly operationWaitBudgetMs: number;
     readonly role: ContainmentRole;
   }>): Promise<void>;
+  /**
+   * One bounded recovery conversation with the recovery transport.
+   *
+   * Recovery is a multi-frame durable protocol rather than one request: the gate
+   * facts are sent before the durable recovering CAS, the post-CAS binding facts
+   * `beginRecovery` returns are validated against that exact gate, and every role
+   * the native classified as contained is durably recorded before its CAS
+   * acknowledgement is written. This port carries typed facts only; the
+   * composition owns their encoding into platform frames, so no platform frame
+   * representation enters this module.
+   */
+  recover(input: Readonly<{
+    readonly guardianInstanceId: string;
+    readonly guardianEpoch: number;
+    readonly attemptId: string;
+    readonly operationWaitBudgetMs: number;
+    readonly recoveryInstanceId: string;
+    /** Typed facts of the exact recovery lease binding the native gate must acquire. */
+    readonly gateFacts: TypedPrivateGameFacts;
+    /** Durable recovering CAS; the successor facts it returns are the post-CAS binding. */
+    readonly beginRecovery: () => Promise<TypedPrivateGameFacts>;
+    /** Durable per-role containment CAS, before that role's recovery CAS acknowledgement. */
+    readonly roleContained: (role: GuardianRecoveryRole) => Promise<void>;
+  }>): Promise<GuardianRecoveryAck>;
   /**
    * Protected terminal settlement for one attempt. The platform owns what a
    * settlement durably records and proves; the generic runtime only guarantees

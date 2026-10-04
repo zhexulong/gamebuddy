@@ -89,6 +89,15 @@ const MOD_DIRECTORY = "GameBuddy";
 const MOD_CONFIG_FILE = "config.json";
 const INTEGRATION_VERSION = "0.1.0";
 const MANIFEST_LIFETIME_SECONDS = 120;
+/**
+ * Display-only values for the staged Player Host world-creation form. The
+ * physical slot basename the Player Host publishes after creation remains the
+ * only world-identity authority, so none of these is an identity: they exist
+ * solely because SMAPI must be handed a complete, non-empty creation form.
+ */
+const WORLD_CREATION_FARM_NAME = "GameBuddy Farm";
+const WORLD_CREATION_PLAYER_NAME = "GameBuddy";
+const WORLD_CREATION_FAVORITE_THING = "Companion";
 const PHASE_B_PACKAGE_ENTRIES = Object.freeze([
   "GameBuddy.Stardew.Core.dll",
   "GameBuddy.Stardew.deps.json",
@@ -175,6 +184,18 @@ export type StardewContainedAiClientLaunchSeam = Readonly<{
 }>;
 
 /**
+ * The exact owner's durable recovery drive. It is the recovery half of the same
+ * one-shot Guardian owner binding the contained runtime consumes: the exact
+ * Guardian recovery-gate correlation plus the very CAS-cursor transition
+ * surface the live owner binding exposes over this owner's `owner.json`. It
+ * opens no second durable read/write seam and needs no launch.
+ */
+export type StardewBootstrapOwnerRecoveryDrive = Readonly<{
+  readonly recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding;
+  readonly transitions: StardewBootstrapOwnerTransitions;
+}>;
+
+/**
  * Private, bounded, per-owner runtime collaborator injected by the Host
  * composition. It constructs one composition-owned `ContainedGameRuntime` per
  * owner (binding from the owner's Guardian correlation) and forwards the
@@ -201,6 +222,17 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
   containAiClient(
     owner: StardewOwnedPlayerHostBootstrap,
   ): Promise<import("../../../containment/runtime/contract/game-runtime.js").RedactedContainmentOutcome>;
+  /**
+   * The exact owner's durable recovery drive. A recovery is a chain of durable
+   * transitions over this owner's `owner.json`, so it belongs to the one
+   * collaborator that already holds the exact owner and its consumed Guardian
+   * binding — never to a second owner path or a second durable read/write seam.
+   * Opening the drive consumes the same one-shot owner binding the contained
+   * runtime uses, so it is reachable before a launch as well; the native
+   * recovery attempt itself is still driven by whoever holds the Guardian
+   * recovery gate.
+   */
+  recovery(owner: StardewOwnedPlayerHostBootstrap): StardewBootstrapOwnerRecoveryDrive;
   /**
    * Protected terminal settlement for the exact owner. It is only reachable
    * from the coordinator's explicit endgame operation, never from ordinary
@@ -2642,6 +2674,17 @@ async function stagePlayerHostModProfile(
           ManifestLifetimeSeconds: MANIFEST_LIFETIME_SECONDS,
           AuthorizedCompanionIds: [facts.durableOwner.record.companionId],
         },
+        // Creation is requested, never named: the Mod creates one world from
+        // this form and publishes the physical slot basename it observed, which
+        // stays the single world-identity authority. This file therefore carries
+        // no save/slot identity, only the one-shot creation request.
+        WorldCreation: {
+          Enable: true,
+          FarmName: WORLD_CREATION_FARM_NAME,
+          PlayerName: WORLD_CREATION_PLAYER_NAME,
+          FavoriteThing: WORLD_CREATION_FAVORITE_THING,
+          CreateOnce: true,
+        },
       });
       await writeManagedFile(join(hostModDirectory, MOD_CONFIG_FILE), hostConfig, transactionDirectory, managed);
       for (const entry of packageSource.entries) {
@@ -3555,7 +3598,13 @@ function createStardewBootstrapOwnerTransitionPrimitives(
       return { ...current, state: "recovering", guardianState: "recovering", recoveryInstanceId };
     }),
     containRecoveringRole: (role, revision, recoveryInstanceId) => transition(revision, (current) => {
-      if (current.state !== "recovering" || current.guardianState !== "recovering" || (role === "playerHost" ? current.playerHostState : current.aiClientState) === "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      if (current.state !== "recovering" || current.guardianState !== "recovering") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      // A role this recovery already contained is not a transition that is still
+      // available. It fails closed with its own error so a driver that resumed a
+      // crashed recovery can tell "already contained" from a wrong state and
+      // drive only the roles it actually recovered.
+      if ((role === "playerHost" ? current.playerHostState : current.aiClientState) === "contained")
+        throw new Error("stardew_bootstrap_owner_recovery_role_already_contained");
       return changeRole(current, role, "contained");
     }, recoveryInstanceId),
     finalizeControlledContained: (revision) => transition(revision, (current) => {
@@ -3592,6 +3641,39 @@ function createProductionStardewBootstrapOwnerTransitionPrimitives(
   return createStardewBootstrapOwnerTransitionPrimitives(input, productionOwnerTransitionPersistence);
 }
 
+/**
+ * One CAS-cursor port over the durable transition engine. The live owner binding
+ * and the recoverable-owner opener share this construction so a recovery driver
+ * sees the identical surface on both: every named transition advances the
+ * closure-held revision and the successor record then reaches the caller's own
+ * side effect (the live owner replaces its in-memory record; the opener has
+ * none, because it never holds an owner object).
+ */
+function createStardewBootstrapOwnerTransitionPort(
+  primitives: StardewOwnerTransitionPrimitives,
+  initialOwnerRecordRevision: number,
+  onAdvanced?: (record: StardewPrivateBootstrapOwnerRecord) => void,
+): StardewBootstrapGuardianOwnerTransitionPort {
+  let revision = initialOwnerRecordRevision;
+  const advance = async (operation: (expectedRevision: number) => Promise<StardewPrivateBootstrapOwnerRecord>): Promise<void> => {
+    const next = await operation(revision);
+    revision = next.ownerRecordRevision;
+    if (onAdvanced !== undefined) onAdvanced(next);
+  };
+  return Object.freeze({
+    armAcknowledged: () => advance((current) => primitives.arm(current)),
+    roleActive: (role) => advance((current) => primitives.activate(role, current)),
+    beginControlledClose: () => advance((current) => primitives.beginControlledClose(current)),
+    controlledRoleContained: (role) => advance((current) => primitives.containControlledRole(role, current)),
+    finalizeControlledContained: () => advance((current) => primitives.finalizeControlledContained(current)),
+    beginRecovery: (actor) => advance((current) => primitives.beginRecovery(current, actor)),
+    recoveryRoleContained: (role, actor) => advance((current) => primitives.containRecoveringRole(role, current, actor)),
+    finalizeRecoveredContained: (actor) => advance((current) => primitives.finalizeRecoveredContained(current, actor)),
+    quarantine: () => advance((current) => primitives.quarantine(current)),
+    quarantineRecovery: (actor) => advance((current) => primitives.quarantineRecovery(current, actor)),
+  });
+}
+
 function immutableFenceFor(owner: StardewPrivateBootstrapOwnerRecord): StardewOwnerImmutableFence {
   return Object.freeze({ bootstrapId: owner.bootstrapId, playerId: owner.playerId, companionId: owner.companionId, guardian: owner.guardian });
 }
@@ -3623,6 +3705,8 @@ export type StardewBootstrapGuardianRecoveryGateBinding = Readonly<{
   bindingRevision: string;
   leaseName: string;
 }>;
+
+export type StardewBootstrapOwnerTransitions = StardewBootstrapGuardianOwnerTransitionPort;
 
 declare const stardewGuardianSettlementProofBrand: unique symbol;
 export type StardewBootstrapGuardianSettlementProof = Readonly<{
@@ -3750,6 +3834,103 @@ export function consumeStardewBootstrapGuardianOwnerBinding(
     recoveryGateBinding: facts.recoveryGateBinding,
     settlementBinding: facts.settlementBinding,
     armFrame,
+  });
+}
+
+/**
+ * One recoverable instance over an existing crashed `owner.json`.
+ */
+export type StardewRecoverableBootstrapOwner = Readonly<{
+  ownerPath: string;
+  /** The CAS revision this instance was opened at. */
+  ownerRecordRevision: number;
+  /** The same transition surface the live owner binding exposes. */
+  transitions: StardewBootstrapOwnerTransitions;
+  /** The recorded recovery actor, or null when the record has none. */
+  recoveryInstanceId: string | null;
+}>;
+
+/**
+ * The only legal way to open an existing crashed (non-pristine, non-terminal)
+ * `owner.json` as a recoverable instance.
+ *
+ * The normal reservation path refuses every non-pristine record
+ * (`stardew_bootstrap_owner_occupied`), so a Guardian/Host crash that left the
+ * durable attempt non-terminal had no path back to a terminal state. This seam
+ * reopens exactly that record and hands out the same one-CAS-cursor transition
+ * surface the live owner binding uses, so a recovery driver needs no second
+ * durable read/write seam.
+ *
+ * It is deliberately fail-closed and never returns a half-usable instance. A
+ * `contained`/`quarantined` terminal record and any record whose principal
+ * (bootstrap/player/companion) is not the requested one throw, and so does any
+ * record the strict v4 validator rejects: that is the same validator that
+ * guards every CAS successor, so a record whose state/role matrix is already
+ * inconsistent is never handed out as a drive. The single locked read below
+ * also sources the immutable fence and the CAS cursor, so the returned revision
+ * is the exact persisted predecessor the engine CASes from; a record that moves
+ * afterwards fails its transition with `stardew_bootstrap_owner_transition_mismatch`
+ * rather than being driven from a stale cursor.
+ *
+ * The durable `recoveryInstanceId` is adopted, never minted here: an interrupted
+ * recovery resumes its exact recorded actor, and a record that has none reports
+ * `null` so the caller mints a fresh one through `beginRecovery`.
+ */
+export async function openRecoverableStardewBootstrapOwner(
+  input: Readonly<{
+    /**
+     * The root the existing private-bootstrap transaction is derived from: the
+     * record is read at
+     * `<transactionRoot>/stardew-private-bootstrap/<bootstrapId>/owner.json`,
+     * exactly where the reservation path persists it.
+     */
+    transactionRoot: string;
+    bootstrapFacts: Readonly<{ bootstrapId: string; playerId: string; companionId: string }>;
+  }>,
+): Promise<StardewRecoverableBootstrapOwner> {
+  if (
+    !isRecord(input) ||
+    !exactKeys(input, ["transactionRoot", "bootstrapFacts"]) ||
+    typeof input.transactionRoot !== "string" ||
+    input.transactionRoot.length === 0 ||
+    input.transactionRoot.includes("\0") ||
+    !isRecord(input.bootstrapFacts) ||
+    !exactKeys(input.bootstrapFacts, ["bootstrapId", "playerId", "companionId"]) ||
+    !isOpaque(input.bootstrapFacts.bootstrapId) ||
+    !isOpaque(input.bootstrapFacts.playerId) ||
+    !isOpaque(input.bootstrapFacts.companionId)
+  ) {
+    throw new TypeError("invalid_stardew_recoverable_bootstrap_owner_input");
+  }
+  const root = resolve(input.transactionRoot);
+  const ownerPath = join(root, "stardew-private-bootstrap", input.bootstrapFacts.bootstrapId, OWNER_FILE);
+  const record = await withPathLock(
+    ownerPath,
+    () => readAndValidateOwner(ownerPath, root),
+    { containmentRoot: root },
+  );
+  if (
+    record.bootstrapId !== input.bootstrapFacts.bootstrapId ||
+    record.playerId !== input.bootstrapFacts.playerId ||
+    record.companionId !== input.bootstrapFacts.companionId
+  ) {
+    throw new Error("stardew_bootstrap_owner_recovery_principal_mismatch");
+  }
+  if (record.state === "contained" || record.state === "quarantined") {
+    throw new Error("stardew_bootstrap_owner_recovery_terminal");
+  }
+  return Object.freeze({
+    ownerPath,
+    ownerRecordRevision: record.ownerRecordRevision,
+    transitions: createStardewBootstrapOwnerTransitionPort(
+      createProductionStardewBootstrapOwnerTransitionPrimitives({
+        ownerPath,
+        containmentRoot: root,
+        immutableFence: immutableFenceFor(record),
+      }),
+      record.ownerRecordRevision,
+    ),
+    recoveryInstanceId: record.recoveryInstanceId,
   });
 }
 
