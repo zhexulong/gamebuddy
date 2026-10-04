@@ -7,6 +7,7 @@ import {
   attributeMemoryFunnel,
   foldCommittedRenderedIdsFromMarkers,
   m0DigestsFromMarkers,
+  m0SourcesFromMarkers,
   renderedMemoryIdsFromMarkers,
   renderedChaptersFromMarkers,
   summarizeMemoryFunnel,
@@ -481,4 +482,34 @@ test("m0DigestsFromMarkers ignores malformed digest lines (junk tails, wrong len
     m0DigestsFromMarkers(["[probe:m0_digest] zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz rev_1"]),
     undefined,
   );
+});
+test("m0SourcesFromMarkers reports which authored kinds reached m[0] (the S3 claim)", () => {
+  // The claim itself: reviewed always-on background compiled into the baseline.
+  const reached = m0SourcesFromMarkers([
+    "[probe:m0_sources] rev_7 stable=lorebook_constant,persona volatile=lorebook_entry",
+  ]);
+  assert.equal(reached.observed, true);
+  assert.deepEqual(reached.stableKinds, ["lorebook_constant", "persona"]);
+  assert.deepEqual(reached.volatileKinds, ["lorebook_entry"]);
+  assert.equal(reached.lorebookConstantPresent, true);
+
+  // Kinds accumulate across passes and de-duplicate, so a later pass that renders
+  // the same set cannot read as a different one.
+  const acrossPasses = m0SourcesFromMarkers([
+    "[probe:m0_sources] rev_7 stable=lorebook_constant volatile=-",
+    "[probe:m0_sources] rev_8 stable=persona,lorebook_constant volatile=-",
+  ]);
+  assert.deepEqual(acrossPasses.stableKinds, ["lorebook_constant", "persona"]);
+  assert.deepEqual(acrossPasses.volatileKinds, []);
+  assert.equal(acrossPasses.lorebookConstantPresent, true);
+
+  // A baseline with no always-on background is a real observation, not a gap.
+  const empty = m0SourcesFromMarkers(["[probe:m0_sources] rev_9 stable=- volatile=-"]);
+  assert.equal(empty.observed, true);
+  assert.deepEqual(empty.stableKinds, []);
+  assert.equal(empty.lorebookConstantPresent, false);
+
+  // No marker at all is a producer gap and must not read as a negative result.
+  assert.equal(m0SourcesFromMarkers([]), undefined);
+  assert.equal(m0SourcesFromMarkers(["[probe:m0_sources] malformed"]), undefined);
 });

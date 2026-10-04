@@ -48,7 +48,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "../chat/run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
+import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, m0SourcesFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
@@ -68,12 +68,14 @@ const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../.
 const PROBE_M0_MEMORY_IDS_PREFIX = "[probe:m0_memory_ids]";
 const PROBE_M0_CHAPTERS_PREFIX = "[probe:m0_chapters]";
 const PROBE_M0_DIGEST_PREFIX = "[probe:m0_digest]";
+const PROBE_M0_SOURCES_PREFIX = "[probe:m0_sources]";
 const PROBE_FOLD_COMMITTED_PREFIX = "[probe:fold_committed]";
 
 const MARKER_CONTRACT = Object.freeze([
   ["PROBE_M0_MEMORY_IDS_PREFIX", PROBE_M0_MEMORY_IDS_PREFIX],
   ["PROBE_M0_CHAPTERS_PREFIX", PROBE_M0_CHAPTERS_PREFIX],
   ["PROBE_M0_DIGEST_PREFIX", PROBE_M0_DIGEST_PREFIX],
+  ["PROBE_M0_SOURCES_PREFIX", PROBE_M0_SOURCES_PREFIX],
   ["PROBE_FOLD_COMMITTED_PREFIX", PROBE_FOLD_COMMITTED_PREFIX],
 ]);
 
@@ -454,7 +456,24 @@ async function runChatTurn(origin, client, text) {
       ...(draftRevision === undefined ? {} : { expectedDraftRevision: draftRevision }),
     }),
   });
-  if (response.status !== 202) throw new Error(`message_failed:${response.status}`);
+  if (response.status !== 202) {
+    // The refusal's own problem code is the whole diagnostic value: a bare status
+    // says nothing about WHICH runtime refused, and the product's 503s cover
+    // runtime_unavailable, storage_unavailable and composition failures alike.
+    // Read the bounded body, never the transcript.
+    const body = await response.text().catch(() => "");
+    const code = /"code"\s*:\s*"([a-z0-9_]+)"/u.exec(body)?.[1];
+    // A refused message usually means the mounted runtime never became ready, and
+    // the state snapshot is the only place that says why. Report the turn
+    // projection verbatim (bounded) instead of guessing at field names: the
+    // snapshot's own shape is the authority on what a refusal looks like.
+    const turnProjection = JSON.stringify(state?.chat?.turn ?? null).slice(0, 300);
+    const chatKeys = state?.chat === undefined ? "-" : Object.keys(state.chat).join(",");
+    throw new Error(
+      `message_failed:${response.status}${code === undefined ? "" : `:${code}`}` +
+        `:turn=${turnProjection}:chatKeys=${chatKeys}`,
+    );
+  }
 
   // The terminal wait is SSE-driven with a bounded state cross-check, mirroring
   // the Chat harness (audit finding: the loop used to poll /state every 250 ms for
@@ -521,6 +540,7 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
 				line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
   							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
   							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+  							line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
   							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
 			)
 				markers.push(line.trim());
@@ -613,6 +633,7 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
   							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
   							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+  							line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
   							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
  					)
  						markers.push(line.trim());
@@ -897,6 +918,13 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // core of the whole loop: a fresh second phase would create an EMPTY second
     // SQLite and the seeded row could never be seen (the audit's finding).
     //
+    // The Chat surface is the only surface this loop can ask on: the Game surface is
+    // driven from inside the running game (the Game child exposes game-lifecycle
+    // routes, not a dialogue route), so a Game-surface recall claim belongs to the
+    // Stardew live ladder, not here. Memory, continuity and the materializer are
+    // shared, and the vendor's m[0] source marker names what was compiled in, so
+    // the two surfaces remain comparable without this loop pretending to be both.
+    //
     // The child accepts a cooperative shutdown request over the IPC channel
     // (desktop-runtime-bootstrap `waitForTermination`), which is what lets that
     // teardown commit and this phase mount as a successor. Without it the product
@@ -931,6 +959,11 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
         dimension: scenario.dimension,
       }),
+      // Which surface answered. The seeded fact, the Memory authority and the
+      // Magic Context materializer are shared with the Game surface, which answers
+      // through the running game instead; the name is recorded so a reader never
+      // has to guess what this report measured.
+      askingSurface: "chat",
       ...(installedCard === undefined
         ? {}
         : { card: Object.freeze({ profileId: installedCard.profileId, canonicalHash: installedCard.canonicalHash }) }),
@@ -954,6 +987,10 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // stability (vendor m[0] digest per materialization revision), reply
     // language effectiveness, and persona-liveness signals.
     const m0Digests = m0DigestsFromMarkers(chatResult.markers);
+    // S3: which kinds of reviewed authored context the vendor actually compiled
+    // into m[0] - the direct evidence that the companion's always-on world book
+    // is in the Tier 2 baseline, on whichever surface this run drove.
+    const m0Sources = m0SourcesFromMarkers(chatResult.markers);
     const replyObservation = observeCompanionReply(chat.committedText);
 
     // L2 (assembly): did the fact reach the context the model was given? The vendor
@@ -1003,6 +1040,11 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
         dimension: scenario.dimension,
       }),
+      // Which surface answered. The seeded fact, the Memory authority and the
+      // Magic Context materializer are shared with the Game surface, which answers
+      // through the running game instead; the name is recorded so a reader never
+      // has to guess what this report measured.
+      askingSurface: "chat",
       ...(installedCard === undefined
         ? {}
         : {
@@ -1024,6 +1066,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
           passCount: m0Digests?.passes?.length ?? null,
           revisionCount: m0Digests?.revisionCount ?? null,
           digestStablePerRevision: m0Digests?.stable ?? null,
+        }),
+        // S3: the kinds of reviewed authored context the vendor compiled into the
+        // m[0] it presented. `lorebookConstantPresent` is the claim itself; the
+        // kinds are reported raw so a reader can see what else rode the baseline.
+        m0Sources: Object.freeze({
+          markerObserved: m0Sources?.observed === true,
+          stableKinds: m0Sources?.stableKinds ?? null,
+          volatileKinds: m0Sources?.volatileKinds ?? null,
+          lorebookConstantPresent: m0Sources?.lorebookConstantPresent ?? null,
         }),
         ...(replyObservation === null
           ? {}
