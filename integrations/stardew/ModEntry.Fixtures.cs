@@ -307,7 +307,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_admission_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_toggle_mine_lamp_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_admission_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_toggle_mine_lamp_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -367,6 +367,24 @@ public sealed partial class ModEntry : Mod
         if (fixture.FixtureScenario == "native_wia_pass_out_v1")
         {
             InstallWiaInterruptionFixture(player, farm, WiaInterruptionFixtureKind.PassOut);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_eat_interrupt_v1")
+        {
+            InstallWiaEatInterruptionFixture(player);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_eat_interrupt_v1")
+        {
+            InstallWiaEatInterruptionFixture(player);
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "native_wia_answer_question_v1")
+        {
+            InstallWiaAnswerQuestionFixture(player, farm);
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
@@ -1770,7 +1788,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 StardewValley.TerrainFeatures.FruitTree tree = new("(O)629", 3);
                 tree.growthStage.Value = 3;
                 tree.GreenHouseTileTree = false;
-                tree.fruit[0] = ItemRegistry.Create<StardewValley.Object>("(O)638");
+                tree.fruit.Add(ItemRegistry.Create<StardewValley.Object>("(O)638"));
                 farm.terrainFeatures.Add(spot.Value.TargetTile, tree);
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
@@ -1784,7 +1802,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 tree.hasSeed.Value = true;
                 tree.stump.Value = false;
                 tree.wasShakenToday.Value = false;
-                player.experiencePoints[1] = Math.Max(player.experiencePoints[1], 100);
+                player.foragingLevel.Value = Math.Max(player.foragingLevel.Value, 1);
                 farm.terrainFeatures.Add(spot.Value.TargetTile, tree);
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
@@ -1846,6 +1864,9 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 if (!farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? placed) || !ReferenceEquals(placed, mannequin)) throw new InvalidOperationException("fixture_native_local_dress_mannequin_placement_failed");
                 Item clothing = ItemRegistry.Create("(H)0", 1);
                 if (player.addItemToInventory(clothing) is not null) throw new InvalidOperationException("fixture_native_local_dress_mannequin_item_inventory_full");
+                int clothingSlot = player.Items.IndexOf(clothing);
+                if (clothingSlot < 0) throw new InvalidOperationException("fixture_native_local_dress_mannequin_clothing_slot_missing");
+                player.CurrentToolIndex = clothingSlot;
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log("GameBuddy native-local-player initialized mannequin precondition before bridge attachment; production alone dresses and emits receipt.", LogLevel.Info);
@@ -1861,6 +1882,9 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 farm.objects.Add(spot.Value.TargetTile, sign);
                 Item display = ItemRegistry.Create("(O)388", 1);
                 if (player.addItemToInventory(display) is not null) throw new InvalidOperationException("fixture_native_local_set_sign_item_inventory_full");
+                int displaySlot = player.Items.IndexOf(display);
+                if (displaySlot < 0) throw new InvalidOperationException("fixture_native_local_set_sign_display_slot_missing");
+                player.CurrentToolIndex = displaySlot;
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log("GameBuddy native-local-player initialized Sign display precondition before bridge attachment; production alone sets display and emits receipt.", LogLevel.Info);
@@ -3097,6 +3121,111 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             this.Helper.Events.GameLoop.UpdateTicked -= OnTick;
         }
         this.Helper.Events.GameLoop.UpdateTicked += OnTick;
+    }
+
+    /// <summary>
+    /// Stages a native modal after Farmer.eatHeldObject has started the item-use
+    /// animation. RequestLocalUseItem consumes one item synchronously before its
+    /// accepted receipt, then the non-movement WIA arbiter owns interruption and
+    /// handler release; this fixture only opens the real modal after two ticks.
+    /// </summary>
+    private void InstallWiaEatInterruptionFixture(Farmer player)
+    {
+        if (player.MaxItems < 36)
+            player.increaseBackpackSize(36 - player.MaxItems);
+        const string foodId = "(O)216";
+        StardewValley.Object? food = player.Items.OfType<StardewValley.Object>()
+            .FirstOrDefault(candidate => candidate.QualifiedItemId == foodId && candidate.Stack > 0);
+        if (food is null)
+        {
+            if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(foodId, 2)) is not null)
+                throw new InvalidOperationException("fixture_native_local_wia_eat_interrupt_inventory_full");
+        }
+        else if (food.Stack < 2)
+        {
+            if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(foodId, 2 - food.Stack)) is not null)
+                throw new InvalidOperationException("fixture_native_local_wia_eat_interrupt_inventory_full");
+        }
+        food = player.Items.OfType<StardewValley.Object>()
+            .FirstOrDefault(candidate => candidate.QualifiedItemId == foodId && candidate.Stack > 0);
+        if (food is null || food.Stack < 2 || food.Edibility < 0
+            || (Game1.objectData.TryGetValue(food.ItemId, out var foodData) && foodData.IsDrink))
+            throw new InvalidOperationException("fixture_native_local_wia_eat_interrupt_food_missing");
+
+        int ticksAfterEatStart = 0;
+        void OnTick(object? sender, UpdateTickedEventArgs e)
+        {
+            Farmer? actor = Game1.player;
+            // isEating is the public native signal that eatHeldObject started;
+            // ExecutionManager's private activeItemUse is established in the
+            // same accepted RequestLocalUseItem call and is not fixture-owned.
+            if (actor is null || !actor.isEating)
+            {
+                ticksAfterEatStart = 0;
+                return;
+            }
+            ticksAfterEatStart++;
+            if (ticksAfterEatStart < 2)
+                return;
+            Game1.drawObjectDialogue("GameBuddy WIA eat modal interruption probe");
+            this.Helper.Events.GameLoop.UpdateTicked -= OnTick;
+        }
+        this.Helper.Events.GameLoop.UpdateTicked += OnTick;
+        this.Monitor.Log($"GameBuddy native-local-player initialized WIA eat-interrupt precondition before bridge attachment: food={food.QualifiedItemId}; stack={food.Stack}; production alone consumes natively, receives modal_interrupted, dismisses, and retries.", LogLevel.Info);
+    }
+
+
+    /// <summary>
+    /// WIA answer_dialogue live precondition: a REAL native question modal.
+    /// The actor starts on the Farm with far bare-soil targets (the runner
+    /// moves there); a few ticks into the move the fixture opens a question
+    /// dialogue through the same native path a map Action tile uses
+    /// (createQuestionDialogue -> Game1.drawObjectQuestionDialogue), so the
+    /// running body loop interrupts the move with modal_interrupted and the
+    /// runner answers with the native answerDialogue seam. Responses are
+    /// yes/no with stable keys; the after-behavior is inert by design.
+    /// </summary>
+    private void InstallWiaAnswerQuestionFixture(Farmer player, GameLocation farm)
+    {
+        GameLocation? wiaPreviousLocation = Game1.currentLocation;
+        try
+        {
+            Game1.currentLocation = farm;
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null))
+                throw new InvalidOperationException("fixture_native_local_wia_answer_remove_dirt_unavailable");
+        }
+        finally
+        {
+            Game1.currentLocation = wiaPreviousLocation;
+        }
+        Vector2? wiaAnchor = FindNativeLocalFarmFixtureTile(farm, new Vector2(20f, 20f), 18, requireEmptyObjectTile: true);
+        if (wiaAnchor is null)
+            throw new InvalidOperationException("fixture_native_local_wia_answer_farm_anchor_missing");
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)wiaAnchor.Value.X, (int)wiaAnchor.Value.Y, false));
+        player.stamina = 270f;
+
+        int ticksAfterMoveStart = 0;
+        void OnTick(object? sender, UpdateTickedEventArgs e)
+        {
+            Farmer? actor = Game1.player;
+            if (actor is null || actor.currentLocation is not Farm
+                || actor.controller is not StardewValley.Pathfinding.PathFindController)
+            {
+                ticksAfterMoveStart = 0;
+                return;
+            }
+            ticksAfterMoveStart++;
+            if (ticksAfterMoveStart < 2)
+                return;
+            Game1.currentLocation.createQuestionDialogue(
+                "GameBuddy WIA answer probe: proceed?",
+                new[] { new Response("yes", "Yes"), new Response("no", "No") },
+                (who, whichAnswer) => { },
+                speaker: null);
+            this.Helper.Events.GameLoop.UpdateTicked -= OnTick;
+        }
+        this.Helper.Events.GameLoop.UpdateTicked += OnTick;
+        this.Monitor.Log("GameBuddy native-local-player initialized WIA answer-question precondition before bridge attachment.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalMoveStallProbeFixture(Farmer player, Farm farm, bool useHorseBlock)
