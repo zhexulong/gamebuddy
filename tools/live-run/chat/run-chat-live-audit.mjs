@@ -65,7 +65,7 @@ import { fileURLToPath } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 
-const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
+const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
 // The audited generation root. Production consumes the canonical `host/dist`
 // pointer; local iteration may point this at a disposable generation built by
 // host/scripts/build-desktop-launcher-test-generation.mjs, so a source change can

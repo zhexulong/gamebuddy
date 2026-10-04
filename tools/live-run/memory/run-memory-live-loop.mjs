@@ -67,29 +67,26 @@ const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../.
  */
 const PROBE_M0_MEMORY_IDS_PREFIX = "[probe:m0_memory_ids]";
 const PROBE_M0_CHAPTERS_PREFIX = "[probe:m0_chapters]";
+const PROBE_M0_DIGEST_PREFIX = "[probe:m0_digest]";
 const PROBE_FOLD_COMMITTED_PREFIX = "[probe:fold_committed]";
 
+const MARKER_CONTRACT = Object.freeze([
+  ["PROBE_M0_MEMORY_IDS_PREFIX", PROBE_M0_MEMORY_IDS_PREFIX],
+  ["PROBE_M0_CHAPTERS_PREFIX", PROBE_M0_CHAPTERS_PREFIX],
+  ["PROBE_M0_DIGEST_PREFIX", PROBE_M0_DIGEST_PREFIX],
+  ["PROBE_FOLD_COMMITTED_PREFIX", PROBE_FOLD_COMMITTED_PREFIX],
+]);
+
 function assertMarkerContract() {
-  const source = resolve(
-    fileURLToPath(new URL(".", import.meta.url)),
-    "..",
-    "vendor",
-    "magic-context",
-    "packages",
-    "pi-plugin",
-    "src",
-    "probe-materialization-marker.ts",
+  const source = fileURLToPath(
+    new URL("../../../vendor/magic-context/packages/pi-plugin/src/probe-materialization-marker.ts", import.meta.url),
   );
   if (!existsSync(source)) return;
   const declared = readFileSync(source, "utf8");
-  if (!declared.includes(`export const PROBE_M0_MEMORY_IDS_PREFIX = "${PROBE_M0_MEMORY_IDS_PREFIX}"`)) {
-    throw new Error("memory_loop_probe_marker_contract_drift");
-  }
-  if (!declared.includes(`export const PROBE_M0_CHAPTERS_PREFIX = "${PROBE_M0_CHAPTERS_PREFIX}"`)) {
-    throw new Error("memory_loop_probe_marker_contract_drift");
-  }
-  if (!declared.includes(`export const PROBE_FOLD_COMMITTED_PREFIX = "${PROBE_FOLD_COMMITTED_PREFIX}"`)) {
-    throw new Error("memory_loop_probe_marker_contract_drift");
+  for (const [name, prefix] of MARKER_CONTRACT) {
+    if (!declared.includes(`export const ${name} = "${prefix}"`)) {
+      throw new Error("memory_loop_probe_marker_contract_drift");
+    }
   }
 }
 assertMarkerContract();
@@ -522,8 +519,9 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
       		for (const line of String(chunk).split("\n")) {
 			if (
 				line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
-				line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
-				line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+  							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+  							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+  							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
 			)
 				markers.push(line.trim());
 		}
@@ -613,8 +611,9 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  					// mistaken for a materialization fact.
  					if (
  						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
- 						line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
- 						line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+  							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+  							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+  							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
  					)
  						markers.push(line.trim());
  				}
