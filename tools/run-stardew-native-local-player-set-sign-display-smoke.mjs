@@ -19,7 +19,7 @@ export async function runSetSignDisplaySmoke(client, receipts, _config, { termin
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const target = (snapshot.signTargets ?? []).find((entry) => entry?.targetId && Math.max(Math.abs(entry.x - snapshot.tile.x), Math.abs(entry.y - snapshot.tile.y)) <= 1);
     if (!target) throw new Error("sign_no_adjacent_target");
-    const slot = (snapshot.inventoryItemFacts ?? []).find((entry) => Number.isInteger(entry.slot))?.slot;
+    const slot = (snapshot.inventoryItemFacts ?? []).find((entry) => Number.isInteger(entry.slot) && entry.qualifiedItemId === "(O)388")?.slot ?? (snapshot.inventoryItemFacts ?? []).find((entry) => Number.isInteger(entry.slot))?.slot;
     if (!Number.isInteger(slot)) throw new Error("sign_no_display_item_slot");
     const requestId = `native_local_set_sign_display_${Date.now()}`;
     const accepted = await executeFresh(client, { requestId, idempotencyKey: `${requestId}_idem`, action: ACTION, args: { slot, x: target.x, y: target.y, expectedTargetId: target.targetId }, snapshot, timeoutMs: 30_000 });

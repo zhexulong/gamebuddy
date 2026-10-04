@@ -146,8 +146,9 @@ internal sealed partial class ExecutionManager
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entrance_out_of_range", $"tile={targetX},{targetY}");
         int nextLevel = Math.Max(1, Game1.player.deepestMineLevel + 1);
-        if (!location.performAction(action, Game1.player, new xTile.Dimensions.Location(targetX, targetY)))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entry_action_not_handled", $"tile={targetX},{targetY}");
+        // Enter through the public native entry (the M8-frozen seam); the tile
+        // check above already proved this really is a mine entrance.
+        Game1.enterMine(nextLevel);
         if (Game1.player.currentLocation is MineShaft mine && Game1.player.TilePoint == new Point(6, 6) && mine.mineLevel == nextLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={mine.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
         LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, targetX, targetY, MineShaft.GetLevelName(nextLevel), 6, 6, this.revision, requestedDeadlineMs);

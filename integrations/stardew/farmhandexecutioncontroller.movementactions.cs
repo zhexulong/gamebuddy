@@ -378,7 +378,13 @@ internal sealed partial class ExecutionManager
 
         this.revision++;
         bool locationMatches = string.Equals(Game1.player.currentLocation.NameOrUniqueName, specification.TargetLocation, StringComparison.Ordinal);
-        bool tileMatches = Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY;
+        // mine entry: the native MineShaft layout repositions the farmer onto the
+        // level's stairs (verified live at 10,4 vs the requested 6,6), so tile
+        // equality is not a legal postcondition for enter_mine; reaching the
+        // target level is.
+        bool tileMatches = specification.Action == "enter_mine"
+            ? Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft && shaft.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length))
+            : Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY;
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = locationMatches && tileMatches
             ? specification.Action == "enter_exit"
@@ -407,7 +413,7 @@ internal sealed partial class ExecutionManager
             state,
             reasonCode,
             this.revision,
-            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{minecartEvidence}");
+            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action == "enter_mine" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : "")}{(specification.Action == "ride_minecart" ? minecartEvidence : "")}");
         this.activeTravel = null;
         this.Remember(receipt);
         this.AddTrace(receipt);

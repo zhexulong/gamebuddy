@@ -1169,6 +1169,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && pedestalObject is StardewValley.Objects.ItemPedestal pedestal && pedestal.heldObject.Value is null;
             int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
             bool laterTick = this.tick > specification.StartedTick;
+            // The native ItemPedestal hands the object over through
+            // itemModifyMutex, whose callback is polled by the location update
+            // loop; the execution update may run one tick before that poll. Give
+            // the native mutex a bounded window (30 ticks ~ 0.5 s) before
+            // settling Uncertain, instead of racing it.
+            bool mutexWindowExhausted = this.tick > specification.StartedTick + 30;
             if (laterTick && pedestalEmpty && inventoryAfter >= specification.InventoryBefore + specification.StackBefore)
             {
                 this.activePedestalTaking = null;
@@ -1179,7 +1185,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.AddTrace(receipt);
                 this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
-            else if (laterTick)
+            else if (mutexWindowExhausted)
             {
                 this.activePedestalTaking = null;
                 this.revision++;
@@ -1324,8 +1330,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeMountTransport is not null)
         {
             LocalMountTransportSpec specification = this.activeMountTransport;
-            Horse? horse = Game1.player.currentLocation?.characters.OfType<Horse>().FirstOrDefault(candidate => candidate.HorseId == specification.HorseId);
-            if (horse?.rider == Game1.player && Game1.player.mount == horse && !horse.mounting.Value)
+            // The native mount completes by removing the horse from the location's
+            // characters list and assigning Farmer.mount, so the settle must read
+            // the rider's mount rather than search characters (which no longer
+            // contains it at that point).
+            Horse? horse = Game1.player.mount as Horse;
+            if (horse is not null && horse.HorseId == specification.HorseId && !horse.mounting.Value)
             {
                 this.activeMountTransport = null;
                 this.revision++;
@@ -3061,9 +3071,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         List<BridgeInventoryItemFact> result = new();
         for (int slot = 0; slot < player.Items.Count && result.Count < 36; slot++)
         {
-            if (player.Items[slot] is not StardewValley.Object item || string.IsNullOrWhiteSpace(item.QualifiedItemId) || item.Stack < 1)
+            // Hat / Clothing / Boots are Item subclasses, not Object; the
+            // mannequin lane needs their slots surfaced to the Agent.
+            if (player.Items[slot] is not Item item || string.IsNullOrWhiteSpace(item.QualifiedItemId))
                 continue;
-            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
+            int stack = item is StardewValley.Object obj ? obj.Stack : 1;
+            if (stack < 1) continue;
+            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), stack));
         }
         return result;
     }

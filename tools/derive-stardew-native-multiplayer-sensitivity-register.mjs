@@ -419,27 +419,27 @@ const TABLE = {
   // the classification follows the same rules as their existing families.
   harvest_bush: [
     "StardewValley.TerrainFeatures/Bush.cs",
-    "public override bool performUseAction(Vector2 tileLocation)",
+    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
     "mp-insensitive",
-    "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token",
+    "shakes fruit into debris on the shared location; the body reads no multiplayer token",
   ],
   harvest_fruit_tree: [
     "StardewValley.TerrainFeatures/FruitTree.cs",
-    "public override bool performUseAction(Vector2 tileLocation)",
+    "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
     "mp-insensitive",
-    "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token",
+    "drops fruit debris on the shared location; the body reads no multiplayer token",
   ],
   shake_tree: [
     "StardewValley.TerrainFeatures/Tree.cs",
-    "public override bool performUseAction(Vector2 tileLocation)",
+    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
     "mp-observational",
-    "performUseAction routes into shake(), whose seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode",
+    "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode",
   ],
   take_pedestal_item: [
     "StardewValley.Objects/ItemPedestal.cs",
-    "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+    "public bool DropObject(Farmer who)",
     "mp-insensitive",
-    "checkForAction routes into DropObject(), which moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token",
+    "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token",
   ],
   toggle_fence_gate: [
     "StardewValley/Fence.cs",
@@ -490,10 +490,10 @@ const TABLE = {
     "rides/dismounts one shared Horse under the horse mutex; the mutex serialises cross-player mounts on the same horse",
   ],
   enter_mine: [
-    "StardewValley/GameLocation.cs",
-    "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
+    "StardewValley/Game1.cs",
+    "public static void enterMine(int whatLevel, int? forceLayout = null)",
     "mp-insensitive",
-    "the Mine case of performAction calls Game1.enterMine, which warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
+    "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
   ],
   toggle_mine_lamp: [
     "StardewValley/GameLocation.cs",

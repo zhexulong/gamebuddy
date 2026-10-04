@@ -35,7 +35,7 @@ internal sealed partial class ExecutionManager
 
         int debrisBefore = location.debris.Count;
         bush!.shakeTimer = 0f;
-        bush.performUseAction(new Vector2(targetX, targetY));
+        bush.shake(new Vector2(targetX, targetY), doEvenIfStillShaking: false);
         int debrisAfter = location.debris.Count;
         bool droppedItem = debrisAfter > debrisBefore && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};debris_before={debrisBefore};debris_after={debrisAfter};item_dropped={droppedItem.ToString().ToLowerInvariant()}";
@@ -80,7 +80,7 @@ internal sealed partial class ExecutionManager
         if (!TryGetHarvestableFruitTree(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.FruitTree? tree))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fruit_tree_target_changed", $"target={targetX},{targetY}");
         int debrisBefore = location.debris.Count;
-        tree!.performUseAction(new Vector2(targetX, targetY));
+        tree!.shake(new Vector2(targetX, targetY), doEvenIfStillShaking: false);
         int debrisAfter = location.debris.Count;
         bool fruitDropped = debrisAfter > debrisBefore && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
         string evidence = $"target={expectedTargetId};tile={targetX},{targetY};debris_before={debrisBefore};debris_after={debrisAfter};fruit_dropped={fruitDropped.ToString().ToLowerInvariant()}";
@@ -150,7 +150,7 @@ internal sealed partial class ExecutionManager
         bool shakenBefore = tree!.wasShakenToday.Value;
         if (!seedBefore || shakenBefore)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_not_shakeable_today", $"target={expectedTargetId};has_seed={seedBefore};shaken_today={shakenBefore}");
-        tree.performUseAction(new Vector2(targetX, targetY));
+        tree.shake(new Vector2(targetX, targetY), doEvenIfStillShaking: false);
         bool seedAfter = tree.hasSeed.Value;
         bool shakenAfter = tree.wasShakenToday.Value;
         bool succeeded = !seedAfter && shakenAfter;

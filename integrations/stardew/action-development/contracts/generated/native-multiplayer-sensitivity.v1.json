@@ -219,10 +219,10 @@
       "seams": [
         {
           "kind": "native",
-          "file": "StardewValley/GameLocation.cs",
-          "signature": "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
+          "file": "StardewValley/Game1.cs",
+          "signature": "public static void enterMine(int whatLevel, int? forceLayout = null)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "the Mine case of performAction calls Game1.enterMine, which warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token"
+          "modeNeutralReason": "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1017,9 +1017,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/Bush.cs",
-          "signature": "public override bool performUseAction(Vector2 tileLocation)",
+          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token"
+          "modeNeutralReason": "shakes fruit into debris on the shared location; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1034,9 +1034,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/FruitTree.cs",
-          "signature": "public override bool performUseAction(Vector2 tileLocation)",
+          "signature": "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token"
+          "modeNeutralReason": "drops fruit debris on the shared location; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1051,9 +1051,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/Tree.cs",
-          "signature": "public override bool performUseAction(Vector2 tileLocation)",
+          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
           "sensitivity": "mp-observational",
-          "observedEffect": "performUseAction routes into shake(), whose seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode"
+          "observedEffect": "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode"
         }
       ],
       "admission": {
@@ -1068,9 +1068,9 @@
         {
           "kind": "native",
           "file": "StardewValley.Objects/ItemPedestal.cs",
-          "signature": "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
+          "signature": "public bool DropObject(Farmer who)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "checkForAction routes into DropObject(), which moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token"
+          "modeNeutralReason": "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token"
         }
       ],
       "admission": {
