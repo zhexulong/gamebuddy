@@ -301,6 +301,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // modal, answered with the native answerDialogue seam.
   wia_answer_question: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
   wia_eat_interrupt: "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
+  // The other three WIA slots: each holds a body-holding execution whose
+  // interruption is measured while that slot is live (the tool-approach leg,
+  // the asynchronous animal-product animation, and the magnetic pickup window).
+  wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
+  wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
+  wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
