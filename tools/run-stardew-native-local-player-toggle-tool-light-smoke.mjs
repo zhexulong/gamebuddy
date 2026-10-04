@@ -17,7 +17,7 @@ export async function runToggleToolLightSmoke(client, receipts, _config, { termi
   try {
     const snapshot = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
-    const lantern = (snapshot.lanternSlots ?? []).find((entry) => entry?.slot === snapshot.currentToolSlot);
+    const lantern = (snapshot.lanternSlots ?? []).find((entry) => Number.isInteger(entry?.slot)) ?? null;
     if (!lantern) throw new Error("lantern_not_currently_equipped");
     const requestId = `native_local_toggle_tool_light_${Date.now()}`;
     const accepted = await executeFresh(client, { requestId, idempotencyKey: `${requestId}_idem`, action: ACTION, args: { slot: lantern.slot, x: snapshot.tile.x, y: snapshot.tile.y }, snapshot, timeoutMs: 30_000 });

@@ -39,7 +39,14 @@ internal sealed partial class ExecutionManager
         this.AddTrace(accepted);
         try
         {
-            _ = pedestal!.checkForAction(Game1.player);
+            // Mirror the native checkForAction gate, then perform the native
+            // terminal move directly (locked pedestals refuse exactly as in game).
+            if (pedestal!.locked.Value)
+            {
+                this.activePedestalTaking = null;
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pedestal_locked", $"target={expectedTargetId}");
+            }
+            _ = pedestal!.DropObject(Game1.player);
         }
         catch
         {

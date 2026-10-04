@@ -31,7 +31,7 @@ export async function runClearCaskSmoke(client, receipts, config, { terminalTime
       throw new Error(`equip_failed:${equipTerminal.reasonCode}`);
 
     snapshot = await observeFresh(client, { actionable: true, minRevision: equipTerminal.revision });
-    const slot = chooseToolSlot(snapshot, "axe");
+    const slot = chooseToolSlot(snapshot, "(T)Axe");
     const requestId = `native_local_clear_cask_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId, idempotencyKey: `${requestId}_idem`, action: ACTION,
@@ -47,7 +47,7 @@ export async function runClearCaskSmoke(client, receipts, config, { terminalTime
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
-    const passed = after.revision >= terminal.revision && evidence.target === target.targetId && evidence.tool === "axe" && evidence.had_held_object === "false" && evidence.removed === "true" && evidence.postcondition === "true";
+    const passed = after.revision >= terminal.revision && evidence.target === target.targetId && evidence.tool === "(T)Axe" && evidence.had_held_object === "false" && evidence.removed === "true" && evidence.postcondition === "true";
     return {
       state: passed ? "passed" : "blocked", topology: "native_local_player_fixture",
       reasonCode: passed ? "cask_cleared" : "clear_cask_postcondition_mismatch", target, slot,

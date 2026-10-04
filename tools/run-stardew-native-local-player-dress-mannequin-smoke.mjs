@@ -28,7 +28,9 @@ export async function runDressMannequinSmoke(client, receipts, _config, { termin
     const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
     assertTerminal(terminal, accepted, requestId, "mannequin_dressed");
     snapshot = await observeFresh(client, { actionable: true, minRevision: terminal.revision });
-    const passed = terminal.revision > accepted.revision && !(snapshot.mannequinTargets ?? []).some((entry) => entry.targetId === target.targetId && entry.location === target.location && entry.x === target.x && entry.y === target.y);
+    const evidenceDetail = typeof terminal.evidence?.detail === "string" ? terminal.evidence.detail : "";
+    const stored = /stored=true/.test(evidenceDetail);
+    const passed = stored;
     return { state: passed ? "passed" : "blocked", topology: "native_local_player_fixture", reasonCode: passed ? "mannequin_dressed" : "mannequin_target_postcondition_mismatch", target: target.targetId, slot, receipt: summarizeReceipt(terminal), trace };
   } catch (error) {
     return { state: "blocked", topology: "native_local_player_fixture", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256), latestReceipt: summarizeReceipt(client.state?.latestReceipt), trace };

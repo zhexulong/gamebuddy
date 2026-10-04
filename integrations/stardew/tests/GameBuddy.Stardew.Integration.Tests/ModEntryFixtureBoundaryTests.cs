@@ -40,7 +40,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativePetFixture", "IsFixtureAdjacentToFarmer", "IsFixtureAdjacentToPlayer",
         "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
-        "FindNativeMineEntranceFixtureTarget",
+        "FindNativeMineEntranceFixtureTarget", "FindNativeRaftFixtureWaterEdge",
         "InstallWiaEatInterruptionFixture",
         "InstallWiaAnswerQuestionFixture",
     };
@@ -90,5 +90,35 @@ public sealed class ModEntryFixtureBoundaryTests
         var declared = DeclaredMethodNames(fixtures).ToHashSet(StringComparer.Ordinal);
         var missing = FixtureMethodWhitelist.Where(name => !declared.Contains(name)).ToArray();
         missing.Should().BeEmpty("白名单中每个夹具方法都必须存在于 ModEntry.Fixtures.cs（防误删）");
+    }
+
+    /// <summary>
+    /// 夹具播种必须每个 parseDebugInput 只带一条命令。
+    ///
+    /// 目标版本 `Game1.parseDebugInput` 把整串按空格切成 command[]，然后
+    /// `DebugCommands.TryHandle(command)` 只按 command[0] 分派；`SpreadDirt` 的处理器
+    /// 签名是 `SpreadDirt(string[] command, IGameLogger log)` 且从不读取 command[1..]。
+    /// 因此 `parseDebugInput("SpreadDirt SpreadSeeds 745")` 只铺土、静默不播种，
+    /// 夹具随后找不到成熟作物而抛 `*_ready_crop_missing` —— 2026-10-04 的 8eaeb2c 把
+    /// 两行折成一行正是这样静默破坏了 4 个夹具（harvest_crop ×2 / jodi / strawberry），
+    /// 且只有真实游戏运行才能暴露。此测试把该失败模式变成源码级红测。
+    /// </summary>
+    [Fact]
+    public void FixtureDebugCommands_CarryExactlyOneCommandPerCall()
+    {
+        string fixtures = ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs");
+        // 只检查确实会吞掉后续 token 的无参命令：SpreadDirt / RemoveDirt。
+        var offenders = new List<string>();
+        foreach (Match match in Regex.Matches(fixtures, "parseDebugInput\\(\\s*\"([^\"]*)\""))
+        {
+            string literal = match.Groups[1].Value.Trim();
+            string[] tokens = literal.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length < 2)
+                continue;
+            if (tokens[0] is "SpreadDirt" or "RemoveDirt")
+                offenders.Add(literal);
+        }
+        offenders.Should().BeEmpty(
+            "SpreadDirt/RemoveDirt 不读取后续参数；必须拆成多次 parseDebugInput 调用，否则第二条命令被静默丢弃");
     }
 }

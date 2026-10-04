@@ -778,7 +778,8 @@ public sealed partial class ModEntry : Mod
                 {
                     Game1.currentLocation = farm;
                     if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                        || !Game1.game1.parseDebugInput("SpreadDirt SpreadSeeds 472")
+                        || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                    || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
                         || !Game1.game1.parseDebugInput("GrowCrops 6", null))
                         throw new InvalidOperationException("fixture_native_local_harvest_crop_setup_unavailable");
                 }
@@ -822,7 +823,8 @@ public sealed partial class ModEntry : Mod
                 {
                     Game1.currentLocation = farm;
                     if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                        || !Game1.game1.parseDebugInput("SpreadDirt SpreadSeeds 472")
+                        || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                    || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
                         || !Game1.game1.parseDebugInput("GrowCrops 6", null))
                         throw new InvalidOperationException("fixture_native_local_harvest_full_bag_setup_unavailable");
                 }
@@ -1785,20 +1787,21 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                     Game1.currentSeason = "spring";
                 if (Game1.dayOfMonth is < 15 or > 18)
                     Game1.dayOfMonth = 15;
-                StardewValley.TerrainFeatures.FruitTree tree = new("(O)629", 3);
-                tree.growthStage.Value = 3;
+                StardewValley.TerrainFeatures.FruitTree tree = new("629", 4);
+                tree.growthStage.Value = 4;
                 tree.GreenHouseTileTree = false;
                 tree.fruit.Add(ItemRegistry.Create<StardewValley.Object>("(O)638"));
                 farm.terrainFeatures.Add(spot.Value.TargetTile, tree);
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy harvest-fruit-tree diagnostics: tree_tile={spot.Value.TargetTile.X},{spot.Value.TargetTile.Y};standing={spot.Value.StandingTile.X},{spot.Value.StandingTile.Y};season={Game1.season};day={Game1.dayOfMonth};in_season={tree.IsInSeasonHere()};data_null={tree.GetData() is null};tree_id={tree.treeId.Value};keys={string.Join(",", Game1.fruitTreeData.Keys.Take(6))};fruit_count={tree.fruit.Count};tree_stage={tree.growthStage.Value};seed_ready={farm.terrainFeatures.ContainsKey(spot.Value.TargetTile)}", LogLevel.Info);
                 return;
             }
             if (fixture.FixtureScenario == "native_shake_tree_v1")
             {
                 (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
                 if (spot is null || farm.terrainFeatures.ContainsKey(spot.Value.TargetTile)) throw new InvalidOperationException("fixture_native_shake_tree_target_missing");
-                StardewValley.TerrainFeatures.Tree tree = new("1", 3);
+                StardewValley.TerrainFeatures.Tree tree = new("1", 5);
                 tree.hasSeed.Value = true;
                 tree.stump.Value = false;
                 tree.wasShakenToday.Value = false;
@@ -1895,10 +1898,29 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             if (fixture.FixtureScenario == "native_deposit_silo_hay_v1")
             {
                 StardewValley.Buildings.Building? silo = farm.buildings.FirstOrDefault(building => building.buildingType.Value == "Silo");
+                if (silo is null)
+                {
+                    // The bootstrapped stable template has no Silo; the fixture
+                    // builds one so the native tryToAddHay has a real silo to hit.
+                    Vector2 siloTile = new(16, 8);
+                    while (farm.buildings.Any(building => building.tileX.Value == (int)siloTile.X && building.tileY.Value == (int)siloTile.Y))
+                        siloTile += new Vector2(3, 0);
+                    silo = new StardewValley.Buildings.Building("Silo", siloTile);
+                    // A freshly constructed Silo has daysOfConstructionLeft =
+                    // BuildDays > 0, which makes GetHayCapacity() count it as 0
+                    // (hay capacity only applies after construction). Finish it.
+                    silo.daysOfConstructionLeft.Value = 0;
+                    farm.buildings.Add(silo);
+                    farm.updateLayout();
+                }
                 if (silo is null) throw new InvalidOperationException("fixture_native_local_deposit_silo_missing");
                 Point door = silo.getPointForHumanDoor();
                 if (!farm.isTileOnMap(new Vector2(door.X, door.Y))) throw new InvalidOperationException("fixture_native_local_deposit_silo_door_missing");
-                if (player.addItemToInventory(ItemRegistry.Create("(O)178", 4)) is not null) throw new InvalidOperationException("fixture_native_local_deposit_silo_hay_inventory_full");
+                StardewValley.Object hay = ItemRegistry.Create<StardewValley.Object>("(O)178", 4);
+                if (player.addItemToInventory(hay) is not null) throw new InvalidOperationException("fixture_native_local_deposit_silo_hay_inventory_full");
+                int haySlot = player.Items.IndexOf(hay);
+                if (haySlot < 0) throw new InvalidOperationException("fixture_native_local_deposit_silo_hay_slot_missing");
+                player.CurrentToolIndex = haySlot;
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, door.X, door.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log("GameBuddy native-local-player initialized Silo/Hay precondition before bridge attachment; production alone deposits Hay and emits receipt.", LogLevel.Info);
@@ -2346,21 +2368,19 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 player.CurrentToolIndex = raftSlot;
                 if (!ReferenceEquals(player.CurrentTool, equippedRaft))
                     throw new InvalidOperationException("fixture_native_use_raft_equip_failed");
-                Vector2? waterTile = null;
-                Vector2 currentTile = player.Tile;
-                waterTile = new[] { currentTile + new Vector2(0, -1), currentTile + new Vector2(1, 0), currentTile + new Vector2(0, 1), currentTile + new Vector2(-1, 0) }
-                    .FirstOrDefault(candidate => farm.isWaterTile((int)candidate.X, (int)candidate.Y)
-                        && farm.isTileOnMap(candidate));
-                if (waterTile == Vector2.Zero && !farm.isWaterTile(0, 0))
-                    waterTile = null;
-                if (waterTile is null)
+                // The actor starts indoors (FarmHouse), so the water edge must be
+                // located on the Farm map itself before the raft can be aimed.
+                Vector2? waterEdge = FindNativeRaftFixtureWaterEdge(farm);
+                if (waterEdge is null)
                     throw new InvalidOperationException("fixture_native_use_raft_water_tile_missing");
-                Vector2 raftStanding = new[] { waterTile.Value + new Vector2(-1, 0), waterTile.Value + new Vector2(1, 0), waterTile.Value + new Vector2(0, -1), waterTile.Value + new Vector2(0, 1) }
-                    .First(standing => farm.isTileOnMap(standing) && farm.isTilePassable(standing)
-                        && !farm.IsTileOccupiedBy(standing, CollisionMask.All, CollisionMask.None, useFarmerTile: false));
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)waterEdge.Value.X, (int)waterEdge.Value.Y, false));
+                // warpFarmer does not move the actor synchronously, so read the
+                // water geometry from the pre-warp edge tile (waterEdge is the
+                // land tile adjacent to water) and stand there.
+                Vector2 raftStanding = waterEdge.Value;
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)raftStanding.X, (int)raftStanding.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
-                this.Monitor.Log($"GameBuddy native-local-player initialized use-raft precondition before bridge attachment: water={waterTile.Value.X},{waterTile.Value.Y};standing={raftStanding.X},{raftStanding.Y};slot={raftSlot};production alone launches.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy native-local-player initialized use-raft precondition before bridge attachment: standing={raftStanding.X},{raftStanding.Y};slot={raftSlot};production alone launches.", LogLevel.Info);
                 return;
             }
 
@@ -2386,18 +2406,43 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
 
             if (fixture.FixtureScenario == "native_enter_mine_v1")
             {
-                Vector2? entrance = FindNativeMineEntranceFixtureTarget(farm, player);
+                StardewValley.GameLocation? mineMap = Game1.getLocationFromName("Mine");
+                Vector2? entrance = mineMap is null ? null : FindNativeMineEntranceFixtureTarget(mineMap, player);
                 if (entrance is null) throw new InvalidOperationException("fixture_native_enter_mine_entrance_missing");
-                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)entrance.Value.X, (int)entrance.Value.Y, false));
+                // The bridge reads the same "Mine" Action tile on the player's
+                // current map. The real entrance lives on the "Mine" map (reached
+                // from Mountain by warp), so place the actor adjacent to it.
+                Vector2 mineStanding = entrance.Value;
+                Vector2[] mineNeighbours = new[] {
+                    mineStanding + new Vector2(0, -1), mineStanding + new Vector2(1, 0),
+                    mineStanding + new Vector2(0, 1), mineStanding + new Vector2(-1, 0),
+                };
+                Vector2? stand = mineNeighbours.FirstOrDefault(candidate =>
+                    candidate.X >= 0 && candidate.Y >= 0
+                    && candidate.X < mineMap!.map.Layers[0].LayerWidth
+                    && candidate.Y < mineMap.map.Layers[0].LayerHeight
+                    && mineMap.isTilePassable(candidate));
+                if (stand is null) throw new InvalidOperationException("fixture_native_enter_mine_standing_missing");
+                // Warping into the Mine entrance plays event 100162 (first-entry
+                // cutscene) once; mark it seen so the fixture is not blocked by it.
+                player.eventsSeen.Add("100162");  // NetHashSet.Add is idempotent
+                player.warpFarmer(new StardewValley.Warp(0, 0, mineMap!.NameOrUniqueName, (int)stand.Value.X, (int)stand.Value.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized enter-mine precondition: entrance={entrance.Value.X},{entrance.Value.Y}; production alone enters.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy enter-mine event-probe: event_up={Game1.eventUp};event_id={Game1.CurrentEvent?.id};tile={player.Tile}", LogLevel.Info);
                 return;
             }
 
             if (fixture.FixtureScenario == "native_toggle_mine_lamp_v1")
             {
-                this.Monitor.Log("GameBuddy native-local-player mine-lamp fixture requires a live MineShaft attachment and is not armed from Farm.", LogLevel.Warn);
-                this.nativeLocalPlayerFixtureTerminal = true;
+                // The Lamp action only exists on MineShaft maps. Enter the mine
+                // natively (skipping the one-time first-entry cutscene 100162);
+                // enterMine warps asynchronously, so the Mod's own Lamp discovery
+                // reads the live MineShaft map after the actor lands.
+                player.eventsSeen.Add("100162");  // NetHashSet.Add is idempotent
+                Game1.enterMine(1);
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log("GameBuddy native-local-player initialized mine-lamp precondition: entered UndergroundMine1; production alone toggles.", LogLevel.Info);
                 return;
             }
 
@@ -2781,7 +2826,8 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         {
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt SpreadSeeds 474")
+                || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadSeeds 474", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 12", null))
                 throw new InvalidOperationException("fixture_native_local_jodi_harvest_setup_unavailable");
         }
@@ -2861,7 +2907,8 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         {
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt SpreadSeeds 745")
+                || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadSeeds 745", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 8", null))
                 throw new InvalidOperationException("fixture_native_local_strawberry_covenant_setup_unavailable");
         }
@@ -4748,6 +4795,25 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// Action property starting with "Mine"). The fixture warps the player to
     /// that tile so production alone performs the entry.
     /// </summary>
+
+    private static Vector2? FindNativeRaftFixtureWaterEdge(StardewValley.GameLocation location)
+    {
+        if (location?.map is null) return null;
+        int width = location.map.Layers[0].LayerWidth;
+        int height = location.map.Layers[0].LayerHeight;
+        for (int y = 4; y < height - 4; y++)
+        for (int x = 4; x < width - 4; x++)
+        {
+            if (location.isTileOnMap(new Vector2(x, y)) && location.isTilePassable(new Vector2(x, y)))
+            {
+                bool hasAdjacentWater = location.isWaterTile(x - 1, y) || location.isWaterTile(x + 1, y)
+                    || location.isWaterTile(x, y - 1) || location.isWaterTile(x, y + 1);
+                if (hasAdjacentWater) return new Vector2(x, y);
+            }
+        }
+        return null;
+    }
+
     private static Vector2? FindNativeMineEntranceFixtureTarget(StardewValley.GameLocation location, Farmer player)
     {
         if (location?.map is null || location is StardewValley.Locations.MineShaft) return null;

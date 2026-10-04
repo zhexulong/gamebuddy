@@ -7,6 +7,7 @@ import {
   summarizeReceipt,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "use_raft";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -69,7 +70,7 @@ function chooseRaftTarget(snapshot) {
 }
 
 function chooseRaftSlot(snapshot) {
-  const matches = (snapshot.toolSlots ?? []).filter((entry) => Number.isInteger(entry?.slot) && entry.label === "Raft");
+  const matches = (snapshot.toolSlots ?? []).filter((entry) => Number.isInteger(entry?.slot) && (entry.label === "Raft" || entry.label === "(T)Raft" || entry.label?.endsWith("Raft")));
   if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_raft_slot" : "raft_slot_missing");
   return matches[0].slot;
 }
@@ -85,7 +86,7 @@ function parseEvidence(evidence) {
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runUseRaftSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
