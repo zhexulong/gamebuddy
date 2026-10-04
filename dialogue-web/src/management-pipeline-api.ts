@@ -151,6 +151,41 @@ export type CompanionDetailV1 = Readonly<{
   apiVersion: 1;
   name: string;
 }>;
+export type StCardImportFieldSummaryV1 = Readonly<{
+  field: string;
+  eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+  chars: number;
+}>;
+export type StCardImportDispositionV1 = Readonly<{
+  field: string;
+  classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
+  reason: string;
+}>;
+export type StCardImportStageResultV1 = Readonly<{
+  apiVersion: 1;
+  importId: string;
+  name: string;
+  candidateRevision: number;
+  fields: readonly StCardImportFieldSummaryV1[];
+  dispositions: readonly StCardImportDispositionV1[];
+}>;
+export type StCardImportReadResultV1 = Readonly<{
+  apiVersion: 1;
+  importId: string;
+  name: string;
+  candidateRevision: number;
+  reviewed: boolean;
+  reviewedFields: readonly string[];
+  fields: readonly StCardImportFieldSummaryV1[];
+  dispositions: readonly StCardImportDispositionV1[];
+}>;
+export type StCardImportReviewResultV1 = Readonly<{
+  apiVersion: 1;
+  importId: string;
+  reviewedFields: readonly string[];
+  approvedAtMs: number;
+}>;
+export type StCardImportConfirmResultV1 = Readonly<{ apiVersion: 1; name: string }>;
 /** Player persona projection: revision and safe display fields. */
 export type PersonaV1 = Readonly<{
   apiVersion: 1;
@@ -885,6 +920,119 @@ function isCompanionDetail(value: unknown): value is CompanionDetailV1 {
   );
 }
 
+const IMPORT_FIELD_KEYS = ["field", "eligibility", "chars"] as const;
+const IMPORT_DISPOSITION_KEYS = ["field", "classification", "reason"] as const;
+const IMPORT_STAGE_KEYS = ["apiVersion", "importId", "name", "candidateRevision", "fields", "dispositions"] as const;
+const IMPORT_READ_KEYS = [
+  "apiVersion",
+  "importId",
+  "name",
+  "candidateRevision",
+  "reviewed",
+  "reviewedFields",
+  "fields",
+  "dispositions",
+] as const;
+const IMPORT_REVIEW_KEYS = ["apiVersion", "importId", "reviewedFields", "approvedAtMs"] as const;
+const IMPORT_CONFIRM_KEYS = ["apiVersion", "name"] as const;
+const IMPORT_ELIGIBILITY = new Set([
+  "candidate_only",
+  "profile_eligible_after_explicit_review",
+  "never_runtime",
+]);
+const IMPORT_CLASSIFICATION = new Set([
+  "accepted_typed",
+  "preserved_opaque",
+  "dropped_unsupported",
+  "rejected_invalid",
+]);
+
+function isImportField(value: unknown): value is StCardImportFieldSummaryV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_FIELD_KEYS) &&
+    isLengthBoundedString(value.field, 1, 64) &&
+    typeof value.eligibility === "string" &&
+    IMPORT_ELIGIBILITY.has(value.eligibility) &&
+    isNonNegativeSafeInteger(value.chars)
+  );
+}
+
+function isImportDisposition(value: unknown): value is StCardImportDispositionV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_DISPOSITION_KEYS) &&
+    isLengthBoundedString(value.field, 1, 128) &&
+    typeof value.classification === "string" &&
+    IMPORT_CLASSIFICATION.has(value.classification) &&
+    isLengthBoundedString(value.reason, 1, 128)
+  );
+}
+
+function isImportFields(value: unknown): value is readonly StCardImportFieldSummaryV1[] {
+  return Array.isArray(value) && value.length <= 32 && value.every(isImportField);
+}
+
+function isImportDispositions(value: unknown): value is readonly StCardImportDispositionV1[] {
+  return Array.isArray(value) && value.length <= 128 && value.every(isImportDisposition);
+}
+
+function isReviewedFields(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 32 &&
+    value.every((field) => isLengthBoundedString(field, 1, 64))
+  );
+}
+
+function isStCardImportStageResult(value: unknown): value is StCardImportStageResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_STAGE_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.importId) &&
+    isLengthBoundedString(value.name, 1, 128) &&
+    isNonNegativeSafeInteger(value.candidateRevision) &&
+    isImportFields(value.fields) &&
+    isImportDispositions(value.dispositions)
+  );
+}
+
+function isStCardImportReadResult(value: unknown): value is StCardImportReadResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_READ_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.importId) &&
+    isLengthBoundedString(value.name, 1, 128) &&
+    isNonNegativeSafeInteger(value.candidateRevision) &&
+    typeof value.reviewed === "boolean" &&
+    isReviewedFields(value.reviewedFields) &&
+    isImportFields(value.fields) &&
+    isImportDispositions(value.dispositions)
+  );
+}
+
+function isStCardImportReviewResult(value: unknown): value is StCardImportReviewResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_REVIEW_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.importId) &&
+    isReviewedFields(value.reviewedFields) &&
+    isNonNegativeSafeInteger(value.approvedAtMs)
+  );
+}
+
+function isStCardImportConfirmResult(value: unknown): value is StCardImportConfirmResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_CONFIRM_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isLengthBoundedString(value.name, 1, 128)
+  );
+}
+
 function isPersona(value: unknown): value is PersonaV1 {
   if (!isRecord(value) || !hasExactKeys(value, PERSONA_KEYS)) return false;
   return (
@@ -1405,6 +1553,26 @@ export function validateChatRetentionResult(value: unknown): ChatRetentionResult
   return value;
 }
 
+export function validateStCardImportStageResult(value: unknown): StCardImportStageResultV1 {
+  if (!isStCardImportStageResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateStCardImportReadResult(value: unknown): StCardImportReadResultV1 {
+  if (!isStCardImportReadResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateStCardImportReviewResult(value: unknown): StCardImportReviewResultV1 {
+  if (!isStCardImportReviewResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateStCardImportConfirmResult(value: unknown): StCardImportConfirmResultV1 {
+  if (!isStCardImportConfirmResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatList(value: unknown): ChatListV1 {
   if (!isChatList(value)) throw new TavernProtocolError();
   return value;
@@ -1546,6 +1714,19 @@ export type ManagementPipelineApi = Readonly<{
     expectedManagementRevision: number,
     csrfToken: string,
   ): Promise<ChatRetentionResultV1>;
+  /** POST /api/tavern/v1/imports: stage a character card for review (design/28 Import row). */
+  stageStCardImport(card: string, csrfToken: string): Promise<StCardImportStageResultV1>;
+  /** GET /api/tavern/v1/imports/:importId: safe review data for one staged card. */
+  readStCardImport(importId: string): Promise<StCardImportReadResultV1>;
+  /** POST /api/tavern/v1/imports/:importId/review: record an explicit eligible-field review. */
+  reviewStCardImport(
+    importId: string,
+    reviewedFields: readonly string[],
+    approvedAtMs: number,
+    csrfToken: string,
+  ): Promise<StCardImportReviewResultV1>;
+  /** POST /api/tavern/v1/imports/:importId/confirm: provision the reviewed companion. */
+  confirmStCardImport(importId: string, csrfToken: string): Promise<StCardImportConfirmResultV1>;
 }>;
 
 export type ManagementOperationObservation = Readonly<{
@@ -1933,6 +2114,58 @@ export function createManagementPipelineApi(
         },
       );
       observe(operation === "archive" ? "chat.archive" : operation === "restore" ? "chat.restore" : "chat.trash", "passed", String(result.managementRevision));
+      return result;
+    },
+    async stageStCardImport(card: string, csrfToken: string): Promise<StCardImportStageResultV1> {
+      if (!isLengthBoundedString(card, 1, 2_097_152) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/imports",
+        200,
+        validateStCardImportStageResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, card },
+      );
+      observe("character.import.stage", "passed", result.importId);
+      return result;
+    },
+    async readStCardImport(importId: string): Promise<StCardImportReadResultV1> {
+      if (!isOpaqueHandle(importId)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/imports/${importId}`, 200, validateStCardImportReadResult);
+    },
+    async reviewStCardImport(
+      importId: string,
+      reviewedFields: readonly string[],
+      approvedAtMs: number,
+      csrfToken: string,
+    ): Promise<StCardImportReviewResultV1> {
+      if (!isOpaqueHandle(importId) || !isOpaqueHandle(csrfToken) || !isNonNegativeSafeInteger(approvedAtMs) || !isReviewedFields(reviewedFields))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/imports/${importId}/review`,
+        200,
+        validateStCardImportReviewResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, reviewedFields: [...reviewedFields], approvedAtMs },
+      );
+      observe("character.import.review", "passed", result.importId);
+      return result;
+    },
+    async confirmStCardImport(importId: string, csrfToken: string): Promise<StCardImportConfirmResultV1> {
+      if (!isOpaqueHandle(importId) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/imports/${importId}/confirm`,
+        200,
+        validateStCardImportConfirmResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION },
+      );
+      observe("character.import.confirm", "passed", result.name);
       return result;
     },
   });

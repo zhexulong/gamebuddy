@@ -253,7 +253,7 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
     // the import folded in. Both are Tier 2 always-on: stable across the whole
     // session, 100% prefix-cache eligible. Budget-bound so an extreme book
     // degrades to the premise overview instead of blowing the stable ceiling.
-    if ("constantEntries" in sourceValue && sourceValue.constantEntries.length > 0) {
+    if ("constantEntries" in sourceValue && sourceValue.constantEntries !== undefined && sourceValue.constantEntries.length > 0) {
       const constants = canonicalJson({
         worldBookId: sourceValue.binding.worldBookId,
         alwaysOnPremise: sourceValue.alwaysOnPremise,
@@ -300,7 +300,7 @@ function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, pare
     // Native WorldBook with explicit keyword-gated entries: they become volatile
     // lorebook_entry selection candidates (keyed by title) so the Chat surface —
     // which has no lookup tools — can still surface them selectively.
-    if ("keywordEntries" in sourceValue && sourceValue.keywordEntries.length > 0) {
+    if ("keywordEntries" in sourceValue && sourceValue.keywordEntries !== undefined && sourceValue.keywordEntries.length > 0) {
       const revision = sourceValue.binding.revision;
       const canonical = sourceValue.binding.canonicalHash;
       return Object.freeze(

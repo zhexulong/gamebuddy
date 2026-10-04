@@ -52,6 +52,10 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "companion.list",
       "companion.detail",
       "companion.create",
+      "character.import.stage",
+      "character.import.read",
+      "character.import.review",
+      "character.import.confirm",
       "persona.read",
       "persona.update",
       "scenario.read",
@@ -1090,6 +1094,62 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "character.import.stage",
+      "POST",
+      "/api/tavern/v1/imports",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "character.import.read",
+      "GET",
+      "/api/tavern/v1/imports/:importId",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      ["importId"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "character.import.review",
+      "POST",
+      "/api/tavern/v1/imports/:importId/review",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      ["importId"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "character.import.confirm",
+      "POST",
+      "/api/tavern/v1/imports/:importId/confirm",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      ["importId"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "persona.read",
       "GET",
       "/api/tavern/v1/persona",
@@ -1376,4 +1436,37 @@ test("world-info bind command is a strict opaque revision-scoped union", () => {
     TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: `${handle}=` }),
     false,
   );
+});
+test("import operations carry CSRF-bound write routes and safe projections", () => {
+  const stage = TavernBrowserContractV1.routes.find((route) => route.routeId === "character.import.stage");
+  const read = TavernBrowserContractV1.routes.find((route) => route.routeId === "character.import.read");
+  const review = TavernBrowserContractV1.routes.find((route) => route.routeId === "character.import.review");
+  const confirm = TavernBrowserContractV1.routes.find((route) => route.routeId === "character.import.confirm");
+  assert.ok(stage);
+  assert.equal(stage.method, "POST");
+  assert.equal(stage.path, "/api/tavern/v1/imports");
+  assert.equal(stage.csrf, "required");
+  assert.ok(read);
+  assert.equal(read.method, "GET");
+  assert.equal(read.path, "/api/tavern/v1/imports/:importId");
+  assert.equal(read.csrf, "none");
+  assert.ok(review);
+  assert.equal(review.method, "POST");
+  assert.equal(review.path, "/api/tavern/v1/imports/:importId/review");
+  assert.equal(review.csrf, "required");
+  assert.ok(confirm);
+  assert.equal(confirm.method, "POST");
+  assert.equal(confirm.path, "/api/tavern/v1/imports/:importId/confirm");
+  assert.equal(confirm.csrf, "required");
+  // The stage result carries only player-readable projections (field summary,
+  // dispositions) - never card body text.
+  const stageResult = TavernBrowserContractV1.schemas.StCardImportStageResultV1Schema;
+  assert.deepEqual(Object.keys(stageResult.properties ?? {}).sort(), [
+    "apiVersion",
+    "candidateRevision",
+    "dispositions",
+    "fields",
+    "importId",
+    "name",
+  ]);
 });

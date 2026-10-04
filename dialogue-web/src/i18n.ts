@@ -245,6 +245,18 @@ const en = {
   chatRetentionRestore: "Restore",
   chatRetentionTrash: "Trash",
   chatRetentionFailed: "The chat lifecycle could not be changed.",
+  cardImportTitle: "Import card",
+  cardImportHint: "Paste a character card (SillyTavern V2/V3 JSON). You review what is included before it becomes a companion.",
+  cardImportStage: "Review card",
+  cardImportStaging: "Reviewing…",
+  cardImportFieldsTitle: "Included fields",
+  cardImportDispositionsTitle: "Not included",
+  cardImportReviewSelectionTitle: "Review before creating",
+  cardImportReviewSelected: "Confirm & create companion",
+  cardImportConfirming: "Creating…",
+  cardImportCreated: "Imported companion created.",
+  cardImportError: "The card could not be imported. Paste a valid character card and try again.",
+  cardImportLongHint: "This description is long ({{chars}} chars); it may raise per-turn token use.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -493,7 +505,18 @@ const zh: Messages = {
   chatRetentionRestore: "恢复",
   chatRetentionTrash: "删除",
   chatRetentionFailed: "无法更改聊天生命周期。",
-} satisfies Record<MessageKey, string>;
+  cardImportTitle: "导入角色卡",
+  cardImportHint: "粘贴角色卡（SillyTavern V2/V3 JSON）。它会先经过审查，确认包含哪些内容后才会成为同伴。",
+  cardImportStage: "审查卡片",
+  cardImportStaging: "审查中…",
+  cardImportFieldsTitle: "将包含的内容",
+  cardImportDispositionsTitle: "未包含的内容",
+  cardImportReviewSelectionTitle: "创建前确认",
+  cardImportReviewSelected: "确认并创建同伴",
+  cardImportConfirming: "创建中…",
+  cardImportCreated: "已导入并创建同伴。",
+  cardImportError: "无法导入该卡片。请粘贴有效角色卡后重试。",
+  cardImportLongHint: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",} satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
   return locale === "zh-CN" ? zh : en;

@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
@@ -11,6 +11,7 @@ import {
   type CompanionListV1,
   type ComposedTavernProfile,
   type CreateCompanionCommandV1,
+  type ConfirmStCardImportCommandV1,
   type DiscardDraftCommandV1,
   type GreetingUpdateCommandV1,
   type GreetingV1,
@@ -20,10 +21,16 @@ import {
   type PersonaUpdateCommandV1,
   type PersonaV1,
   type RenameChatTitleCommandV1,
+  type ReviewStCardImportCommandV1,
   type SaveDraftCommandV1,
   type ScenarioUpdateCommandV1,
   type ScenarioV1,
   type SetWorldInfoBindingCommandV1,
+  type StageStCardImportCommandV1,
+  type StCardImportFieldSummaryV1,
+  type StCardImportReadResultV1,
+  type StCardImportReviewResultV1,
+  type StCardImportStageResultV1,
   TAVERN_BROWSER_API_V1,
   TAVERN_BROWSER_API_VERSION,
   TavernBrowserContractV1,
@@ -148,6 +155,20 @@ const MANAGEMENT_P9_ROUTES = [
   "chat.restore",
   "chat.trash",
 ] as const;
+/** Optional reviewed ST-card import extension (design/28 Import/export row). */
+const MANAGEMENT_IMPORT_ROUTES = [
+  "character.import.stage",
+  "character.import.read",
+  "character.import.review",
+  "character.import.confirm",
+] as const;
+/**
+ * Import-stage body ceiling: the card JSON itself is bounded by the decoder
+ * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
+ * small margin. Far above the 24 KiB default body bound used by every other
+ * management route.
+ */
+const MAX_ST_CARD_IMPORT_BODY_BYTES = 2_097_152 + 8_192;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -171,6 +192,13 @@ const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUp
 const scenarioUpdateValidator = Compile(TavernBrowserContractV1.schemas.ScenarioUpdateCommandV1Schema);
 const greetingUpdateValidator = Compile(TavernBrowserContractV1.schemas.GreetingUpdateCommandV1Schema);
 const chatRetentionValidator = Compile(TavernBrowserContractV1.schemas.ChatRetentionCommandV1Schema);
+const stageStCardImportValidator = Compile(TavernBrowserContractV1.schemas.StageStCardImportCommandV1Schema);
+const reviewStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ReviewStCardImportCommandV1Schema);
+const confirmStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ConfirmStCardImportCommandV1Schema);
+const stCardImportResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportStageResultV1Schema);
+const stCardImportReadResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportReadResultV1Schema);
+const stCardImportReviewResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportReviewResultV1Schema);
+const stCardImportConfirmResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportConfirmResultV1Schema);
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
@@ -256,6 +284,74 @@ export type TavernManagementDialogueWebOptions = Readonly<{
       Readonly<{ revision: number; label?: string; variants: readonly Readonly<{ label?: string; text: string }>[] }>
     >;
   }>;
+  /**
+   * Reviewed ST-card import pipeline (design/28 Import/export row). The card
+   * body is the only input the browser sends; everything read back is a
+   * derived projection. Present only when the composition injects it and the
+   * profile declares the import routes.
+   */
+  stCardImportService?: Readonly<{
+    import(
+      importId: string,
+      input: string | Uint8Array,
+    ): Promise<Readonly<{
+      candidate: Readonly<{
+        artifact: Readonly<{
+          name: string;
+          revision: number;
+          fields: readonly Readonly<{
+            field: string;
+            text: string;
+            eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+          }>[];
+        }>;
+      }>;
+      report: Readonly<{
+        artifact: Readonly<{
+          dispositions: readonly Readonly<{
+            field: string;
+            classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
+            reason: string;
+          }>[];
+        }>;
+      }>;
+    }>>;
+    read(importId: string): Promise<Readonly<{
+      candidate: Readonly<{
+        artifact: Readonly<{
+          name: string;
+          revision: number;
+          fields: readonly Readonly<{
+            field: string;
+            text: string;
+            eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+          }>[];
+        }>;
+      }>;
+      report: Readonly<{
+        artifact: Readonly<{
+          dispositions: readonly Readonly<{
+            field: string;
+            classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
+            reason: string;
+          }>[];
+        }>;
+      }>;
+    }>>;
+    recordReview(
+      importId: string,
+      input: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }>,
+    ): Promise<Readonly<{ artifact: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }> }>>;
+    readReview(importId: string): Promise<Readonly<{
+      artifact: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }>;
+    }> | null>;
+  }>;
+  /**
+   * Provisions the reviewed candidate as a new companion. Only the composition
+   * owns the runtime root/threads and the exact artifacts, so the confirm
+   * route delegates here; the browser receives the safe confirmed name.
+   */
+  confirmStCardImport?: (importId: string) => Promise<Readonly<{ name: string }>>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
   readonly [key: string]: unknown;
@@ -302,6 +398,8 @@ export function createTavernManagementDialogueWebRequestHandler(
   const personaService = options.personaService;
   const scenarioService = options.scenarioService;
   const greetingService = options.greetingService;
+  const stCardImportService = options.stCardImportService;
+  const confirmStCardImport = options.confirmStCardImport;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -366,6 +464,15 @@ export function createTavernManagementDialogueWebRequestHandler(
       throw new Error("tavern_management_composition_unavailable");
   }
   for (const routeId of ["companion.create", "persona.update", "scenario.update", "greeting.update"] as const) {
+    if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  // The reviewed ST-card import routes are mounted only when both the exact
+  // service and the composition-owned confirm provisioner are injected; a
+  // profile that advertises them without either fails closed before dispatch.
+  for (const routeId of MANAGEMENT_IMPORT_ROUTES) {
+    if (profile.routeIds.includes(routeId) && (stCardImportService === undefined || confirmStCardImport === undefined))
+      throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
   }
@@ -764,6 +871,178 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.CompanionDetailV1Schema.Check(result))
           throw new Error("companion_create_service_unavailable");
         return sendJson(response, 200, result);
+      }
+      {
+        const importId = matchImportIdRoute(request.method, url.pathname);
+        if (importId !== null) {
+          // character.import.read: safe review data for the exact staged card.
+          if (url.search !== "" || (await hasRequestBody(request)))
+            return sendProblem(response, 400, "invalid_request");
+          if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (!profile.routeIds.includes("character.import.read"))
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          let imported;
+          try {
+            imported = await stCardImportService?.read(importId);
+          } catch {
+            return sendProblem(response, 404, "character_import_not_found");
+          }
+          if (imported === undefined) return sendProblem(response, 404, "profile_operation_unavailable");
+          let review: Readonly<{
+            artifact: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }>;
+          }> | null = null;
+          try {
+            review = (await stCardImportService?.readReview(importId)) ?? null;
+          } catch {
+            review = null; // not reviewed yet is the honest state
+          }
+          const result: StCardImportReadResultV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            importId,
+            name: imported.candidate.artifact.name,
+            candidateRevision: imported.candidate.artifact.revision,
+            reviewed: review !== null,
+            reviewedFields: review === null ? [] : [...review.artifact.reviewedFields],
+            fields: imported.candidate.artifact.fields.map((field) =>
+              Object.freeze({
+                field: field.field,
+                eligibility: field.eligibility,
+                chars: field.text.length,
+              }),
+            ),
+            dispositions: imported.report.artifact.dispositions.map((disposition) =>
+              Object.freeze({
+                field: disposition.field,
+                classification: disposition.classification,
+                reason: disposition.reason,
+              }),
+            ),
+          });
+          if (!TavernBrowserValidatorsV1.StCardImportReadResultV1Schema.Check(result))
+            throw new Error("character_import_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/imports") {
+        // character.import.stage: the card body is the ONLY input the browser
+        // sends. Host mints the opaque importId; the player never names it.
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("character.import.stage") ||
+          stCardImportService === undefined ||
+          confirmStCardImport === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_ST_CARD_IMPORT_BODY_BYTES);
+        if (!stageStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const importId = `import-${randomUUID()}`;
+        let staged;
+        try {
+          staged = await stCardImportService.import(importId, (body as StageStCardImportCommandV1).card);
+        } catch {
+          // Invalid / rejected cards never persist and never get an importId
+          // beyond this request; the player sees the decode problem directly.
+          return sendProblem(response, 422, "st_card_import_rejected");
+        }
+        const result: StCardImportStageResultV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          importId,
+          name: staged.candidate.artifact.name,
+          candidateRevision: staged.candidate.artifact.revision,
+          fields: staged.candidate.artifact.fields.map((field) =>
+            Object.freeze({
+              field: field.field,
+              eligibility: field.eligibility,
+              chars: field.text.length,
+            }),
+          ),
+          dispositions: staged.report.artifact.dispositions.map((disposition) =>
+            Object.freeze({
+              field: disposition.field,
+              classification: disposition.classification,
+              reason: disposition.reason,
+            }),
+          ),
+        });
+        if (!TavernBrowserValidatorsV1.StCardImportStageResultV1Schema.Check(result))
+          throw new Error("character_import_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      {
+        const importReviewRoute = matchImportReviewRoute(request.method, url.pathname);
+        if (importReviewRoute !== null) {
+          // character.import.review: an explicit eligible-field review record.
+          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = authenticate(request, browser, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("character.import.review") ||
+            stCardImportService === undefined ||
+            confirmStCardImport === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!reviewStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const command = body as ReviewStCardImportCommandV1;
+          let review;
+          try {
+            review = await stCardImportService.recordReview(importReviewRoute, {
+              reviewedFields: command.reviewedFields,
+              approvedAtMs: command.approvedAtMs,
+            });
+          } catch {
+            return sendProblem(response, 409, "character_import_review_invalid");
+          }
+          const result: StCardImportReviewResultV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            importId: importReviewRoute,
+            reviewedFields: [...review.artifact.reviewedFields],
+            approvedAtMs: review.artifact.approvedAtMs,
+          });
+          if (!TavernBrowserValidatorsV1.StCardImportReviewResultV1Schema.Check(result))
+            throw new Error("character_import_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      {
+        const importConfirmRoute = matchImportConfirmRoute(request.method, url.pathname);
+        if (importConfirmRoute !== null) {
+          // character.import.confirm: provision the reviewed candidate. The
+          // composition owns the runtime root/threads; the browser receives
+          // only the safe confirmed name.
+          if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = authenticate(request, browser, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("character.import.confirm") ||
+            stCardImportService === undefined ||
+            confirmStCardImport === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!confirmStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          let confirmed;
+          try {
+            confirmed = await confirmStCardImport(importConfirmRoute);
+          } catch {
+            return sendProblem(response, 409, "character_import_confirm_invalid");
+          }
+          const result = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            name: confirmed.name,
+          });
+          if (!TavernBrowserValidatorsV1.StCardImportConfirmResultV1Schema.Check(result))
+            throw new Error("character_import_service_unavailable");
+          return sendJson(response, 200, result);
+        }
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/persona") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -1234,6 +1513,27 @@ function matchRetentionRoute(
 function matchCompanionDetailRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** character.import.read: GET the staged candidate's safe review data. */
+function matchImportIdRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET") return null;
+  const match = /^\/api\/tavern\/v1\/imports\/([A-Za-z0-9_-]{22,128})$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** character.import.review: POST an explicit eligible-field review record. */
+function matchImportReviewRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "POST") return null;
+  const match = /^\/api\/tavern\/v1\/imports\/([A-Za-z0-9_-]{22,128})\/review$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** character.import.confirm: POST the reviewed candidate for provisioning. */
+function matchImportConfirmRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "POST") return null;
+  const match = /^\/api\/tavern\/v1\/imports\/([A-Za-z0-9_-]{22,128})\/confirm$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 

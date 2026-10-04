@@ -1,11 +1,12 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { Messages } from "../i18n";
-import {
-  type CompanionListV1,
-  type GreetingV1,
-  type ManagementPipelineApi,
-  type PersonaV1,
-  type ScenarioV1,
+import type {
+  CompanionListV1,
+  GreetingV1,
+  ManagementPipelineApi,
+  PersonaV1,
+  ScenarioV1,
+  StCardImportStageResultV1,
 } from "../management-pipeline-api";
 
 /**
@@ -51,6 +52,12 @@ export function CharactersPanel({
   ]);
   const [greetingSaving, setGreetingSaving] = useState(false);
   const [greetingNotice, setGreetingNotice] = useState<"saved" | "error" | null>(null);
+
+  // Reviewed ST-card import (design/28 Import row): stage -> review -> confirm.
+  const [importCardText, setImportCardText] = useState("");
+  const [importStaged, setImportStaged] = useState<StCardImportStageResultV1 | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importNotice, setImportNotice] = useState<"created" | "error" | null>(null);
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -211,6 +218,44 @@ export function CharactersPanel({
     }
   };
 
+  const handleStageImport = async (): Promise<void> => {
+    const card = importCardText.trim();
+    if (card.length === 0 || importBusy) return;
+    setImportBusy(true);
+    setImportNotice(null);
+    try {
+      const staged = await api.stageStCardImport(card, csrfToken);
+      if (activeRef.current) {
+        setImportStaged(staged);
+        setImportNotice(null);
+      }
+    } catch {
+      if (activeRef.current) setImportNotice("error");
+    } finally {
+      if (activeRef.current) setImportBusy(false);
+    }
+  };
+
+  const handleConfirmImport = async (): Promise<void> => {
+    if (importStaged === null || importBusy) return;
+    setImportBusy(true);
+    setImportNotice(null);
+    try {
+      await api.confirmStCardImport(importStaged.importId, csrfToken);
+      const list = await api.listCompanions();
+      if (activeRef.current) {
+        setCompanionList(list);
+        setImportStaged(null);
+        setImportCardText("");
+        setImportNotice("created");
+      }
+    } catch {
+      if (activeRef.current) setImportNotice("error");
+    } finally {
+      if (activeRef.current) setImportBusy(false);
+    }
+  };
+
   return (
     <section className="management-settings-section" aria-label={labels.charactersTitle} data-characters-panel>
       <h2>{labels.charactersTitle}</h2>
@@ -255,6 +300,78 @@ export function CharactersPanel({
             {createNotice !== null && (
               <p role="status" className={createNotice === "saved" ? "success-banner" : "error-banner"}>
                 {createNotice === "saved" ? labels.authoredContentSaved : labels.authoredContentError}
+              </p>
+            )}
+          </section>
+
+          <section aria-label={labels.cardImportTitle} data-card-import>
+            <h3>{labels.cardImportTitle}</h3>
+            <p className="management-settings-hint">{labels.cardImportHint}</p>
+            {importStaged === null ? (
+              <>
+                <textarea
+                  className="form-textarea"
+                  rows={5}
+                  placeholder='{"spec":"chara_card_v3","data":{"name":"…"}}'
+                  value={importCardText}
+                  onChange={(event) => setImportCardText(event.target.value)}
+                />
+                <div className="composer-actions">
+                  <button
+                    type="button"
+                    className="small-button"
+                    disabled={importBusy || importCardText.trim().length === 0}
+                    onClick={() => void handleStageImport()}
+                  >
+                    {importBusy ? labels.cardImportStaging : labels.cardImportStage}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>
+                  <strong>{importStaged.name}</strong>
+                </p>
+                <details>
+                  <summary>{labels.cardImportFieldsTitle}</summary>
+                  <ul data-import-fields>
+                    {importStaged.fields.map((field) => (
+                      <li key={field.field}>
+                        {field.field} · {field.eligibility} · {field.chars} chars
+                        {field.field === "persona_core" && field.chars > 4000 && (
+                          <em className="management-settings-hint">{labels.cardImportLongHint.replace("{{chars}}", String(field.chars))}</em>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                {importStaged.dispositions.length > 0 && (
+                  <details>
+                    <summary>{labels.cardImportDispositionsTitle}</summary>
+                    <ul data-import-dispositions>
+                      {importStaged.dispositions.map((disposition) => (
+                        <li key={`${disposition.field}-${disposition.reason}`}>
+                          {disposition.field} · {disposition.classification} · {disposition.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                <div className="composer-actions">
+                  <button
+                    type="button"
+                    className="small-button"
+                    disabled={importBusy}
+                    onClick={() => void handleConfirmImport()}
+                  >
+                    {importBusy ? labels.cardImportConfirming : labels.cardImportReviewSelected}
+                  </button>
+                </div>
+              </>
+            )}
+            {importNotice !== null && (
+              <p role="status" className={importNotice === "created" ? "success-banner" : "error-banner"}>
+                {importNotice === "created" ? labels.cardImportCreated : labels.cardImportError}
               </p>
             )}
           </section>
