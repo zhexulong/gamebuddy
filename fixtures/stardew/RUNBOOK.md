@@ -1393,17 +1393,18 @@ live gate `wia_answer_question` on `GameBuddyFixtureStable_445936768`:
 Domain 7.4.2 question-answer closes with the Modal admission family: dismiss
 (informational) and answer (question) are both live-proven.
 
-## 34. WIA activeToolApproach live proof: the tool-approach leg is interruptible and resumable
+## 34. WIA slot live proofs: tool approach, the async animal-product animation, and the pickup window
 
-Scenario `native_wia_tool_approach_interrupt_v1`, runner
-`run-stardew-native-local-player-wia-tool-approach-smoke.mjs` (gate action
-`wia_tool_approach_interrupt`), 2026-10-05. The slot under test is
-**`activeToolApproach`** — the walk leg the tool family holds while it closes
-on its target (a different slot from `activeNavigate`: the approach spec and the
-body controller are BOTH owned, so its release runs through the manager's
-`RecordControllerTransition` path rather than the body loop's own evidence).
+Three gate scenarios, three runners, 2026-10-05, all on
+`GameBuddyFixtureStable_445936768`. Together with the move slot (§30/§33) and the
+use-item slot (§32) this closes **five** of the WIA slots with real receipts:
+`activeNavigate`, `activeItemUse`, `activeToolApproach`, `activeAnimalProduct`
+and `activeItemPickup`.
 
-Three phases, one journal, contiguous revisions:
+### 34.1 `native_wia_tool_approach_interrupt_v1` — 802 ms
+
+The tool family's walk leg holds BOTH the approach spec and the body controller,
+so its release runs through the manager's `RecordControllerTransition` path.
 
 ```
 interrupt  chop_tree_source  accepted(r2) -> invalidated/modal_interrupted(r4)
@@ -1411,8 +1412,7 @@ dismiss    dismiss_modal     succeeded/modal_dismissed(r5)
 retry      chop_tree_source  accepted(r6) -> succeeded/tree_source_chopped(r8)
 ```
 
-The interrupt evidence is the slot's honest shape — the approach's frozen
-vocabulary plus the wrapped intent breakpoint:
+Interrupt evidence is the slot's honest shape plus the wrapped breakpoint:
 
 ```
 location=Farm;target=tree_chop_source_db2e14e373c76083;tile=64,17;reach=1;
@@ -1421,30 +1421,54 @@ body_evidence=interrupted_by=DialogueBox;target_tile=64,17;
               interrupted_at=62,17;remaining_distance=2;revision=2
 ```
 
-`approach=invalidated` (not `failed`) is the live confirmation of the fix in
-`2c10b0a`: a world-change interruption must not be stamped as an action fault
-one field away from `ExecutionState.Invalidated`.
+`approach=invalidated` rather than `failed` is the live confirmation of
+`2c10b0a`. Retry: health 1 -> 5, stump false -> true, source_transformed=true,
+stamina 270 -> 268 (expected 2), source targets 1 -> 0 and result targets 0 -> 1.
 
-Release is clean (`activeExecution=null` at revision 4, the tree still published
-as a source target), and the retry completes the action natively:
+### 34.2 `native_wia_animal_product_interrupt_v1` — 2039 ms
+
+The **asynchronous** slot: the MilkPail/Shears animation completes on later ticks.
+First live attempt failed with `native_fresh_snapshot_timeout`: the interruption
+minted its receipt but the slot stayed owned, so no later snapshot was actionable.
+That was a real defect, fixed at the interruption point —
+`InvalidateForLifecycle` now releases `activeAnimalProduct`/`activeItemUse`
+immediately instead of parking them in `DeferredTerminalState` until an animation
+that a modal cut short may never report (WIA: a world change releases the body).
 
 ```
-health 1 -> 5, stump false -> true, source_transformed=true,
-stamina 270 -> 268, expected_stamina_cost=2,
-after: treeChopSourceTargets 1 -> 0, treeChopResultTargets 0 -> 1
+interrupt  collect_animal_product  accepted(r1) -> invalidated/modal_interrupted(r2)
+dismiss    dismiss_modal           succeeded/modal_dismissed(r3)
+retry      collect_animal_product  accepted(r4) -> succeeded/animal_product_collected(r5)
 ```
 
-Duration 802 ms, teardown restored + cleaned, no residual process.
+Interrupt evidence: `native_animation_pending=true` (the non-movement slot shape).
+Retry evidence: `location=Barn373f33aa3…`, `animal=2048459012`,
+`tool=shears`, `produce=(O)440`, `produce_cleared=true`,
+`inventory 0 -> 1`, `animation_complete=true`,
+`stamina 270 -> 266` (expected 4).
 
-**Not yet proven (honest status).** The sibling slots
-`wia_animal_product_interrupt` and `wia_item_pickup_interrupt` are implemented
-with runners and offline tests but their first live attempts did NOT pass:
-`native_fresh_snapshot_timeout` (the dismissal succeeded at revision 3 and the
-post-dismiss snapshot never reached an actionable revision) and
-`no_fresh_live_item_target` (the first observe already had an empty
-`itemTargets`, i.e. the pickup fixture's debris was not there to be seen).
-Both are fixture/runner defects to be fixed, not product findings yet — and the
-pickup lane's source-level finding stands independently: `Debris.updateChunks`
-only homes chunks onto a farmer inside `Farmer.GetAppliedMagneticRadius()`
-(max(128, radius) px), so the fixture must place the debris ~3 tiles (192 px)
-away or a standing actor cannot magnetize it.
+### 34.3 `native_wia_item_pickup_interrupt_v1` — 1089 ms
+
+First live attempt failed with `no_fresh_live_item_target` (empty
+`itemTargets` at the very first observe). The fixture log showed it had
+initialized (`item=(O)388; anchor_tile=20,19; debris_tile=19,17`), and the source
+gave the reason: `Debris.playerInRange` (Debris.cs:582-595) compares **each axis**
+against the magnetic radius — a rectangle, not a euclidean disc — so a debris at
+Chebyshev 2 (dx 64 px, dy 128 px, exactly the default radius) is magnetized away by
+`updateChunks` before any approach can happen. The fixture now requires
+**Chebyshev >= 3** (both axes genuinely outside the radius) and validates with the
+same rectangle formula the game uses.
+
+```
+interrupt  pickup_item   accepted(r1) -> invalidated/modal_interrupted(r3)
+dismiss    dismiss_modal succeeded/modal_dismissed(r4)
+retry      pickup_item   accepted(r5) -> succeeded/item_picked_up(r10)
+```
+
+Interrupt evidence (the pickup slot's own shape plus the wrapped breakpoint):
+`tile=24,19;native_auto_collect_pending=false;
+body_evidence=interrupted_by=DialogueBox;interrupted_at=20,19;remaining_distance=4`.
+Retry evidence: `item=(O)388`, `native_auto_collect=true`,
+`chunk_removed=true`, `inventory 0 -> 1`, and the target is gone from the fresh
+snapshot. No magnet race occurred (`native_auto_collect_pending=false` at
+interruption), which is exactly what the placement fix bought.
