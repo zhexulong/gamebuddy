@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "evidence_kind": "automation_evidence",
+  "profile_id": "gamebuddy.tavern-management.chat-list-title",
+  "profile_hash": "128ccecd0f7e15a3d7136b5619cf6f0daa70ae8316d6c0d6f91b9a9c39cef58f",
+  "release_tier": "tavern_management",
+  "operations": {
+    "draft.save": [
+      "5df86141c05ff4c71ef19d60161857885d3cbb81d9602365"
+    ],
+    "draft.discard": [
+      "3309149afba0ae23d7bd2378745b84b2cb1de7f063ce9646"
+    ],
+    "chat.rename": [
+      "ce608be64bfa6a396c1a47856d63773511636c1479882aa5"
+    ],
+    "memory.mutate": [
+      "64338904ea36eb7cf76a89d4cd5b25a012d266ae15fd31f6"
+    ],
+    "world-info.bind": [
+      "319fe480412dbd0c5baf16dc331e3eb4967ec0fb8225bbd1"
+    ],
+    "settings.voice.read": [
+      "01606fdc11883500be80b63eca152285f7d506e807ba384b"
+    ],
+    "settings.voice.consent": [
+      "b36e02d67259421c7511152bced50375fdf6996abc01d9d7"
+    ],
+    "settings.voice.devices": [
+      "09c75fa49dd74615b6c6e6f085ef8c5e8ff24b9f812fbb8e"
+    ],
+    "settings.connection.read": [
+      "c0c0c847efbab8aef423920f0daf3a8e087db76095ed570e"
+    ],
+    "settings.connection.create": [
+      "3a184cef3de257d35a1f7218cbc3d3b7944029412c9dadf3"
+    ],
+    "settings.connection.test": [
+      "dd9df4548174455c922f94409eb335fe43c502c4865c3f5c"
+    ],
+    "settings.connection.activate": [
+      "5799892f76bba2316d8de839c6104a79bb0ec12da1dc80fc"
+    ],
+    "settings.connection.model": [
+      "6e454a360e0a3a2270b5b58275447681f75fd838e13f9ffd"
+    ],
+    "settings.connection.remove": [
+      "b70baf14b58ab6258c8b2f49dfecc4862e894d1caddbda0d"
+    ],
+    "companion.list": [
+      "c9a64acbf32791900f2372c4544b1bae7ee9556548b0945d"
+    ],
+    "companion.detail": [
+      "33e50602d70ff3cb560a84714e580853b939d6624ded8686"
+    ],
+    "companion.create": [
+      "4bc5ff045d70fb4b71c044e87e6cbd376d000d638d811ce5"
+    ],
+    "persona.read": [
+      "9399dc8058e2917acf5927b3db5c6110506504a0d9477b7f"
+    ],
+    "persona.update": [
+      "415ce6d52c8d6c903bd74ae0fce7661b6ea09393340d39bc"
+    ],
+    "scenario.read": [
+      "2f39c83dfb008379976b69d1b70a18722efa10171b1b9292"
+    ],
+    "scenario.update": [
+      "5ccc4024be89bee83fe23d46de01352db4720a2de58e04f8"
+    ],
+    "greeting.read": [
+      "f4bb1bf55faf42788a40ad2da947092837a1871b1e4f4b74"
+    ],
+    "greeting.update": [
+      "ecd7118a3f8136ded4c72e0aa366ec4754ef08a454e89989"
+    ],
+    "chat.archive": [
+      "0ae0d61f959029a29f450d69671ab636029aa619c909af91"
+    ],
+    "chat.restore": [
+      "c316a7a705966b2989166806cf7493c376990456b5cac564"
+    ],
+    "chat.trash": [
+      "55f6e880de5d725bd50a9f36210dd806cfb1b34e52853ac6"
+    ]
+  }
+}

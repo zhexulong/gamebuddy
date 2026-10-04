@@ -1,0 +1,138 @@
+{
+  "gate": "tavern_release_live_orchestrator/v1",
+  "profile": "chat-tavern-live",
+  "plannedRunKinds": [
+    "main",
+    "failure",
+    "recovery"
+  ],
+  "runKindSemantics": "attempt_labels_not_exercised_distinctions",
+  "prerequisite": {
+    "verdict": "passed",
+    "checks": [
+      {
+        "id": "windows_arbitrary_reparse_enforcement",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_filesystem_threat_model",
+        "status": "not_applicable"
+      },
+      {
+        "id": "tavern_ordinary_link_reparse_containment",
+        "status": "not_applicable"
+      },
+      {
+        "id": "magic_context_stable_source",
+        "status": "passed"
+      },
+      {
+        "id": "semantic_reference_attestation",
+        "status": "passed"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "role": "main",
+      "state": "passed",
+      "runnerRunId": "10648fb94821bd7677a194dd",
+      "artifact": {
+        "generation": "g-musyhuhk-26104-bcc769a267234f73921d567d442647e3",
+        "inventoryDigest": "9ad6037ee2ce492f447aadbd57cd11b13ede8cd2651be832dfcb6c75ff2465f7"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {
+        "providerAcceptedOrSemanticAnswer": false
+      },
+      "turn": "completed"
+    },
+    {
+      "role": "failure",
+      "state": "passed",
+      "runnerRunId": "7732251a3d157273db32d0cf",
+      "artifact": {
+        "generation": "g-musyhuhk-26104-bcc769a267234f73921d567d442647e3",
+        "inventoryDigest": "9ad6037ee2ce492f447aadbd57cd11b13ede8cd2651be832dfcb6c75ff2465f7"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {
+        "providerAcceptedOrSemanticAnswer": false
+      },
+      "turn": "completed"
+    },
+    {
+      "role": "recovery",
+      "state": "passed",
+      "runnerRunId": "6418ef094a3efeb8b0ee4161",
+      "artifact": {
+        "generation": "g-musyhuhk-26104-bcc769a267234f73921d567d442647e3",
+        "inventoryDigest": "9ad6037ee2ce492f447aadbd57cd11b13ede8cd2651be832dfcb6c75ff2465f7"
+      },
+      "assertions": {
+        "authenticatedReferenceChatApi": true,
+        "realDialogueTurnAttempted": true,
+        "providerRuntimeSessionBound": true,
+        "providerPreSendSerialized": true,
+        "realTurnOutcomeObserved": true
+      },
+      "disclosures": {
+        "providerAcceptedOrSemanticAnswer": false
+      },
+      "turn": "completed"
+    }
+  ],
+  "operationEvidence": {
+    "profileId": "gamebuddy.tavern-management.chat-list-title",
+    "releaseTier": "tavern_management",
+    "profileHash": "128ccecd0f7e15a3d7136b5619cf6f0daa70ae8316d6c0d6f91b9a9c39cef58f",
+    "mappingSchemaVersion": 1,
+    "mappingDigest": "01755e64ff58d3a06b28ad9f48f13e83a08a10effb914cc5361a15b9471b312f"
+  },
+  "mappedOperationIds": [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "memory.mutate",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+    "settings.voice.devices",
+    "settings.connection.read",
+    "settings.connection.create",
+    "settings.connection.test",
+    "settings.connection.activate",
+    "settings.connection.model",
+    "settings.connection.remove",
+    "companion.list",
+    "companion.detail",
+    "companion.create",
+    "persona.read",
+    "persona.update",
+    "scenario.read",
+    "scenario.update",
+    "greeting.read",
+    "greeting.update",
+    "chat.archive",
+    "chat.restore",
+    "chat.trash"
+  ],
+  "verdict": "passed",
+  "blockerIds": [],
+  "claims": {
+    "requiredMustFlowsExecuted": false,
+    "fullReleaseClaim": false
+  }
+}
