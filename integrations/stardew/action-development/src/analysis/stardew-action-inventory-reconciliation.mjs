@@ -146,13 +146,26 @@ export const SELECTOR_VERDICTS = Object.freeze({
       "the case body is a real gameplay write (consumes a held item with Price >= 60 and sets team.sharedDailyLuck to +/-0.12), but the action string exists only as this case: no map declares a SpiritAltar tile and no source writes the property, so there is no native entry to bind",
     anchor: "GameLocation.cs:9972 (case only)",
   },
+  // The B6 claim that used to live here was WRONG, and the way it was wrong matters:
+  // it scanned map tiles, but this entry is not a map tile. The action string comes
+  // from Data/Buildings ActionTiles (a mill's Input/Output chests), reached through
+  // Building.doAction -> BuildingData.GetActionAtTile -> GameLocation.performAction.
+  // The seam exists (Building.PerformBuildingChestAction, Building.cs:746).
+  //
+  // It is still not a new action SHAPE — the reachable branch is a container
+  // transaction — so it is a PARTIAL merge, with the shortfall stated rather than
+  // hidden: the Load branch's conversion gate plus RequiredCount quantisation, and
+  // the Collect branch's >=2-stack ItemGrabMenu fallback, are not covered by
+  // chest_store/chest_retrieve. This table rejects unregistered action ids, so a
+  // future load_building_chest / collect_building_chest_output pair must register
+  // before it can appear here.
   BuildingChest: {
     at: "GameLocation",
-    group: "explicit_exclusion",
-    boundary: "B6_unreachable_in_shipped_content",
+    group: "merge_into_existing",
+    actionIds: ["chest_store", "chest_retrieve"],
     reason:
-      "the case delegates to Building.PerformBuildingChestAction(string, who), whose only invoker is this case: no map declares a BuildingChest tile and no source writes the property, so the only reachable part is the container semantics already owned by chest_store/chest_retrieve",
-    anchor: "GameLocation.cs:10128 (case only)",
+      "reachable via Data/Buildings ActionTiles (Building.doAction -> GameLocation.cs:10128); terminal is Building.PerformBuildingChestAction, a container transaction already owned by chest_store/chest_retrieve, BUT the Load branch's conversion gate + RequiredCount quantisation and the Collect branch's >=2-stack ItemGrabMenu fallback are not covered",
+    anchor: "GameLocation.cs:10128 -> Building.cs:746 (PerformBuildingChestAction)",
   },
 
   // ---- 新 primitive（方法层看不到的 selector 级发现）-----------------------
