@@ -86,4 +86,98 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             $"expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp}",
             this.TryCreateLocalObservation(actor));
     }
+
+    /// <summary>Answers the currently displayed native question dialogue.</summary>
+    public LocalExecutionReceipt RequestLocalAnswerDialogue(BridgeExecutionRequest request, IExecutionLedger ledger)
+    {
+        if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
+            return existing;
+
+        string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+            && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+            ? boundExecutionId
+            : this.NewExecutionId(request.RequestId);
+
+        this.revision++;
+
+        if (Game1.eventUp)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+
+        if (Game1.activeClickableMenu is not DialogueBox dialogue)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);
+
+        if (!dialogue.isQuestion)
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "modal_not_answerable",
+                "modal_type=DialogueBox;question=false");
+
+        string? responseKey = request.Args.ResponseKey;
+        if (string.IsNullOrWhiteSpace(responseKey) || responseKey.Length > 128)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_response_key", null);
+
+        Response[] offeredResponses = dialogue.responses is { Length: > 0 }
+            ? dialogue.responses
+            : Game1.questionChoices?.ToArray() ?? Array.Empty<Response>();
+        if (!offeredResponses.Any(response => string.Equals(response.responseKey, responseKey, StringComparison.Ordinal)))
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "response_key_not_offered",
+                $"modal_type=DialogueBox;question=true;response_key={responseKey}");
+        }
+
+        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null || Game1.currentLocation is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+
+        bool answered = false;
+        try
+        {
+            answered = Game1.currentLocation.answerDialogue(new Response(responseKey, responseKey));
+            if (!answered)
+            {
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Failed,
+                    "answer_dialogue_not_accepted",
+                    $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered=false",
+                    this.TryCreateLocalObservation(actor));
+            }
+
+            dialogue.beginOutro();
+            if (!dialogue.transitioning || dialogue.transitioningBigger)
+            {
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Failed,
+                    "postcondition_failed",
+                    $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered=true;outro_started=false",
+                    this.TryCreateLocalObservation(actor));
+            }
+        }
+        catch (Exception nativeException)
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Uncertain,
+                "answer_dialogue_native_exception",
+                $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered={answered};native_exception={nativeException.GetType().Name}",
+                this.TryCreateLocalObservation(actor));
+        }
+
+        return this.RememberTerminal(
+            request.RequestId,
+            executionId,
+            ExecutionState.Succeeded,
+            "answer_dialogue_answered",
+            $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered=true;outro_started=true;postcondition=dialogue_outro_started",
+            this.TryCreateLocalObservation(actor));
+    }
 }

@@ -340,9 +340,9 @@ public sealed record BridgeFruitTreeTarget(string TargetId, string Location, int
 public sealed record BridgeShakeTreeTarget(string TargetId, string Location, int X, int Y);
 public sealed record BridgePedestalTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, int Stack);
 public sealed record BridgeFenceGateTarget(string TargetId, string Location, int X, int Y, bool IsOpen);
-public sealed record BridgeCaskTarget(string TargetId, string Location, int X, int Y, bool HasHeldObject, string? HeldQualifiedItemId);
+public sealed record BridgeCaskTarget(string TargetId, string Location, int X, int Y, bool HasHeldObject, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? HeldQualifiedItemId);
 public sealed record BridgeMannequinTarget(string TargetId, string Location, int X, int Y);
-public sealed record BridgeSignTarget(string TargetId, string Location, int X, int Y, bool HasDisplayItem, string? DisplayQualifiedItemId);
+public sealed record BridgeSignTarget(string TargetId, string Location, int X, int Y, bool HasDisplayItem, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DisplayQualifiedItemId);
 public sealed record BridgeSiloTarget(string TargetId, string Location, int X, int Y, int Hay);
 public sealed record BridgeLanternSlot(int Slot, bool IsOn, int FuelLeft);
 public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
@@ -545,6 +545,7 @@ public sealed class BridgeExecutionArgs
     public BridgeNavigationDestinationSelector? Destination { get; init; }
     public string? Emote { get; init; }
     public string? Direction { get; init; }
+    public string? ResponseKey { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

@@ -1847,6 +1847,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     // WIA §4.2: dismiss_modal targets the currently open modal itself, so it
     // carries no client-supplied arguments either.
     "dismiss_modal" => Array.Empty<string>(),
+    "answer_dialogue" => new[] { "responseKey" },
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
         _ => null,

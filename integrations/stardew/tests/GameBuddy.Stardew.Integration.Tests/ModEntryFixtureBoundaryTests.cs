@@ -41,6 +41,8 @@ public sealed class ModEntryFixtureBoundaryTests
         "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
         "FindNativeMineEntranceFixtureTarget",
+        "InstallWiaEatInterruptionFixture",
+        "InstallWiaAnswerQuestionFixture",
     };
 
     private static IEnumerable<string> DeclaredMethodNames(string source)

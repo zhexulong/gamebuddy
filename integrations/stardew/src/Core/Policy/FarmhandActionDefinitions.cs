@@ -173,6 +173,13 @@ public static class FarmhandActionCatalog
         "write",
         "modal_dismissed",
         "DialogueBox.closeDialogue"), FarmhandActionLifecycle.Experimental),
+        E("answer_dialogue", "modal_handling", FarmhandActionHandlerGroup.Modal, new FarmhandActionDescriptor(
+            new[] { new FarmhandActionArgument("responseKey", "string") },
+            new Dictionary<string, string>(),
+            EmbodiedActorResource,
+            "write",
+            "answer_dialogue_answered",
+            "GameLocation.answerDialogue"), FarmhandActionLifecycle.Experimental),
         // M2 cross-day lifecycle wiring. The catalog contract
         // (single_player_sleep_and_advance_day / end_day_with_all_players_ready)
         // is coordinated, but the AI's own share of it is one bounded native

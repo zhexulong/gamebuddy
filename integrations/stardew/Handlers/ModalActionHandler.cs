@@ -30,6 +30,7 @@ internal sealed class ModalActionHandler : IFarmhandActionHandler
         return request.Action switch
         {
             "dismiss_modal" => this.executions.RequestLocalDismissModal(request, ledger),
+            "answer_dialogue" => this.executions.RequestLocalAnswerDialogue(request, ledger),
             _ => new LocalExecutionReceipt(
                 Guid.NewGuid().ToString("N"),
                 request.RequestId,
