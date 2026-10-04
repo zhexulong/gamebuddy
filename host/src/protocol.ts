@@ -1637,6 +1637,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
      value.action !== "ride_minecart" &&
+     value.action !== "ride_bus" &&
      value.action !== "use_raft" &&
      value.action !== "mount_transport" &&
      value.action !== "enter_mine" &&
@@ -1751,6 +1752,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_minecart_station";
     return validateMinecartRideTarget(value.args, snapshot);
+  } else if (value.action === "ride_bus") {
+    // The ticket machine of the current location is the whole input: there is no
+    // client-supplied target to validate, so the args must be exactly empty.
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
   } else if (value.action === "enter_exit") {
     if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
     
