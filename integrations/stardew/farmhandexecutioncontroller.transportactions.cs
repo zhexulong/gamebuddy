@@ -74,8 +74,6 @@ internal sealed partial class ExecutionManager
     private static string BuildMineEntranceTargetId(GameLocation location, int x, int y) =>
         $"mine_entrance_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:Mine"))).ToLowerInvariant()[..16]}";
 
-    private static string BuildMineLampTargetId(GameLocation location, int x, int y) =>
-        $"mine_lamp_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:Lamp"))).ToLowerInvariant()[..16]}";
 
     public LocalExecutionReceipt RequestLocalMountTransport(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -131,7 +129,10 @@ internal sealed partial class ExecutionManager
         // Enter through the public native entry (the M8-frozen seam); the tile
         // check above already proved this really is a mine entrance.
         Game1.enterMine(nextLevel);
-        if (Game1.player.currentLocation is MineShaft mine && Game1.player.TilePoint == new Point(6, 6) && mine.mineLevel == nextLevel)
+        // The native MineShaft layout repositions the farmer onto the level's
+        // stairs, so the requested landing tile is not a legal postcondition;
+        // reaching the target level is (the travel-completion branch agrees).
+        if (Game1.player.currentLocation is MineShaft mine && mine.mineLevel == nextLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={mine.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
         LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, targetX, targetY, MineShaft.GetLevelName(nextLevel), 6, 6, this.revision, requestedDeadlineMs);
         this.activeTravel = specification;

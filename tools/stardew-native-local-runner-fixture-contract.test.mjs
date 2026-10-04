@@ -60,6 +60,38 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs": "water_crop",
   // One runner, two gate actions; the fixture keys the scenario on the first.
   "run-stardew-native-local-player-expression-smoke.mjs": "express_emote",
+  // Loop-closure wave (2026-10-04): the 14 lane smoke runners are fixture-family
+  // drivers keyed on the action they exercise, matching the gate table entries.
+  "run-stardew-native-local-player-clear-cask-smoke.mjs": "clear_cask",
+  "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs": "deposit_silo_hay",
+  "run-stardew-native-local-player-dress-mannequin-smoke.mjs": "dress_mannequin",
+  "run-stardew-native-local-player-enter-mine-smoke.mjs": "enter_mine",
+  "run-stardew-native-local-player-harvest-bush-smoke.mjs": "harvest_bush",
+  "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs": "harvest_fruit_tree",
+  "run-stardew-native-local-player-mount-transport-smoke.mjs": "mount_transport",
+  "run-stardew-native-local-player-set-sign-display-smoke.mjs": "set_sign_display",
+  "run-stardew-native-local-player-shake-tree-smoke.mjs": "shake_tree",
+  "run-stardew-native-local-player-take-pedestal-item-smoke.mjs": "take_pedestal_item",
+  "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs": "toggle_fence_gate",
+  "run-stardew-native-local-player-toggle-tool-light-smoke.mjs": "toggle_tool_light",
+  "run-stardew-native-local-player-use-raft-smoke.mjs": "use_raft",
+  // Pre-existing fixture-family drivers whose runner does not carry the action
+  // id in the fixture derive path; they were already covered by STALE baselines
+  // before the loop-closure wave and stay declared here.
+  "run-stardew-native-local-player-chop-tree-approach-smoke.mjs": "chop_tree_source",
+  "run-stardew-native-local-player-cut-grass-smoke.mjs": "cut_grass",
+  "run-stardew-native-local-player-move-stall-probe-smoke.mjs": "move_stall_probe_pet",
+  "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs": "wia_modal_dismiss_chain",
+  "run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs": "wia_modal_interrupt",
+  "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs": "wia_eat_interrupt",
+  "run-stardew-native-local-player-wia-passout-smoke.mjs": "wia_pass_out",
+  "run-stardew-native-local-player-wia-answer-question-smoke.mjs": "wia_answer_question",
+  // The three slot lanes each key their own WIA fixture family.
+  "run-stardew-native-local-player-wia-tool-approach-smoke.mjs": "wia_tool_approach_interrupt",
+  "run-stardew-native-local-player-wia-animal-product-smoke.mjs": "wia_animal_product_interrupt",
+  "run-stardew-native-local-player-wia-item-pickup-smoke.mjs": "wia_item_pickup_interrupt",
+  // Declared by the loop-closure action wave; the runner ships on disk with a
+  // gate-table entry pending, so the contract test must still cover it.
 });
 
 /**
@@ -163,7 +195,7 @@ function configFor(actions, scenario) {
 async function configRejectionFor(name, actionId) {
   const mod = await import(`./${name}`);
   const entry = Object.entries(mod).find(
-    ([key, value]) => key.startsWith("run") && typeof value === "function" && /Smoke$|Chain$/.test(key),
+    ([key, value]) => key.startsWith("run") && typeof value === "function" && /Smoke$|Chain$|[Pp]robe$/.test(key),
   );
   if (!entry) return { skipped: "no runnable export" };
 
