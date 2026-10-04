@@ -78,27 +78,34 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         // Opting a name in is only meaningful for an action that is NOT already
-        // default-consent. cut_grass (the added experimental) and dismiss_modal
-        // (the WIA modal family, live gate landed) coexist with other lane
-        // experimental registrations; every non-experimental registration is
-        // published or live_verified.
+        // default-consent. dismiss_modal is still experimental; the loop-closure
+        // wave promoted its own fifteen actions to live_verified, so they are now
+        // default-consent and naming them would be rejected, not inert.
         string[] experimentalIds = FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
             .Select(registration => registration.ActionId)
             .ToArray();
-        experimentalIds.Should().Contain("cut_grass");
         experimentalIds.Should().Contain("dismiss_modal");
+        // The loop-closure wave promoted its own actions to live_verified, so they
+        // must no longer sit in the experimental partition.
+        experimentalIds.Should().NotContain(new[]
+        {
+            "cut_grass", "clear_cask", "dress_mannequin", "set_sign_display",
+            "deposit_silo_hay", "toggle_tool_light", "harvest_bush",
+            "harvest_fruit_tree", "shake_tree", "take_pedestal_item",
+            "toggle_fence_gate", "use_raft", "mount_transport", "enter_mine",
+        });
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle != FarmhandActionLifecycle.Experimental)
             .Select(registration => registration.ActionId)
-            .Should().OnlyContain(id => id != "cut_grass" && id != "dismiss_modal");
+            .Should().OnlyContain(id => id != "dismiss_modal" && id != "dismiss_modal");
         var options = new ActionPolicyOptions(
-            ExperimentalActions: new[] { "cut_grass", "ride_minecart", "non_existent_action" }
+            ExperimentalActions: new[] { "dismiss_modal", "ride_minecart", "non_existent_action" }
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
 
         // An opted-in experimental action is enabled.
-        enabled.Should().Contain("cut_grass");
+        enabled.Should().Contain("dismiss_modal");
         // A former experimental action that is now live_verified is already
         // default-consent; naming it changes nothing.
         enabled.Should().Contain("ride_minecart");

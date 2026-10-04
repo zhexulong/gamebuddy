@@ -11,12 +11,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class FacilityActionTests
 {
     [Fact]
-    public void Catalog_ClearCaskIsExperimentalResourceToolActionWithEquippedSlot()
+    public void Catalog_ClearCaskIsLiveVerifiedResourceToolActionWithEquippedSlot()
     {
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(entry => entry.ActionId == "clear_cask");
 
         registration.FamilyId.Should().Be("facility_storage_lighting");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // Promoted after its native-local live gate produced cask_cleared with the
+        // held-object postcondition (loop-closure wave, 2026-10-04).
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         registration.Descriptor!.NativeBinding.Should().Be("Cask.performToolAction");
         registration.Descriptor.Postcondition.Should().Be("cask_cleared");

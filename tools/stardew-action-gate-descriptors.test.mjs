@@ -128,6 +128,26 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     cook_recipe: "run-stardew-native-local-player-cook-recipe-smoke.mjs",
     collect_crab_pot_output: "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
     ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
+    // Transport family promoted by the parallel lane work: minecart and bus both
+    // passed their own native-local runs (minecart_ride_completed / bus_arrived).
+    ride_minecart: "run-stardew-native-local-player-ride-minecart-smoke.mjs",
+    ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
+    // Loop-closure wave (2026-10-04): live_verified after each action produced its
+    // own native-local receipt on the recorded fixture scenario.
+    cut_grass: "run-stardew-native-local-player-cut-grass-smoke.mjs",
+    harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
+    harvest_fruit_tree: "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
+    shake_tree: "run-stardew-native-local-player-shake-tree-smoke.mjs",
+    take_pedestal_item: "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+    toggle_fence_gate: "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
+    clear_cask: "run-stardew-native-local-player-clear-cask-smoke.mjs",
+    dress_mannequin: "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
+    set_sign_display: "run-stardew-native-local-player-set-sign-display-smoke.mjs",
+    deposit_silo_hay: "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+    toggle_tool_light: "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
+    use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
+    mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
+    enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -222,6 +242,22 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "cook_recipe",
       "collect_crab_pot_output",
       "ship_item",
+      "ride_minecart",
+      "ride_bus",
+      "cut_grass",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
     ],
   );
   assert.deepEqual(

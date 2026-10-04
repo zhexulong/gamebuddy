@@ -203,14 +203,41 @@
         "handlerGroup": null
       },
       {
+        "actionId": "ride_bus",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "ride_bus",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "bus_arrived"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "use_raft",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "use_raft",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "slot": {
@@ -242,12 +269,12 @@
       {
         "actionId": "mount_transport",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "mount_transport",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -279,12 +306,12 @@
       {
         "actionId": "enter_mine",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "enter_mine",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1790,12 +1817,12 @@
       {
         "actionId": "cut_grass",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "cut_grass",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1830,12 +1857,12 @@
       {
         "actionId": "clear_cask",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "clear_cask",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1870,12 +1897,12 @@
       {
         "actionId": "dress_mannequin",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "dress_mannequin",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1910,12 +1937,12 @@
       {
         "actionId": "set_sign_display",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "set_sign_display",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1950,12 +1977,12 @@
       {
         "actionId": "deposit_silo_hay",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "deposit_silo_hay",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1990,12 +2017,12 @@
       {
         "actionId": "toggle_tool_light",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "toggle_tool_light",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "slot": {
@@ -2067,12 +2094,12 @@
       {
         "actionId": "harvest_bush",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "harvest_bush",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -2104,12 +2131,12 @@
       {
         "actionId": "harvest_fruit_tree",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "harvest_fruit_tree",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -2141,12 +2168,12 @@
       {
         "actionId": "shake_tree",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "shake_tree",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -2178,12 +2205,12 @@
       {
         "actionId": "take_pedestal_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "take_pedestal_item",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -2215,12 +2242,12 @@
       {
         "actionId": "toggle_fence_gate",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "toggle_fence_gate",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -2482,6 +2509,10 @@
       "equip_tool",
       "travel",
       "ride_minecart",
+      "ride_bus",
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -2518,7 +2549,18 @@
       "chop_stump",
       "plant_sapling",
       "cut_weeds",
+      "cut_grass",
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
       "scythe_crop",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
@@ -2530,6 +2572,7 @@
       "equip_tool",
       "travel",
       "ride_minecart",
+      "ride_bus",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -2566,7 +2609,9 @@
       "chop_stump",
       "plant_sapling",
       "cut_weeds",
+      "cut_grass",
       "scythe_crop",
+      "harvest_bush",
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
@@ -2579,20 +2624,6 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "use_raft",
-      "mount_transport",
-      "enter_mine",
-      "cut_grass",
-      "clear_cask",
-      "dress_mannequin",
-      "set_sign_display",
-      "deposit_silo_hay",
-      "toggle_tool_light",
-      "harvest_bush",
-      "harvest_fruit_tree",
-      "shake_tree",
-      "take_pedestal_item",
-      "toggle_fence_gate",
       "dismiss_modal",
       "answer_dialogue"
     ],
@@ -2645,6 +2676,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "ship_item",
@@ -2703,6 +2735,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -2767,6 +2800,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -2831,6 +2865,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -2895,6 +2930,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -2959,6 +2995,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -3117,6 +3154,7 @@
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "set_sign_display",
@@ -3177,6 +3215,7 @@
       "mount_transport",
       "move_to_tile",
       "navigate_to_destination",
+      "ride_bus",
       "ride_minecart",
       "travel",
       "use_raft"
@@ -3448,6 +3487,81 @@
         "actionId": "ride_minecart",
         "runner": "run-stardew-native-local-player-ride-minecart-smoke.mjs",
         "fixtureScenario": "native_ride_minecart_v1"
+      },
+      {
+        "actionId": "ride_bus",
+        "runner": "run-stardew-native-local-player-ride-bus-smoke.mjs",
+        "fixtureScenario": "native_ride_bus_v1"
+      },
+      {
+        "actionId": "cut_grass",
+        "runner": "run-stardew-native-local-player-cut-grass-smoke.mjs",
+        "fixtureScenario": "native_cut_grass_v1"
+      },
+      {
+        "actionId": "harvest_bush",
+        "runner": "run-stardew-native-local-player-harvest-bush-smoke.mjs",
+        "fixtureScenario": "native_harvest_bush_v1"
+      },
+      {
+        "actionId": "harvest_fruit_tree",
+        "runner": "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
+        "fixtureScenario": "native_harvest_fruit_tree_v1"
+      },
+      {
+        "actionId": "shake_tree",
+        "runner": "run-stardew-native-local-player-shake-tree-smoke.mjs",
+        "fixtureScenario": "native_shake_tree_v1"
+      },
+      {
+        "actionId": "take_pedestal_item",
+        "runner": "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+        "fixtureScenario": "native_take_pedestal_item_v1"
+      },
+      {
+        "actionId": "toggle_fence_gate",
+        "runner": "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
+        "fixtureScenario": "native_toggle_fence_gate_v1"
+      },
+      {
+        "actionId": "clear_cask",
+        "runner": "run-stardew-native-local-player-clear-cask-smoke.mjs",
+        "fixtureScenario": "native_clear_cask_v1"
+      },
+      {
+        "actionId": "dress_mannequin",
+        "runner": "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
+        "fixtureScenario": "native_dress_mannequin_v1"
+      },
+      {
+        "actionId": "set_sign_display",
+        "runner": "run-stardew-native-local-player-set-sign-display-smoke.mjs",
+        "fixtureScenario": "native_set_sign_display_v1"
+      },
+      {
+        "actionId": "deposit_silo_hay",
+        "runner": "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+        "fixtureScenario": "native_deposit_silo_hay_v1"
+      },
+      {
+        "actionId": "toggle_tool_light",
+        "runner": "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
+        "fixtureScenario": "native_toggle_tool_light_v1"
+      },
+      {
+        "actionId": "use_raft",
+        "runner": "run-stardew-native-local-player-use-raft-smoke.mjs",
+        "fixtureScenario": "native_use_raft_v1"
+      },
+      {
+        "actionId": "mount_transport",
+        "runner": "run-stardew-native-local-player-mount-transport-smoke.mjs",
+        "fixtureScenario": "native_mount_transport_v1"
+      },
+      {
+        "actionId": "enter_mine",
+        "runner": "run-stardew-native-local-player-enter-mine-smoke.mjs",
+        "fixtureScenario": "native_enter_mine_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",
