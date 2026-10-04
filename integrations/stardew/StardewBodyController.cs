@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework;
 using StardewValley;
+using StardewValley.Characters;
 using StardewValley.Pathfinding;
 
 namespace GameBuddy.Stardew;
@@ -18,12 +19,20 @@ internal sealed class StardewBodyController
     private int lastProgressTick;
     private bool hasEmittedRunning;
     private bool hasEmittedStalledWaiting;
+    private bool isStallWaiting;
+    private int stallWaitStartedTick;
 
     /// <summary>Navigation L2 watchdog: native movement must show progress before
     /// this many game ticks have elapsed. Stardew's native update loop is 60 FPS,
     /// so the frozen 2 second blocker diagnostic window is 120 ticks
     /// (blocker-and-navigation-diagnostics.md §5.3).</summary>
     private const int StallDetectionTicks = 120;
+
+    /// <summary>Navigation L2 quiet recovery window. After the first two-second
+    /// stall, native movement is halted so a Pet/NPC can move away without being
+    /// pushed. Sixty native ticks is the frozen one-second lower bound of the
+    /// design's one-to-one-and-a-half second waiting window.</summary>
+    private const int StallWaitTicks = 60;
 
     /// <summary>Navigation L2 watchdog hard budget. The 5 second bound is 300
     /// native 60 FPS ticks, measured from the last observed progress tick.</summary>
@@ -76,25 +85,7 @@ internal sealed class StardewBodyController
             return false;
         }
 
-        PathFindController plannedPath = new(
-            localPlayer,
-            localPlayer.currentLocation,
-            // Native goal PREDICATE, not an exact coordinate. `findPath` tests
-            // `isAtEnd` on every dequeue (`PathFindController.cs:199-203`) and
-            // enqueues the start node unconditionally (`:194`), so asking "is this
-            // a valid arrival tile?" (a) returns a single-node path when the actor
-            // already stands somewhere valid, and (b) stops at the nearest valid
-            // tile when the requested tile itself cannot be stood on -- instead of
-            // returning null for a target a human would simply walk up to.
-            //
-            // The exact-coordinate constructor (`isAtEndPoint`) asked the wrong
-            // question: "can this tile be stood on", which is why an adjacent
-            // tile one step away could be rejected outright.
-            this.IsArrivalTile(specification),
-            -1,
-            null,
-            10000,
-            new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
+        PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
             // Dead-end rejection: no tile in this location satisfies the arrival
@@ -112,6 +103,8 @@ internal sealed class StardewBodyController
         this.lastProgressTick = tick;
         this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
+        this.isStallWaiting = false;
+        this.stallWaitStartedTick = 0;
         this.transientSinceMs = 0;
         reasonCode = "accepted";
         return true;
@@ -140,6 +133,8 @@ internal sealed class StardewBodyController
         this.pathController = null;
         this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
+        this.isStallWaiting = false;
+        this.stallWaitStartedTick = 0;
         this.transientSinceMs = 0;
     }
 
@@ -231,6 +226,24 @@ internal sealed class StardewBodyController
         bool exactArrival = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
         bool adjacentArrival = specification.AllowAdjacentArrival
             && IsChebyshevAdjacent(Math.Abs((int)currentTile.X - (int)specification.TargetTile.X), Math.Abs((int)currentTile.Y - (int)specification.TargetTile.Y));
+        if (this.isStallWaiting)
+        {
+            if (!HasStallWaitElapsed(tick, this.stallWaitStartedTick, StallWaitTicks))
+                return;
+
+            PathFindController resumedPath = this.BuildNativePath(specification, localPlayer);
+            if (resumedPath.pathToEndPoint is null || resumedPath.pathToEndPoint.Count == 0)
+            {
+                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+                return;
+            }
+
+            this.pathController = resumedPath;
+            localPlayer.controller = resumedPath;
+            this.isStallWaiting = false;
+            return;
+        }
+
         if (!ReferenceEquals(localPlayer.controller, pathController))
         {
             if (exactArrival || adjacentArrival)
@@ -242,11 +255,7 @@ internal sealed class StardewBodyController
             }
             else
             {
-                int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-                string evidence = $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)}";
-                if (stalledTicks >= StallTimeoutTicks)
-                    evidence += $";stalled_ticks={stalledTicks}";
-                this.Fail("native_path_ended", evidence);
+                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
             }
             return;
         }
@@ -284,16 +293,18 @@ internal sealed class StardewBodyController
         StallWatchdogAction stallAction = AssessStall(tick, this.lastProgressTick, this.hasEmittedStalledWaiting);
         if (stallAction == StallWatchdogAction.TimedOut)
         {
-            int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-            this.Fail("native_path_ended", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks}");
+            this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
             return;
         }
 
         if (stallAction == StallWatchdogAction.Waiting)
         {
             this.hasEmittedStalledWaiting = true;
+            this.isStallWaiting = true;
+            this.stallWaitStartedTick = tick;
+            this.HaltNativeMovement(localPlayer);
             int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks}");
+            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};wait_ticks={StallWaitTicks}");
         }
     }
 
@@ -318,6 +329,87 @@ internal sealed class StardewBodyController
         return StallWatchdogAction.None;
     }
 
+    /// <summary>Returns whether the quiet blocker window has elapsed. Keeping this
+    /// as arithmetic makes its one-second boundary independently testable.</summary>
+    internal static bool HasStallWaitElapsed(int tick, int waitStartedTick, int waitTicks) =>
+        Math.Max(0, tick - waitStartedTick) >= waitTicks;
+
+    private PathFindController BuildNativePath(LocalMoveSpec specification, Farmer localPlayer)
+    {
+        GameLocation location = localPlayer.currentLocation!;
+        return new PathFindController(
+            localPlayer,
+            location,
+            // The native goal remains a predicate on every re-plan. Re-planning
+            // after the quiet window must not turn an adjacent approach back into
+            // an exact-coordinate request.
+            this.IsArrivalTile(specification),
+            -1,
+            null,
+            10000,
+            new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
+    }
+
+    private void HaltNativeMovement(Farmer localPlayer)
+    {
+        if (ReferenceEquals(localPlayer.controller, this.pathController))
+            localPlayer.controller = null;
+        // Halt clears the native movement intent. In particular, do not leave the
+        // PathFindController installed while waiting: Farmer collision handling
+        // would continue pushing the entity that caused this stall.
+        localPlayer.Halt();
+    }
+
+    private string FormatStallEvidence(Farmer localPlayer, LocalMoveSpec specification, int tick)
+    {
+        int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
+        return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DetectStalledBy(localPlayer)}";
+    }
+
+    private static string DetectStalledBy(Farmer localPlayer)
+    {
+        GameLocation? location = localPlayer.currentLocation;
+        if (location is null)
+            return "unknown";
+
+        Point frontTile = GetFrontTile(localPlayer);
+        try
+        {
+            if (location.characters.OfType<Pet>().Any(character => IsAtTile(character, frontTile)))
+                return "Pet";
+            if (location.characters.OfType<Horse>().Any(character => IsAtTile(character, frontTile)))
+                return "Horse";
+            if (location.characters.OfType<NPC>().Any(character => IsAtTile(character, frontTile)))
+                return "Npc";
+        }
+        catch
+        {
+            // A world collection can change during a game-thread lifecycle edge;
+            // an unknown blocker is honest and keeps the terminal ruling intact.
+        }
+
+        return "unknown";
+    }
+
+    private static bool IsAtTile(Character character, Point tile) =>
+        character.currentLocation is not null
+        && character.currentLocation == Game1.player?.currentLocation
+        && (int)character.Tile.X == tile.X
+        && (int)character.Tile.Y == tile.Y;
+
+    private static Point GetFrontTile(Farmer player)
+    {
+        Point tile = new((int)player.Tile.X, (int)player.Tile.Y);
+        return player.FacingDirection switch
+        {
+            Game1.up => new Point(tile.X, tile.Y - 1),
+            Game1.right => new Point(tile.X + 1, tile.Y),
+            Game1.down => new Point(tile.X, tile.Y + 1),
+            Game1.left => new Point(tile.X - 1, tile.Y),
+            _ => tile,
+        };
+    }
+
     private void Fail(string reasonCode, string evidence) => this.Stop(ExecutionState.Failed, reasonCode, evidence);
 
     private void Expire(string reasonCode, string evidence) => this.Stop(ExecutionState.Expired, reasonCode, evidence);
@@ -336,6 +428,8 @@ internal sealed class StardewBodyController
         this.pathController = null;
         this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
+        this.isStallWaiting = false;
+        this.stallWaitStartedTick = 0;
         this.transientSinceMs = 0;
         this.transition(state, reasonCode, evidence);
     }

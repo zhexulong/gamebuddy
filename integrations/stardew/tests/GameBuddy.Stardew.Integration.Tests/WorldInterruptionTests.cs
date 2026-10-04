@@ -187,6 +187,25 @@ public sealed class WorldInterruptionTests
             .Should().Be(StardewBodyController.StallWatchdogAction.Waiting);
     }
 
+    [Fact]
+    public void StallWait_IsQuietForOneSecondThenAllowsANativeReplan()
+    {
+        StardewBodyController.HasStallWaitElapsed(59, 0, waitTicks: 60).Should().BeFalse();
+        StardewBodyController.HasStallWaitElapsed(60, 0, waitTicks: 60).Should().BeTrue();
+        StardewBodyController.HasStallWaitElapsed(300, 240, waitTicks: 60).Should().BeTrue();
+    }
+
+    [Fact]
+    public void StallEvidence_ReportsAConservativeStoppedByVocabulary()
+    {
+        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
+        source.Should().Contain("stopped_by={DetectStalledBy(localPlayer)}");
+        source.Should().Contain("return \"Pet\";");
+        source.Should().Contain("return \"Horse\";");
+        source.Should().Contain("return \"Npc\";");
+        source.Should().Contain("return \"unknown\";");
+    }
+
     // ---- Update wiring (source probe; the ruling needs a live game thread) ----
 
     [Fact]
@@ -216,8 +235,34 @@ public sealed class WorldInterruptionTests
             "disposition rulings must precede L2 stall handling");
         source.Should().Contain("transition(ExecutionState.Running, \"stalled_waiting\",",
             "the first stall is a non-terminal progress notification");
+        source.Should().Contain("this.HaltNativeMovement(localPlayer)",
+            "stall detection must stop native pushing before the quiet window");
+        MethodBody(source, "private void HaltNativeMovement(")
+            .Should().Contain("localPlayer.Halt();",
+                "the native Farmhand must have movement intent cleared while waiting");
+        source.Should().Contain("this.isStallWaiting = true;");
+        source.Should().Contain("this.BuildNativePath(specification, localPlayer)",
+            "the controller replans through the native path finder after quiet waiting");
         source.Should().Contain(";stalled_ticks={stalledTicks}",
             "the timeout keeps tile/target evidence and adds elapsed stall ticks");
+    }
+
+    private static string MethodBody(string source, string signature)
+    {
+        int start = source.IndexOf(signature, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"method signature must exist: {signature}");
+        int bodyStart = source.IndexOf('{', start);
+        bodyStart.Should().BeGreaterThan(start, $"method body must exist: {signature}");
+        int depth = 0;
+        for (int index = bodyStart; index < source.Length; index++)
+        {
+            if (source[index] == '{')
+                depth++;
+            else if (source[index] == '}' && --depth == 0)
+                return source.Substring(bodyStart, index - bodyStart + 1);
+        }
+
+        throw new InvalidOperationException($"method body was not balanced: {signature}");
     }
 
     private static string RepositorySourcePath(string relative)
