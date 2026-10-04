@@ -4570,6 +4570,20 @@
       "additionalProperties": false,
       "maxProperties": 0
     },
+    "answerDialogueArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "responseKey"
+      ],
+      "properties": {
+        "responseKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
     "machineLoadArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5791,6 +5805,25 @@
             ],
             "properties": {
               "action": {
+                "const": "answer_dialogue"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/answerDialogueArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "advance_day"
               }
             }
@@ -5893,8 +5926,9 @@
             "ship_item",
             "water_pet_bowl",
             "water_slime_hutch_trough",
-            "dismiss_modal",
-            "advance_day",
+             "dismiss_modal",
+             "answer_dialogue",
+             "advance_day",
             "harvest_bush",
             "harvest_fruit_tree",
             "shake_tree",

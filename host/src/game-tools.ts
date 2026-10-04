@@ -1521,6 +1521,28 @@ export function createStardewActionTools(
   }
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "answer_dialogue",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("answer_dialogue", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("answer_dialogue", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.answer_dialogue,
+          label: "Answer a Dialogue",
+          description:
+            "Choose one response from the currently displayed native question dialogue. responseKey must exactly match a response offered by the live DialogueBox.",
+          parameters: schema,
+          action: "answer_dialogue",
+          toArgs: (params) => ({ responseKey: params.responseKey }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "ride_minecart",
     );
     if (

@@ -240,6 +240,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["dialogue", "modal"],
   ),
   actionAdapter(
+    "answer_dialogue",
+    "Answer a dialogue",
+    "Choose one response from the currently displayed native question dialogue.",
+    ["dialogue", "modal"],
+  ),
+  actionAdapter(
     "water_slime_hutch_trough",
     "Water a Slime Hutch trough",
     "Use the native Watering Can on an unwatered trough tile inside the current Slime Hutch.",
@@ -396,6 +402,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   npc_relationship: "stardew_npc_relationship",
   water_pet_bowl: "stardew_water_pet_bowl",
   dismiss_modal: "stardew_dismiss_modal",
+  answer_dialogue: "stardew_answer_dialogue",
   water_slime_hutch_trough: "stardew_water_slime_hutch_trough",
   chest_store: "stardew_chest_store",
   chest_retrieve: "stardew_chest_retrieve",
@@ -545,6 +552,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "advance_day",
   "ride_minecart",
   "dismiss_modal",
+  "answer_dialogue",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -639,6 +647,15 @@ export function isModDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (descriptor.postcondition !== "minecart_ride_completed") return false;
+    return true;
+  }
+  if (actionId === "answer_dialogue") {
+    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
+    if (JSON.stringify(argumentNames) !== JSON.stringify(["responseKey"])) return false;
+    const argument = getDescriptorArgument(descriptor, "responseKey");
+    if (!argument || argument.type !== "string") return false;
+    if (descriptor.effect !== "write") return false;
+    if (descriptor.postcondition !== "answer_dialogue_answered") return false;
     return true;
   }
   if (actionId === "advance_day") {

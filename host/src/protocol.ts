@@ -596,6 +596,7 @@ export type ExecutionRequest = Readonly<{
     | "ship_item"
     | "water_pet_bowl"
     | "dismiss_modal"
+| "answer_dialogue"
     | "water_slime_hutch_trough"
     | "harvest_bush"
     | "harvest_fruit_tree"
@@ -1648,8 +1649,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "pickup_item" &&
     value.action !== "water_crop" &&
     value.action !== "water_pet_bowl" &&
-    value.action !== "dismiss_modal" &&
-    value.action !== "water_slime_hutch_trough" &&
+     value.action !== "dismiss_modal" &&
+     value.action !== "answer_dialogue" &&
+     value.action !== "water_slime_hutch_trough" &&
     value.action !== "refill_watering_can" &&
     value.action !== "harvest_crop" &&
     value.action !== "plant_seed" &&
@@ -1823,8 +1825,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_pet_bowl_target";
   } else if (value.action === "dismiss_modal") {
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  } else if (value.action === "water_slime_hutch_trough") {
+     if (!hasExactKeys(value.args, [])) return "invalid_args";
+   } else if (value.action === "answer_dialogue") {
+     if (!hasExactKeys(value.args, ["responseKey"])) return "invalid_args";
+     if (typeof value.args.responseKey !== "string" || value.args.responseKey.length < 1 || value.args.responseKey.length > 128) return "invalid_response_key";
+   } else if (value.action === "water_slime_hutch_trough") {
     if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
     if (
       !isTileCoordinate(value.args.x) ||
@@ -2757,8 +2762,9 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "pickup_item" ||
       value.action === "water_crop" ||
       value.action === "water_pet_bowl" ||
-      value.action === "dismiss_modal" ||
-      value.action === "water_slime_hutch_trough" ||
+       value.action === "dismiss_modal" ||
+       value.action === "answer_dialogue" ||
+       value.action === "water_slime_hutch_trough" ||
       value.action === "refill_watering_can" ||
       value.action === "harvest_crop" ||
       value.action === "plant_seed" ||
