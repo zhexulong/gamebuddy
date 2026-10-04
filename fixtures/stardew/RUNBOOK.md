@@ -1342,3 +1342,53 @@ left no Stardew/SMAPI process. dismiss_modal verified against the real game
 three times in this session (once blocked at runner parity before the
 instantaneous-terminal shape was accepted; the product receipt was
 succeeded/modal_dismissed in every run).
+
+
+## 31. WIA non-movement use-item modal interruption (implemented; live pending)
+
+The native-local `wia_eat_interrupt` runner and fixture are implemented for
+`native_wia_eat_interrupt_v1` on `GameBuddyFixtureStable_445936768`; execute the
+live gate serially before treating it as evidence. The fixture supplies two
+`(O)216` Bread items, starts a real `use_item`, opens `drawObjectDialogue` after
+native eating begins, and the runner requires `invalidated/modal_interrupted`
+with `native_animation_pending=true`, a fresh released actor, `dismiss_modal`,
+and a retry that settles `succeeded/item_used` with the remaining item consumed.
+The first native consumption occurs synchronously before the accepted bridge
+response (stack 2 -> 1), so this proof does not claim rollback or zero side
+ effects on interruption; the retry consumes stack 1 -> 0. Non-movement intent
+breakpoint fields such as `target_tile` are not asserted because their shape is
+not frozen for item use.
+
+## 32. WIA non-movement slot live: use_item interrupted then dismissed then retried (2026-10-04, PASSED)
+
+live gate `wia_eat_interrupt` on `GameBuddyFixtureStable_445936768`:
+- interrupt: `use_item`(slot 5, (O)216) accepted(r1) → `invalidated/modal_interrupted`(r2),
+  evidence `native_animation_pending=true` (the non-movement slot's honest shape;
+  move-slot intent-breakpoint fields are not fabricated here).
+- release: fresh snapshot r2 has `activeExecution=null` (clean release).
+- dismiss: `dismiss_modal` → `succeeded/modal_dismissed`(r3).
+- retry: `use_item` accepted(r4) → `succeeded/item_used`(r5); evidence stack 1→0,
+  stamina 270→270, health 100→100, animation_complete=true.
+
+5.4 s total, teardown restored profile and removed backup/lock and working save.
+This closes the Non-Movement Slots evidence: two of the eight WIA slots now have
+live receipts (move + activeItemUse).
+
+## 33. WIA answer_dialogue live: real native question modal answered (2026-10-04, PASSED)
+
+live gate `wia_answer_question` on `GameBuddyFixtureStable_445936768`:
+- interrupt: `move_to_tile` accepted(r1) → `invalidated/modal_interrupted`(r3); the
+  fixture opens a REAL question dialogue (`createQuestionDialogue` →
+  `drawObjectQuestionDialogue`, response keys yes/no) a few ticks into the move,
+  so the intent breakpoint exists (interrupted_by=DialogueBox,
+  target_tile=18,16, interrupted_at=20,19, remaining_distance=3.61).
+- answer: `answer_dialogue`{responseKey:yes} → `succeeded/answer_dialogue_answered`(r4)
+  with evidence modal_type=DialogueBox;question=true;response_key=yes;
+  native_answered=true;outro_started=true;postcondition=dialogue_outro_started.
+  The native answerDialogue accepted and beginOutro started; the dialogue closes
+  on the next frame, which the fresh snapshot observes (actionable=true,
+  activeExecution=null).
+
+0.5 s total, teardown restored profile and removed backup/lock and working save.
+Domain 7.4.2 question-answer closes with the Modal admission family: dismiss
+(informational) and answer (question) are both live-proven.
