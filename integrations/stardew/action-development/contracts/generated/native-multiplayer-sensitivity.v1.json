@@ -219,10 +219,10 @@
       "seams": [
         {
           "kind": "native",
-          "file": "StardewValley/Game1.cs",
-          "signature": "public static void enterMine(int whatLevel, int? forceLayout = null)",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token"
+          "modeNeutralReason": "the Mine case of performAction calls Game1.enterMine, which warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1017,9 +1017,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/Bush.cs",
-          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "signature": "public override bool performUseAction(Vector2 tileLocation)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "shakes fruit into debris on the shared location and plays a sound; the body reads no multiplayer token"
+          "modeNeutralReason": "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1034,9 +1034,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/FruitTree.cs",
-          "signature": "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "signature": "public override bool performUseAction(Vector2 tileLocation)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "drops fruit debris on the shared location; the body reads no multiplayer token"
+          "modeNeutralReason": "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1051,9 +1051,9 @@
         {
           "kind": "native",
           "file": "StardewValley.TerrainFeatures/Tree.cs",
-          "signature": "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+          "signature": "public override bool performUseAction(Vector2 tileLocation)",
           "sensitivity": "mp-observational",
-          "observedEffect": "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode"
+          "observedEffect": "performUseAction routes into shake(), whose seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode"
         }
       ],
       "admission": {
@@ -1068,9 +1068,9 @@
         {
           "kind": "native",
           "file": "StardewValley.Objects/ItemPedestal.cs",
-          "signature": "public bool DropObject(Farmer who)",
+          "signature": "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token"
+          "modeNeutralReason": "checkForAction routes into DropObject(), which moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token"
         }
       ],
       "admission": {
@@ -1193,7 +1193,7 @@
         {
           "kind": "native",
           "file": "StardewValley/GameLocation.cs",
-          "signature": "public bool answerDialogue(Response response)",
+          "signature": "public virtual bool answerDialogue(Response answer)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt"
         }
