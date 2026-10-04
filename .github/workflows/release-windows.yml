@@ -77,6 +77,45 @@ jobs:
       # distribution upload are blocked pending their separately approved contract.
       - run: pnpm --dir host build:release
       - run: pnpm --dir host check:production-artifact
+      # Tavern management P9 live evidence, run against the generation this job
+      # just built and verified. The evidence runner mounts the real management
+      # composition on a fresh gate-owned root and performs every operation the
+      # mounted profile declares (including the reviewed ST-card import
+      # pipeline) against the authenticated HTTP surface; the recorder converts
+      # its content-free outcomes into the release gate's operation-to-evidence
+      # mapping and writes the measured profile next to it. Both derive their
+      # operation vocabulary from the composition source, so a new surface never
+      # needs a hand-edited fixture here.
+      - name: Tavern management operation evidence
+        run: node tools/run-tavern-management-operation-evidence.mjs --outcomes tavern-ui-outcomes.json
+        env:
+          # The gate drives three real embedded provider turns; without the
+          # environment credential they report blocked and the verdict stays
+          # inconclusive rather than passing.
+          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+      - name: Record Tavern operation evidence mapping
+        run: node tools/record-tavern-ui-operation-evidence.mjs tavern-ui-outcomes.json tavern-operation-evidence.json
+      # The single Chat/Tavern release verdict: automated prerequisites plus
+      # three real provider turns plus the complete mounted-operation mapping.
+      # A non-passed verdict exits 2, so this step fails closed.
+      - name: Tavern release live gate
+        run: node tools/run-tavern-release-live-gate.mjs --orchestrate --mounted-profile tavern-operation-evidence.json.profile.json --operation-evidence-mapping tavern-operation-evidence.json --report tavern-release-live-gate.json
+        env:
+          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+      # The gate report and the mapping it was decided on are the release's
+      # Chat/Tavern live claim; keep them with the run instead of a runner scratch
+      # path. Uploaded on every outcome so a failure is still auditable.
+      - name: Upload Tavern live gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tavern-release-live-evidence
+          if-no-files-found: warn
+          path: |
+            tavern-ui-outcomes.json
+            tavern-operation-evidence.json
+            tavern-operation-evidence.json.profile.json
+            tavern-release-live-gate.json
       # Recovery cleanup is repository-owned and derives only this exact protected
       # workflow run root. It never accepts a path or scans TEMP. The native
       # inspector remains the authority for Windows reparse-chain verification.
