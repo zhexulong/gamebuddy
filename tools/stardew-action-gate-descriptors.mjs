@@ -297,6 +297,26 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // WIA §4.2 full modal-handling chain: interrupt -> dismiss (Modal admission
   // half-loop) -> same-intent resume, the 全链路闭环 evidence.
   wia_modal_dismiss_chain: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
+  // WIA §4.2 answer_dialogue live proof: move interrupted by a native question
+  // modal, answered with the native answerDialogue seam.
+  wia_answer_question: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
+  wia_eat_interrupt: "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
+  // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
+  // each earns its live gate; every runner is the dedicated smoke runner in tools/.
+  harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
+  harvest_fruit_tree: "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
+  shake_tree: "run-stardew-native-local-player-shake-tree-smoke.mjs",
+  take_pedestal_item: "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+  toggle_fence_gate: "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
+  clear_cask: "run-stardew-native-local-player-clear-cask-smoke.mjs",
+  dress_mannequin: "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
+  set_sign_display: "run-stardew-native-local-player-set-sign-display-smoke.mjs",
+  deposit_silo_hay: "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+  toggle_tool_light: "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
+  use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
+  mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
+  enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
+  toggle_mine_lamp: "run-stardew-native-local-player-toggle-mine-lamp-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

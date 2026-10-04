@@ -518,6 +518,48 @@ export function fixtureActions(action) {
   if (action === "chop_stump") return ["equip_tool", "chop_stump"];
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
+  if (action === "cut_grass") return ["equip_tool", "cut_grass"];
+  // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
+  // each earns its live gate. Fixture shapes follow the same discipline as
+  // their family peers: the fixture supplies only the native precondition and
+  // production alone runs the typed action.
+  // clear_cask needs an Axe/Pickaxe/Hoe: the runner equips the axe itself, so
+  // the fixture publishes equip_tool alongside the target cask.
+  if (action === "clear_cask") return ["equip_tool", "clear_cask"];
+  // dress_mannequin / set_sign_display / deposit_silo_hay place the actor
+  // beside the target object; slot and item come from the fixture, no equip.
+  if (action === "dress_mannequin") return ["dress_mannequin"];
+  if (action === "set_sign_display") return ["set_sign_display"];
+  if (action === "deposit_silo_hay") return ["deposit_silo_hay"];
+  // toggle_tool_light runs the Lantern tool itself; the fixture supplies the
+  // Lantern in the selected slot and the actor is already standing.
+  if (action === "toggle_tool_light") return ["toggle_tool_light"];
+  // Plants family: the runner discovers the adjacent target and performs the
+  // native interaction; no tool or movement prerequisite.
+  if (action === "harvest_bush") return ["harvest_bush"];
+  if (action === "harvest_fruit_tree") return ["harvest_fruit_tree"];
+  if (action === "shake_tree") return ["shake_tree"];
+  if (action === "take_pedestal_item") return ["take_pedestal_item"];
+  if (action === "toggle_fence_gate") return ["toggle_fence_gate"];
+  // Movement family: the fixture warps the actor beside the water / horse /
+  // mine entrance and production alone launches / mounts / enters.
+  if (action === "use_raft") return ["use_raft"];
+  if (action === "mount_transport") return ["mount_transport"];
+  if (action === "enter_mine") return ["enter_mine"];
+  if (action === "toggle_mine_lamp") return ["toggle_mine_lamp"];
+  // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
+  // §4.3): the SAME published move_to_tile action runs over fixtures that stage
+  // a pass-out or a modal mid-move; travel is needed only if the actor starts
+  // inside the FarmHouse.
+  if (action === "wia_pass_out") return ["move_to_tile", "travel"];
+  if (action === "wia_modal_interrupt") return ["move_to_tile", "travel"];
+  if (action === "wia_modal_dismiss_chain") return ["move_to_tile", "dismiss_modal", "travel"];
+  if (action === "wia_eat_interrupt") return ["use_item", "dismiss_modal"];
+  if (action === "wia_answer_question") return ["move_to_tile", "answer_dialogue"];
+  // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
+  // §4.3): the SAME published move_to_tile action runs over fixtures that stage
+  // a pass-out or a modal mid-move; travel is needed only if the actor starts
+  // inside the FarmHouse.
   if (action === "scythe_crop") return ["equip_tool", "scythe_crop"];
   // The fixture keeps the Farm's own native Shipping Bin building and adds one
   // shippable Object to the backpack; production alone calls Farm.shipItem.
@@ -599,6 +641,15 @@ export function fixtureScenario(actions, action) {
   // neither a covenant shape nor an empty-bin invariant.
   if (actions.includes("harvest_crop") && actions.includes("ship_item"))
     return "native_strawberry_covenant_v1";
+  if (action === "wia_pass_out") return "native_wia_pass_out_v1";
+  if (action === "wia_modal_interrupt") return "native_wia_modal_interrupt_v1";
+  if (action === "wia_modal_dismiss_chain") return "native_wia_modal_dismiss_chain_v1";
+  if (action === "wia_eat_interrupt") return "native_wia_eat_interrupt_v1";
+  if (action === "wia_answer_question") return "native_wia_answer_question_v1";
+  // Action-specific ids take precedence over the includes() fallbacks below:
+  // a WIA chain whose action set contains use_item (wia_eat_interrupt) must
+  // not be captured by the generic use_item scenario (#regression 2026-10-04,
+  // live gate wrote native_use_item_v1 for it).
   if (actions.includes("till_soil")) return "native_till_soil_v1";
   // The expression actions need no scenario: both are pure embodied-actor
   // mutations that run on an ordinary target-version world with no
@@ -636,6 +687,23 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("chop_stump")) return "native_chop_stump_v1";
   if (actions.includes("plant_sapling")) return "native_plant_sapling_v1";
   if (actions.includes("cut_weeds")) return "native_cut_weeds_v1";
+  if (actions.includes("cut_grass")) return "native_cut_grass_v1";
+  // Loop-closure wave (2026-10-04): one scenario per lane action, mirroring
+  // the fixture branch names in ModEntry.Fixtures.cs.
+  if (actions.includes("clear_cask")) return "native_clear_cask_v1";
+  if (actions.includes("dress_mannequin")) return "native_dress_mannequin_v1";
+  if (actions.includes("set_sign_display")) return "native_set_sign_display_v1";
+  if (actions.includes("deposit_silo_hay")) return "native_deposit_silo_hay_v1";
+  if (actions.includes("toggle_tool_light")) return "native_toggle_tool_light_v1";
+  if (actions.includes("harvest_bush")) return "native_harvest_bush_v1";
+  if (actions.includes("harvest_fruit_tree")) return "native_harvest_fruit_tree_v1";
+  if (actions.includes("shake_tree")) return "native_shake_tree_v1";
+  if (actions.includes("take_pedestal_item")) return "native_take_pedestal_item_v1";
+  if (actions.includes("toggle_fence_gate")) return "native_toggle_fence_gate_v1";
+  if (actions.includes("use_raft")) return "native_use_raft_v1";
+  if (actions.includes("mount_transport")) return "native_mount_transport_v1";
+  if (actions.includes("enter_mine")) return "native_enter_mine_v1";
+  if (actions.includes("toggle_mine_lamp")) return "native_toggle_mine_lamp_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
   if (actions.includes("craft_item")) return "native_craft_item_v1";
