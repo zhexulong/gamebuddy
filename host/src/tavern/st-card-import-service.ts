@@ -120,7 +120,7 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
   const value = report.candidate!;
   const profile = value.profileCandidate;
   const fields: CharacterCandidate["fields"] = [
-    field("name", profile.identity.name, "candidate_only"),
+    field("name", profile.identity.name, "profile_eligible_after_explicit_review"),
     field("identity_role", profile.identity.role, "candidate_only"),
     field("continuity", profile.identity.continuity, "candidate_only"),
     ...(value.scenario === undefined

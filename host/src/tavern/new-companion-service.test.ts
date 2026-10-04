@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
@@ -46,7 +46,11 @@ const candidate = {
   reviewState: "reviewed" as const,
   fields: [
     { field: "persona_core", text: "calm", eligibility: "profile_eligible_after_explicit_review" as const },
-    { field: "name", text: "Candidate", eligibility: "candidate_only" as const },
+    // The card's name is reviewable too: approving it names the companion, and
+    // declining it keeps the default. An imported companion must be able to be
+    // called what the player imported.
+    { field: "name", text: "Candidate", eligibility: "profile_eligible_after_explicit_review" as const },
+    { field: "creators_notes", text: "notes", eligibility: "candidate_only" as const },
   ],
 };
 test("New Companion requires explicit eligible-field review and creates only supplied new metadata", async () => {
@@ -69,7 +73,7 @@ test("New Companion requires explicit eligible-field review and creates only sup
   assert.equal(created.companionId, "new-companion");
   assert.equal(writes.length, 1);
   assert.throws(
-    () => service.review(candidate, { reviewedFields: ["name"], approvedAtMs: 1 }),
+    () => service.review(candidate, { reviewedFields: ["creators_notes"], approvedAtMs: 1 }),
     /invalid_new_companion_review/,
   );
   await assert.rejects(
@@ -426,6 +430,59 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
       // The binding a chat creator will mount (createNewChat already carries
       // TavernStableWorldBookBinding) is exactly the on-disk revision metadata.
       assert.match(worldbook.canonicalHash, /^[a-f0-9]{64}$/);
+    } finally {
+      threadStore.close?.();
+    }
+  } finally {
+    await cleanupTestRoot(root);
+  }
+});test("an approved card name names the companion; an unapproved one leaves the default", async () => {
+  const root = await canonicalTestRoot("tavern-reviewed-name-");
+  const namedCandidate = {
+    ...candidate,
+    name: "Imported Rae",
+    fields: [
+      {
+        field: "name",
+        text: "Imported Rae",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "persona_core",
+        text: "Quiet, attentive.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const service = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    });
+    const threadStore = createChatThreadStore(root, "e".repeat(64));
+    try {
+      // Approved name: the companion carries the card's own name.
+      const approved = await provisionNewCompanion(
+        root,
+        "player",
+        namedCandidate,
+        service.review(namedCandidate, { reviewedFields: ["name", "persona_core"], approvedAtMs: 11 }),
+        threadStore,
+      );
+      assert.equal(approved.profile.identity.name, "Imported Rae");
+      assert.equal(approved.companion.name, "Imported Rae");
+      // Unapproved name: fail closed to the default rather than adopting it
+      // silently. The card name never applies without an explicit review.
+      const declined = await provisionNewCompanion(
+        root,
+        "player",
+        namedCandidate,
+        service.review(namedCandidate, { reviewedFields: ["persona_core"], approvedAtMs: 12 }),
+        threadStore,
+      );
+      assert.equal(declined.profile.identity.name, DEFAULT_IDENTITY_PROFILE.identity.name);
+      assert.notEqual(declined.companion.name, "Imported Rae");
     } finally {
       threadStore.close?.();
     }
