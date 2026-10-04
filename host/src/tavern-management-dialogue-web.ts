@@ -1415,12 +1415,26 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   if (
     !isCanonicalGroupSelection(
       profile.routeIds,
-      [coreRoutes, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES, MANAGEMENT_P9_ROUTES],
+      [
+        coreRoutes,
+        MANAGEMENT_VOICE_DEVICES,
+        MANAGEMENT_LANGUAGE_ROUTES,
+        MANAGEMENT_CONNECTION_ROUTES,
+        MANAGEMENT_P9_ROUTES,
+        MANAGEMENT_IMPORT_ROUTES,
+      ],
       coreRoutes,
     ) ||
     !isCanonicalGroupSelection(
       profile.operationIds,
-      [coreOperations, MANAGEMENT_VOICE_DEVICES, MANAGEMENT_LANGUAGE_ROUTES, MANAGEMENT_CONNECTION_ROUTES, MANAGEMENT_P9_ROUTES],
+      [
+        coreOperations,
+        MANAGEMENT_VOICE_DEVICES,
+        MANAGEMENT_LANGUAGE_ROUTES,
+        MANAGEMENT_CONNECTION_ROUTES,
+        MANAGEMENT_P9_ROUTES,
+        MANAGEMENT_IMPORT_ROUTES,
+      ],
       coreOperations,
     )
   )
