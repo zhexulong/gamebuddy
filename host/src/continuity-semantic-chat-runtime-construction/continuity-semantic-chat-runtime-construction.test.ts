@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -16,6 +16,7 @@ import { createChatThreadStore, createProfileAwareChatThreadCreationCapability }
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { validateWorldBook, writeWorldBook } from "../worldbook.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
@@ -246,6 +247,89 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
           ),
         ),
       ),
+      /chat_runtime_exact_content_unavailable/,
+    );
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+test("Chat construction binds the companion's own reviewed world book when the thread names none", async () => {
+  // The reviewed import writes the card's world book into the companion's runtime
+  // cwd. The Game surface compiles it into m[0] automatically; the Chat surface
+  // materialized only what a thread bound, so a companion provisioned from a card
+  // carried its backdrop in Game and silently lost it in Chat. With no explicit
+  // binding, the companion's own book IS the background.
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
+    await mkdir(paths.runtimeCwd, { recursive: true });
+    await writeWorldBook(
+      join(paths.runtimeCwd, "worldbook.json"),
+      validateWorldBook({
+        schemaVersion: 1,
+        worldBookId: "gamebuddy-worldbook-companion_01",
+        revision: 1,
+        alwaysOnPremise: "The valley breathes with the seasons.",
+        entries: [
+          {
+            entryId: "card-entry-1",
+            title: "Footpaths",
+            content: "Knows every footpath around the valley.",
+            scope: "setting",
+            provenance: "reviewed-import",
+            tokenBudget: "small",
+            constant: true,
+          },
+          {
+            entryId: "card-entry-2",
+            title: "Likes",
+            content: "Fond of a quiet morning.",
+            scope: "setting",
+            provenance: "reviewed-import",
+            tokenBudget: "small",
+          },
+        ],
+      }),
+    );
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const catalog = await prepared.materializeStableContextForPiSession("pi_session_companion_book");
+    assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
+    assert.equal(catalog.stableSources[0]?.sourceId, "gamebuddy-worldbook-companion_01");
+    // The always-on entry and the premise ride the stable source; the keyword-gated
+    // entry stays out of the prefix and becomes a volatile candidate.
+    assert.match(catalog.stableSources[0]?.content ?? "", /valley breathes/);
+    assert.match(catalog.stableSources[0]?.content ?? "", /every footpath/);
+    assert.doesNotMatch(catalog.stableSources[0]?.content ?? "", /quiet morning/);
+    assert.deepEqual(catalog.volatileSources.map((source) => source.content), ["Fond of a quiet morning."]);
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+test("Chat construction fails closed on a companion world book it cannot read", async () => {
+  // A present but unreadable book must refuse construction rather than silently
+  // materializing an empty backdrop, the same way a drifted binding does.
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
+    await mkdir(paths.runtimeCwd, { recursive: true });
+    await writeFile(join(paths.runtimeCwd, "worldbook.json"), "{ not a world book", "utf8");
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    await assert.rejects(
+      () => prepared!.materializeStableContextForPiSession("pi_session_broken_book"),
       /chat_runtime_exact_content_unavailable/,
     );
   } finally {
