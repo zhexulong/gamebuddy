@@ -34,8 +34,23 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..");
-const MOD_ENTRY = path.join(repositoryRoot, "integrations/stardew/ModEntry.cs");
 const MOD_CONFIG = path.join(repositoryRoot, "integrations/stardew/ModConfig.cs");
+/**
+ * ModEntry is a partial class: the pre-attachment allowlist and the dispatcher
+ * live in ModEntry.Fixtures.cs (and the per-slot WIA fixtures in further
+ * ModEntry.Fixtures.*.cs files), not in ModEntry.cs. Reading only ModEntry.cs
+ * made this checker report `allowlist_missing` forever, so the gate was noise
+ * instead of signal. Read every partial and concatenate.
+ */
+const MOD_ENTRY_PARTIALS = fs
+  .readdirSync(path.join(repositoryRoot, "integrations/stardew"))
+  .filter((name) => /^ModEntry(\..+)?\.cs$/.test(name))
+  .sort()
+  .map((name) => path.join(repositoryRoot, "integrations/stardew", name));
+
+function readModEntryPartials() {
+  return MOD_ENTRY_PARTIALS.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+}
 
 /** Double-quoted string literals of a source slice. */
 function quoted(source) {
@@ -62,7 +77,7 @@ export function extractPreAttachmentAllowlist(entry) {
 }
 
 export function checkStardewFixtureScenarioWiring({ modEntrySource, modConfigSource } = {}) {
-  const entry = modEntrySource ?? fs.readFileSync(MOD_ENTRY, "utf8");
+  const entry = modEntrySource ?? readModEntryPartials();
   const config = modConfigSource ?? fs.readFileSync(MOD_CONFIG, "utf8");
 
   const knownStart = config.indexOf("KnownFixtureScenarios = new[]");

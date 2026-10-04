@@ -7,7 +7,14 @@ import { checkStardewFixtureScenarioWiring, extractPreAttachmentAllowlist } from
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const REAL_ENTRY = fs.readFileSync(path.join(root, "integrations/stardew/ModEntry.cs"), "utf8");
+// ModEntry is a partial class: the pre-attachment allowlist and the dispatcher
+// live in ModEntry.Fixtures.cs (and the per-slot partials), not ModEntry.cs.
+const REAL_ENTRY = fs
+  .readdirSync(path.join(root, "integrations/stardew"))
+  .filter((name) => /^ModEntry(\..+)?\.cs$/.test(name))
+  .sort()
+  .map((name) => fs.readFileSync(path.join(root, "integrations/stardew", name), "utf8"))
+  .join("\n");
 const REAL_CONFIG = fs.readFileSync(path.join(root, "integrations/stardew/ModConfig.cs"), "utf8");
 
 /** A minimal pair of sources with the three lists under our control. */
