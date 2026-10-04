@@ -241,6 +241,15 @@ export function CharactersPanel({
     setImportBusy(true);
     setImportNotice(null);
     try {
+      // Confirm is only legal on a SIGNED review credential: the product refuses
+      // to provision a card nobody approved. The dialog has already shown every
+      // included and excluded field, so confirming signs the reviewable set it
+      // displayed and then provisions exactly that set.
+      const reviewable = importStaged.fields
+        .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+        .map((field) => field.field);
+      if (reviewable.length > 0)
+        await api.reviewStCardImport(importStaged.importId, reviewable, Date.now(), csrfToken);
       await api.confirmStCardImport(importStaged.importId, csrfToken);
       const list = await api.listCompanions();
       if (activeRef.current) {
