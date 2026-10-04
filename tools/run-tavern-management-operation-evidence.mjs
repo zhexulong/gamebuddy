@@ -96,7 +96,7 @@ async function readJson(origin, client, path) {
   const response = await deadlineFetch(`${origin}${path}`, {
     headers: { Cookie: client.cookie, Origin: origin },
   });
-  if (!response.ok) throw new Error(`read_failed:${path}:${response.status}`);
+  if (!response.ok) throw new Error(`read_failed:${path}:${response.status}${await problemSuffix(response)}`);
   return response.json();
 }
 
@@ -111,8 +111,24 @@ async function sendJson(origin, client, method, path, body) {
     },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`write_failed:${path}:${response.status}`);
+  if (!response.ok) throw new Error(`write_failed:${path}:${response.status}${await problemSuffix(response)}`);
   return response.json();
+}
+
+/**
+ * The bounded machine code of a refusal, appended to the outcome reason. Without
+ * it a `blocked` outcome can only say "409", and the dispatcher maps every
+ * unmapped error message to the same `state_reconciliation_required` 409, so a
+ * missing mapping is indistinguishable from a genuine conflict. The code is one
+ * of the contract's fixed problem codes, never content.
+ */
+async function problemSuffix(response) {
+  try {
+    const problem = await response.json();
+    return typeof problem?.code === "string" && /^[a-z0-9_]{1,64}$/.test(problem.code) ? `:${problem.code}` : "";
+  } catch {
+    return "";
+  }
 }
 
 /** Record one real outcome. `blocked` carries a bounded reason, never content. */
@@ -136,9 +152,14 @@ async function exerciseOperations(origin, client) {
       await run();
       results.push(outcome(operationId, "passed"));
     } catch (error) {
-      const reason = error instanceof Error && /^[a-z_]+:[^\s]{0,120}$/.test(error.message)
-        ? error.message
-        : "operation_failed";
+      // Keep the step's own bounded machine code. A bare code (no colon) is as
+      // informative as a classified one, and collapsing it to `operation_failed`
+      // hid which assertion actually failed: the reason kept the shape of a
+      // channel error while the real cause was a specific postcondition.
+      const reason =
+        error instanceof Error && /^[a-z0-9_]{3,80}(:[^\s]{0,120})?$/.test(error.message)
+          ? error.message
+          : "operation_failed";
       results.push(outcome(operationId, "blocked", reason));
     }
   };
