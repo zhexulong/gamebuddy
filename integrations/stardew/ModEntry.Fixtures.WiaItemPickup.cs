@@ -53,24 +53,32 @@ public sealed partial class ModEntry
         Vector2? debrisTile = FindNativeLocalFarmFixtureTile(
             farm,
             anchorTile.Value,
-            3,
+            4,
             requireEmptyObjectTile: true,
             extraPredicate: candidate =>
             {
                 Vector2 offset = candidate - anchorTile.Value;
-                if (Math.Abs(offset.X) + Math.Abs(offset.Y) != 3f)
+                // Debris.playerInRange compares EACH axis against the magnetic radius
+                // (a rectangle, not a euclidean disc: Debris.cs:588-595), so the debris
+                // has to clear the radius on both axes. A Chebyshev distance of 2
+                // (128 px) sits exactly on the default radius boundary and
+                // updateChunks magnetizes the debris away before any approach can
+                // happen — measured live 2026-10-05: the first observe already had an
+                // empty itemTargets and the fixture log showed debris_tile=19,17 for
+                // anchor_tile=20,19 (dx 64, dy 128).
+                if (Math.Max(Math.Abs(offset.X), Math.Abs(offset.Y)) < 3f)
                     return false;
                 Vector2 towardAnchor = new Vector2(Math.Sign(-offset.X), Math.Sign(-offset.Y));
-                return IsFixtureWalkableFarmTile(farm, candidate + towardAnchor)
-                    && IsFixtureWalkableFarmTile(farm, candidate + towardAnchor * 2f);
+                return IsFixtureWalkableFarmTile(farm, candidate + towardAnchor);
             });
         if (debrisTile is null)
             throw new InvalidOperationException("fixture_native_local_wia_item_pickup_debris_placement_missing");
 
-        float debrisPixelGap = Vector2.Distance(
-            anchorTile.Value * 64f + new Vector2(32f, 32f),
-            debrisTile.Value * 64f + new Vector2(32f, 32f));
-        if (debrisPixelGap <= player.GetAppliedMagneticRadius())
+        // The same rectangle the native magnet uses, so the fixture's own guard
+        // cannot pass while the game still considers the debris in range.
+        float debrisGapX = Math.Abs(debrisTile.Value.X - anchorTile.Value.X) * 64f;
+        float debrisGapY = Math.Abs(debrisTile.Value.Y - anchorTile.Value.Y) * 64f;
+        if (Math.Max(debrisGapX, debrisGapY) <= player.GetAppliedMagneticRadius())
             throw new InvalidOperationException("fixture_native_local_wia_item_pickup_inside_magnetic_radius");
 
         const string itemId = "(O)388";

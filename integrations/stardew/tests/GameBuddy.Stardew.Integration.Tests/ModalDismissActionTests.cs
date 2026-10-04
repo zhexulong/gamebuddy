@@ -72,16 +72,31 @@ public sealed class ModalDismissActionTests
     }
 
     [Fact]
-    public void Dismiss_IsRejected_WhenTheMenusIsNotADialogueBox()
+    public void Dismiss_IsRejected_ForAMenuOutsideTheAuditedWhitelist()
     {
         RunWithGameState(menu: new GameMenuStub(), dialogueUp: true, action: () =>
         {
             ExecutionManager manager = CreateManager(1001);
 
             InvokeDismiss(manager, "req_dismiss_menu")
-                .ReasonCode.Should().Be("no_modal_present",
-                    "dismiss_modal closes informational dialogues only; other menus belong to their own seams");
+                .ReasonCode.Should().Be("modal_not_dismissible",
+                    "an unaudited menu type is refused rather than guessed at; only the whitelisted operation menus may be closed");
         });
+    }
+
+    [Fact]
+    public void Dismiss_WhitelistsOnlyAuditedOperationMenus()
+    {
+        // The whitelist is a source-audited claim: every member closes through the
+        // generic exitActiveMenu (no exitThisMenu override) with its side effects on
+        // the commit paths rather than the close path. Narrative modals already
+        // applied their effect when they opened, so finishing them is not this
+        // action's call.
+        foreach (string audited in new[] { "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu", "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu" })
+            ExecutionManager.IsDismissibleOperationModalType(audited).Should().BeTrue($"{audited} is an audited operation menu");
+
+        foreach (string narrative in new[] { "LetterViewerMenu", "Billboard", "DialogueBox", "SomeFutureMenu" })
+            ExecutionManager.IsDismissibleOperationModalType(narrative).Should().BeFalse($"{narrative} must not be dismissed blindly");
     }
 
     [Fact]

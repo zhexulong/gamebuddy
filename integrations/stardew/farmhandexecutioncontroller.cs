@@ -1243,13 +1243,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             bool consumed = remaining is null || (string.Equals(remaining.QualifiedItemId, specification.QualifiedItemId, StringComparison.Ordinal) && remaining.Stack == specification.StackBefore - 1);
             bool animationComplete = !Game1.player.isEating;
             if (specification.DeferredTerminalState is not null)
+        {
+            // The terminal receipt was already minted when the interruption was
+            // arbitrated; this branch only has to hand the slot back. A native
+            // animation that a modal cut short may never report completion (the
+            // actor is held by the modal, so isEating stops advancing), and
+            // without a bounded fallback the slot would stay owned forever and
+            // every later action would be refused as body-owned.
+            if (animationComplete || nowMs > specification.DeadlineMs)
             {
-                if (animationComplete)
-                {
-                    this.activeItemUse = null;
-                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-                }
+                this.activeItemUse = null;
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
+        }
             else if (animationComplete && consumed)
             {
                 this.activeItemUse = null;
@@ -1286,14 +1292,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.ProduceStack;
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (specification.DeferredTerminalState is not null)
+        {
+            // Same bounded release as the item-use slot: the interruption's
+            // receipt is already durable, and a modal-interrupted tool animation
+            // can leave UsingTool stuck true forever (measured live 2026-10-05:
+            // the animal-product slot never released, so the post-dismiss snapshot
+            // never became actionable). Without this fallback one interruption
+            // would lock every subsequent action out of the body.
+            if (animationComplete || nowMs > specification.DeadlineMs)
             {
-                if (animationComplete)
-                {
-                    Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                    this.activeAnimalProduct = null;
-                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-                }
+                Game1.player.CurrentToolIndex = specification.PreviousSlot;
+                this.activeAnimalProduct = null;
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
+        }
             else if (animationComplete && produceCleared && inventoryGained)
             {
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
@@ -1493,7 +1505,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, "native_animation_pending=true");
                 this.Remember(receipt);
                 this.AddTrace(receipt);
-                this.activeAnimalProduct = specification with { DeferredTerminalState = ExecutionState.Invalidated, DeferredTerminalReason = reasonCode };
+                // WIA: a world-change interruption releases the body NOW. The native animation
+                // a modal cut short may never report completion (measured live 2026-10-05: the
+                // actor stayed non-actionable and every later action was refused as body-owned),
+                // so deferring the release to the animation would hold the body until the request
+                // deadline. Restoring the held slot is safe here — the running animation already
+                // captured its own tool reference.
+                Game1.player.CurrentToolIndex = specification.PreviousSlot;
+                this.activeAnimalProduct = null;
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
         if (this.activeMountTransport is not null)
@@ -1552,7 +1572,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, "native_animation_pending=true");
                 this.Remember(receipt);
                 this.AddTrace(receipt);
-                this.activeItemUse = specification with { DeferredTerminalState = ExecutionState.Invalidated, DeferredTerminalReason = reasonCode };
+                // Same immediate release as the animal-product slot: the interrupted eating
+                // animation is not a reason to keep owning the body.
+                this.activeItemUse = null;
+                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
     }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
 using StardewValley;
@@ -20,6 +21,30 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// answering them is answer_dialogue's future seam (design 7.4.2), and
     /// closeDialogue would skip the native answer lifecycle.
     /// </summary>
+    /// <summary>
+    /// Operation-shaped native menus whose CLOSE path is a pure cancel with no
+    /// world side effect. Audited against the target version: none of these classes
+    /// overrides exitThisMenu (so closing runs the generic exitActiveMenu), and
+    /// every side effect they own (purchase, craft, take, pick a floor) lives on its
+    /// own commit path, never on the close path. Narrative modals
+    /// (LetterViewerMenu, Billboard) stay out of this set on purpose: they already
+    /// applied their effect when they OPENED, and finishing someone's reading
+    /// progress is the player's call, not this action's.
+    /// </summary>
+    private static readonly HashSet<string> DismissibleOperationModalTypes = new(StringComparer.Ordinal)
+    {
+        "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu",
+        "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu",
+    };
+
+    /// <summary>
+    /// Whether a modal's runtime type name is an audited operation menu. Pure so the
+    /// whitelist itself is testable without constructing menus whose readyToClose
+    /// reads live state.
+    /// </summary>
+    internal static bool IsDismissibleOperationModalType(string typeName) =>
+        DismissibleOperationModalTypes.Contains(typeName);
+
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -39,23 +64,51 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (Game1.eventUp)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
 
-        if (Game1.activeClickableMenu is not DialogueBox dialogue)
+        IClickableMenu? modal = Game1.activeClickableMenu;
+        if (modal is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);
 
-        if (dialogue.isQuestion)
+        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+
+        string modalType = modal.GetType().Name;
+
+        if (modal is DialogueBox dialogue)
+        {
+            if (dialogue.isQuestion)
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "modal_not_dismissible",
+                    "modal_type=DialogueBox;question=true;require_answer_dialogue=true");
+        }
+        else if (!IsDismissibleOperationModalType(modalType))
+        {
+            // Anything unaudited stays refused rather than guessed at.
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "modal_not_dismissible",
-                $"modal_type=DialogueBox;question=true;require_answer_dialogue=true");
-
-        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+                $"modal_type={modalType};dismissible=false");
+        }
+        else if (!modal.readyToClose())
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "modal_not_dismissible",
+                $"modal_type={modalType};ready_to_close=false");
+        }
 
         try
         {
-            dialogue.closeDialogue();
+            if (modal is DialogueBox dialogueBox)
+                dialogueBox.closeDialogue();
+            else
+                Game1.exitActiveMenu();
         }
         catch (Exception nativeException)
         {
@@ -64,7 +117,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Uncertain,
                 "dismiss_modal_native_exception",
-                $"modal_type=DialogueBox;native_dispatched=false;native_exception={nativeException.GetType().Name}");
+                $"modal_type={modalType};native_dispatched=false;native_exception={nativeException.GetType().Name}");
         }
 
         if (Game1.activeClickableMenu is null && !Game1.dialogueUp)
@@ -74,7 +127,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Succeeded,
                 "modal_dismissed",
-                "modal_type=DialogueBox;dismissed=true",
+                $"modal_type={modalType};dismissed=true;side_effects=none",
                 this.TryCreateLocalObservation(actor));
         }
 
@@ -83,7 +136,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             executionId,
             ExecutionState.Failed,
             "postcondition_failed",
-            $"expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp}",
+            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp}",
             this.TryCreateLocalObservation(actor));
     }
 
