@@ -116,8 +116,8 @@ test("归并计数与分层数字", async () => {
   ].reduce((sum, k) => sum + a.counts[k], 0);
   assert.equal(selectorGroupSum, a.counts.selectorRows);
 
-  // 方法层：B 档 28 个单元逐条裁定，无遗漏
-  assert.equal(a.counts.methodUnitsTotal, 28);
+  // 方法层：B 档单元逐条裁定，无遗漏（数字随派生变化，故同时与 remaining 对照）
+  assert.equal(a.counts.methodUnitsTotal, 23);
   assert.equal(a.counts.methodUnitsTotal, remaining.counts.tierB_noCatalogIntent);
 
   // 参照列不参与计数，但必须在产物里如实出现
@@ -127,28 +127,29 @@ test("归并计数与分层数字", async () => {
 
 test("selector 层确实带来方法层没有的新 primitive（ride_minecart 同源的失效）", async () => {
   const { artifact: a } = await realRun();
-  // toggle_mine_lamp / enter_mine / deposit_silo_hay 只能从 selector 层看到：
-  // 它们的 case 体要么只写 location 自己的 NetFloat，要么只调一个 helper。
-  assert.deepEqual(a.newPrimitiveIntents, [
-    "clear_cask",
-    "deposit_silo_hay",
-    "dress_mannequin",
-    "enter_mine",
-    "mount_transport",
-    "set_sign_display",
-    "toggle_mine_lamp",
-    "toggle_tool_light",
-    "use_raft",
-  ]);
-  assert.equal(a.counts.newPrimitivesRequired, 9);
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 14);
+  // 两层各自都还能看到「九谓词看不到的单元」：selector 层 2 个、方法层 2 个。
+  assert.equal(a.counts.selectorNewPrimitive, 2);
+  assert.equal(a.counts.methodNewPrimitiveUnits, 2);
+
+  // 但这些 primitive 全部已经登记为 action（本轮 loop-closure 波次把它们实现了），
+  // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
+  // `Lamp` 不在其中：内容扫描证明出货地图没有该 action 瓦片，裁定表记为
+  // explicit_exclusion（边界 B6），其 action 已撤除。
+  assert.deepEqual(a.newPrimitiveIntents, []);
+  assert.equal(a.counts.newPrimitivesRequired, 0);
+  assert.equal(a.counts.pendingAdjudicationItems, 5);
+  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 5);
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
-  const registered = a.groups.selectorLayer.already_registered;
-  assert.equal(registered.length, 1);
-  assert.equal(registered[0].key, "GameLocation.MinecartTransport");
-  assert.deepEqual(registered[0].actionIds, ["ride_minecart"]);
-  assert.equal(registered[0].category, "menu-bound");
+  const minecart = a.groups.selectorLayer.already_registered.find((r) =>
+    r.key === "GameLocation.MinecartTransport",
+  );
+  assert.ok(minecart, "MinecartTransport 必须落在 already_registered（它已成真 action）");
+  assert.ok(
+    minecart.evidence?.some?.((e) => String(e.via ?? "").includes("MinecartWarp")) ||
+      String(minecart.anchor ?? "").includes("MinecartWarp"),
+    "命中必须经由原生 MinecartWarp",
+  );
 });
 
 test("归并行标注门禁：LockedDoorWarp 有门禁、Warp 无门禁", async () => {
@@ -240,7 +241,7 @@ test("reconcile() 内部也执行输入契约检查（程序化误用同样 fail
 /** 最小合成输入：1 个 selector + 1 个 B 档方法单元。 */
 function syntheticInputs() {
   const selector = {
-    selector: "Lamp",
+    selector: "Mine",
     className: "GameLocation",
     file: "StardewValley/GameLocation.cs",
     category: "plain-world-effect",
@@ -258,7 +259,9 @@ function syntheticInputs() {
     counts: { unmatchedCandidateUnits: 1 },
     tiers: {
       A_catalog_intent_exists: [],
-      B_no_catalog_intent: [{ class: "Cask", member: "performToolAction", file: "Cask.cs", line: 41 }],
+      B_no_catalog_intent: [
+        { class: "Mannequin", member: "performToolAction", file: "Mannequin.cs", line: 358 },
+      ],
       C_non_gameplay_writes: [],
     },
   };
@@ -271,10 +274,12 @@ function syntheticInputs() {
     ],
   };
   const catalog = { records: [] };
-  // 规则表只需覆盖合成输入用到的两条：`Lamp`（selector 层）与 `Cask@41`（方法层）。
+  // 规则表只需覆盖合成输入用到的两条：`Mine`（selector 层）与 `Mannequin@358`（方法层）。
   const rules = {
-    selectorVerdicts: { Lamp: SELECTOR_VERDICTS.Lamp },
-    methodVerdicts: { "Cask.performToolAction@41": METHOD_VERDICTS["Cask.performToolAction@41"] },
+    selectorVerdicts: { Mine: SELECTOR_VERDICTS.Mine },
+    methodVerdicts: {
+      "Mannequin.performToolAction@358": METHOD_VERDICTS["Mannequin.performToolAction@358"],
+    },
   };
   return { selectorArtifact, remainingReport, register, catalog, rules };
 }
@@ -284,20 +289,20 @@ test("合成 fixture：分组计数与 newPrimitiveIntents", () => {
   const a = reconcile(inputs);
   assert.equal(a.counts.selectorRows, 1);
   assert.equal(a.counts.selectorNewPrimitive, 1);
-  assert.deepEqual(a.newPrimitiveIntents, ["clear_cask", "toggle_mine_lamp"]);
+  assert.deepEqual(a.newPrimitiveIntents, ["dress_mannequin", "enter_mine"]);
   assert.equal(a.counts.newPrimitivesRequired, 2);
   assert.equal(a.counts.methodUnitsTotal, 1);
   assert.equal(a.counts.pendingAdjudicationItems, 0);
   assert.equal(
     a.groups.selectorLayer.new_primitive_needed[0].reason,
-    SELECTOR_VERDICTS.Lamp.reason,
+    SELECTOR_VERDICTS.Mine.reason,
     "裁定理由必须原样进入产物",
   );
 });
 
 test("完备性①：裁定表里有 selector 未被任何 selector 命中 → selector_verdict_not_matched_to_any_selector", () => {
   const inputs = syntheticInputs();
-  // 枚举结果里没有 `Lamp`（叫别的名字），但裁定表有它 —— 捕获拼写漂移/枚举漏项。
+  // 枚举结果里没有 `Mine`（叫别的名字），但裁定表有它 —— 捕获拼写漂移/枚举漏项。
   const selectors = [{ ...inputs.selectorArtifact.selectors[0], selector: "SomeOtherWord" }];
   assert.throws(
     () =>
@@ -308,14 +313,14 @@ test("完备性①：裁定表里有 selector 未被任何 selector 命中 → s
         verdictIndex: buildVerdictIndex(inputs.rules.selectorVerdicts),
         categoryDefaults: {},
       }),
-    /selector_verdict_not_matched_to_any_selector:GameLocation\.Lamp/,
+    /selector_verdict_not_matched_to_any_selector:GameLocation\.Mine/,
   );
 });
 
 test("完备性②：B 档有单元没有裁定 → tier_b_unit_without_verdict", () => {
   const inputs = syntheticInputs();
   inputs.remainingReport.tiers.B_no_catalog_intent = [
-    { class: "Cask", member: "performToolAction", file: "Cask.cs", line: 41 },
+    { class: "Mannequin", member: "performToolAction", file: "Mannequin.cs", line: 358 },
     { class: "Nobody", member: "checkAction", file: "Nobody.cs", line: 7 },
   ];
   inputs.remainingReport.counts.unmatchedCandidateUnits = 2;
@@ -327,21 +332,23 @@ test("完备性②：B 档有单元没有裁定 → tier_b_unit_without_verdict"
 
 test("完备性③：裁定表里的单元不在候选池 → method_verdict_not_in_candidate_pool", () => {
   const inputs = syntheticInputs();
-  // 行号漂移：候选池里是 Cask@99（实际语义已移动），裁定表还钉在 Cask@41。
-  // 两个方向必须都能报警：先抽 B 档（Cask@99 未裁定），后抽 stray（Cask@41 不在池里）。
-  inputs.remainingReport.tiers.B_no_catalog_intent = [{ class: "Cask", member: "performToolAction", file: "Cask.cs", line: 99 }];
+  // 行号漂移：候选池里是 Mannequin@399（实际语义已移动），裁定表还钉在 @358。
+  // 两个方向必须都能报警：先抽 B 档（@399 未裁定），后抽 stray（@358 不在池里）。
+  inputs.remainingReport.tiers.B_no_catalog_intent = [
+    { class: "Mannequin", member: "performToolAction", file: "Mannequin.cs", line: 399 },
+  ];
   assert.throws(
     () => groupMethodUnits({ remainingReport: inputs.remainingReport, methodVerdicts: inputs.rules.methodVerdicts }),
-    /tier_b_unit_without_verdict:Cask@99/,
+    /tier_b_unit_without_verdict:Mannequin@399/,
   );
 
-  // 候选池里只剩一个**非 B 档**单元：Cask@41 不在池里 → method_verdict_not_in_candidate_pool
+  // 候选池里只剩一个**非 B 档**单元：Mannequin@358 不在池里 → method_verdict_not_in_candidate_pool
   inputs.remainingReport.tiers.B_no_catalog_intent = [];
   inputs.remainingReport.tiers.A_catalog_intent_exists = [{ class: "Other", member: "checkAction", file: "Other.cs", line: 5 }];
   inputs.remainingReport.counts.unmatchedCandidateUnits = 1;
   assert.throws(
     () => groupMethodUnits({ remainingReport: inputs.remainingReport, methodVerdicts: inputs.rules.methodVerdicts }),
-    /method_verdict_not_in_candidate_pool:Cask@41/,
+    /method_verdict_not_in_candidate_pool:Mannequin@358/,
   );
 });
 
@@ -356,7 +363,7 @@ test("完备性④：tier 索引与 unmatchedCandidateUnits 不一致 → tier_i
 
 test("完备性⑤：未知分组落不进已知组集合 → selector_left_ungrouped", () => {
   const inputs = syntheticInputs();
-  const rules = { selectorVerdicts: { Lamp: { ...SELECTOR_VERDICTS.Lamp, group: "made_up_group" } } };
+  const rules = { selectorVerdicts: { Mine: { ...SELECTOR_VERDICTS.Mine, group: "made_up_group" } } };
   assert.throws(
     () =>
       groupSelectors({
@@ -366,7 +373,7 @@ test("完备性⑤：未知分组落不进已知组集合 → selector_left_ungr
         verdictIndex: buildVerdictIndex(rules.selectorVerdicts),
         categoryDefaults: {},
       }),
-    /selector_left_ungrouped:GameLocation\.Lamp/,
+    /selector_left_ungrouped:GameLocation\.Mine/,
   );
 });
 
@@ -391,7 +398,7 @@ test("CLI：--remaining 与旧名 --candidates 指向同一输入槽位", async 
       execFileAsync(process.execPath, [...base, "--candidates", tmp], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: ROOT }),
     ]);
     assert.equal(a.stdout, b.stdout, "两个参数名必须产生逐字节相同的产物");
-    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 9);
+    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 0);
   } finally {
     await rm(tmp, { force: true });
   }

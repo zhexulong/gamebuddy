@@ -94,7 +94,8 @@ export const UI_INPUT_BOUNDARIES = Object.freeze({
     "input-edge gated branch: the native branch requires a real mouse/keyboard edge (Game1.didPlayerJustRightClick) that the companion cannot manufacture without input injection",
   B3_subjective_text_input: "subjective text input (NamingMenu naming, free dialogue text)",
   B4_realtime_minigame: "real-time minigame / reeling contest (MiniGames, festival minigames, fishing reel)",
-  B5_no_effect: "no bound effect (empty selector shell, sound-only selector)",
+  B5_no_effect:
+    "no bound effect (empty selector shell, sound-only selector, presentation/animation-only writes such as HoeDirt.shake's crop-shake state)",
   B6_unreachable_in_shipped_content:
     "unreachable in shipped content: the selector's case body exists in code, but no map asset in the shipped game carries a tile with that action, so there is no native entry to bind (evidence: a full Content/Maps scan for the action value)",
 });
@@ -140,13 +141,6 @@ export const SELECTOR_VERDICTS = Object.freeze({
     actionId: "enter_mine",
     reason: "same case body as `Mine` (alias label on the same switch bucket)",
     anchor: "GameLocation.cs:9807",
-  },
-  BuildingSilo: {
-    at: "GameLocation",
-    group: "new_primitive_needed",
-    actionId: "deposit_silo_hay",
-    reason: "deterministic consume of held (O)178 + tryToAddHay into the building silo; carries a dialogue branch for the non-hay path, which is why the signal classifier reads it as dialogue-bound",
-    anchor: "GameLocation.cs:10150",
   },
 
   // ---- 归并进现有 action ------------------------------------------------
@@ -286,24 +280,32 @@ export const SELECTOR_VERDICTS = Object.freeze({
  * `gatingAnchor`。归并只表达同一意图，不保证门禁等价（见产物 nonGuarantees）。
  */
 export const METHOD_VERDICTS = Object.freeze({
+  // 已登记的派生裁定在此退役：这些单元的 action 已注册（register 的 seam 表是
+  // 现在的事实来源），单元因此退出候选池，保留条目会触发 method_verdict_not_in_candidate_pool。
+  //   Cask.performToolAction@41 -> clear_cask · Horse.checkAction@599 -> mount_transport
+  //   Lantern.DoFunction@36 -> toggle_tool_light · Mannequin.performObjectDropInAction@436 -> dress_mannequin
+  //   Raft.DoFunction@29 -> use_raft · Sign.checkForAction@49 -> set_sign_display
+  //   BusStop.answerDialogue@132 -> ride_bus（该单元随 ride_bus 登记退出候选池；其
+  //     Bus_Yes 分支的应答语义仍属 answer_dialogue，收钱 + 强制控制的编排由原生自己完成）
   "Game1.warpFarmer@9788": merge(["enter_exit"], "same Farmer.warpFarmer transition", "4.3"),
   "GameServer.warpFarmer@673": merge(["enter_exit"], "multiplayer-authoritative copy of the same warp transition", "4.3"),
   "NPC.checkAction@2464": merge(["interact_npc_with_item"], "gift branch routes into tryToReceiveActiveObject -> receiveGift", "4.3"),
   "ShippingBin.shipItem@158": merge(["ship_item"], "private shipItem is the shipping transaction; Farm.shipItem is registered", "4.3"),
   "ShippingBin.leftClicked@182": merge(["ship_item"], "menu-free shipping entry point", "4.3"),
+  "HoeDirt.shake@367": {
+    group: "explicit_exclusion",
+    boundary: "B5_no_effect",
+    reason:
+      "writes only the crop-shake animation state (maxShake, shakeRate, shakeRotation, shakeLeft) plus NeedsUpdate; it is presentation invoked by the harvest sequence itself, so there is no player intent to bind. The harvest is bound by harvest_crop on HoeDirt.performUseAction",
+    anchor: "HoeDirt.cs:367",
+  },
   "FarmHouse.checkAction@696": implemented("chest_store/chest_retrieve fridge target extension (live 2026-09-28)", "4.3"),
   "IslandFarmHouse.checkAction@199": implemented("chest_store/chest_retrieve fridge target extension (live 2026-09-28)", "4.3"),
   "IslandWest.leftClick@235": implemented("ship_item island bin target extension (live 2026-09-28)", "4.3"),
   "PetBowl.performToolAction@81": implemented("water_pet_bowl (live 2026-09-28)", "4.3"),
   "SlimeHutch.performToolAction@154": implemented("water_slime_hutch_trough (live 2026-09-28)", "4.3"),
-  "Horse.checkAction@599": newPrimitive("mount_transport", "mount/dismount/hat/carrot horse interaction", "Horse.cs:599", "4.3"),
-  "Cask.performToolAction@41": newPrimitive("clear_cask", "heavy-hitter strike drops heldObject", "Cask.cs:41", "4.3"),
   "Mannequin.performToolAction@358": newPrimitive("dress_mannequin", "place/dress/undress are the same intent", "Mannequin.cs:358", "4.3"),
   "Mannequin.checkForAction@400": newPrimitive("dress_mannequin", "same intent (cursed <0.001 branch counted here)", "Mannequin.cs:400", "4.3"),
-  "Mannequin.performObjectDropInAction@436": newPrimitive("dress_mannequin", "same intent", "Mannequin.cs:436", "4.3"),
-  "Sign.checkForAction@49": newPrimitive("set_sign_display", "displayItem.Value = currentItem.getOne()", "Sign.cs:49", "4.3"),
-  "Lantern.DoFunction@36": newPrimitive("toggle_tool_light", "on = !on; remove/AddLightSource", "Lantern.cs:36", "4.3"),
-  "Raft.DoFunction@29": newPrimitive("use_raft", "who.isRafting = true; water-tile move", "Raft.cs:29", "4.3"),
   "Child.checkAction@737": pending(
     "hat swap + talkToFriend + doEmote mixed; whether it is an independent action depends on dress-up vs social product intent",
     "Child.cs:737",

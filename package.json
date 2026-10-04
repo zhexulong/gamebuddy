@@ -160,6 +160,8 @@
     "test:stardew-uncovered-exit-table": "node --test integrations/stardew/action-development/tests/stardew-uncovered-exit-table.test.mjs",
     "report:stardew-remaining-actions": "node integrations/stardew/action-development/src/analysis/stardew-remaining-actions-report.mjs",
     "test:stardew-remaining-actions": "node --test integrations/stardew/action-development/tests/stardew-remaining-actions-report.test.mjs",
+    "reconcile:stardew-action-inventory": "node integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs",
+    "test:stardew-action-inventory-reconciliation": "node --test integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",
     "derive:stardew-tile-action-selectors": "node integrations/stardew/action-development/src/analysis/stardew-tile-action-selectors.mjs",
     "test:stardew-tile-action-selectors": "node --test integrations/stardew/action-development/tests/stardew-tile-action-selectors.test.mjs",
     "smoke:chat-conversational-quality-gate": "node tools/check-chat-conversational-quality-gate.mjs --transcript tools/fixtures/chat-quality-gate-synthetic-transcript.json --require-db --quiet",
