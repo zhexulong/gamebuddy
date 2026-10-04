@@ -187,7 +187,15 @@ const voiceObservationPromise = new Promise((resolvePromise) => {
 // companion text successfully landed in the game; forwards the exact text to
 // the voice lane. No game/presentation authority is touched here.
 const onCompanionTextPresented = (text, locale) => {
-  if (LADDER !== "3" && LADDER !== "4") return;
+  // RECORD the presentation for EVERY ladder. The callback is only invoked after
+  // a companion text actually landed in the game, so it is the harness's only
+  // evidence of what the player was shown — gating it on the ladder made
+  // ladder-5 runs report `presentation.pieces: []` and `presentedSummary: ""`
+  // even when the Agent had spoken, which reads exactly like "the companion said
+  // nothing" and sent a real investigation in the wrong direction.
+  //
+  // The VOICE lane stays ladder-scoped (below): recording evidence and speaking
+  // are different concerns.
   if (typeof text !== "string" || text.trim().length === 0) return;
   // Record EVERY committed piece before any single-shot voice logic runs: the
   // chunked-presentation evidence must not depend on voice being enabled or on
@@ -204,6 +212,9 @@ const onCompanionTextPresented = (text, locale) => {
   // interaction gate must assess the whole turn, not only its first bubble.
   presentedSummary = presentedSummary === null ? speakable : `${presentedSummary}${speakable}`;
   console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
+  // Only the voice lane is ladder-scoped: the speech path exists for ladders 3
+  // and 4 today, and ladders 0-2 use no voice at all.
+  if (LADDER !== "3" && LADDER !== "4") return;
   if (voiceStarted) return;
   const spokenSoFar = presentedSummary;
   void (async () => {
@@ -680,17 +691,21 @@ try {
         assembled: worldBookAssembled,
       });
   const worldBookPassed = worldBookGate.expected === true ? worldBookGate.assembled === true : true;
-  const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4): the spoken closing line must be
+  const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4/5): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
   // receipts never recorded. The offer receipt carries showed_response, so an
   // NPC reaction is only "observed" when the game actually showed it.
+  //
+  // Ladder 5 belongs here too: its reply is the companion's covenant answer to
+  // the player, and gating only 3/4 meant ladder-5 dialogue was never assessed
+  // for tone or truthfulness at all.
   const observedEvents = [];
   if (offerReceipt?.evidence !== null && typeof offerReceipt?.evidence === "object" && offerReceipt.evidence.showed_response === true) {
     observedEvents.push("npc_dialogue");
   }
   const interactionAssessment =
-    (LADDER === "3" || LADDER === "4") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
+    (LADDER === "3" || LADDER === "4" || LADDER === "5") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
