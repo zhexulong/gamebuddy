@@ -105,13 +105,16 @@ type HasExactKeys<T, TKeys extends PropertyKey> =
       : false
     : false;
 type ProductionInternalComposition = ReturnType<typeof internalComposer.createStardewPrivateBootstrapComposition>;
-type _ProductionInternalCompositionHasExactKeys = Assert<
+// Exported so `noUnusedLocals` keeps these compile-time contract assertions: an
+// alias that stops holding still fails the build, it is just never reported as
+// an unused local.
+export type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
      "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "prepareFreshFarmhandAiClientActivation" | "abandonFarmhandAiClientActivation" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "settleOwnedPlayerHostContainedRuntimeAttempt"
   >
 >;
-type _ProductionInternalCompositionRetainsPublicComposition = Assert<
+export type _ProductionInternalCompositionRetainsPublicComposition = Assert<
   ProductionInternalComposition["composition"] extends StardewPrivateBootstrapComposition ? true : false
 >;
 
@@ -463,6 +466,188 @@ test("v4 recovery CAS rejects takeover and requires its exact actor for every re
   await assert.rejects(transition.beginRecovery(recovering.ownerRecordRevision, "recovery-2"), /transition_invalid/);
   await assert.rejects(transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
   await assert.rejects(transition.finalizeRecoveredContained(recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
+});
+
+test("v4 recovery names an already-contained role instead of the generic invalid-transition error", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const recovering = await transition.beginRecovery(1, "recovery-1");
+  const contained = await transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-1");
+  const containedBytes = await readFile(path, "utf8");
+  // A recovery driver that resumed a crashed recovery must be able to tell
+  // "this role is already contained" from "this is the wrong state", so the
+  // refusal is its own error and it never rewrites the byte it refuses.
+  await assert.rejects(
+    transition.containRecoveringRole("playerHost", contained.ownerRecordRevision, "recovery-1"),
+    /stardew_bootstrap_owner_recovery_role_already_contained/,
+  );
+  assert.equal(await readFile(path, "utf8"), containedBytes, "re-containing a contained role never rewrites the record");
+});
+
+test("recoverable owner opener adopts a crashed record's exact revision and recorded recovery actor", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  // A crash mid-recovery: the Guardian armed, one role active, and a recovery
+  // actor already durably recorded in a non-terminal, non-pristine record.
+  await transition.arm(1);
+  await transition.activate("playerHost", 2);
+  await transition.beginRecovery(3, "recovery-1");
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  assert.equal(opened.ownerPath, path);
+  assert.equal(opened.ownerRecordRevision, 4);
+  assert.equal(opened.recoveryInstanceId, "recovery-1");
+
+  // The handed-out transitions are the real durable CAS surface: the recovery
+  // resumes from exactly the opened revision under its recorded actor.
+  await opened.transitions.recoveryRoleContained("playerHost", "recovery-1");
+  await opened.transitions.recoveryRoleContained("aiClient", "recovery-1");
+  await opened.transitions.finalizeRecoveredContained("recovery-1");
+  const persisted = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(
+    {
+      state: persisted.state,
+      guardian: persisted.guardianState,
+      player: persisted.playerHostState,
+      ai: persisted.aiClientState,
+      recovery: persisted.recoveryInstanceId,
+      revision: persisted.ownerRecordRevision,
+    },
+    { state: "contained", guardian: "contained", player: "contained", ai: "contained", recovery: null, revision: 7 },
+  );
+});
+
+test("recoverable owner opener reports a null recovery actor for a crash that never began one", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  // Crashed after arming the Guardian but before any recovery actor existed.
+  await transition.arm(1);
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  assert.equal(opened.ownerRecordRevision, 2);
+  assert.equal(opened.recoveryInstanceId, null);
+  // The opener never mints one; the caller mints a fresh actor explicitly.
+  await opened.transitions.beginRecovery("recovery-fresh");
+  const persisted = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  assert.equal(persisted.recoveryInstanceId, "recovery-fresh");
+  assert.equal(persisted.state, "recovering");
+});
+
+test("recoverable owner opener refuses a contained terminal record without rewriting it", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  await transition.arm(1);
+  await transition.activate("playerHost", 2);
+  await transition.activate("aiClient", 3);
+  await transition.beginControlledClose(4);
+  await transition.containControlledRole("playerHost", 5);
+  await transition.containControlledRole("aiClient", 6);
+  await transition.finalizeControlledContained(7);
+  const containedBytes = await readFile(path, "utf8");
+
+  await assert.rejects(
+    productionCore.openRecoverableStardewBootstrapOwner({
+      transactionRoot: root,
+      bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+    }),
+    /stardew_bootstrap_owner_recovery_terminal/,
+  );
+  assert.equal(await readFile(path, "utf8"), containedBytes, "a contained record is never reopened or rewritten");
+});
+
+test("recoverable owner opener refuses a quarantined terminal record without rewriting it", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  await transition.quarantine(1);
+  const quarantinedBytes = await readFile(path, "utf8");
+
+  await assert.rejects(
+    productionCore.openRecoverableStardewBootstrapOwner({
+      transactionRoot: root,
+      bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+    }),
+    /stardew_bootstrap_owner_recovery_terminal/,
+  );
+  assert.equal(await readFile(path, "utf8"), quarantinedBytes, "a quarantined record is never reopened or rewritten");
+});
+
+test("recoverable owner opener refuses a foreign principal and a CAS-inconsistent predecessor without rewriting it", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  await transition.arm(1);
+  const crashedBytes = await readFile(path, "utf8");
+
+  for (const bootstrapFacts of [
+    { bootstrapId: "bootstrap-1", playerId: "player-2", companionId: "companion-1" },
+    { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-2" },
+  ]) {
+    await assert.rejects(
+      productionCore.openRecoverableStardewBootstrapOwner({ transactionRoot: root, bootstrapFacts }),
+      /stardew_bootstrap_owner_recovery_principal_mismatch/,
+    );
+  }
+  assert.equal(await readFile(path, "utf8"), crashedBytes, "a principal mismatch never rewrites the record");
+
+  // The opener uses the same strict v4 validator that guards every CAS
+  // successor, so a persisted predecessor the transition engine itself would
+  // reject can never be handed out as a half-usable drive.
+  for (const inconsistent of [
+    { ...expectedRecord(), guardianState: "armed", playerHostState: "reserved", aiClientState: "armed" },
+    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "reserved", aiClientState: "active" },
+  ]) {
+    await writeFile(path, `${JSON.stringify(inconsistent)}\n`, "utf8");
+    const inconsistentBytes = await readFile(path, "utf8");
+    await assert.rejects(
+      productionCore.openRecoverableStardewBootstrapOwner({
+        transactionRoot: root,
+        bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+      }),
+      /invalid_stardew_bootstrap_owner/,
+    );
+    assert.equal(await readFile(path, "utf8"), inconsistentBytes, "a CAS-rejected predecessor is never rewritten");
+  }
 });
 
 test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, and strict-rereads", async () => {
@@ -1949,6 +2134,16 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
       IntegrationVersion: "0.1.0",
       ManifestLifetimeSeconds: 120,
       AuthorizedCompanionIds: ["companion-1"],
+    },
+    // Creation is requested, never named: the staged form carries no save/slot
+    // identity, only the one-shot creation request whose observed physical slot
+    // basename stays the single world-identity authority.
+    WorldCreation: {
+      Enable: true,
+      FarmName: "GameBuddy Farm",
+      PlayerName: "GameBuddy",
+      FavoriteThing: "Companion",
+      CreateOnce: true,
     },
   });
   assert.deepEqual((await readdir(transaction)).sort(), [OWNER_FILE, "player-host"]);

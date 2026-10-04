@@ -8,6 +8,12 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { driveGuardianRecoveryConversation } from "./desktop-runtime-bootstrap.internal.js";
+import type {
+  DesktopGuardianRecovery,
+  DesktopGuardianRecoveryTransport,
+  GuardianRecoveryRole,
+} from "../../containment/auth/desktop-guardian-session.internal.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -174,10 +180,37 @@ test("desktop bootstrap helper ignores a malformed IPC message and stays up", as
   assert.equal(result.workerExitCode, null, "a malformed message must not drop the composition");
 });
 
-async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
+// The recovery conversation is the only operation whose read path waits for more
+// than one acknowledgement on one session. This drives it through the real named
+// pipe so the session's waiter installs, the exact ordinal frame order the
+// Desktop broker compares, and the terminal containment are all observed on the
+// wire rather than only against a recording transport.
+test("desktop bootstrap helper drives the recovery conversation over one authenticated session", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("recovery-success");
+  assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+  assert.deepEqual(result.requests.map((request) => request.operation), [
+    "hello",
+    "recover_attempt",
+    "recovery_post_cas",
+    "recover_attempt",
+    "recovery_role_cas_ack",
+    "recovery_role_cas_ack",
+    "recovery_finalize_ack",
+    "release",
+  ]);
+  // The recovery frames speak the recovery role token, and the private bodies are
+  // the ones the durable steps produced.
+  assert.deepEqual(result.requests.filter((request) => request.role !== undefined).map((request) => request.role), ["playerHost", "aiClient"]);
+  const postCas = JSON.parse(Buffer.from(String(result.requests[2]!.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
+  assert.equal(postCas.ownerRecordRevision, 2);
+  assert.doesNotMatch(result.stderr, /desktop_runtime_bootstrap_unavailable/);
+});
+
+async function runWireFixture(scenario: "success" | "recovery-success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
-  const bootstrapId = (scenario === "success" ? "d" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
+  const bootstrapId = (scenario === "success" ? "d" : scenario === "recovery-success" ? "1" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
   const guardianInstanceId = scenario === "success" ? "11111111-1111-4111-8111-111111111111" : scenario === "malformed-arm" ? "33333333-3333-4333-8333-333333333333" : "55555555-5555-4555-8555-555555555555";
   const attemptId = scenario === "success" ? "22222222-2222-4222-8222-222222222222" : scenario === "malformed-arm" ? "44444444-4444-4444-8444-444444444444" : "66666666-6666-4666-8666-666666666666";
   const rootLayout = {
@@ -191,6 +224,7 @@ async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdo
   const endpoint = `\\\\.\\pipe\\GameBuddy.HostGuardian.${bootstrapId}`;
   const requests: Record<string, unknown>[] = [];
   let connected = false;
+  let recoveryAttempts = 0;
   let operationsResolve!: () => void;
   const operationsComplete = new Promise<void>((resolve) => { operationsResolve = resolve; });
   let worker: ReturnType<typeof spawn> | undefined;
@@ -213,6 +247,20 @@ async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdo
         buffer = buffer.subarray(newline + 1);
         requests.push(request);
         const operation = request.operation;
+        if (scenario === "recovery-success" && operation !== "hello") {
+          // Answered at the positions the Desktop broker answers: one
+          // acknowledgement for the gate, one for the post-CAS + native recover
+          // pair, one per contained role, and one terminal acknowledgement after
+          // the release frame. Every acknowledgement carries the recovery actor
+          // and no role.
+          let status: string | undefined;
+          if (operation === "recover_attempt") { status = recoveryAttempts === 0 ? "recovery_accepted" : "player_contained"; recoveryAttempts += 1; }
+          else if (operation === "recovery_role_cas_ack") status = request.role === "playerHost" ? "ai_contained" : undefined;
+          else if (operation === "release") status = "contained";
+          if (status !== undefined) socket.write(`${JSON.stringify({ schema: "gamebuddy-desktop-guardian-session/v1", protocolVersion: 1, operation: "recover_attempt", status, bootstrapId, generation: request.generation, inventoryDigest: request.inventoryDigest, runtimeAdmissionSha256: request.runtimeAdmissionSha256, guardianInstanceId: request.guardianInstanceId, guardianEpoch: request.guardianEpoch, attemptId: request.attemptId, recoveryInstanceId: request.recoveryInstanceId })}\n`);
+          if (operation === "release") operationsResolve();
+          continue;
+        }
         if (scenario === "delayed-arm-ack" && operation === "arm_attempt") {
           armReceiptAt = performance.now();
           setTimeout(() => socket.write(`${JSON.stringify({ schema: "gamebuddy-desktop-guardian-session/v1", protocolVersion: 1, operation: "arm_attempt", status: "armed", bootstrapId, generation: request.generation, inventoryDigest: request.inventoryDigest, runtimeAdmissionSha256: request.runtimeAdmissionSha256, guardianInstanceId: request.guardianInstanceId, guardianEpoch: request.guardianEpoch, attemptId: request.attemptId })}\n`), 250);
@@ -306,7 +354,7 @@ async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdo
         worker.kill("SIGTERM");
         await withTimeout(workerClose, 10_000, "shutdown-malformed cleanup");
       }
-    } else if (scenario === "success") {
+    } else if (scenario === "success" || scenario === "recovery-success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
     } else if (scenario !== "malformed-arm" && scenario !== "missing-arm-executable") {
@@ -322,7 +370,7 @@ async function runWireFixture(scenario: "success" | "shutdown-request" | "shutdo
   }
 }
 
-function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
+function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "recovery-success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
   const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
   const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
   const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href;
@@ -331,6 +379,8 @@ function workerSource(moduleDirectory: string, guardianInstanceId: string, attem
   // is the native ParseLaunch encoder output (executable === approvedExecutable).
   const operation = scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed"
     ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, authorization: { role: "player_host", revision: "11111111-1111-4111-8111-111111111111", executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
+    : scenario === "recovery-success"
+      ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
     : scenario === "missing-arm-executable"
       ? `try { const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" } }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
     : scenario === "composition-failure"
@@ -434,3 +484,202 @@ function findPackageRoot(directory: string): string {
   }
   return candidate;
 }
+
+/**
+ * The recovery conversation is a pure protocol: the five frames, their exact
+ * ordinal key order, the four acknowledgement positions and the durable
+ * callbacks are asserted against a recording transport, so no socket, named
+ * pipe, Windows root layout or production artifact is involved.
+ */
+const recoveryBinding = Object.freeze({ bootstrapId: "a".repeat(64), generation: "generation-1", inventoryDigest: "b".repeat(64), runtimeAdmissionSha256: "c".repeat(64) });
+const recoveryCorrelation = Object.freeze({ guardianInstanceId: "11111111-1111-4111-8111-111111111111", guardianEpoch: 1, attemptId: "22222222-2222-4222-8222-222222222222" });
+const recoveryInstance = "33333333-3333-4333-8333-333333333333";
+const recoveryPreCas = new TextEncoder().encode('{"guardianInstanceId":"11111111-1111-4111-8111-111111111111","guardianEpoch":1,"attemptId":"22222222-2222-4222-8222-222222222222","bindingRevision":"44444444-4444-4444-8444-444444444444","leaseName":"Local\\GameBuddy-Lease-1"}');
+const recoveryPostCas = new TextEncoder().encode('{"ownerRecordRevision":2}');
+
+/** The exact ordinal key sequence `DesktopHostBootstrapBroker.ExactObject` compares. */
+const recoveryFrameKeys = (...trailing: readonly string[]): readonly string[] => [
+  "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256",
+  "operationWaitBudgetMs", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId", ...trailing,
+];
+
+function recoveryAcknowledgement(status: string, overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  return { schema: "gamebuddy-desktop-guardian-session/v1", protocolVersion: 1, operation: "recover_attempt", status, ...recoveryBinding, ...recoveryCorrelation, recoveryInstanceId: recoveryInstance, ...overrides };
+}
+
+function recoveryHarness(acknowledgements: readonly Readonly<Record<string, unknown>>[]): Readonly<{
+  transport: DesktopGuardianRecoveryTransport;
+  events: string[];
+  frames: Array<Record<string, unknown>>;
+}> {
+  const events: string[] = [];
+  const frames: Array<Record<string, unknown>> = [];
+  const pending = [...acknowledgements];
+  const transport: DesktopGuardianRecoveryTransport = Object.freeze({
+    write: (frame) => { events.push(`write:${String(frame.operation)}`); frames.push({ ...frame }); },
+    receive: () => {
+      // Fails closed instead of hanging: a conversation that waits for an
+      // acknowledgement the broker would never write is a protocol violation.
+      events.push("receive");
+      const acknowledgement = pending.shift();
+      return acknowledgement === undefined ? Promise.reject(new Error("unexpected_receive")) : Promise.resolve(acknowledgement);
+    },
+  });
+  return { transport, events, frames };
+}
+
+/** The conversation one test drives; every durable step is recorded in `events` in place. */
+function recoveryInput(events: string[]): DesktopGuardianRecovery {
+  return Object.freeze({
+    guardianInstanceId: recoveryCorrelation.guardianInstanceId,
+    guardianEpoch: recoveryCorrelation.guardianEpoch,
+    attemptId: recoveryCorrelation.attemptId,
+    operationWaitBudgetMs: 1_000,
+    recoveryInstanceId: recoveryInstance,
+    preCasFrame: recoveryPreCas,
+    beginRecovery: async (): Promise<Uint8Array> => { events.push("beginRecovery"); return recoveryPostCas; },
+    roleContained: async (role: GuardianRecoveryRole): Promise<void> => { events.push(`roleContained:${role}`); },
+  });
+}
+
+test("recovery conversation writes the five Desktop frames in exact ordinal key order and reaches containment", async () => {
+  const harness = recoveryHarness([
+    recoveryAcknowledgement("recovery_accepted"),
+    recoveryAcknowledgement("player_contained"),
+    recoveryAcknowledgement("ai_contained"),
+    recoveryAcknowledgement("contained"),
+  ]);
+  const outcome = await driveGuardianRecoveryConversation(harness.transport, recoveryBinding, recoveryInput(harness.events));
+
+  assert.deepEqual(outcome, { outcome: "contained" });
+  assert.deepEqual(harness.frames.map((frame) => frame.operation), [
+    "recover_attempt",
+    "recovery_post_cas",
+    "recover_attempt",
+    "recovery_role_cas_ack",
+    "recovery_role_cas_ack",
+    "recovery_finalize_ack",
+    "release",
+  ]);
+  const gate = harness.frames[0]!;
+  const postCas = harness.frames[1]!;
+  const recover = harness.frames[2]!;
+  const playerCas = harness.frames[3]!;
+  const aiCas = harness.frames[4]!;
+  const finalize = harness.frames[5]!;
+  const release = harness.frames[6]!;
+  // The Desktop compares the key SEQUENCE, so the ordinal order is protocol, not
+  // formatting: the bounded wait precedes the correlation, and the private body
+  // or the role follows the recovery actor.
+  assert.deepEqual(Object.keys(gate), recoveryFrameKeys("privateFrame"));
+  assert.deepEqual(Object.keys(postCas), recoveryFrameKeys("privateFrame"));
+  assert.deepEqual(Object.keys(recover), recoveryFrameKeys());
+  assert.deepEqual(Object.keys(playerCas), recoveryFrameKeys("role"));
+  assert.deepEqual(Object.keys(aiCas), recoveryFrameKeys("role"));
+  assert.deepEqual(Object.keys(finalize), recoveryFrameKeys());
+  assert.deepEqual(Object.keys(release), recoveryFrameKeys());
+  // Only the two recovery bodies are private frames: the broker rebuilds the
+  // native recover attempt from the correlation, so that frame carries none.
+  assert.equal(Object.hasOwn(recover, "privateFrame"), false);
+  assert.equal(Object.hasOwn(finalize, "privateFrame"), false);
+  assert.equal(Object.hasOwn(release, "privateFrame"), false);
+  // The bytes the native ingress validates are exactly the frames the durable
+  // steps produced, not a re-encoding of them.
+  assert.deepEqual(Buffer.from(String(gate.privateFrame), "base64url"), Buffer.from(recoveryPreCas));
+  assert.deepEqual(Buffer.from(String(postCas.privateFrame), "base64url"), Buffer.from(recoveryPostCas));
+  assert.equal(String(recover.privateFrame ?? ""), "");
+  // The recovery wire names the OS roles `playerHost`/`aiClient`; the containment
+  // spelling belongs to arm/launch/contain and must never appear here.
+  assert.deepEqual(harness.frames.filter((frame) => frame.role !== undefined).map((frame) => frame.role), ["playerHost", "aiClient"]);
+  // Every durable step runs in the only order the broker accepts: the recovering
+  // CAS strictly after the gate acknowledgement, each role durably recorded
+  // before its CAS acknowledgement, and the waiter installed before the frames it
+  // answers. One acknowledgement answers the post-CAS and native recover frames,
+  // which is why this conversation cannot use the single request/ack helper.
+  assert.deepEqual(harness.events, [
+    "receive",
+    "write:recover_attempt",
+    "beginRecovery",
+    "receive",
+    "write:recovery_post_cas",
+    "write:recover_attempt",
+    "roleContained:playerHost",
+    "receive",
+    "write:recovery_role_cas_ack",
+    "roleContained:aiClient",
+    "receive",
+    "write:recovery_role_cas_ack",
+    "write:recovery_finalize_ack",
+    "write:release",
+  ]);
+});
+
+test("recovery reads the shared `unavailable` status by position, never by its text", async () => {
+  // At the gate position the same text means the Guardian refused to open the
+  // gate: the previous lease stays authority and no durable CAS may run.
+  const held = recoveryHarness([recoveryAcknowledgement("unavailable")]);
+  assert.deepEqual(await driveGuardianRecoveryConversation(held.transport, recoveryBinding, recoveryInput(held.events)), { outcome: "gate_held" });
+  assert.deepEqual(held.frames.map((frame) => frame.operation), ["recover_attempt"]);
+  assert.deepEqual(held.events, ["receive", "write:recover_attempt"]);
+
+  // At a role position it is a native classification: the recovery ran and that
+  // exact role was not contained.
+  const playerFailed = recoveryHarness([recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("unavailable")]);
+  assert.deepEqual(await driveGuardianRecoveryConversation(playerFailed.transport, recoveryBinding, recoveryInput(playerFailed.events)), { outcome: "role_classified", role: "playerHost", classification: "unavailable" });
+  assert.deepEqual(playerFailed.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt"]);
+  assert.deepEqual(playerFailed.events.filter((event) => event.startsWith("roleContained")), []);
+
+  const aiFailed = recoveryHarness([recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("quarantined")]);
+  assert.deepEqual(await driveGuardianRecoveryConversation(aiFailed.transport, recoveryBinding, recoveryInput(aiFailed.events)), { outcome: "role_classified", role: "aiClient", classification: "quarantined" });
+  // Only the Player role was acknowledged, so only it reached durable
+  // containment; the AI role's CAS acknowledgement is never written.
+  assert.deepEqual(aiFailed.events.filter((event) => event.startsWith("roleContained")), ["roleContained:playerHost"]);
+  assert.deepEqual(aiFailed.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt", "recovery_role_cas_ack"]);
+});
+
+test("recovery rejects an acknowledgement the broker would never write at that position", async () => {
+  const withoutActor = recoveryAcknowledgement("recovery_accepted");
+  delete withoutActor.recoveryInstanceId;
+  const cases: ReadonlyArray<readonly [string, ReadonlyArray<Readonly<Record<string, unknown>>>]> = [
+    ["gate acknowledgement carrying a containment role", [recoveryAcknowledgement("recovery_accepted", { role: "player_host" })]],
+    ["gate acknowledgement without the recovery actor", [withoutActor]],
+    ["gate acknowledgement for another recovery actor", [recoveryAcknowledgement("recovery_accepted", { recoveryInstanceId: "55555555-5555-4555-8555-555555555555" })]],
+    ["gate acknowledgement for another attempt", [recoveryAcknowledgement("recovery_accepted", { attemptId: "66666666-6666-4666-8666-666666666666" })]],
+    ["gate acknowledgement for another guardian epoch", [recoveryAcknowledgement("recovery_accepted", { guardianEpoch: 2 })]],
+    ["gate acknowledgement from the role CAS operation", [recoveryAcknowledgement("recovery_accepted", { operation: "recovery_role_cas_ack" })]],
+    ["gate position answered with a role containment status", [recoveryAcknowledgement("player_contained")]],
+    ["role position answered with a gate status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("recovery_accepted")]],
+    ["terminal position answered with a role status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("ai_contained")]],
+    ["terminal position answered with the gate-held status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("unavailable")]],
+  ];
+  for (const [label, acknowledgements] of cases) {
+    const harness = recoveryHarness(acknowledgements);
+    await assert.rejects(
+      () => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, recoveryInput(harness.events)),
+      /desktop_runtime_bootstrap_unavailable/,
+      label,
+    );
+  }
+});
+
+test("recovery refuses malformed input and a missing post-CAS binding without inventing an outcome", async () => {
+  const harness = recoveryHarness([recoveryAcknowledgement("recovery_accepted")]);
+  const input = recoveryInput(harness.events);
+  // A recovery actor the native ingress cannot parse, an empty gate body, and a
+  // zero wait budget are all refused before any frame reaches the wire.
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, recoveryInstanceId: "gamebuddy-stardew-token" }), /desktop_runtime_bootstrap_unavailable/);
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, preCasFrame: new Uint8Array(0) }), /desktop_runtime_bootstrap_unavailable/);
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, operationWaitBudgetMs: 0 }), /desktop_runtime_bootstrap_unavailable/);
+  assert.deepEqual(harness.frames, []);
+  assert.deepEqual(harness.events, []);
+
+  // A durable CAS that produced no post-CAS binding cannot be continued: the
+  // native ingress would refuse the frame, so the conversation stops after the
+  // gate frame instead of writing an empty binding.
+  const shortCas = recoveryHarness([recoveryAcknowledgement("recovery_accepted")]);
+  await assert.rejects(
+    () => driveGuardianRecoveryConversation(shortCas.transport, recoveryBinding, { ...recoveryInput(shortCas.events), beginRecovery: async () => new Uint8Array(0) }),
+    /desktop_runtime_bootstrap_unavailable/,
+  );
+  assert.deepEqual(shortCas.frames.map((frame) => frame.operation), ["recover_attempt"]);
+});

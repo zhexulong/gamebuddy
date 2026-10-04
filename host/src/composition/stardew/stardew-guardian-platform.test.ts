@@ -1,9 +1,29 @@
 import assert from "node:assert/strict";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
-import { createDesktopGuardianGameRuntimePlatform } from "./stardew-guardian-platform.js";
+import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory } from "./stardew-guardian-platform.js";
 import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
+import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
+import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
+import {
+  createHarness,
+  createRoot,
+  expectedGuardianBinding,
+  mintOwnedTriple,
+  ownerPath,
+  simulatedLockHelper,
+  temporaryRoots,
+} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.js";
+
+test.beforeEach(() => bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper)));
+test.after(() => bindWindowsStaleLockReclaimer(undefined));
+test.after(async () => {
+  for (const root of temporaryRoots.splice(0)) {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 const ack = (operation: string, role?: string): GuardianAck => ({
   operation,
@@ -66,6 +86,10 @@ function recordingSession(calls: RecordedCall[]): DesktopGuardianSession {
     contain: async (input) => {
       calls.push({ operation: "contain" });
       return ack("contain", input.role);
+    },
+    recover: async () => {
+      calls.push({ operation: "recover" });
+      return Object.freeze({ outcome: "contained" as const });
     },
     close: async () => {},
   });
@@ -150,6 +174,7 @@ test("launch and arm fail closed before the native session when facts violate th
       return ack("launch", input.role);
     },
     contain: async (input) => { return ack("contain", input.role); },
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     close: async () => {},
   }));
   const base = {
@@ -219,6 +244,7 @@ test("a failed platform close stays retryable and only a successful close latche
     arm: async () => ack("arm"),
     launch: async (input) => ack("launch", input.role),
     contain: async (input) => ack("contain", input.role),
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     close: async () => {
       closeCalls += 1;
       if (failNext) throw new Error("controlled_session_close_failure");
@@ -248,6 +274,7 @@ test("concurrent platform closes are joined onto a single session close", async 
     arm: async () => ack("arm"),
     launch: async (input) => ack("launch", input.role),
     contain: async (input) => ack("contain", input.role),
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     close: async () => {
       closeCalls += 1;
       await new Promise<void>((resolveClose) => { release = resolveClose; });
@@ -262,4 +289,141 @@ test("concurrent platform closes are joined onto a single session close", async 
   release?.();
   await Promise.all([first, second]);
   assert.equal(closeCalls, 1);
+});
+
+/**
+ * The recovery drive is only useful if the layer that actually holds the exact
+ * owner can reach it. The launch collaborator is that layer, so this drives a
+ * durable recovery through the collaborator's own `recovery(owner)` instead of
+ * through a core-level opener test, and proves the drive is the same one-shot
+ * binding the contained runtime consumes.
+ */
+test("the owner-holding collaborator exposes a recovery drive that advances the durable owner record", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const calls: RecordedCall[] = [];
+  const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+    createDesktopGuardianGameRuntimePlatform(recordingSession(calls)),
+  );
+
+  const drive = collaborator.recovery(owner);
+  // The drive is the consumed one-shot Guardian owner binding projected onto its
+  // recovery half: the exact gate correlation plus the durable transition port.
+  assert.deepEqual(Object.keys(drive).sort(), ["recoveryGateBinding", "transitions"]);
+  assert.equal(Object.isFrozen(drive), true);
+  assert.deepEqual({ ...drive.recoveryGateBinding }, {
+    bindingRevision: expectedGuardianBinding().bindingRevision,
+    leaseName: expectedGuardianBinding().leaseName,
+  });
+
+  // Driving the durable transition engine through that drive really advances
+  // owner.json: this is the production authority, not a stub.
+  await drive.transitions.beginRecovery("recovery-platform-1");
+  const persisted = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(
+    {
+      state: persisted.state,
+      guardian: persisted.guardianState,
+      recovery: persisted.recoveryInstanceId,
+      revision: persisted.ownerRecordRevision,
+    },
+    { state: "recovering", guardian: "recovering", recovery: "recovery-platform-1", revision: 2 },
+  );
+
+  // One owner, one binding, one drive: reading it twice is the exact same
+  // authority, and reaching it required no launch at all.
+  assert.equal(collaborator.recovery(owner), drive);
+  assert.deepEqual(calls, []);
+});
+
+/**
+ * The Host half of a recovery conversation is exactly two native bodies. This
+ * checks the relay hands the session those bodies with the documented key sets
+ * and values, and that the gate body is tokenless (the Desktop supervisor
+ * injects the recovery token into that one frame).
+ *
+ * It deliberately does NOT claim native acceptance: the native contract itself
+ * (`GuardianRecoveryIngress.ParsePreCas`/`ParsePostCas`, C#) is not importable
+ * into a Node test program, so the parser round trip remains unverified here.
+ */
+test("the platform recovery relay sends the exact tokenless pre-CAS and post-CAS native bodies", async () => {
+  const frames: Array<Readonly<{ operation: string; frame: Uint8Array }>> = [];
+  const roleContainedCalls: string[] = [];
+  const bindingRevision = "0d3b8f4d-6b7c-4e21-9d5a-2f1c8a4e6b70";
+  const leaseName = "Local\\GameBuddy-Test-Lease-1";
+  const playerJobName = "Local\\GameBuddy-Test-PlayerJob-1";
+  const aiJobName = "Local\\GameBuddy-Test-AiJob-1";
+  const recoveryInstanceId = "53ee44a2-d70b-4a49-a857-1ca4883e5d2e";
+  const platform = createDesktopGuardianGameRuntimePlatform(Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: async (input) => {
+      // The session owns the conversation: it validates its own input, and the
+      // post-CAS body may only be requested once the gate is held.
+      assert.deepEqual(Object.keys(input).sort(), [
+        "attemptId", "beginRecovery", "guardianEpoch", "guardianInstanceId",
+        "operationWaitBudgetMs", "preCasFrame", "recoveryInstanceId", "roleContained",
+      ].sort());
+      frames.push({ operation: "preCas", frame: input.preCasFrame });
+      frames.push({ operation: "postCas", frame: await input.beginRecovery() });
+      await input.roleContained("playerHost");
+      return Object.freeze({ outcome: "contained" as const });
+    },
+    close: async () => {},
+  }));
+
+  const acknowledgement = await platform.recover({
+    guardianInstanceId: "guardian",
+    guardianEpoch: 1,
+    attemptId: "attempt",
+    operationWaitBudgetMs: 1000,
+    recoveryInstanceId,
+    gateFacts: Object.freeze({ bindingRevision, leaseName }),
+    beginRecovery: async () => Object.freeze({
+      bindingRevision,
+      ownerRecordRevision: 4,
+      leaseName,
+      playerJobName,
+      aiJobName,
+      playerHostState: "active",
+      aiClientState: "armed",
+    }),
+    roleContained: async (role) => { roleContainedCalls.push(role); },
+  });
+  assert.deepEqual(acknowledgement, { outcome: "contained" });
+  assert.deepEqual(roleContainedCalls, ["playerHost"]);
+
+  const decode = (frame: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
+  // Exactly the five tokenless keys the broker accepts and the native parser
+  // reads once the supervisor injected the recovery token.
+  assert.deepEqual(decode(frames[0]!.frame), {
+    guardianInstanceId: "guardian",
+    guardianEpoch: 1,
+    attemptId: "attempt",
+    bindingRevision,
+    leaseName,
+  });
+  assert.equal("token" in decode(frames[0]!.frame), false);
+  // Exactly the eleven keys the native post-CAS parser reads.
+  assert.deepEqual(decode(frames[1]!.frame), {
+    guardianInstanceId: "guardian",
+    guardianEpoch: 1,
+    attemptId: "attempt",
+    recoveryInstanceId,
+    bindingRevision,
+    ownerRecordRevision: 4,
+    leaseName,
+    playerJobName,
+    aiJobName,
+    playerHostState: "active",
+    aiClientState: "armed",
+  });
 });

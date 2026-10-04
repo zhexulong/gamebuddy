@@ -28,6 +28,10 @@ function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGa
       log.push(`contain:${input.role}`);
       if (options.failContain) throw new Error("contain failed");
     },
+    // The generic runtime never drives a recovery: the composition-owned
+    // recovery drive reaches the transport directly. The fake still has to
+    // carry the port member, so it reports the only successful outcome.
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     settle: async () => {
       log.push("settle");
       if (options.failSettle) throw new Error("settle failed");
@@ -42,6 +46,7 @@ test("operation wait budgets are independent from launch deadline and are sent o
     arm: async (input) => { calls.push({ operation: "arm", input: { ...input } }); },
     launch: async (input) => { calls.push({ operation: "launch", input: { ...input } }); },
     contain: async (input) => { calls.push({ operation: "contain", input: { ...input } }); },
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     settle: async () => { calls.push({ operation: "settle", input: {} }); },
     close: async () => {},
   });
@@ -168,6 +173,7 @@ test("serialized Promise.all operations never overlap platform calls", async () 
       log.push(`contain:${input.role}`);
       active--;
     },
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     settle: async () => { log.push("settle"); },
     close: async () => {},
   });
@@ -324,6 +330,7 @@ test("a failed runtime close is re-driven on the next call instead of faking suc
     arm: async () => {},
     launch: async () => {},
     contain: async () => {},
+    recover: async () => Object.freeze({ outcome: "contained" as const }),
     settle: async () => {},
     close: async () => {
       log.push("close");

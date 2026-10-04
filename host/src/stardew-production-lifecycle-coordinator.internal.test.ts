@@ -1105,6 +1105,12 @@ test("contained Player Host success constructs the real contained runtime and se
         sessionCalls.push({ operation: "contain", input: { ...input } });
         return containedSessionAck("contain_role", input.role);
       },
+      // These launches never drive a recovery, but the session contract carries
+      // it and an honest literal fake answers it explicitly.
+      async recover() {
+        sessionCalls.push({ operation: "recover", input: {} });
+        return Object.freeze({ outcome: "contained" as const });
+      },
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
     const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
@@ -1179,6 +1185,12 @@ test("explicit endgame settles the contained attempt, releases the registration 
       async contain(input) {
         sessionCalls.push({ operation: "contain", input: { ...input } });
         return containedSessionAck("contain_role", input.role);
+      },
+      // These launches never drive a recovery, but the session contract carries
+      // it and an honest literal fake answers it explicitly.
+      async recover() {
+        sessionCalls.push({ operation: "recover", input: {} });
+        return Object.freeze({ outcome: "contained" as const });
       },
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
@@ -1256,6 +1268,12 @@ test("contained Player Host launch failure after the claim durably quarantines t
         sessionCalls.push({ operation: "contain", input: { ...input } });
         return containedSessionAck("contain_role", input.role);
       },
+      // These launches never drive a recovery, but the session contract carries
+      // it and an honest literal fake answers it explicitly.
+      async recover() {
+        sessionCalls.push({ operation: "recover", input: {} });
+        return Object.freeze({ outcome: "contained" as const });
+      },
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
     const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session));
@@ -1299,6 +1317,12 @@ test("contained Player Host decision failing before the claim restores staged wi
       async contain(input) {
         sessionCalls.push({ operation: "contain", input: { ...input } });
         return containedSessionAck("contain_role", input.role);
+      },
+      // These launches never drive a recovery, but the session contract carries
+      // it and an honest literal fake answers it explicitly.
+      async recover() {
+        sessionCalls.push({ operation: "recover", input: {} });
+        return Object.freeze({ outcome: "contained" as const });
       },
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
@@ -1352,6 +1376,12 @@ test("contained AI and Player roles share one per-owner runtime, close drains AI
       async contain(input) {
         sessionCalls.push({ operation: "contain", input: { ...input } });
         return containedSessionAck("contain_role", input.role);
+      },
+      // These launches never drive a recovery, but the session contract carries
+      // it and an honest literal fake answers it explicitly.
+      async recover() {
+        sessionCalls.push({ operation: "recover", input: {} });
+        return Object.freeze({ outcome: "contained" as const });
       },
       async close() { sessionCalls.push({ operation: "close", input: {} }); },
     });
@@ -3710,49 +3740,96 @@ test("reopenActionAuthority stays paused after teardown, then reopens the fresh 
   }
 });// ─── Slice 3: game.create two-phase flow and failure/terminal discipline ────
 
-test("game.create persists pending intent, registers + completes the world binding, and returns the store-minted gameSessionId", async () => {
+test("game.create fails explicitly without a launched and attested Player Host and writes nothing durable", async () => {
+  // Owner ruling (a)/(b): create is admitted only over the exact Player Host
+  // this lifecycle already launched and attested. Neither a never-activated
+  // lifecycle nor an activated-but-unlaunched one may persist a binding intent
+  // and sit at `accepted` forever.
+  for (const stage of ["never_activated", "activated_not_launched"] as const) {
+    const fake = fakeGameSessionCreationAuthority();
+    const fixture = await createFixture({
+      overrides: {
+        gameSessionCreationAuthority: fake.authority,
+        createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+      },
+    });
+    try {
+      if (stage === "activated_not_launched") {
+        await withWindowsPlatform(async () => { await fixture.coordinator.activationOwner.activate(fixture.broker.issue()); });
+      }
+      assert.throws(
+        () => fixture.coordinator.activationOwner.createGameSession(
+          fixture.broker.issue("game_create"),
+          { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+        ),
+        /stardew_game_create_player_host_unavailable/,
+      );
+      // Fail-closed before any durable write, and no native or attachment work.
+      assert.deepEqual(fake.sessions(), []);
+      assert.deepEqual(fake.inputs(), []);
+      assert.deepEqual(fixture.spawnCalls, []);
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+      assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+        status: "none", generation: 0, connectionStatus: "none",
+      });
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  }
+});
+
+test("game.create over the launched exact owner re-admits the manifest handoff and attaches the first activation", async () => {
   const fake = fakeGameSessionCreationAuthority();
-  const fixture = await createFixture({
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       gameSessionCreationAuthority: fake.authority,
-      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+      // Integration-private seam stand-in: the Stardew implementation drives the
+      // game's own native new-game entry and returns the physical slot basename
+      // it observed. The coordinator never names a slot and persists the opaque
+      // ref verbatim.
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
     },
   });
   try {
-    // Producer: the two-phase create over the store-minted id; no prior
-    // lifecycle activation exists, so no native attach can be built inside
-    // this instance and the durable session reports as accepted.
-    const result = await fixture.coordinator.activationOwner.createGameSession(
+    // Launch-before-create only launched the Player Host: no cabin was admitted
+    // yet, so the AI-client profile is not materialized and the first
+    // activation still needs the manifest handoff re-admission.
+    assert.equal(fixture.spawnCalls.length, 0);
+    const created = fixture.coordinator.activationOwner.createGameSession(
       fixture.broker.issue("game_create"),
       { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
     );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await created;
     assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
-    assert.equal(result.status, "accepted");
+    assert.equal(result.status, "attached");
     assert.match(result.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
-    // Consumer: every durable step re-verifies the identical store-minted id
-    // (register, complete) — no synthesized id is ever used.
     const sessionId = result.gameSessionId!;
+    // Phase 2a-2c persisted the store-minted id and the seam's opaque bindingRef.
+    assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
     assert.deepEqual(fake.readMetadata(sessionId), {
       gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "resumable", revision: 2,
     });
     assert.deepEqual(fake.readBinding(sessionId), {
-      gameSessionId: sessionId, integrationId: "stardew", bindingRef: `world-${sessionId.slice(0, 8)}`, status: "registered", revision: 1,
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "registered", revision: 1,
     });
     assert.deepEqual(fake.listResumable(), [fake.readMetadata(sessionId)]);
-    assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
-    // Verifier: no resumable half-record, no native/attachment work without an
-    // activation, and the fresh session projection is armed at generation 1
-    // with actions paused (ready-actions-paused).
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
-      status: "attached", generation: 1, connectionStatus: "reconnecting",
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
     });
     assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
-    assert.deepEqual(fixture.spawnCalls, []);
-    assert.deepEqual(fixture.playerSpawnCalls, []);
-    assert.deepEqual(fixture.bridgeConnectCalls, []);
-    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
-    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
-    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 0);
+    // The first activation launches the AI client through the reservations the
+    // owner already holds; only an owner whose previous activation ended is
+    // re-armed onto a fresh launch generation.
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls[0]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-1");
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    assert.equal(fixture.bridgeConnectCalls[0]!.launchGeneration, "ai-generation-1");
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 1);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
@@ -3762,7 +3839,10 @@ test("game.create persists pending intent, registers + completes the world bindi
 test("game.create fails closed as unavailable with a failed pending row when world creation is unavailable or fails", async () => {
   for (const seamMode of ["absent", "authority-only", "throwing"] as const) {
     const fake = fakeGameSessionCreationAuthority();
-    const fixture = await createFixture({
+    // Launch-before-create: the create is admitted over a launched and attested
+    // Player Host, so these cases exercise the seam contract itself rather than
+    // the launch precondition.
+    const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
       overrides: seamMode === "absent"
         ? {}
         : seamMode === "authority-only"
@@ -3798,8 +3878,10 @@ test("game.create fails closed as unavailable with a failed pending row when wor
         // The failure path re-verifies the store-minted id for the CAS.
         assert.ok(fake.inputs().includes("fail"));
       }
+      // The failed create launched no role itself: the only Player Host spawn
+      // is the launch that preceded the create.
       assert.deepEqual(fixture.spawnCalls, []);
-      assert.deepEqual(fixture.playerSpawnCalls, []);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
@@ -3837,7 +3919,7 @@ test("game.create rejects a foreign integrationId before any durable write (publ
 
 test("game.create replays the same idempotency key with the same session and rejects a changed tuple", async () => {
   const fake = fakeGameSessionCreationAuthority();
-  const fixture = await createFixture({
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       gameSessionCreationAuthority: fake.authority,
       createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
@@ -3848,8 +3930,12 @@ test("game.create replays the same idempotency key with the same session and rej
     const first = fixture.coordinator.activationOwner.createGameSession(fixture.broker.issue("game_create"), command);
     const replay = fixture.coordinator.activationOwner.createGameSession(fixture.broker.issue("game_create"), command);
     assert.equal(replay, first);
+    // The create is admitted over the launched Player Host and re-admits the
+    // manifest handoff; the external admission publication releases it.
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
     const result = await first;
-    assert.equal(result.status, "accepted");
+    assert.equal(result.status, "attached");
     // Exactly one durable lineage was created for both requests.
     assert.equal(fake.sessions().length, 1);
     assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
@@ -3935,13 +4021,13 @@ test("game.create enforces the single-activation mutual exclusion for live attac
     await resumeFixture.broker.close();
   }
 
-  // In-flight create blocks resume; the resume admission rejects synchronously.
+  // In-flight create blocks resume; the resume admission rejects synchronously
+  // while the create is still pending on its own handoff re-admission.
   const createBlocked = fakeGameSessionCreationAuthority();
-  const createFixtureGate = await createFixture({
+  const createFixtureGate = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       gameSessionCreationAuthority: createBlocked.authority,
       createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
-      connectFarmhandGameRuntimeFacade: async () => { throw new Error("blocked-attach-until-close"); },
     },
   });
   try {
@@ -3956,12 +4042,12 @@ test("game.create enforces the single-activation mutual exclusion for live attac
       ),
       /stardew_game_resume_in_progress/,
     );
-    // The create attempt stays admitted with a durable resumable session
-    // (no lifecycle activation exists, so the first activation stays pending
-    // inside this instance); it never blocks the resume guard again after
-    // settling.
+    const request = await waitForAttachmentRequest(createFixtureGate.runtimeRoot);
+    await publishAttachmentAdmission(createFixtureGate.runtimeRoot, request, availableCabins[0]!);
+    // The create completes its first activation over the launched exact owner
+    // and never blocks the resume guard again after settling.
     const createOutcome = await creating;
-    assert.equal(createOutcome.status, "accepted");
+    assert.equal(createOutcome.status, "attached");
     assert.match(createOutcome.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
     const blockedSessions = createBlocked.sessions();
     assert.equal(blockedSessions.length, 1);
