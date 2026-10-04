@@ -1048,6 +1048,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // controller, and it must observe its terminal on the same game thread
         // that produced the save/day facts.
         this.UpdateActiveDayAdvance();
+        // The bus owns no body and no movement: it drives the native ticket
+        // interaction and then observes the arrival the game's own cutscene
+        // produces, so it is pumped here next to the cross-day advance.
+        this.UpdateBusRide();
         if (this.activeNavigate is not null)
             this.LogNavigationDiagnostic("tick", $"destination={this.activeNavigate.CanonicalDestinationIdentity}");
         // Deferred Navigation approach commit. The body controller marks an
@@ -1423,6 +1427,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
+            || this.activeBusRide is not null)
         {
             switch (this.disposition.Kind)
             {
@@ -1538,7 +1543,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (this.activeToolApproach is not null)
         {
-            // A tool-family approach invalidated before executing anything native:
+            // A tool-family approach invalidated before executing anything native:        // The bus may already have committed its native cutscene, so its terminal is
+        // always Uncertain (see InvalidateBusRide).
+        this.InvalidateBusRide(reasonCode);
+
             // no world mutation happened, so this is an honest Invalidated terminal.
             LocalApproachSpec specification = this.activeToolApproach;
             this.activeToolApproach = null;

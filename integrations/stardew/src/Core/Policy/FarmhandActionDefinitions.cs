@@ -97,7 +97,19 @@ public static class FarmhandActionCatalog
         // fixture (scenario name + real UnlockCondition); publication review is
         // still owed for the final `published` rung.
         E("ride_minecart", "transport_warps", FarmhandActionHandlerGroup.Movement, MinecartRide(), FarmhandActionLifecycle.LiveVerified),
-        E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.Experimental),
+        E("use_raft", "water_travel"        // The bus has no reusable UI-free warp seam: its fare, the driver check,
+        // the control freeze and the cutscene all live inside
+        // BusStop.answerDialogue("Bus_Yes"). This action therefore drives the
+        // native ticket interaction and waits for the arrival the game itself
+        // produces (see farmhandexecutioncontroller.busactions.cs).
+        E("ride_bus", "transport_warps", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
+            Array.Empty<FarmhandActionArgument>(),
+            new Dictionary<string, string>(),
+            EmbodiedActorResource,
+            "write",
+            "bus_arrived",
+            "BusStop.checkAction+answerDialogue"), FarmhandActionLifecycle.Experimental),
+, FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.Experimental),
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
