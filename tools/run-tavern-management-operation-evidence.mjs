@@ -622,6 +622,86 @@ async function exerciseOperations(origin, client) {
       throw new Error("chat_trash_revision_unadvanced");
   });
 
+  // design/28 Import/export row: reviewed ST-card import. A synthetic card
+  // with one reviewed persona field AND one always-on world-book entry drives
+  // the whole pipeline (stage -> read -> review -> confirm). The confirmed
+  // companion must appear in the library list with its safe name - the durable
+  // postcondition that provisioning actually landed (profile + world book).
+  const IMPORT_CARD = {
+    spec: "chara_card_v3",
+    data: {
+      name: "Imported Rae",
+      description: "Quiet, attentive, fond of the valley.",
+      mes_example: "<START>\n{{user}}: Morning!\n{{char}}: A quiet start; I like it.",
+      character_book: {
+        entries: [
+          {
+            keys: [],
+            content: "Imported Rae knows every footpath around the valley.",
+            extensions: {},
+            name: "Footpaths",
+            constant: true,
+            comment: "Always-on world book entry.",
+          },
+        ],
+      },
+    },
+  };
+  let stagedImportId = null;
+  await attempt("character.import.stage", async () => {
+    const staged = await sendJson(origin, client, "POST", "/api/tavern/v1/imports", {
+      apiVersion: 1,
+      card: JSON.stringify(IMPORT_CARD),
+    });
+    if (staged === null || typeof staged !== "object") throw new Error("character_import_stage_unavailable");
+    if (typeof staged.importId !== "string" || !/^import-[A-Za-z0-9_-]{20,}$/.test(staged.importId))
+      throw new Error("character_import_id_invalid");
+    if (staged.name !== "Imported Rae") throw new Error("character_import_name_not_applied");
+    if (!Array.isArray(staged.fields) || staged.fields.length === 0) throw new Error("character_import_fields_missing");
+    if (!Array.isArray(staged.dispositions)) throw new Error("character_import_dispositions_missing");
+    // The always-on world book entry must travel as a candidate (S3 path).
+    if (!staged.fields.some((field) => field?.field === "worldbook_Footpaths"))
+      throw new Error("character_import_worldbook_field_missing");
+    stagedImportId = staged.importId;
+  });
+
+  await attempt("character.import.read", async () => {
+    if (stagedImportId === null) throw new Error("character_import_stage_prerequisite");
+    const read = await readJson(origin, client, `/api/tavern/v1/imports/${stagedImportId}`);
+    if (read === null || typeof read !== "object") throw new Error("character_import_read_unavailable");
+    if (read.importId !== stagedImportId) throw new Error("character_import_read_id_mismatch");
+    if (read.reviewed !== false) throw new Error("character_import_read_review_state_invalid");
+    if (!Array.isArray(read.fields) || read.fields.length === 0) throw new Error("character_import_read_fields_missing");
+  });
+
+  await attempt("character.import.review", async () => {
+    if (stagedImportId === null) throw new Error("character_import_stage_prerequisite");
+    const review = await sendJson(origin, client, "POST", `/api/tavern/v1/imports/${stagedImportId}/review`, {
+      apiVersion: 1,
+      reviewedFields: ["persona_core"],
+      approvedAtMs: Date.now(),
+    });
+    if (review === null || typeof review !== "object") throw new Error("character_import_review_unavailable");
+    if (review.importId !== stagedImportId) throw new Error("character_import_review_id_mismatch");
+    if (!Array.isArray(review.reviewedFields) || review.reviewedFields[0] !== "persona_core")
+      throw new Error("character_import_review_not_applied");
+    if (!Number.isInteger(review.approvedAtMs) || review.approvedAtMs <= 0)
+      throw new Error("character_import_review_timestamp_missing");
+  });
+
+  await attempt("character.import.confirm", async () => {
+    if (stagedImportId === null) throw new Error("character_import_stage_prerequisite");
+    const confirmed = await sendJson(origin, client, "POST", `/api/tavern/v1/imports/${stagedImportId}/confirm`, {
+      apiVersion: 1,
+    });
+    if (confirmed === null || typeof confirmed !== "object") throw new Error("character_import_confirm_unavailable");
+    if (confirmed.name !== "Imported Rae") throw new Error("character_import_confirm_name_not_applied");
+    // Durably visible: the provisioned companion joins the library.
+    const list = await readJson(origin, client, "/api/tavern/v1/companions");
+    if (!Array.isArray(list?.companions) || !list.companions.some((entry) => entry?.name === "Imported Rae"))
+      throw new Error("character_import_confirm_not_listed");
+  });
+
   return results;
 }
 

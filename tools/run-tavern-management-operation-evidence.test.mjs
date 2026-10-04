@@ -60,6 +60,10 @@ const ALL_OPERATIONS = [
   "chat.archive",
   "chat.restore",
   "chat.trash",
+  "character.import.stage",
+  "character.import.read",
+  "character.import.review",
+  "character.import.confirm",
 ];
 
 test("the producer exercises every operation the mounted profile declares", async () => {

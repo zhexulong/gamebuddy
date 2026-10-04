@@ -69,6 +69,10 @@ const ProblemCode = Type.Union([
   Type.Literal("invalid_request"),
   Type.Literal("unsupported_api_version"),
   Type.Literal("profile_operation_unavailable"),
+  Type.Literal("st_card_import_rejected"),
+  Type.Literal("character_import_not_found"),
+  Type.Literal("character_import_review_invalid"),
+  Type.Literal("character_import_confirm_invalid"),
   Type.Literal("selection_conflict"),
   Type.Literal("draft_conflict"),
   Type.Literal("idempotency_conflict"),
@@ -197,6 +201,81 @@ export const MemoryMutationCommandV1Schema = Type.Union([
 ]);
 /** Every successful mutation returns the same safe fresh read model. */
 export const MemoryMutationResultV1Schema = MemoryReadV1Schema;
+
+/**
+ * Reviewed ST-card import pipeline (design/28 Import/export row).
+ *
+ * One Host-minted opaque importId per card submission; four operations:
+ *   stage   POST /imports                — submit a character card JSON (bounded)
+ *   read    GET  /imports/:importId      — safe review data (fields + dispositions)
+ *   review  POST /imports/:importId/review  — record explicit eligible-field review
+ *   confirm POST /imports/:importId/confirm— provision the reviewed companion
+ *
+ * The card body is the ONLY input the player submits. Everything read back is a
+ * derived, player-readable projection: candidate field summaries (field,
+ * eligibility, char count — never body text), inert disposition rows, and the
+ * confirmed companion name. Unsupported card content is shown as not included
+ * and never executed.
+ */
+export const StCardImportFieldSummaryV1Schema = strictObject({
+  field: Type.String({ minLength: 1, maxLength: 64 }),
+  eligibility: Type.Union([
+    Type.Literal("candidate_only"),
+    Type.Literal("profile_eligible_after_explicit_review"),
+    Type.Literal("never_runtime"),
+  ]),
+  chars: Revision,
+});
+export const StCardImportDispositionV1Schema = strictObject({
+  field: Type.String({ minLength: 1, maxLength: 128 }),
+  classification: Type.Union([
+    Type.Literal("accepted_typed"),
+    Type.Literal("preserved_opaque"),
+    Type.Literal("dropped_unsupported"),
+    Type.Literal("rejected_invalid"),
+  ]),
+  reason: Type.String({ minLength: 1, maxLength: 128 }),
+});
+export const StageStCardImportCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  /** Raw CCv2/v3 card JSON text (bounded at the same ceiling as the decoder). */
+  card: Type.String({ minLength: 1, maxLength: 2_097_152 }),
+});
+export const StCardImportStageResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  importId: OpaqueHandle,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  candidateRevision: Revision,
+  fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
+  dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
+});
+export const StCardImportReadResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  importId: OpaqueHandle,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  candidateRevision: Revision,
+  reviewed: Type.Boolean(),
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
+  fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
+  dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
+});
+export const ReviewStCardImportCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
+  approvedAtMs: Revision,
+});
+export const StCardImportReviewResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  importId: OpaqueHandle,
+  reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
+  approvedAtMs: Revision,
+});
+export const ConfirmStCardImportCommandV1Schema = strictObject({ apiVersion: ApiVersion });
+/** The confirmed result is the same safe companion name projection as create. */
+export const StCardImportConfirmResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+});
 
 /**
  * Player-facing connection and model catalog (design/28 §1, §5.1).
@@ -348,6 +427,10 @@ const OperationId = Type.Union([
   Type.Literal("companion.list"),
   Type.Literal("companion.detail"),
   Type.Literal("companion.create"),
+  Type.Literal("character.import.stage"),
+  Type.Literal("character.import.read"),
+  Type.Literal("character.import.review"),
+  Type.Literal("character.import.confirm"),
   Type.Literal("persona.read"),
   Type.Literal("persona.update"),
   Type.Literal("scenario.read"),
@@ -383,6 +466,10 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.detail"),
   Type.Literal("tavern.operation.companion.create"),
+  Type.Literal("tavern.operation.character.import.stage"),
+  Type.Literal("tavern.operation.character.import.read"),
+  Type.Literal("tavern.operation.character.import.review"),
+  Type.Literal("tavern.operation.character.import.confirm"),
   Type.Literal("tavern.operation.persona.read"),
   Type.Literal("tavern.operation.persona.update"),
   Type.Literal("tavern.operation.scenario.read"),
@@ -835,6 +922,7 @@ const BootstrapRequest = strictObject({ apiVersion: ApiVersion, bootstrapToken: 
 const TurnPath = strictObject({ turnHandle: OpaqueHandle });
 const ConnectionPath = strictObject({ connectionId: OpaqueHandle });
 const CompanionPath = strictObject({ companionHandle: OpaqueHandle });
+const ImportPath = strictObject({ importId: OpaqueHandle });
 const ChatPath = strictObject({ chatHandle: OpaqueHandle });
 const EventsQuery = strictObject({ apiVersion: ApiVersion, cursor: Type.Optional(OpaqueHandle) });
 const noQuery = strictObject({});
@@ -1272,6 +1360,65 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
   }),
   route({
+    routeId: "character.import.stage",
+    method: "POST",
+    path: "/api/tavern/v1/imports",
+    operationId: "character.import.stage",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: StageStCardImportCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: StCardImportStageResultV1Schema },
+  }),
+  route({
+    routeId: "character.import.read",
+    method: "GET",
+    path: "/api/tavern/v1/imports/:importId",
+    operationId: "character.import.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: ImportPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: StCardImportReadResultV1Schema },
+  }),
+  route({
+    routeId: "character.import.review",
+    method: "POST",
+    path: "/api/tavern/v1/imports/:importId/review",
+    operationId: "character.import.review",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ImportPath,
+    query: noQuery,
+    request: ReviewStCardImportCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: StCardImportReviewResultV1Schema },
+  }),
+  route({
+    routeId: "character.import.confirm",
+    method: "POST",
+    path: "/api/tavern/v1/imports/:importId/confirm",
+    operationId: "character.import.confirm",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: ImportPath,
+    query: noQuery,
+    request: ConfirmStCardImportCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: StCardImportConfirmResultV1Schema },
+  }),
+  route({
     routeId: "persona.read",
     method: "GET",
     path: "/api/tavern/v1/persona",
@@ -1462,6 +1609,15 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionListV1Schema,
     CompanionDetailV1Schema,
     CreateCompanionCommandV1Schema,
+    StCardImportFieldSummaryV1Schema,
+    StCardImportDispositionV1Schema,
+    StageStCardImportCommandV1Schema,
+    StCardImportStageResultV1Schema,
+    StCardImportReadResultV1Schema,
+    ReviewStCardImportCommandV1Schema,
+    StCardImportReviewResultV1Schema,
+    ConfirmStCardImportCommandV1Schema,
+    StCardImportConfirmResultV1Schema,
     PersonaV1Schema,
     PersonaUpdateCommandV1Schema,
     ScenarioV1Schema,
@@ -1494,6 +1650,15 @@ export type TavernVoiceDevicesV1 = Static<typeof TavernVoiceDevicesV1Schema>;
 export type TavernVoicePreferenceConsentCommandV1 = Static<typeof TavernVoicePreferenceConsentCommandV1Schema>;
 export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV1Schema>;
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
+export type StCardImportFieldSummaryV1 = Static<typeof StCardImportFieldSummaryV1Schema>;
+export type StCardImportDispositionV1 = Static<typeof StCardImportDispositionV1Schema>;
+export type StageStCardImportCommandV1 = Static<typeof StageStCardImportCommandV1Schema>;
+export type StCardImportStageResultV1 = Static<typeof StCardImportStageResultV1Schema>;
+export type StCardImportReadResultV1 = Static<typeof StCardImportReadResultV1Schema>;
+export type ReviewStCardImportCommandV1 = Static<typeof ReviewStCardImportCommandV1Schema>;
+export type StCardImportReviewResultV1 = Static<typeof StCardImportReviewResultV1Schema>;
+export type ConfirmStCardImportCommandV1 = Static<typeof ConfirmStCardImportCommandV1Schema>;
+export type StCardImportConfirmResultV1 = Static<typeof StCardImportConfirmResultV1Schema>;
 export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Schema>;
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;
