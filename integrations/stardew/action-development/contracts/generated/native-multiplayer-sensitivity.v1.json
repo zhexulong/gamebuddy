@@ -4,6 +4,14 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
+      "defect": "unverified_scope",
+      "actions": [
+        "ride_bus"
+      ],
+      "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. These actions are pinned here only until their own shared-world live run lands; that run is the evidence, so reaching `live_verified` retires the pin.",
+      "owner": "stardew-integration"
+    },
+    {
       "defect": "unverified_mechanism_scope",
       "mechanisms": [
         "sleep"
@@ -53,6 +61,7 @@
     "equip_tool",
     "travel",
     "ride_minecart",
+    "ride_bus",
     "use_raft",
     "mount_transport",
     "enter_mine",
@@ -177,6 +186,30 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "ride_bus",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Locations/BusStop.cs",
+          "signature": "public override bool checkAction(Location tileLocation, xTile.Dimensions.Rectangle viewport, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "checkAction's ticket branch is decided by the local player's mail flags, whether the local player rides a horse, and the local passenger list; the shared canDriveYourselfToday write lives in a different BusStop method, so this seam itself reads no multiplayer-scoped state"
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley.Locations/BusStop.cs",
+          "signature": "public override bool answerDialogue(Response answer)",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "answerDialogue deducts Game1.player.Money and arms forceWarpTimer/PathFindController for the local player, but it also clears the shared Game1.netWorldState canDriveYourselfToday flag and reads Desert.warpedToDesert, so the verdict is world-mode dependent, not local-only"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
     },
     {
       "actionId": "use_raft",
