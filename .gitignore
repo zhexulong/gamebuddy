@@ -197,3 +197,7 @@ voice-gateway/scripts/player-turn-*.wav
 /_*.result.json
 /_*.log
 /tools/_*.result.json
+
+# Any stray live-run evidence directory (the capture root must be the repo
+# root; this also catches a mis-resolved root so evidence can never be staged).
+.live-runs/

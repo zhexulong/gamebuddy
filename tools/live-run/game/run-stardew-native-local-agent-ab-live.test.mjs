@@ -1,13 +1,27 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { resolveLiveRunRoot } from "../core/capture.mjs";
 
 const RUNNER_SOURCE = await readFile(
   new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url),
   "utf8",
 );
+
+test("the runner resolves its capture root to the repository root, not tools/", () => {
+  // The runner lives at tools/live-run/game; "../../.." must land on the
+  // directory that owns package.json. One hop short drops live-run evidence
+  // (which contains player memory content) into tools/.live-runs.
+  const fromRunnerDir = fileURLToPath(new URL("../../..", import.meta.url));
+  // A real check, not a tautology: tools/ has no package.json, so one hop short
+  // fails here instead of silently staging evidence under tools/.live-runs.
+  assert.ok(existsSync(join(fromRunnerDir, "package.json")), "capture root must own package.json");
+  assert.equal(resolveLiveRunRoot({ repoRoot: fromRunnerDir }), join(fromRunnerDir, ".live-runs"));
+});
 
 test("the live runner takes the runtime root, principal, and voice enablement from configuration", () => {
   // Runtime root and continuity identity are product configuration, so the run
@@ -79,6 +93,12 @@ test("the runner emits system findings as a first-class health signal", () => {
   // the result JSON surfaces the capture summary so a broken capture is never
   // silent.
   assert.match(RUNNER_SOURCE, /import \{ openLiveRunCapture, resolveLiveRunRoot \} from "\.\.\/core\/capture\.mjs";/);
+  // The capture root must be the REPOSITORY root, not tools/. The runner lives
+  // at tools/live-run/game, so the relative hop count is load-bearing: one hop
+  // short drops evidence into tools/.live-runs, where the evidence (player
+  // memory contents) could be staged by git add.
+  assert.match(RUNNER_SOURCE, /resolveLiveRunRoot\(\{ repoRoot: fileURLToPath\(new URL\("\.\.\/\.\.\/\.\.", import\.meta\.url\)\) \}\)/);
+  assert.doesNotMatch(RUNNER_SOURCE, /resolveLiveRunRoot\(\{ repoRoot: fileURLToPath\(new URL\("\.\.\/\.\.", import\.meta\.url\)\) \}\)/);
   assert.match(RUNNER_SOURCE, /result\.capture = await closeCapture\(capture, runtimeRoot, result\);/);
   assert.match(RUNNER_SOURCE, /partialResult\.capture = await closeCapture\(capture, runtimeRoot, partialResult\);/);
   // Content gate: the same canonical profile the assembly gate hashes is
@@ -94,6 +114,11 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /worldBookPassed/);
   assert.match(RUNNER_SOURCE, /turn\.steerObserved =/);
   assert.match(RUNNER_SOURCE, /steer_may_have_been_silently_dropped/);
+  // A second run on the same product continuity must OPEN the already
+  // provisioned authority (mode known) instead of failing the whole ladder with
+  // production_authority_artifact_present; only that refusal is retried.
+  assert.match(RUNNER_SOURCE, /production_authority_artifact_present/);
+  assert.match(RUNNER_SOURCE, /gameSessionMode: "known"/);
   // Audit NOTE-7: the Windows double-drive capture-root bug must not regress —
   // neither runner may resolve its live-run root from a URL pathname.
   assert.doesNotMatch(
