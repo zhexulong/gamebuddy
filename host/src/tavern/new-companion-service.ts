@@ -275,11 +275,20 @@ function reviewedProfile(
   playerId: string,
 ): IdentityProfile {
   const base = DEFAULT_IDENTITY_PROFILE;
+  // The card's own name is a reviewed field: a player who approves it gets the
+  // companion they imported; declining it keeps the default. It never applies
+  // silently, and it is bounded like every other identity field.
+  const reviewedName = fields.get("name")?.trim();
+  const name =
+    reviewedName === undefined || reviewedName.length === 0
+      ? base.identity.name
+      : reviewedName.slice(0, 128);
   const identity = Object.freeze({
     ...base.identity,
+    name,
     continuity: `Host-owned continuity ${continuityId}; ${base.identity.continuity}`,
   });
-  const macros = Object.freeze({ char: identity.name, user: playerId ?? "Player" });
+  const macros = Object.freeze({ char: name, user: playerId ?? "Player" });
   const render = (value: string): string => renderMacros(value, macros);
   const core = fields.get("persona_core");
   const interactionStyle = fields.get("persona_interaction_style");
