@@ -1,7 +1,13 @@
 # Stardew native-action fixture saves
 
-This directory contains **metadata only**. It must never contain a player save, a
-profile configuration, a bridge token, an attachment manifest, or a session
+This directory contains fixture metadata contracts, binding records, and the
+fixed native save templates under `templates/` that staged-save and navigation
+fixtures copy into a disposable working save. A template comes from the native
+target-version bootstrap (`titleMenu.createdNewCharacter(skipIntro: true)`), not
+from XML editing or cloning a personal/Farmhand save. Templates are local test
+inputs only and are strictly excluded from production release artifacts. This
+directory must never contain a profile configuration, a bridge token, an
+attachment manifest, or a session
 exchange file. The mandatory Farmhand end-to-end procedure is in
  [`RUNBOOK.md`](RUNBOOK.md). The isolated single-player Portfolio environment
  variables and gate-specific local setup were formerly documented in a
@@ -441,6 +447,8 @@ by itself.
 5. Stop game processes, remove the working `GameBuddyFixture_*` directory with
    the harness, and restore any temporarily changed profile configuration.
 
-An operator must create the first native template through the target-version game.
-The repository intentionally contains no save payload and cannot claim a success
-fixture gate until such a template is provisioned and the above sequence passes.
+An operator must create native templates through the target-version game. The
+checked-in `templates/` tree holds those fixed save templates as local test
+inputs only and never enters a production release artifact, so a specific action
+cannot claim a success fixture gate until its own template is provisioned and the
+above sequence passes.

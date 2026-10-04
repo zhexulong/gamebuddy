@@ -413,6 +413,26 @@ test("current production config fixes the bundled Node runtime and bootstrap ent
   });
 });
 
+/**
+ * The fixed save templates under `fixtures/stardew/templates/` are local
+ * native-action test inputs (see fixtures/stardew/README.md) and must never
+ * reach a published generation; a generation stages only what the
+ * production-artifact config declares. The second assertion keeps the check
+ * live by proving it catches a config that does declare the checked-in
+ * navigation template.
+ */
+test("current production config declares no fixture or template path", async () => {
+  const declaredPaths = (value) => typeof value === "string" ? [value]
+    : Array.isArray(value) ? value.flatMap(declaredPaths)
+      : value !== null && typeof value === "object" ? Object.values(value).flatMap(declaredPaths)
+        : [];
+  const forbiddenPaths = (values) => values.filter((value) => /(?:^|\/)(?:fixtures|templates)(?:\/|$)/i.test(value));
+  const config = JSON.parse(await readFile(join(hostRoot, "production-artifact.config.json"), "utf8"));
+  assert.deepEqual(forbiddenPaths(declaredPaths(config)), []);
+  const declaredTemplate = "fixtures/stardew/templates/GameBuddyFixtureNavigation_447088730/GameBuddyFixtureNavigation_447088730";
+  assert.deepEqual(forbiddenPaths(declaredPaths({ resources: [{ source: declaredTemplate, destination: "template.xml" }] })), [declaredTemplate]);
+});
+
 test("production publisher has no ambient runtime fallback when verified acquisition is unavailable", async () => withFixture(async (root) => {
   const outputRoot = join(root, "dist");
   await assert.rejects(
