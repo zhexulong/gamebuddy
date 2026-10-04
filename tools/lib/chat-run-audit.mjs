@@ -1100,7 +1100,7 @@ function detectMicroStepping(context) {
       "turn transitions are being discovered by polling instead of consumed from the event stream, so every poll is a serialized roundtrip the stream already had the facts for",
     recommendation:
       "audit the live-run harness /state polling loop against its SSE consumption: an excess read means the stream is not carrying the transition",
-    seam: "tools/run-chat-live-audit.mjs (harness polling loop) + host/src/tavern/chat-event-stream.ts",
+    seam: "tools/live-run/chat/run-chat-live-audit.mjs (harness polling loop) + host/src/tavern/chat-event-stream.ts",
     blindSpot:
       "the stream is tested with subscribers that always receive events, so a polling fallback in the harness is never measured",
     gate: "hard bound of one /state read per observed transition plus the terminal read; the audit reports any turn above the bound with its count",
@@ -1302,7 +1302,7 @@ function detectRunBoundaryFailed(context) {
       "the harness could not reach the point where it observes a real turn (bootstrap, artifact resolution or stream setup failed), so no product behaviour was exercised at all",
     recommendation:
       "fix the harness boundary that failed (the reason names it) and re-run; do not read this trace as evidence about the Chat pipeline",
-    seam: "tools/run-chat-live-audit.mjs:main (boundary collection) + tools/desktop-composition-launch.mjs (launch seam)",
+    seam: "tools/live-run/chat/run-chat-live-audit.mjs:main (boundary collection) + tools/desktop-composition-launch.mjs (launch seam)",
     blindSpot:
       "the producer wrote an honest status field and no consumer read it, so an unstarted run and a clean run were indistinguishable to the audit",
     gate: "deterministic gate: run.finished.meta.status must be `collected` for a trace to be auditable; any other value is an integrity failure",
@@ -1325,7 +1325,7 @@ function detectRunWithoutTurns(context) {
       "a run with no submitted turn exercised no Chat turn behaviour; silence from the turn detectors is absence of evidence, not evidence of health",
     recommendation:
       "require at least one submitted turn in an auditable run and treat a turn-less trace as incomplete evidence",
-    seam: "tools/run-chat-live-audit.mjs (turn drive sequence)",
+    seam: "tools/live-run/chat/run-chat-live-audit.mjs (turn drive sequence)",
     blindSpot:
       "detectors report findings, so a trace with nothing to examine produces an empty finding list that reads identical to a clean run",
     gate: "deterministic gate: an auditable trace must contain at least one lifecycle.turn.submitted; the audit fails closed otherwise",

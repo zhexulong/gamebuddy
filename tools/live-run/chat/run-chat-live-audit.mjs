@@ -50,7 +50,7 @@
  *    prove the harness, not the product.
  * 3. After each real run, audit the trace with the `auditing-runs` skill and
  *    dispatch a reviewer subagent over it (the same requirement is recorded in
- *    tools/run-stardew-native-local-agent-ab-live.mjs). Findings feed the next
+ *    tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs). Findings feed the next
  *    iteration of THIS file. A fluent reply is never evidence that persistence,
  *    source placement, privacy or surface isolation worked.
  * 4. Never upgrade `blocked`/`inconclusive` to `passed`, and never suppress an
@@ -63,7 +63,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
+import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
 // The audited generation root. Production consumes the canonical `host/dist`
@@ -97,7 +97,7 @@ const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "f
  *
  * This table is a second copy of the kernel's `CHAT_RUN_AUDIT_CODES_BY_KIND`, so
  * the two are pinned equal in both directions by the producer/consumer parity
- * test (`tools/run-chat-live-audit.test.mjs`). The load-time drift check inside
+ * test (`tools/live-run/chat/run-chat-live-audit.test.mjs`). The load-time drift check inside
  * `tools/compare-chat-live-runs.mjs` only covers kernel<->compare, so without
  * that test a change to either table alone would go unnoticed.
  */
@@ -219,9 +219,9 @@ function delay(ms) {
 export function parseArguments(argv) {
   if (argv.length === 0) return Object.freeze({ reportPath: undefined });
   if ((argv.length !== 2 && argv.length !== 4) || argv[0] !== "--report")
-    throw new Error("usage: node tools/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
+    throw new Error("usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
   if (argv[1].length === 0 || (argv.length === 4 && (argv[2] !== "--probe-manifest" || argv[3].length === 0)))
-    throw new Error("usage: node tools/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
+    throw new Error("usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
   return argv.length === 2
     ? Object.freeze({ reportPath: resolve(argv[1]) })
     : Object.freeze({ reportPath: resolve(argv[1]), probeManifestPath: resolve(argv[3]) });

@@ -12,7 +12,7 @@
  *    Stardew/SMAPI/Mod/Agent run closes a rung.
  * 3. After each real run, audit the trace with the `auditing-runs` skill and
  *    dispatch a reviewer subagent over it (see the same requirement recorded in
- *    tools/run-chat-live-audit.mjs). Findings feed the next iteration of THIS
+ *    tools/live-run/chat/run-chat-live-audit.mjs). Findings feed the next iteration of THIS
  *    file. Fix the system, not the symptom: attribute a failure to the
  *    observation/contract/native-state/orchestration component that caused it
  *    (`tools/lib/system-findings.mjs`) rather than prompting the model harder.
@@ -26,41 +26,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
-import { LocalStardewBridgeClient } from "../host/dist-test/local-stardew-bridge.js";
-import { dehydrateCompanionSpeech } from "../host/dist-test/companion-speech-dehydration.js";
-import { LocalVoiceGatewayClient } from "../host/dist-test/voice-gateway-client.js";
+import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
+import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
+import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
 import {
   launchVoiceGatewayChild,
   pickVoiceGatewayPort,
   resolveVoiceConfiguration,
-} from "./lib/voice-gateway-launch.mjs";
-import { assessCompanionInteraction } from "./lib/companion-interaction-gate.mjs";
-import { summarizeSystemFindings } from "./lib/system-findings.mjs";
-import { buildPresenceProjection } from "./lib/stardew-companion-presence-projection.mjs";
-import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../host/dist-test/stardew-game-integration-adapter.js";
-import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../host/dist-test/stardew-integration-launcher.js";
-import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { reserveGameRuntimeMaterialization, withConsumedBindingExecution } from "../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
-import { createHostGameRuntimeMaterializer } from "../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-import { loadHostDeploymentManifest } from "../host/dist-test/deployment-manifest.js";
-import { resolveRuntimePaths } from "../host/dist-test/runtime-identity.js";
-import { bindWindowsStaleLockReclaimer } from "../host/dist-test/path-lock.js";
-import { createBuildWindowsStaleLockReclaimer } from "../host/dist-test/windows-stale-lock-reclaimer/index.js";
+} from "../../lib/voice-gateway-launch.mjs";
+import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
+import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../../../host/dist-test/stardew-game-integration-adapter.js";
+import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../../../host/dist-test/stardew-integration-launcher.js";
+import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { reserveGameRuntimeMaterialization, withConsumedBindingExecution } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
+import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
+import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
+import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../../../host/dist-test/windows-stale-lock-reclaimer/index.js";
 // Ladder 5 (embodied-memory covenant): the covenant FACT is planted through the
 // real management surface under the product continuity, then the Game runtime on
 // the SAME root/continuity must render it into m[0] — the Agent reads the rule
 // from memory, never from a prompt line. When no configured root/continuity is
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
-import { seedMemoriesViaManagementSurface } from "./run-memory-live-loop.mjs";
+import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
 // Content gate over the captured evidence (tools/live-run/core/content-gate.mjs):
 // the assembly gate only proves hash consistency; this proves the assembled
 // profile actually has persona content and no unrendered SillyTavern macros.
 // A configured-root run whose captured profile is a hollow default (no persona)
 // is an explicit context failure, never a silent pass. A read GAP (no profile
 // captured) stays a gap: nothing to assert.
-import { assessIdentityProfile } from "./live-run/core/content-gate.mjs";
-import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
+import { assessIdentityProfile } from "../core/content-gate.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
 // runtime root's OWN evidence (identity-profile.json, worldbook.json, the

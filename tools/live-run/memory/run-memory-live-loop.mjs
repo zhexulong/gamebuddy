@@ -46,10 +46,10 @@ import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
-import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "./run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "./lib/memory-funnel.mjs";
-import { openLiveRunCapture, resolveLiveRunRoot } from "./live-run/core/capture.mjs";
+import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "../chat/run-chat-live-audit.mjs";
+import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
+import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
 // its own directory with the runtime root's evidence and the child stderr, so a
@@ -112,7 +112,7 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>]";
+  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>]";
 }
 
 function parseArguments(argv) {
