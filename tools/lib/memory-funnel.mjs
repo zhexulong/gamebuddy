@@ -423,3 +423,36 @@ export function m0DigestsFromMarkers(markers) {
 		stable,
 	});
 }
+/**
+ * Parse the authored-source marker lines: which KINDS of reviewed context Magic
+ * Context compiled into the m[0] each observed pass presented.
+ *
+ * This is the S3 claim's direct evidence - "the companion's reviewed always-on
+ * world book is in the Tier 2 baseline" - reported without launching the game
+ * and without any source text leaving the vendor. Returns `undefined` when no
+ * marker was present (producer gap), never a fabricated empty set: an absent
+ * observation must not read as a negative one.
+ */
+export function m0SourcesFromMarkers(markers) {
+	let observed = false;
+	const stable = new Set();
+	const volatileKinds = new Set();
+	for (const line of markers) {
+		const match = /^\[probe:m0_sources\]\s+(\S+)\s+stable=(\S+)\s+volatile=(\S+)\s*$/u.exec(
+			String(line).trim(),
+		);
+		if (match === null) continue;
+		observed = true;
+		for (const kind of match[2].split(",")) if (kind !== "-") stable.add(kind);
+		for (const kind of match[3].split(",")) if (kind !== "-") volatileKinds.add(kind);
+	}
+	if (!observed) return undefined;
+	const stableKinds = Object.freeze([...stable].sort());
+	return Object.freeze({
+		observed: true,
+		stableKinds,
+		volatileKinds: Object.freeze([...volatileKinds].sort()),
+		// The one fact S3 is about: reviewed always-on background reached m[0].
+		lorebookConstantPresent: stable.has("lorebook_constant"),
+	});
+}
