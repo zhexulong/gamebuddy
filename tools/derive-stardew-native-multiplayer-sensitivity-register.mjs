@@ -399,7 +399,7 @@ const TABLE = {
   // a server or net-field.
   answer_dialogue: [
     "StardewValley/GameLocation.cs",
-    "public bool answerDialogue(Response response)",
+    "public virtual bool answerDialogue(Response answer)",
     "mp-insensitive",
     "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt",
   ],
@@ -419,27 +419,27 @@ const TABLE = {
   // the classification follows the same rules as their existing families.
   harvest_bush: [
     "StardewValley.TerrainFeatures/Bush.cs",
-    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "public override bool performUseAction(Vector2 tileLocation)",
     "mp-insensitive",
-    "shakes fruit into debris on the shared location and plays a sound; the body reads no multiplayer token",
+    "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token",
   ],
   harvest_fruit_tree: [
     "StardewValley.TerrainFeatures/FruitTree.cs",
-    "public virtual void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "public override bool performUseAction(Vector2 tileLocation)",
     "mp-insensitive",
-    "drops fruit debris on the shared location; the body reads no multiplayer token",
+    "performUseAction routes into shake(), which drops fruit debris on the shared location; the body reads no multiplayer token",
   ],
   shake_tree: [
     "StardewValley.TerrainFeatures/Tree.cs",
-    "public void shake(Vector2 tileLocation, bool doEvenIfStillShaking)",
+    "public override bool performUseAction(Vector2 tileLocation)",
     "mp-observational",
-    "seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode",
+    "performUseAction routes into shake(), whose seed drop is gated on Game1.IsMultiplayer || ForagingLevel >= 1, so the drop behaviour itself depends on the world mode",
   ],
   take_pedestal_item: [
     "StardewValley.Objects/ItemPedestal.cs",
-    "public bool DropObject(Farmer who)",
+    "public override bool checkForAction(Farmer who, bool justCheckingForActivity = false)",
     "mp-insensitive",
-    "moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token",
+    "checkForAction routes into DropObject(), which moves heldObject into the player inventory under itemModifyMutex; the body reads no multiplayer token",
   ],
   toggle_fence_gate: [
     "StardewValley/Fence.cs",
@@ -490,10 +490,10 @@ const TABLE = {
     "rides/dismounts one shared Horse under the horse mutex; the mutex serialises cross-player mounts on the same horse",
   ],
   enter_mine: [
-    "StardewValley/Game1.cs",
-    "public static void enterMine(int whatLevel, int? forceLayout = null)",
+    "StardewValley/GameLocation.cs",
+    "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
     "mp-insensitive",
-    "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
+    "the Mine case of performAction calls Game1.enterMine, which warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
   ],
   toggle_mine_lamp: [
     "StardewValley/GameLocation.cs",

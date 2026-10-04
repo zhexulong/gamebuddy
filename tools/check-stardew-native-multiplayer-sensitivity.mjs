@@ -79,6 +79,18 @@ const NATIVE_CALL_PATTERN =
 const SEAM_DELEGATION_TARGETS = Object.freeze([
   // `Farmer.eatHeldObject()` calls `eatObject(ActiveObject)`; the register cites eatObject.
   ["eatHeldObject", "eatObject"],
+  // Virtual dispatch: every TerrainFeature subclass that can be harvested/shaken
+  // overrides `performUseAction` and its body calls `shake(...)`
+  // (Bush.cs:350, FruitTree.cs performUseAction, Tree.cs:402). The handler reaches
+  // the shake through the base call, so the register's `shake` seam is real.
+  ["performUseAction", "shake"],
+  // `GameLocation.performAction` selector branch: `case "Mine"` (GameLocation.cs:9807)
+  // calls `Game1.enterMine(value)` (GameLocation.cs:9815). The handler invokes the
+  // selector, which is the documented player entry; the register cites enterMine.
+  ["performAction", "enterMine"],
+  // `ItemPedestal.checkForAction` calls `DropObject(who)`; the register cites
+  // DropObject, and the handler invokes the native checkForAction entry.
+  ["checkForAction", "DropObject"],
 ]);
 
 /**
@@ -162,7 +174,7 @@ function deriveReadOnlyActions(definitionsText) {
   return readOnly;
 }
 
-async function deriveNativeSeamCalls(repoRoot) {
+async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) {
   const handlerDir = path.join(repoRoot, "integrations/stardew/Handlers");
   const controllerDir = path.join(repoRoot, "integrations/stardew");
 
@@ -197,7 +209,17 @@ async function deriveNativeSeamCalls(repoRoot) {
   for (const [actionId, method] of actionToMethod) {
     const body = methodBody.get(method);
     if (!body) continue;
-    const called = [...new Set([...body.matchAll(NATIVE_CALL_PATTERN)].map((match) => match[1]))].sort();
+    const calledSet = new Set([...body.matchAll(NATIVE_CALL_PATTERN)].map((match) => match[1]));
+    // The register is the authority for the seam an action claims, so an
+    // invocation of a declared member counts even when the hard-coded
+    // NATIVE_CALL_PATTERN never heard of it (answerDialogue, enterMine,
+    // toggleGate, tryToAddHay, shake, DropObject, ...). Seams the register
+    // does not declare are still gated by the pattern list.
+    for (const name of declaredSeamMembers) {
+      if (!calledSet.has(name) && new RegExp(`\\b(?:[A-Za-z_]\\w*\\.)*${name}\\s*\\(`).test(body))
+        calledSet.add(name);
+    }
+    const called = [...calledSet].sort();
     /** Follow one recorded delegation hop: `eatHeldObject()` → `eatObject(..)` */
     const reached = new Set(called);
     if (NATIVE_DELEGATING_CALL.test(body)) reached.add("eatHeldObject");
@@ -235,6 +257,20 @@ function nativeMemberOf(signature) {
   if (withParens) return withParens[withParens.length - 1].replace(/\s*\($/, "");
   const tokens = signature.trim().split(/\s+/);
   return tokens[tokens.length - 1].replace(/\(.*$/, "");
+}
+
+/** Every native member name the register declares, so seam-call observation uses
+ *  the register as its authority instead of a hand-maintained method list. */
+function declaredSeamMembersOf(register) {
+  const members = new Set();
+  for (const action of register?.actions ?? []) {
+    for (const seam of action.seams ?? []) {
+      if ((seam.kind ?? "native") !== "native") continue;
+      const name = nativeMemberOf(String(seam.signature ?? ""));
+      if (name) members.add(name);
+    }
+  }
+  return members;
 }
 
 async function collectSources(root) {
@@ -321,14 +357,14 @@ const args = parseArgs(process.argv.slice(2));
 const repoRoot = process.cwd();
 
 try {
-  const [registerText, sources, modAdmission, pipelines, nativeSeamCalls] = await Promise.all([
+  const [registerText, sources, modAdmission, pipelines] = await Promise.all([
     readFile(args.register, "utf8"),
     collectSources(args["source-root"]),
     deriveModAdmission(repoRoot),
     derivePipelineRoutedActions(repoRoot),
-    deriveNativeSeamCalls(repoRoot),
   ]);
   const register = JSON.parse(registerText);
+  const nativeSeamCalls = await deriveNativeSeamCalls(repoRoot, declaredSeamMembersOf(register));
   const report = validateMultiplayerSensitivityRegister(register, sources);
 
   // Read-pipeline actions have no execution admission; the navigation action has
