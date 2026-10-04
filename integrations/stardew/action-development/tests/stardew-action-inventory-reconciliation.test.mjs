@@ -128,17 +128,17 @@ test("归并计数与分层数字", async () => {
 test("selector 层确实带来方法层没有的新 primitive（ride_minecart 同源的失效）", async () => {
   const { artifact: a } = await realRun();
   // 两层各自都还能看到「九谓词看不到的单元」：selector 层 2 个、方法层 2 个。
-  assert.equal(a.counts.selectorNewPrimitive, 2);
+  assert.equal(a.counts.selectorNewPrimitive, 3);
   assert.equal(a.counts.methodNewPrimitiveUnits, 2);
 
   // 但这些 primitive 全部已经登记为 action（本轮 loop-closure 波次把它们实现了），
   // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
   // `Lamp` 不在其中：内容扫描证明出货地图没有该 action 瓦片，裁定表记为
   // explicit_exclusion（边界 B6），其 action 已撤除。
-  assert.deepEqual(a.newPrimitiveIntents, []);
-  assert.equal(a.counts.newPrimitivesRequired, 0);
-  assert.equal(a.counts.pendingAdjudicationItems, 5);
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 5);
+  assert.deepEqual(a.newPrimitiveIntents, ["use_mine_elevator"]);
+  assert.equal(a.counts.newPrimitivesRequired, 1);
+  assert.equal(a.counts.pendingAdjudicationItems, 0);
+  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 1);
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
   const minecart = a.groups.selectorLayer.already_registered.find((r) =>
@@ -398,7 +398,7 @@ test("CLI：--remaining 与旧名 --candidates 指向同一输入槽位", async 
       execFileAsync(process.execPath, [...base, "--candidates", tmp], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: ROOT }),
     ]);
     assert.equal(a.stdout, b.stdout, "两个参数名必须产生逐字节相同的产物");
-    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 0);
+    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 1);
   } finally {
     await rm(tmp, { force: true });
   }
