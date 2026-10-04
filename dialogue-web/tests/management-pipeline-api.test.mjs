@@ -20,7 +20,7 @@ function worldInfo(overrides = {}) {
   return {
     state: "selected",
     revision: HANDLE,
-    items: [{ handle: HANDLE, title: "Pelican Town", summary: "A safe summary", selected: true }],
+    items: [{ handle: HANDLE, title: "Pelican Town", summary: "A safe summary", selected: true, pending: false }],
     ...overrides,
   };
 }
