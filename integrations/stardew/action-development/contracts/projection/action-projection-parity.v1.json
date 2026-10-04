@@ -204,33 +204,6 @@
         }
       },
       {
-        "actionId": "toggle_mine_lamp",
-        "identityVersion": 1,
-        "lifecycle": "experimental",
-        "kind": "execution",
-        "argumentSchema": {
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          }
-        },
-        "outputFacts": {},
-        "resourceTemplate": {
-          "claims": [
-            {
-              "key": "embodied_actor",
-              "value": "ScopePlayer"
-            }
-          ]
-        },
-        "effect": "write",
-        "postcondition": {
-          "name": "mine_lamp_toggled"
-        }
-      },
-      {
         "actionId": "enter_exit",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -2052,7 +2025,6 @@
       "use_raft",
       "mount_transport",
       "enter_mine",
-      "toggle_mine_lamp",
       "cut_grass",
       "clear_cask",
       "dress_mannequin",

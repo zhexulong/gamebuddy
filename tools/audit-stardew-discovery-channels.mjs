@@ -89,7 +89,6 @@ const TARGET_FIELD = Object.freeze({
   use_raft: "RaftTargets",
   mount_transport: "HorseTargets",
   enter_mine: "MineEntranceTargets",
-  toggle_mine_lamp: "MineLampTargets",
   // Added by the minecart lane after this table was written; the audit caught the
   // omission rather than letting the action ship with an unverified discovery leg.
   ride_minecart: "MinecartTargets",

@@ -2752,13 +2752,6 @@
             "$ref": "#/$defs/mineEntranceTarget"
           },
           "maxItems": 16
-        },
-        "mineLampTargets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/mineLampTarget"
-          },
-          "maxItems": 16
         }
       }
     },
@@ -2832,33 +2825,6 @@
         },
         "y": {
           "$ref": "#/$defs/tile"
-        }
-      }
-    },
-    "mineLampTarget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "targetId",
-        "x",
-        "y",
-        "lightLevel"
-      ],
-      "properties": {
-        "targetId": {
-          "type": "string",
-          "pattern": "^mine_lamp_[a-f0-9]{16}$"
-        },
-        "x": {
-          "$ref": "#/$defs/tile"
-        },
-        "y": {
-          "$ref": "#/$defs/tile"
-        },
-        "lightLevel": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 0.6
         }
       }
     },
@@ -5879,7 +5845,6 @@
             "use_raft",
             "mount_transport",
             "enter_mine",
-            "toggle_mine_lamp",
             "enter_exit",
             "till_soil",
             "pickup_forage",
@@ -5926,9 +5891,9 @@
             "ship_item",
             "water_pet_bowl",
             "water_slime_hutch_trough",
-             "dismiss_modal",
-             "answer_dialogue",
-             "advance_day",
+            "dismiss_modal",
+            "answer_dialogue",
+            "advance_day",
             "harvest_bush",
             "harvest_fruit_tree",
             "shake_tree",

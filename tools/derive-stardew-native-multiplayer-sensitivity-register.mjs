@@ -495,12 +495,6 @@ const TABLE = {
     "mp-insensitive",
     "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
   ],
-  toggle_mine_lamp: [
-    "StardewValley/GameLocation.cs",
-    "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
-    "mp-observational",
-    "flips the shared location lightLevel through the Lamp action; players on both sides see the light change",
-  ],
 };
 
 const MP_REJECT_PATTERN =

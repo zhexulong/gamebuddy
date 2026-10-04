@@ -53,12 +53,6 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "toggle_mine_lamp" => this.executions.RequestLocalToggleMineLamp(
-                request.RequestId,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
-                request.DeadlineMs),
-
             "ride_minecart" => this.executions.RequestLocalMinecartRide(
                 request.RequestId,
                 (int)(request.Args.X ?? 0),

@@ -306,8 +306,6 @@ public sealed record BridgeMinecartTarget(
 public sealed record BridgeRaftTarget(string TargetId, int X, int Y);
 public sealed record BridgeHorseTarget(string TargetId, int X, int Y, string Name);
 public sealed record BridgeMineEntranceTarget(string TargetId, int X, int Y);
-public sealed record BridgeMineLampTarget(string TargetId, int X, int Y, float LightLevel);
-
 public sealed record BridgePetBowlTarget(string TargetId, int X, int Y);
 
 public sealed record BridgeSlimeHutchTroughTarget(string TargetId, int X, int Y);
@@ -464,8 +462,7 @@ public sealed record BridgeSnapshot(
     string PresentationLocale,
     IReadOnlyList<BridgeRaftTarget>? RaftTargets = null,
     IReadOnlyList<BridgeHorseTarget>? HorseTargets = null,
-    IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null,
-    IReadOnlyList<BridgeMineLampTarget>? MineLampTargets = null
+    IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null
     );
 
 public sealed record BridgeActiveExecution(

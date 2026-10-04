@@ -5,13 +5,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] != "--navigation"))
+if (args.Length is < 1 or > 2 || (args.Length == 2 && args[1] is not ("--navigation" or "--maps")))
 {
-    Console.Error.WriteLine("usage: ContentProbe <game-root> [--navigation]");
+    Console.Error.WriteLine("usage: ContentProbe <game-root> [--navigation|--maps]");
     return 2;
 }
 
-var navigationOnly = args.Length == 2;
+var navigationOnly = args.Length == 2 && args[1] == "--navigation";
+var mapsOnly = args.Length == 2 && args[1] == "--maps";
 var root = Path.GetFullPath(args[0]);
 var assemblyPath = Path.Combine(root, "Stardew Valley.dll");
 var contentRoot = Path.Combine(root, "Content");
@@ -47,6 +48,11 @@ try
     if (navigationOnly)
     {
         Console.WriteLine(JsonSerializer.Serialize(NavigationProjection(root, gameAssembly, dataLoaderType, manager), new JsonSerializerOptions { WriteIndented = false }));
+        return 0;
+    }
+    if (mapsOnly)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(MapActionScan(root, gameAssembly, manager), new JsonSerializerOptions { WriteIndented = false }));
         return 0;
     }
 
@@ -533,6 +539,102 @@ static string Digest(IEnumerable<string> entries)
 {
     string input = string.Join("\n", entries) + "\n";
     return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
+}
+
+
+/// <summary>
+/// Load every map asset under Content/Maps and report the distinct Action /
+/// TouchAction / TileIndex property values found, so map-data-only behaviours
+/// (for example the "Lamp" action) can be located without launching the game.
+/// </summary>
+static object MapActionScan(string root, Assembly gameAssembly, object manager)
+{
+    var mapType = gameAssembly.GetType("xTile.Map", throwOnError: false)
+        ?? Assembly.LoadFrom(Path.Combine(root, "xTile.dll")).GetType("xTile.Map", throwOnError: true)!;
+    var loadMethod = manager.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        .FirstOrDefault(m => m.Name == "Load" && m.IsGenericMethodDefinition && m.GetParameters().Length == 1)
+        ?? throw new InvalidOperationException("content_load_missing");
+    var loadMap = loadMethod.MakeGenericMethod(mapType);
+
+    var mapsRoot = Path.Combine(root, "Content", "Maps");
+    var results = new List<object>();
+    foreach (var file in Directory.EnumerateFiles(mapsRoot, "*.xnb", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+    {
+        var asset = Path.ChangeExtension(file.Substring(Path.Combine(root, "Content").Length + 1), null)!.Replace('\\', '/');
+        object? map;
+        try
+        {
+            map = loadMap.Invoke(manager, new object?[] { asset });
+        }
+        catch (Exception error)
+        {
+            results.Add(new { asset, state = "load_failed", error = (error.InnerException ?? error).GetType().Name });
+            continue;
+        }
+        if (map is null)
+        {
+            results.Add(new { asset, state = "null", error = (string?)null });
+            continue;
+        }
+        var properties = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var layers = (IEnumerable?)mapType.GetProperty("Layers")!.GetValue(map);
+        if (layers is not null)
+        {
+            foreach (var layer in layers)
+            {
+                var layerId = (string?)layer.GetType().GetProperty("Id")?.GetValue(layer) ?? "";
+                var tiles = layer.GetType().GetProperty("Tiles")?.GetValue(layer);
+                var indexer = tiles?.GetType().GetMethod("get_Item", new[] { typeof(int), typeof(int) });
+                if (tiles is null || indexer is null) continue;
+                var width = (int?)layer.GetType().GetProperty("LayerWidth")?.GetValue(layer) ?? 0;
+                var height = (int?)layer.GetType().GetProperty("LayerHeight")?.GetValue(layer) ?? 0;
+                for (var x = 0; x < width; x++)
+                {
+                    for (var y = 0; y < height; y++)
+                    {
+                        var tile = indexer.Invoke(tiles, new object[] { x, y });
+                        if (tile is null) continue;
+                        var tileProperties = tile.GetType().GetProperty("Properties")?.GetValue(tile);
+                        if (tileProperties is not IEnumerable pairs) continue;
+                        foreach (var pair in pairs)
+                        {
+                            var key = (string?)pair.GetType().GetProperty("Key")?.GetValue(pair) ?? "";
+                            var value = pair.GetType().GetProperty("Value")?.GetValue(pair)?.ToString() ?? "";
+                            if (key is not ("Action" or "TouchAction")) continue;
+                            var composite = $"{layerId}:{value}";
+                            if (!properties.ContainsKey(composite)) properties[composite] = $"{x},{y}";
+                        }
+                    }
+                }
+            }
+        }
+        // doesTileHaveProperty also merges a tilesheet tile-index property, so a
+        // map can inherit an action without declaring it on the tile.
+        var sheets = (IEnumerable?)mapType.GetProperty("TileSheets")?.GetValue(map);
+        if (sheets is not null)
+        {
+            foreach (var sheet in sheets)
+            {
+                var indexProperties = sheet.GetType().GetProperty("TileIndexProperties")?.GetValue(sheet);
+                if (indexProperties is not IEnumerable indexPairs) continue;
+                foreach (var indexPair in indexPairs)
+                {
+                    var index = indexPair.GetType().GetProperty("Key")?.GetValue(indexPair)?.ToString() ?? "";
+                    if (indexPair.GetType().GetProperty("Value")?.GetValue(indexPair) is not IEnumerable tilePairs) continue;
+                    foreach (var tilePair in tilePairs)
+                    {
+                        var key = (string?)tilePair.GetType().GetProperty("Key")?.GetValue(tilePair) ?? "";
+                        var value = tilePair.GetType().GetProperty("Value")?.GetValue(tilePair)?.ToString() ?? "";
+                        if (key is not ("Action" or "TouchAction")) continue;
+                        var composite = $"sheet:{index}:{value}";
+                        if (!properties.ContainsKey(composite)) properties[composite] = "tile-index";
+                    }
+                }
+            }
+        }
+        results.Add(new { asset, state = "loaded", properties });
+    }
+    return new { maps_scanned = results.Count, maps = results };
 }
 
 sealed record MemberResolution(bool Found, MemberInfo? Member, Type? DeclaredType, bool SourceOptional, object? Value);

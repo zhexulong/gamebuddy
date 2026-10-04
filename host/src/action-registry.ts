@@ -52,7 +52,6 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter("use_raft", "Launch a raft", "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
   actionAdapter("mount_transport", "Mount a named horse", "Mount one advertised named native horse.", ["horse"]),
   actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance without selecting a level.", ["mine_entrance"]),
-  actionAdapter("toggle_mine_lamp", "Toggle a mine lamp", "Toggle one live Lamp action in the current mine.", ["mine_lamp"]),
   actionAdapter(
     "enter_exit",
     "Enter or exit through a discovered door",
@@ -370,7 +369,6 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   use_raft: "stardew_use_raft",
   mount_transport: "stardew_mount_transport",
   enter_mine: "stardew_enter_mine",
-  toggle_mine_lamp: "stardew_toggle_mine_lamp",
   enter_exit: "stardew_enter_exit",
   till_soil: "stardew_till_soil",
   pickup_forage: "stardew_pickup_forage",

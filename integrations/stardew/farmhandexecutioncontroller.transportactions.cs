@@ -74,24 +74,6 @@ internal sealed partial class ExecutionManager
     private static string BuildMineEntranceTargetId(GameLocation location, int x, int y) =>
         $"mine_entrance_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:Mine"))).ToLowerInvariant()[..16]}";
 
-    private static IReadOnlyList<BridgeMineLampTarget> DiscoverMineLampTargets(Farmer player)
-    {
-        if (player.currentLocation is not MineShaft mine || mine.map is null) return Array.Empty<BridgeMineLampTarget>();
-        int width = mine.map.Layers[0].LayerWidth;
-        int height = mine.map.Layers[0].LayerHeight;
-        List<BridgeMineLampTarget> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= Math.Min(width - 1, player.TilePoint.X + TargetDiscoveryRadius); x++)
-        for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(height - 1, player.TilePoint.Y + TargetDiscoveryRadius); y++)
-        {
-            string? action = mine.doesTileHaveProperty(x, y, "Action", "Buildings");
-            if (action is null || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), "Lamp", StringComparison.Ordinal))
-                continue;
-            result.Add(new BridgeMineLampTarget(BuildMineLampTargetId(mine, x, y), x, y, LightLevel: 0f));
-            if (result.Count == 16) return result;
-        }
-        return result;
-    }
-
     private static string BuildMineLampTargetId(GameLocation location, int x, int y) =>
         $"mine_lamp_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:Lamp"))).ToLowerInvariant()[..16]}";
 
@@ -157,28 +139,6 @@ internal sealed partial class ExecutionManager
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
-    }
-
-    public LocalExecutionReceipt RequestLocalToggleMineLamp(string requestId, int targetX, int targetY, long requestedDeadlineMs)
-    {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
-        this.revision++;
-        string executionId = this.NewExecutionId(requestId);
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
-        if (Game1.player.currentLocation is not MineShaft mine)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_lamp_location_required", null);
-        string? action = mine.doesTileHaveProperty(targetX, targetY, "Action", "Buildings");
-        if (action is null || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), "Lamp", StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_lamp_target_unavailable", $"tile={targetX},{targetY}");
-        if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_lamp_out_of_range", $"tile={targetX},{targetY}");
-        if (!mine.performAction(action, Game1.player, new xTile.Dimensions.Location(targetX, targetY)))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_lamp_action_not_handled", $"tile={targetX},{targetY}");
-        // lightLevel is protected on GameLocation; the native Lamp case flips it
-        // internally, so success is the performAction acknowledgement.
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_lamp_toggled",
-            $"tile={targetX},{targetY};action={action};handled=true");
     }
 
     public LocalExecutionReceipt RequestLocalUseRaft(string requestId, int slot, int targetX, int targetY, long requestedDeadlineMs)
