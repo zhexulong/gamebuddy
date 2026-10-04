@@ -114,9 +114,29 @@
         }
       },
       {
+        "actionId": "ride_bus",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "bus_arrived"
+        }
+      },
+      {
         "actionId": "use_raft",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -146,7 +166,7 @@
       {
         "actionId": "mount_transport",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -176,7 +196,7 @@
       {
         "actionId": "enter_mine",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1407,7 +1427,7 @@
       {
         "actionId": "cut_grass",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1440,7 +1460,7 @@
       {
         "actionId": "clear_cask",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1473,7 +1493,7 @@
       {
         "actionId": "dress_mannequin",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1506,7 +1526,7 @@
       {
         "actionId": "set_sign_display",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1539,7 +1559,7 @@
       {
         "actionId": "deposit_silo_hay",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1572,7 +1592,7 @@
       {
         "actionId": "toggle_tool_light",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -1635,7 +1655,7 @@
       {
         "actionId": "harvest_bush",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1665,7 +1685,7 @@
       {
         "actionId": "harvest_fruit_tree",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1695,7 +1715,7 @@
       {
         "actionId": "shake_tree",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1725,7 +1745,7 @@
       {
         "actionId": "take_pedestal_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1755,7 +1775,7 @@
       {
         "actionId": "toggle_fence_gate",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1973,6 +1993,10 @@
       "equip_tool",
       "travel",
       "ride_minecart",
+      "ride_bus",
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -2009,7 +2033,18 @@
       "chop_stump",
       "plant_sapling",
       "cut_weeds",
+      "cut_grass",
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
       "scythe_crop",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
@@ -2022,20 +2057,6 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "use_raft",
-      "mount_transport",
-      "enter_mine",
-      "cut_grass",
-      "clear_cask",
-      "dress_mannequin",
-      "set_sign_display",
-      "deposit_silo_hay",
-      "toggle_tool_light",
-      "harvest_bush",
-      "harvest_fruit_tree",
-      "shake_tree",
-      "take_pedestal_item",
-      "toggle_fence_gate",
       "dismiss_modal",
       "answer_dialogue"
     ]
@@ -2063,6 +2084,10 @@
       "move_to_tile",
       "travel",
       "ride_minecart",
+      "ride_bus",
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
       "enter_exit",
       "till_soil",
       "pickup_item",
@@ -2098,7 +2123,18 @@
       "chop_stump",
       "plant_sapling",
       "cut_weeds",
+      "cut_grass",
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
       "scythe_crop",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",

@@ -108,7 +108,7 @@ public static class FarmhandActionCatalog
             EmbodiedActorResource,
             "write",
             "bus_arrived",
-            "BusStop.checkAction+answerDialogue"), FarmhandActionLifecycle.Experimental),
+            "BusStop.checkAction+answerDialogue"), FarmhandActionLifecycle.LiveVerified),
 , FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.Experimental),
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),

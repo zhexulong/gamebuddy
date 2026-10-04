@@ -210,6 +210,12 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // the 700ms freezePause window rather than sampling once; publication review
   // is still owed (design/10 3.1.1).
   gate("ride_minecart", 1, "run-stardew-native-local-player-ride-minecart-smoke.mjs", "minecart_ride_completed", "native_ride_minecart_v1"),
+
+  // The bus is a typed transport action over the game's own ticket interaction,
+  // not a fixture-authored warp: the runner proves the native terminal
+  // (bus_arrived), the fare actually deducted, and the world moving the actor to
+  // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
+  gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
 ]);
 
 /**
@@ -307,7 +313,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
-  ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   harvest_bush: "run-stardew-native-local-player-harvest-bush-smoke.mjs",
