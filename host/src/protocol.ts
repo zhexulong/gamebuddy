@@ -545,6 +545,7 @@ export type ExecutionRequest = Readonly<{
     | "equip_tool"
     | "travel"
     | "ride_minecart"
+    | "ride_bus"
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
@@ -2743,6 +2744,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "equip_tool" ||
       value.action === "travel" ||
        value.action === "ride_minecart" ||
+       value.action === "ride_bus" ||
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
        value.action === "enter_mine" ||

@@ -4536,6 +4536,11 @@
       "additionalProperties": false,
       "maxProperties": 0
     },
+    "rideBusArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
     "answerDialogueArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5771,6 +5776,25 @@
             ],
             "properties": {
               "action": {
+                "const": "ride_bus"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/rideBusArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "answer_dialogue"
               }
             }
@@ -5891,7 +5915,7 @@
             "ship_item",
             "water_pet_bowl",
             "water_slime_hutch_trough",
-            "dismiss_modal",
+            "dismiss_modal",             "ride_bus",
             "answer_dialogue",
             "advance_day",
             "harvest_bush",

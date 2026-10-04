@@ -508,6 +508,12 @@ export function buildCandidateToolSchema(
     return Type.Object({}, { additionalProperties: false });
   }
 
+  if (actionId === "ride_bus") {
+    // No client-supplied target: the ticket machine of the current location is
+    // the whole input, so there is nothing to synthesize or spoof.
+    return Type.Object({}, { additionalProperties: false });
+  }
+
   if (actionId === "ride_minecart") {
     // Station tile plus the opaque ride selector: both are copied verbatim from
     // the minecartTargets entries of the most recent observation.
@@ -1514,6 +1520,28 @@ export function createStardewActionTools(
             "Close the informational native dialogue currently on screen (a DialogueBox with no pending question) through the native closeDialogue path. The dialog must have been opened by the world (a villager, a door gate, an event) and must not be a question that requires choosing an answer.",
           parameters: schema,
           action: "dismiss_modal",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "ride_bus",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("ride_bus", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("ride_bus", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.ride_bus,
+          label: "Ride the Bus",
+          description:
+            "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
+          parameters: schema,
+          action: "ride_bus",
           toArgs: () => ({}),
         }),
       );
