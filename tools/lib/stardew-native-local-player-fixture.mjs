@@ -138,13 +138,16 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       configPath: context.configPath,
       modsPath: context.modsPath,
     });
-  } catch {
+  } catch (error) {
+    // Keep the underlying failure. The public entry point still redacts anything
+    // outside PUBLIC_ERROR_CODES, but a whitelisted code (or a diagnostic caller)
+    // can now see WHY preparation failed instead of a blanket code.
     await rollbackFailedPreparation(
       context,
       backup,
       options.backupName,
       backupCreated,
-      new Error("native_local_fixture_preparation_failed"),
+      error instanceof Error ? error : new Error("native_local_fixture_preparation_failed"),
     );
   }
 }
@@ -187,13 +190,13 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
       configPath: context.configPath,
       modsPath: context.modsPath,
     });
-  } catch {
+  } catch (error) {
     await rollbackFailedPreparation(
       context,
       backup,
       options.backupName,
       backupCreated,
-      new Error("native_local_fixture_preparation_failed"),
+      error instanceof Error ? error : new Error("native_local_fixture_preparation_failed"),
     );
   }
 }
@@ -365,6 +368,9 @@ export function fixtureActions(action) {
   // only creates a station tile and the vanilla network unlock flag; production
   // alone discovers the objective, resolves it and performs the native ride.
   if (action === "ride_minecart") return ["move_to_tile", "ride_minecart"];
+  // ride_bus needs no movement: the fixture already stands the actor beside the
+  // ticket machine, so the whole contract is the ride itself.
+  if (action === "ride_bus") return ["ride_bus"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
@@ -598,6 +604,7 @@ export function fixtureScenario(actions, action) {
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   if (action === "ride_minecart") return "native_ride_minecart_v1";
+  if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this

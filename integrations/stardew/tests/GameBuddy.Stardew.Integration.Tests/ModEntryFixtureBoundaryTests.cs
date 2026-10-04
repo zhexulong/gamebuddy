@@ -43,7 +43,28 @@ public sealed class ModEntryFixtureBoundaryTests
         "FindNativeMineEntranceFixtureTarget", "FindNativeRaftFixtureWaterEdge",
         "InstallWiaEatInterruptionFixture",
         "InstallWiaAnswerQuestionFixture",
+        // 2026-10-04：WIA 三槽各自拆成 ModEntry.Fixtures.*.cs partial；守卫已扩展到
+        // ModEntry.Fixtures*.cs，因此这些方法必须登记（IsFixtureWalkableFarmTile /
+        // ChebyshevTileDistance 是槽间共享的夹具谓词，暂时随工具走近位 partial 居住）。
+        "InstallWiaToolApproachInterruptionFixture", "InstallWiaAnimalProductInterruptionFixture",
+        "InstallWiaItemPickupInterruptionFixture", "IsFixtureWalkableFarmTile", "ChebyshevTileDistance",
+        "InstallNativeLocalRideBusFixture", "TryFindBusTicketMachine",
     };
+
+    /// <summary>
+    /// ModEntry 是 partial：夹具方法散在 ModEntry.Fixtures.cs 与按槽拆分的
+    /// ModEntry.Fixtures.*.cs 中。只扫单个文件会让守卫对新增 partial 失明。
+    /// </summary>
+    private static string ReadFixturesPartials()
+    {
+        string directory = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot, "integrations/stardew"));
+        return string.Join(
+            "\n",
+            Directory.GetFiles(directory, "ModEntry.Fixtures*.cs")
+                .OrderBy(file => file, StringComparer.Ordinal)
+                .Select(File.ReadAllText));
+    }
 
     private static IEnumerable<string> DeclaredMethodNames(string source)
     {
@@ -60,7 +81,7 @@ public sealed class ModEntryFixtureBoundaryTests
     public void FixtureMethods_LiveOnlyInTheFixturesPartialFile()
     {
         string production = ReadRepositoryFile("integrations/stardew/ModEntry.cs");
-        string fixtures = ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs");
+        string fixtures = ReadFixturesPartials();
 
         // 1) 生产区禁止出现夹具/自动化/Probe/Scenario 命名的方法（夹具已全部搬出）。
         var productionFixtureNamed = DeclaredMethodNames(production)
@@ -76,7 +97,7 @@ public sealed class ModEntryFixtureBoundaryTests
     [Fact]
     public void FixturesPartial_ContainsNoUnregisteredFixtureMethod()
     {
-        string fixtures = ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs");
+        string fixtures = ReadFixturesPartials();
         var declared = DeclaredMethodNames(fixtures).ToHashSet(StringComparer.Ordinal);
         var unregistered = declared.Where(name => !FixtureMethodWhitelist.Contains(name)).ToArray();
         unregistered.Should().BeEmpty(
@@ -86,7 +107,7 @@ public sealed class ModEntryFixtureBoundaryTests
     [Fact]
     public void FixtureWhitelist_IsFullyPresentInTheFixturesPartial()
     {
-        string fixtures = ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs");
+        string fixtures = ReadFixturesPartials();
         var declared = DeclaredMethodNames(fixtures).ToHashSet(StringComparer.Ordinal);
         var missing = FixtureMethodWhitelist.Where(name => !declared.Contains(name)).ToArray();
         missing.Should().BeEmpty("白名单中每个夹具方法都必须存在于 ModEntry.Fixtures.cs（防误删）");
@@ -106,7 +127,7 @@ public sealed class ModEntryFixtureBoundaryTests
     [Fact]
     public void FixtureDebugCommands_CarryExactlyOneCommandPerCall()
     {
-        string fixtures = ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs");
+        string fixtures = ReadFixturesPartials();
         // 只检查确实会吞掉后续 token 的无参命令：SpreadDirt / RemoveDirt。
         var offenders = new List<string>();
         foreach (Match match in Regex.Matches(fixtures, "parseDebugInput\\(\\s*\"([^\"]*)\""))
