@@ -26,6 +26,12 @@
     <Compile Remove="action-development\**\*.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The window-mode contract mapping is pure game-side glue: it is asserted by
+         the Mod's own test project instead of widening the public surface. -->
+    <InternalsVisibleTo Include="GameBuddy.Stardew.Integration.Tests" />
+  </ItemGroup>
+
 
   <ItemGroup>
     <None Update="manifest.json">

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { resolve } from "node:path";
-import { launchStardewLiveRun } from "./lib/stardew-live-run.mjs";
+import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 
 // One-shot orchestrator for the ladder live run.
 //
@@ -29,6 +29,21 @@ GAME_PATH = GAME_PATH.replaceAll("/", "\\");
 MODS_PATH = MODS_PATH.replaceAll("/", "\\");
 const PIPE_NAME = "gamebuddy-stardew";
 
+// Window mode is configuration, not a constant (the frozen 5-mode vocabulary
+// lives in tools/lib/stardew-live-run.mjs; host/src/live-run/window-mode.ts is
+// the authority). Default `hidden`: a live run must not take the screen or the
+// focus. A human who wants to WATCH passes `foreground`, which the Mod honours
+// by actually activating the window — before that it stayed behind every other
+// window even when asked for `foreground`, so the mode was unobservable.
+// An invalid value is refused here rather than silently coerced.
+let WINDOW_MODE;
+try {
+  WINDOW_MODE = normalizeLiveRunWindowMode(process.env.GAMEBUDDY_LADDER_WINDOW_MODE ?? "hidden");
+} catch (error) {
+  console.error(String(error?.message ?? error));
+  process.exit(2);
+}
+
 const logPath = process.env.GAMEBUDDY_LADDER_LIVE_LOG ?? resolve(process.cwd(), "tools", "_ladder-live-runner.log");
 const runnerLog = createWriteStream(logPath, { flags: "w" });
 
@@ -38,11 +53,11 @@ try {
   game = await launchStardewLiveRun({
     gamePath: GAME_PATH,
     modsPath: MODS_PATH,
-    windowMode: "visible",
+    windowMode: WINDOW_MODE,
     pipeName: PIPE_NAME,
     timeoutMs: 150_000,
   });
-  console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid }));
+  console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid, windowMode: game.windowMode }));
 
   // 2. Now run the ladder runner against the live bridge.
   const runner = spawn(process.execPath, ["tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"], {
