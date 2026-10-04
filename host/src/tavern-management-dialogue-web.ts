@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
@@ -193,10 +193,6 @@ const chatRetentionValidator = Compile(TavernBrowserContractV1.schemas.ChatReten
 const stageStCardImportValidator = Compile(TavernBrowserContractV1.schemas.StageStCardImportCommandV1Schema);
 const reviewStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ReviewStCardImportCommandV1Schema);
 const confirmStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ConfirmStCardImportCommandV1Schema);
-const stCardImportResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportStageResultV1Schema);
-const stCardImportReadResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportReadResultV1Schema);
-const stCardImportReviewResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportReviewResultV1Schema);
-const stCardImportConfirmResultValidator = Compile(TavernBrowserContractV1.schemas.StCardImportConfirmResultV1Schema);
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
@@ -937,7 +933,10 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_ST_CARD_IMPORT_BODY_BYTES);
         if (!stageStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-        const importId = `import-${randomUUID()}`;
+        // The opaque handle the contract projects is a canonical base64url
+        // token (`OpaqueHandle`, shared with every other Host handle); a
+        // prefixed or UUID-shaped id fails the response schema's own check.
+        const importId = randomBytes(24).toString("base64url");
         let staged;
         try {
           staged = await stCardImportService.import(importId, (body as StageStCardImportCommandV1).card);

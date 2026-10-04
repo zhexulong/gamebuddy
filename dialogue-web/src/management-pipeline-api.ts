@@ -67,6 +67,10 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.list"
     | "companion.detail"
     | "companion.create"
+    | "character.import.stage"
+    | "character.import.read"
+    | "character.import.review"
+    | "character.import.confirm"
     | "persona.read"
     | "persona.update"
     | "scenario.read"
@@ -101,6 +105,10 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.companion.list"
     | "tavern.operation.companion.detail"
     | "tavern.operation.companion.create"
+    | "tavern.operation.character.import.stage"
+    | "tavern.operation.character.import.read"
+    | "tavern.operation.character.import.review"
+    | "tavern.operation.character.import.confirm"
     | "tavern.operation.persona.read"
     | "tavern.operation.persona.update"
     | "tavern.operation.scenario.read"
@@ -500,6 +508,11 @@ const OPERATION_IDS = [
   "companion.list",
   "companion.detail",
   "companion.create",
+  // design/28 §2 import/export row: reviewed ST-card import pipeline.
+  "character.import.stage",
+  "character.import.read",
+  "character.import.review",
+  "character.import.confirm",
   "persona.read",
   "persona.update",
   "scenario.read",
@@ -535,6 +548,10 @@ const LABEL_KEYS = [
   "tavern.operation.companion.list",
   "tavern.operation.companion.detail",
   "tavern.operation.companion.create",
+  "tavern.operation.character.import.stage",
+  "tavern.operation.character.import.read",
+  "tavern.operation.character.import.review",
+  "tavern.operation.character.import.confirm",
   "tavern.operation.persona.read",
   "tavern.operation.persona.update",
   "tavern.operation.scenario.read",
@@ -581,6 +598,12 @@ const PROBLEM_CODES = [
   "connection_limit_reached",
   "companion_not_found",
   "companion_conflict",
+  // design/28 §2 import/export row: the staged-card pipeline has its own closed
+  // problem codes (rejected card, unknown import, unreviewed confirm).
+  "st_card_import_rejected",
+  "character_import_not_found",
+  "character_import_review_invalid",
+  "character_import_confirm_invalid",
   "persona_conflict",
   "scenario_conflict",
   "greeting_conflict",

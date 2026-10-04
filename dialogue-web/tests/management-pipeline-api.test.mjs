@@ -238,3 +238,41 @@ test("management Voice device enumeration and output-device selection use exact 
   await assert.rejects(api.updateVoicePreference({ ...command, outputDevice: "speakers" }, HANDLE), TavernProtocolError);
   await assert.rejects(api.updateVoicePreference({ ...command, action: "setOutputDeviceX" }, HANDLE), TavernProtocolError);
 });
+
+test("the hand-written client mirror covers the Host contract's whole operation, label and problem vocabulary", async () => {
+  // The browser client mirrors `tavern_browser_api/v1` by hand and stays
+  // dependency-free, so nothing at compile time forces the two to agree. The
+  // Host-derived vocabulary is compared against the mirror source directly:
+  // comparing it through a runtime snapshot would test this fixture's shape, not
+  // the vocabulary, and the failure this guards (a Host operation with no client
+  // mirror) is a static gap, not a runtime state.
+  const { readFile } = await import("node:fs/promises");
+  const { TavernBrowserContractV1 } = await import("../../host/src/tavern/browser-contract/index.ts");
+  const literalsIn = (union) => {
+    const members = Array.isArray(union?.anyOf) ? union.anyOf : Array.isArray(union?.oneOf) ? union.oneOf : [];
+    return members.map((member) => member?.const).filter((value) => typeof value === "string");
+  };
+  const operationSchema = TavernBrowserContractV1.schemas.TavernBrowserOperationV1Schema;
+  const operationIds = literalsIn(operationSchema.properties.operationId);
+  const labelKeys = literalsIn(operationSchema.properties.labelKey);
+  const problemCodes = literalsIn(TavernBrowserContractV1.schemas.TavernProblemV1Schema.properties.code);
+  assert.ok(operationIds.length >= 30, `the contract declares the mounted surface, saw ${operationIds.length}`);
+  assert.ok(problemCodes.length >= 30, `the contract declares a closed problem vocabulary, saw ${problemCodes.length}`);
+
+  const mirror = await readFile(new URL("../src/management-pipeline-api.ts", import.meta.url), "utf8");
+  const sessionMirror = await readFile(new URL("../src/management-pipeline-session.ts", import.meta.url), "utf8");
+  for (const [kind, vocabulary, source] of [
+    ["operation", operationIds, mirror],
+    ["label", labelKeys, mirror],
+    ["problem code", problemCodes, mirror],
+    ["operation", operationIds, sessionMirror],
+    ["label", labelKeys, sessionMirror],
+  ]) {
+    for (const member of vocabulary) {
+      assert.ok(
+        source.includes(`"${member}"`),
+        `the client mirror is missing the Host-declared ${kind} ${member}`,
+      );
+    }
+  }
+});
