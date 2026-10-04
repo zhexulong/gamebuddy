@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertRideBusPostconditions, runRideBusSmoke } from "./run-stardew-native-local-player-ride-bus-smoke.mjs";
+import { assertRideBusPostconditions, parseStrictEvidence, runRideBusSmoke } from "./run-stardew-native-local-player-ride-bus-smoke.mjs";
 
 const SCENARIO = "native_ride_bus_v1";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "ride_bus"];
@@ -24,6 +24,10 @@ const config = {
 
 const ARRIVED_EVIDENCE =
   "origin=BusStop;destination=Desert;fare=500;money_before=6000;money_after=5500";
+// The wire carries evidence as an object; the Mod's string form arrives as
+// `{ detail: "..." }`. The fake mirrors that so the tests cannot pass on a shape
+// the real bridge never sends (this is exactly how the first live attempt failed).
+const asWireEvidence = (text) => ({ detail: text });
 
 function snapshot(revision, location) {
   return {
@@ -58,7 +62,7 @@ function makeClient({ terminalReason = "bus_arrived", evidence = ARRIVED_EVIDENC
         state: "running",
         reasonCode: "bus_departure_started",
         revision: 6,
-        evidence: "origin=BusStop;destination=Desert;fare=500;money_before=6000",
+        evidence: asWireEvidence("origin=BusStop;destination=Desert;fare=500;money_before=6000"),
       };
       receipts.push(running);
       const terminal = {
@@ -67,7 +71,7 @@ function makeClient({ terminalReason = "bus_arrived", evidence = ARRIVED_EVIDENC
         state: terminalReason === "bus_arrived" ? "succeeded" : "uncertain",
         reasonCode: terminalReason,
         revision: 7,
-        evidence,
+        evidence: asWireEvidence(evidence),
       };
       receipts.push(terminal);
       current = snapshot(7, arrival);
@@ -90,7 +94,7 @@ test("passes when the native ride reaches the desert and the fare was spent", as
   assert.equal(result.moneyAfter, 5500);
   assert.equal(result.runningReason, "bus_departure_started");
   assert.equal(result.location, "Desert");
-  assert.equal(result.trace.length, 1);
+  assert.equal(result.trace.filter((entry) => entry.action === "ride_bus").length, 1);
   assert.equal(result.trace[0].action, "ride_bus");
 });
 
@@ -144,6 +148,24 @@ test("refuses a config that is not this scenario or is not topology-isolated", a
   // the profile config: its absence must NOT be treated as a topology violation.
   const absentPortfolio = await runRideBusSmoke(client, receipts, config);
   assert.equal(absentPortfolio.state, "passed");
+});
+
+test("parses the Mod's string evidence as well as the wire object", () => {
+  // Both shapes must work: the parser is about the contract (key=value pairs),
+  // not about which envelope the evidence arrived in. The FIRST live attempt failed
+  // for exactly this reason — the runner assumed a string while the wire sends an
+  // object — so both shapes are pinned here.
+  const fromWire = parseStrictEvidence({ detail: ARRIVED_EVIDENCE });
+  const fromString = parseStrictEvidence(ARRIVED_EVIDENCE);
+  for (const fields of [fromWire, fromString]) {
+    assert.equal(fields.origin, "BusStop");
+    assert.equal(fields.destination, "Desert");
+    assert.equal(fields.fare, "500");
+    assert.equal(fields.money_after, "5500");
+  }
+  assert.throws(() => parseStrictEvidence(null), /ride_bus_evidence_missing/);
+  assert.throws(() => parseStrictEvidence({ detail: "" }), /ride_bus_evidence_missing/);
+  assert.throws(() => parseStrictEvidence({ detail: "noequals" }), /ride_bus_evidence_malformed/);
 });
 
 test("the pass contract rejects each clause it claims", async () => {

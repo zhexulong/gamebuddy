@@ -66,6 +66,16 @@ export async function runRideBusSmoke(client, receipts, config, { rideTimeoutMs 
       dispatched.state === "uncertain"
         ? dispatched
         : await waitForTerminal(receipts, dispatched, rideTimeoutMs);
+    // Record the raw terminal so a failure names the receipt that actually arrived
+    // (state, reason code and the evidence prefix) instead of only reporting that a
+    // field was missing.
+    trace.push({
+      phase: "terminal",
+      state: terminal.state,
+      reasonCode: terminal.reasonCode,
+      revision: terminal.revision,
+      evidencePrefix: typeof terminal.evidence === "string" ? terminal.evidence.slice(0, 240) : null,
+    });
 
     if (terminal.state !== "succeeded" || terminal.reasonCode !== TERMINAL_REASON)
       throw new Error(`ride_bus_terminal_mismatch:state=${terminal.state};reason=${terminal.reasonCode}`);
@@ -147,10 +157,19 @@ export function validateNativeLocalFixtureConfig(config) {
     throw new Error(`native_local_fixture_scenario_mismatch:${scenario ?? "missing"}`);
 }
 
-function parseStrictEvidence(evidence) {
-  if (typeof evidence !== "string" || evidence.length === 0) throw new Error("ride_bus_evidence_missing");
+export function parseStrictEvidence(evidence) {
+  // The wire carries evidence as an object; the Mod's string form arrives as
+  // `{ detail: "a=1;b=2" }`. Accept either so the parser is about the contract
+  // (key=value pairs in a string) rather than about one envelope shape.
+  const text = typeof evidence === "string" ? evidence : evidence?.detail;
+  if (typeof text !== "string" || text.length === 0) {
+    // Say WHAT arrived instead of only that something was missing: the empty case
+    // is the difference between "the Mod omitted evidence" and "the wrong receipt
+    // won the terminal race", and those have different owners.
+    throw new Error(`ride_bus_evidence_missing:type=${typeof evidence};shape=${JSON.stringify(evidence)?.slice(0, 160) ?? "n/a"}`);
+  }
   const fields = {};
-  for (const part of evidence.split(";")) {
+  for (const part of text.split(";")) {
     const index = part.indexOf("=");
     if (index <= 0) throw new Error(`ride_bus_evidence_malformed:${part}`);
     fields[part.slice(0, index).trim()] = part.slice(index + 1).trim();
