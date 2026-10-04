@@ -1809,8 +1809,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             PresentationLocale: string.Empty,
             RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
             HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
-            MineLampTargets: advertisedCapabilities.Contains("toggle_mine_lamp", StringComparer.Ordinal) ? DiscoverMineLampTargets(player) : null);
+            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null);
     }
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
@@ -1835,7 +1834,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, MineLampTargets: null);
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)

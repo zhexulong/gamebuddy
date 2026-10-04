@@ -322,7 +322,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
   mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
   enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
-  toggle_mine_lamp: "run-stardew-native-local-player-toggle-mine-lamp-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

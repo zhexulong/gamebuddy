@@ -533,7 +533,6 @@ activeExecution?: ActiveExecution | null;
    raftTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
    horseTargets?: readonly Readonly<{ targetId: string; x: number; y: number; name: string }>[];
    mineEntranceTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
-   mineLampTargets?: readonly Readonly<{ targetId: string; x: number; y: number; lightLevel: number }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -549,7 +548,6 @@ export type ExecutionRequest = Readonly<{
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
-    | "toggle_mine_lamp"
     | "enter_exit"
     | "till_soil"
     | "pickup_forage"
@@ -1139,7 +1137,6 @@ const SNAPSHOT_KEYS = [
     "raftTargets",
     "horseTargets",
     "mineEntranceTargets",
-    "mineLampTargets",
     "weather",
 ] as const;
 
@@ -1642,7 +1639,6 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "use_raft" &&
      value.action !== "mount_transport" &&
      value.action !== "enter_mine" &&
-     value.action !== "toggle_mine_lamp" &&
      value.action !== "enter_exit" &&
     value.action !== "till_soil" &&
     value.action !== "pickup_forage" &&
@@ -1747,10 +1743,6 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(mineArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(mineArgs.x) || !isTileCoordinate(mineArgs.y) || !isOpaqueId(mineArgs.expectedTargetId)) return "invalid_mine_entrance";
     if (!snapshot.mineEntranceTargets?.some(target => target.targetId === mineArgs.expectedTargetId && target.x === mineArgs.x && target.y === mineArgs.y)) return "invalid_mine_entrance";
-  } else if (value.action === "toggle_mine_lamp") {
-    const lampArgs = value.args;
-    if (!hasExactKeys(lampArgs, ["x", "y"])) return "invalid_args";
-    if (!isTileCoordinate(lampArgs.x) || !isTileCoordinate(lampArgs.y) || !snapshot.mineLampTargets?.some(target => target.x === lampArgs.x && target.y === lampArgs.y)) return "invalid_mine_lamp";
   } else if (value.action === "ride_minecart") {
     // The station tile plus one exact published ride. Both x/y and the opaque
     // selector are mandatory: unlike `travel`, there is no "plain" form, so a
@@ -2732,7 +2724,6 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.raftTargets) && value.raftTargets.length <= 16 && value.raftTargets.every(isRaftTargetFact))) &&
     (value.horseTargets === undefined || (Array.isArray(value.horseTargets) && value.horseTargets.length <= 16 && value.horseTargets.every(isHorseTargetFact))) &&
     (value.mineEntranceTargets === undefined || (Array.isArray(value.mineEntranceTargets) && value.mineEntranceTargets.length <= 16 && value.mineEntranceTargets.every(isMineEntranceTargetFact))) &&
-    (value.mineLampTargets === undefined || (Array.isArray(value.mineLampTargets) && value.mineLampTargets.length <= 16 && value.mineLampTargets.every(isMineLampTargetFact))) &&
      isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
@@ -2755,7 +2746,6 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
        value.action === "enter_mine" ||
-       value.action === "toggle_mine_lamp" ||
        value.action === "enter_exit" ||
       value.action === "till_soil" ||
       value.action === "pickup_forage" ||
@@ -4130,9 +4120,6 @@ function isHorseTargetFact(value: unknown): boolean {
 }
 function isMineEntranceTargetFact(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) && typeof value.targetId === "string" && /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
-}
-function isMineLampTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "lightLevel"]) && typeof value.targetId === "string" && /^mine_lamp_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.lightLevel === "number" && Number.isFinite(value.lightLevel) && value.lightLevel >= 0 && value.lightLevel <= 0.6;
 }
 
 function isMinecartTargetFact(value: unknown): boolean {

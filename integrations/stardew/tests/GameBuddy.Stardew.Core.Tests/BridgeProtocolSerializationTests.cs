@@ -526,7 +526,7 @@ public sealed class BridgeProtocolSerializationTests
             BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null,
             PedestalTargets: null, FenceGateTargets: null,
             CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null,
-            RaftTargets: null, HorseTargets: null, MineEntranceTargets: null, MineLampTargets: null,
+            RaftTargets: null, HorseTargets: null, MineEntranceTargets: null,
             // A real 6:00am spring day-1 clock, matching the Host test fixtures, so
             // the wire-parity fixture carries a plausible non-zero time rather than
             // the world-not-ready zeroes.

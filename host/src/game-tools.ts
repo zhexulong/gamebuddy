@@ -2059,14 +2059,6 @@ export function createStardewActionTools(
       toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
     }));
     tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES.toggle_mine_lamp,
-      label: "Toggle Mine Lamp",
-      description: "Toggle one live Lamp action in the current mine; x and y must be copied exactly from mineLampTargets in the most recent observe result.",
-      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
-      action: "toggle_mine_lamp",
-      toArgs: params => ({ x: params.x, y: params.y }),
-    }));
-    tools.push(makeGameActionTool({
       name: STARDEW_ACTION_TOOL_NAMES.use_raft,
       label: "Launch Stardew Raft",
       description: "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",

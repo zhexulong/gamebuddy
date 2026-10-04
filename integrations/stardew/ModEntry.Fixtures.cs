@@ -2451,19 +2451,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 return;
             }
 
-            if (fixture.FixtureScenario == "native_toggle_mine_lamp_v1")
-            {
-                // The Lamp action only exists on MineShaft maps. Enter the mine
-                // natively (skipping the one-time first-entry cutscene 100162);
-                // enterMine warps asynchronously, so the Mod's own Lamp discovery
-                // reads the live MineShaft map after the actor lands.
-                player.eventsSeen.Add("100162");  // NetHashSet.Add is idempotent
-                Game1.enterMine(1);
-                this.nativeLocalPlayerFixtureInitialized = true;
-                this.Monitor.Log("GameBuddy native-local-player initialized mine-lamp precondition: entered UndergroundMine1; production alone toggles.", LogLevel.Info);
-                return;
-            }
-
             if (fixture.FixtureScenario == "native_ride_minecart_v1")
             {
                 // Pre-attachment fixture only: a minecart station the bridge can discover.

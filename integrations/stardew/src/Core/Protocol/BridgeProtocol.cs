@@ -1820,7 +1820,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             "ride_minecart" => new[] { "x", "y", "expectedTargetId" },
             "use_raft" => new[] { "slot", "x", "y" },
             "mount_transport" or "enter_mine" => new[] { "x", "y", "expectedTargetId" },
-            "toggle_mine_lamp" => new[] { "x", "y" },
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },

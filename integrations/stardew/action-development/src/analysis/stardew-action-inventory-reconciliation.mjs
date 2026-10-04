@@ -84,7 +84,8 @@ export const CATEGORY_DEFAULTS = Object.freeze({
 
 /**
  * 已声明的边界。B1-B4 是四条 UI/input 边界（selector 层只能引用，不新造分类）；
- * B5 不是 UI 边界，而是「没有可绑定的世界效果」这个单独的排除理由（空壳 / 仅音效）。
+ * B5/B6 不是 UI 边界：B5 是「没有可绑定的世界效果」（空壳 / 仅音效），
+ * B6 是「出货内容里根本没有该 action 的瓦片」，即 selector 无原生入口可绑。
  */
 export const UI_INPUT_BOUNDARIES = Object.freeze({
   B1_menu_owned_transaction:
@@ -94,6 +95,8 @@ export const UI_INPUT_BOUNDARIES = Object.freeze({
   B3_subjective_text_input: "subjective text input (NamingMenu naming, free dialogue text)",
   B4_realtime_minigame: "real-time minigame / reeling contest (MiniGames, festival minigames, fishing reel)",
   B5_no_effect: "no bound effect (empty selector shell, sound-only selector)",
+  B6_unreachable_in_shipped_content:
+    "unreachable in shipped content: the selector's case body exists in code, but no map asset in the shipped game carries a tile with that action, so there is no native entry to bind (evidence: a full Content/Maps scan for the action value)",
 });
 
 // ---------------------------------------------------------------------------
@@ -119,10 +122,10 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // ---- 新 primitive（方法层看不到的 selector 级发现）-----------------------
   Lamp: {
     at: "GameLocation",
-    group: "new_primitive_needed",
-    actionId: "toggle_mine_lamp",
-    reason: "deterministic lightLevel.Value 0 <-> 0.6 toggle; no menu, no dialogue, no RNG; the nine predicates reject it because the branch has no write the predicate sees as a world terminal of the whole method",
-    anchor: "GameLocation.cs:9776",
+    group: "explicit_exclusion",
+    boundary: "B6_unreachable_in_shipped_content",
+    reason: "the case body is a deterministic lightLevel.Value 0 <-> 0.6 toggle, but no map in the shipped 1.6.15 content carries a Lamp action tile, so the selector has no reachable native entry: a scan of every loadable map asset (563 candidates under Content/Maps, incl. tilesheet tile-index properties) reports 148 distinct Action values and no Lamp. The action built on it was withdrawn rather than kept unverifiable",
+    anchor: "GameLocation.cs:9776 (case only; no map usage)",
   },
   Mine: {
     at: "GameLocation",

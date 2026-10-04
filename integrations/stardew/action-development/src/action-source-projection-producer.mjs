@@ -219,22 +219,29 @@ function parseHostToolNames(source) {
 }
 
 function parseHostToolRoutes(source) {
-  const openings = [...source.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\) \{/g)];
-  if (openings.length === 0) fail("tool_routes_empty");
+  // Constant mount (36608fa): Host mounts every Game Action tool unconditionally
+  // and per-action authority is decided at execution time, so the mounted set is
+  // exactly the defined tool set (tool name id == action id). The previous
+  // \`if (isVisible("x")) {\` shape no longer exists in game-tools.ts and made this
+  // parser report tool_routes_empty for the whole Host surface.
   const routes = [];
-  for (let index = 0; index < openings.length; index += 1) {
-    const opening = openings[index];
-    const visible = opening[1];
-    const start = opening.index + opening[0].length;
-    const end = index + 1 < openings.length ? openings[index + 1].index : source.length;
-    const block = source.slice(start, end);
-    const name = block.match(/name: STARDEW_ACTION_TOOL_NAMES\.([a-z0-9_]+),/)?.[1];
-    const action = block.match(/\n\s*action: "([a-z0-9_]+)",/)?.[1];
-    if (!name || !action || name !== visible || action !== visible) {
-      fail(`tool_route_identity_drift:${visible}`);
-    }
-    routes.push(visible);
+  for (const entry of source.matchAll(
+    /name: STARDEW_ACTION_TOOL_NAMES\.([a-z0-9_]+),[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g,
+  )) {
+    const name = entry[1];
+    const action = entry[2];
+    if (name !== action) fail(`tool_route_identity_drift:${name}`);
+    routes.push(action);
   }
+  // Loop-mounted families (for example the facility actions built with
+  // \`for (const action of ["dress_mannequin", ...] as const)\`) mount one tool per
+  // id from the loop header and use \`action: action\` in the body.
+  for (const loop of source.matchAll(
+    /for \(const action of (\[[a-z0-9_"\s,]+\]) as const\) \{[\s\S]*?makeGameActionTool\(\{/g,
+  )) {
+    for (const id of loop[1].matchAll(/"([a-z0-9_]+)"/g)) routes.push(id[1]);
+  }
+  if (routes.length === 0) fail("tool_routes_empty");
   return assertUnique(routes, "tool_route_duplicates");
 }
 

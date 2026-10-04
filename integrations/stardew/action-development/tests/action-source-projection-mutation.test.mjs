@@ -79,10 +79,18 @@ test("Host route drift restricts the executable intersection without widening it
   assert.notEqual(routeIdentityAdrift, gameTools, "tool route action anchor must match");
   expectRejection(() => deriveWith({ host_game_tools: routeIdentityAdrift }), "tool_route_identity_drift:equip_tool");
 
-  const routeStart = gameTools.indexOf('  if (isVisible("equip_tool")) {');
-  const routeEnd = gameTools.indexOf("\n  return tools;", routeStart);
-  assert.ok(routeStart >= 0 && routeEnd > routeStart, "equip_tool route block anchor must match");
-  const routeRemoved = gameTools.slice(0, routeStart) + gameTools.slice(routeEnd + 1);
+  // Constant mount (36608fa): a tool is a makeGameActionTool block, not an
+  // if (isVisible("x")) guard, so the removal mutation drops the block itself.
+  const routeStart = gameTools.indexOf("      name: STARDEW_ACTION_TOOL_NAMES.equip_tool,");
+  const routeBlockStart = gameTools.lastIndexOf("    tools.push(", routeStart);
+  const routeBlockEnd = gameTools.indexOf("\n      }),\n    );\n", routeStart);
+  assert.ok(
+    routeStart >= 0 && routeBlockStart >= 0 && routeBlockEnd > routeStart,
+    "equip_tool route block anchor must match",
+  );
+  const removedLength = "\n      }),\n    );\n".length;
+  const routeRemoved =
+    gameTools.slice(0, routeBlockStart) + gameTools.slice(routeBlockEnd + removedLength);
   const routeProjection = deriveWith({ host_game_tools: routeRemoved });
   assert.ok(!routeProjection.mod.executableActionIds.includes("equip_tool"));
 });

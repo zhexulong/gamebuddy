@@ -31,6 +31,12 @@ import { promisify } from "node:util";
  * （`Object.performToolAction`）的 weeds 写入被识别为候选终态，从「九谓词全拒」
  * 集合退出；原 12 个 audited / 6 个 suspect 因此修正为 11 / 5。
  *
+ * 2026-10-04 注：`harvest_fruit_tree` 与 `shake_tree` 的 register seam 从
+ * `FruitTree/Tree.performUseAction`（纯路由、方法体无写入）改为它们真正执行的
+ * `shake`（`Tree.shake` 读 `Game1.IsMultiplayer`）。`shake` 方法体写 `wasShakenToday`，
+ * 但落果终态在私有委托（`TryGetDrop` / `Game1.createItemDebris`）里，故与 `harvest_crop`
+ * / `cut_grass` 同型归入 seam_writes_but_no_terminal：14 audited / 8 suspect。
+ *
  * 第 6 条 `place_wood_fence` 已修复：原先引用纯判断的 `Object.canBePlacedHere`
  * （0 写入 → gate 误判 mp-insensitive 并放行），现改为引用真实变异点
  * `Object.placementAction` 并判 `mp-observational`。见下方专门的回归测试。
@@ -79,15 +85,15 @@ async function audit() {
   return cached;
 }
 
-test("审计 11 个「已注册但九谓词全拒」的 seam", async () => {
+test("审计 14 个「已注册但九谓词全拒」的 seam", async () => {
   const a = await audit();
   assert.equal(a.artifactKind, "stardew_action_seam_terminal_audit");
-  assert.equal(a.counts.audited, 12);
+  assert.equal(a.counts.audited, 14);
   assert.equal(
     a.counts.byKind.terminal_in_delegate +
       a.counts.byKind.seam_not_terminal +
       a.counts.byKind.seam_writes_but_no_terminal,
-    12,
+    14,
   );
 });
 
@@ -107,9 +113,9 @@ test("6 个工具类 DoFunction 的 seam 引用正确（终态在委托目标）
   for (const x of deleg) assert.ok(x.evidence.delegates.length > 0, `${x.actionId} 必须有委托目标`);
 });
 
-test("6 个 seam 引用指向非终态位置（可疑）", async () => {
+test("8 个 seam 引用指向非终态位置（可疑）", async () => {
   const a = await audit();
-  assert.equal(a.counts.suspectSeamReferences, 6);
+  assert.equal(a.counts.suspectSeamReferences, 8);
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
   /**
    * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
@@ -120,7 +126,7 @@ test("6 个 seam 引用指向非终态位置（可疑）", async () => {
    * `advance_day` 是 register 新增的第十二个 seam（GameLocation.startSleep），
    * 与 switch_section 作用域修正无关，见文件头注记。
    */
-  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "scythe_crop", "ship_item"]);
+  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "harvest_fruit_tree", "scythe_crop", "shake_tree", "ship_item"]);
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {
