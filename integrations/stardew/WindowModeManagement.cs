@@ -62,6 +62,58 @@ public sealed partial class ModEntry
         return NormalizeMode(mode) == "foreground";
     }
 
+    /// <summary>How a `foreground` request actually resolved on the OS.</summary>
+    internal enum WindowRaiseOutcome
+    {
+        /// <summary>SetForegroundWindow was accepted; the window is active.</summary>
+        Activated,
+
+        /// <summary>Focus theft was refused; the window was raised to the top of the z-order instead.</summary>
+        Raised,
+
+        /// <summary>Neither worked; the window keeps its current stacking.</summary>
+        Unchanged
+    }
+
+    /// <summary>The reported outcome of a foreground request (testable without a window).</summary>
+    internal static string DescribeRaiseOutcome(WindowRaiseOutcome outcome)
+    {
+        return outcome switch
+        {
+            WindowRaiseOutcome.Activated => "SetForegroundWindow=accepted",
+            WindowRaiseOutcome.Raised => "SetForegroundWindow=refused; raised to the top of the z-order",
+            _ => "SetForegroundWindow=refused; window not raised"
+        };
+    }
+
+    /// <summary>
+    /// Bring the window in front of the user.
+    ///
+    /// Measured on Windows (2026-10-05, foreground live run): a background process
+    /// calling <c>SetForegroundWindow</c> is REFUSED - the OS does not let a process
+    /// steal the foreground on demand - and <c>BringWindowToTop</c> only reorders the
+    /// calling thread's own window stack, so the game stayed behind the active window
+    /// while an independent probe kept reporting the other app as foreground.
+    ///
+    /// <c>SetWindowPos(HWND_TOPMOST)</c> needs no foreground right, so it is the
+    /// mechanism that actually makes a run watchable; the topmost flag is dropped
+    /// immediately so the window then behaves like any other.
+    /// </summary>
+    private static WindowRaiseOutcome RaiseWindow(IntPtr hWnd)
+    {
+        if (Win32WindowInterop.SetForegroundWindow(hWnd))
+        {
+            return WindowRaiseOutcome.Activated;
+        }
+
+        const uint flags = Win32WindowInterop.SWP_NOMOVE | Win32WindowInterop.SWP_NOSIZE | Win32WindowInterop.SWP_NOACTIVATE;
+        bool raised = Win32WindowInterop.SetWindowPos(hWnd, Win32WindowInterop.HWND_TOPMOST, 0, 0, 0, 0, flags);
+        // Drop the topmost flag either way: a permanently topmost game window would
+        // sit over everything the user does.
+        Win32WindowInterop.SetWindowPos(hWnd, Win32WindowInterop.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        return raised ? WindowRaiseOutcome.Raised : WindowRaiseOutcome.Unchanged;
+    }
+
     private void ApplyWindowModeInitial()
     {
         string mode = this.GetEffectiveWindowMode();
@@ -178,16 +230,7 @@ public sealed partial class ModEntry
             Win32WindowInterop.ShowWindowAsync(hWnd, nCmdShow);
             if (RequiresActivation(mode))
             {
-                // Evidence, not theatre: SetForegroundWindow is refused when the
-                // caller may not steal focus, so record which path actually ran
-                // instead of assuming the mode was honoured. Only the transition
-                // is logged, not every tick.
-                bool activated = Win32WindowInterop.SetForegroundWindow(hWnd);
-                if (!activated)
-                {
-                    Win32WindowInterop.BringWindowToTop(hWnd);
-                }
-                this.ReportActivation(mode, activated);
+                this.ReportActivation(mode, RaiseWindow(hWnd));
             }
         }
         catch (Exception ex)
@@ -198,19 +241,17 @@ public sealed partial class ModEntry
 
     private string? windowActivationReport;
 
-    private void ReportActivation(string mode, bool activated)
+    private void ReportActivation(string mode, WindowRaiseOutcome outcome)
     {
         // Record the transition, not every tick: at startup the window handle may
-        // not exist yet, so the first attempts can legitimately fail and a later
-        // tick succeed. Keying on the RESULT means the successful activation is
-        // still reported rather than hidden behind an earlier failure.
-        string report = $"{mode}:{(activated ? "accepted" : "refused")}";
+        // not exist yet, so early attempts can legitimately fail and a later tick
+        // succeed. Keying on the RESULT means a later success is still reported
+        // rather than hidden behind an earlier attempt.
+        string report = $"{mode}:{outcome}";
         if (this.windowActivationReport == report)
             return;
         this.windowActivationReport = report;
-        this.Monitor.Log(
-            $"GameBuddy window mode {mode}: SetForegroundWindow={(activated ? "accepted" : "refused, used BringWindowToTop")}.",
-            LogLevel.Info);
+        this.Monitor.Log($"GameBuddy window mode {mode}: {DescribeRaiseOutcome(outcome)}.", LogLevel.Info);
     }
 
     private static class Win32WindowInterop
@@ -234,9 +275,22 @@ public sealed partial class ModEntry
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        [DllImport("user32.dll")]
+        public static readonly IntPtr HWND_TOPMOST = new(-1);
+        public static readonly IntPtr HWND_NOTOPMOST = new(-2);
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
+        public const uint SWP_NOACTIVATE = 0x0010;
+
+        [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool BringWindowToTop(IntPtr hWnd);
+        public static extern bool SetWindowPos(
+            IntPtr hWnd,
+            IntPtr hWndInsertAfter,
+            int x,
+            int y,
+            int cx,
+            int cy,
+            uint flags);
 
         public const int ProcessPowerThrottling = 4;
         public const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
