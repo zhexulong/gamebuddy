@@ -67,7 +67,7 @@ import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 // Magic Context database + log, session logs). This is what makes a content
 // defect (e.g. an empty default persona) visible to a reviewer — the harness
 // is an external tool and is not bound by the Host's write-ownership rule.
-const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../..", import.meta.url)) });
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
@@ -449,6 +449,22 @@ if (LADDER === "5" && !usesDisposableRoot) {
     root,
     deploymentManifestPath: manifestPath,
     seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
+  }).catch(async (error) => {
+    // A continuity that already holds a provisioned authority — i.e. ANY second
+    // run on a real product continuity — cannot be mounted "fresh"; the product
+    // refuses with production_authority_artifact_present. That is correct
+    // behaviour, so open the existing authority instead of provisioning a new
+    // one. Only that specific refusal is retried: every other failure still
+    // surfaces, so a broken seed can never pass as seeded.
+    const message = String(error?.message ?? error);
+    if (!message.includes("production_authority_artifact_present")) throw error;
+    process.stderr.write("[ladder] covenant seed: authority already provisioned, opening as known\n");
+    return seedMemoriesViaManagementSurface({
+      root,
+      deploymentManifestPath: manifestPath,
+      seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
+      gameSessionMode: "known",
+    });
   });
   covenantSeed = Object.freeze({ durable: seeded.result.durable, rowCount: seeded.result.rowCount, markerCount: seeded.markers.length });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));

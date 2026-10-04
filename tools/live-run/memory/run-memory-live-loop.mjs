@@ -54,7 +54,7 @@ import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
 // its own directory with the runtime root's evidence and the child stderr, so a
 // reviewer can see what actually reached the model instead of only digest facts.
-const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../..", import.meta.url)) });
+const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 /**
  * The Class B marker Magic Context emits with the ids it assembled into m[0]
@@ -94,7 +94,7 @@ function assertMarkerContract() {
 }
 assertMarkerContract();
 
-const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
+const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
 const OUTPUT_ROOT = process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT
   ? resolve(process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT)
   : join(HOST_ROOT, "dist");
@@ -283,7 +283,7 @@ async function readMemory(origin, client) {
  * the approved one (readOrCreateIdentityProfile).
  */
 async function installCharacterCard(root, identity, cardPath) {
-  const cardDir = new URL("../host/dist-test/", import.meta.url);
+  const cardDir = new URL("../../../host/dist-test/", import.meta.url);
   const { candidateToIdentityProfile, previewStCard } = await import(new URL("st-card-import.js", cardDir));
   const { identityProfileMetadata, validateIdentityProfile } = await import(new URL("identity-profile.js", cardDir));
   const { resolveRuntimePaths } = await import(new URL("runtime.js", cardDir));
@@ -505,7 +505,7 @@ const noopRecorder = Object.freeze({ record() {} });
  * on the SAME root/continuity renders it into m[0] — the cross-surface
  * embodiment path that a chat-only memory loop cannot close by itself.
  */
-export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs }) {
+export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs, gameSessionMode = "fresh" }) {
   const markers = [];
   const launch = await launchDesktopCompositionGateChild({
     outputRoot: outputRoot ?? OUTPUT_ROOT,
@@ -514,7 +514,7 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
     nonceSha256: createHash("sha256").update(randomBytes(32)).digest("hex"),
     manifestPath: deploymentManifestPath,
     readyTimeoutMs: readyTimeoutMs ?? START_TIMEOUT_MS,
-    gameSessionMode: "fresh",
+    gameSessionMode,
     spawnImpl: (command, args, options) => {
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
