@@ -113,6 +113,7 @@
     "collect_crab_pot_output",
     "ship_item",
     "dismiss_modal",
+    "answer_dialogue",
     "advance_day"
   ],
   "actions": [
@@ -1177,7 +1178,24 @@
           "file": "StardewValley.Menus/DialogueBox.cs",
           "signature": "public void closeDialogue()",
           "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "closeDialogue calls Game1.exitActiveMenu (menu = null) and Game1.dialogueUp = false; both are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net-field for the receipt"
+          "modeNeutralReason": "closeDialogue calls Game1.exitActiveMenu (menu = null) and Game1.dialogueUp = false; both are client-side UI state with no multiplayer read or write on the path"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "answer_dialogue",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public bool answerDialogue(Response response)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt"
         }
       ],
       "admission": {

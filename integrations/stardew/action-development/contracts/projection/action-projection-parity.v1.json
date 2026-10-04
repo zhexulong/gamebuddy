@@ -114,6 +114,123 @@
         }
       },
       {
+        "actionId": "use_raft",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "slot": {
+            "type": "integer"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "raft_launched"
+        }
+      },
+      {
+        "actionId": "mount_transport",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "horse_mounted"
+        }
+      },
+      {
+        "actionId": "enter_mine",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "mine_entered"
+        }
+      },
+      {
+        "actionId": "toggle_mine_lamp",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "mine_lamp_toggled"
+        }
+      },
+      {
         "actionId": "enter_exit",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1348,6 +1465,168 @@
         }
       },
       {
+        "actionId": "clear_cask",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "cask_cleared"
+        }
+      },
+      {
+        "actionId": "dress_mannequin",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "mannequin_dressed"
+        }
+      },
+      {
+        "actionId": "set_sign_display",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "sign_display_set"
+        }
+      },
+      {
+        "actionId": "deposit_silo_hay",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "silo_hay_deposited"
+        }
+      },
+      {
+        "actionId": "toggle_tool_light",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "slot": {
+            "type": "integer"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "tool_light_toggled"
+        }
+      },
+      {
         "actionId": "scythe_crop",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -1360,6 +1639,156 @@
             "type": "integer"
           },
           "slot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
+        "actionId": "harvest_bush",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
+        "actionId": "harvest_fruit_tree",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
+        "actionId": "shake_tree",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
+        "actionId": "take_pedestal_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
+        "actionId": "toggle_fence_gate",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
             "type": "integer"
           },
           "expectedTargetId": {
@@ -1515,6 +1944,30 @@
         }
       },
       {
+        "actionId": "answer_dialogue",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "responseKey": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "answer_dialogue_answered"
+        }
+      },
+      {
         "actionId": "advance_day",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -1596,8 +2049,23 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
+      "toggle_mine_lamp",
       "cut_grass",
-      "dismiss_modal"
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
+      "dismiss_modal",
+      "answer_dialogue"
     ]
   },
   "protocol": {

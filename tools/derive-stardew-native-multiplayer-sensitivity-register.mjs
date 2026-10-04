@@ -397,6 +397,12 @@ const TABLE = {
   // (Game1.exitActiveMenu + dialogueUp=false); the modal's presence and
   // dismissal are pure client-side world state, and the receipt never touches
   // a server or net-field.
+  answer_dialogue: [
+    "StardewValley/GameLocation.cs",
+    "public bool answerDialogue(Response response)",
+    "mp-insensitive",
+    "answerDialogue dispatches to afterQuestion/answerDialogueAction on the local location and starts the DialogueBox outro (beginOutro); the question modal and its responses are client-side UI state with no multiplayer read or write on the path, and the Mod never touches a net field for the receipt",
+  ],
   dismiss_modal: [
     "StardewValley.Menus/DialogueBox.cs",
     "public void closeDialogue()",
