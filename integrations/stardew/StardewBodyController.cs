@@ -10,6 +10,8 @@ namespace GameBuddy.Stardew;
 /// this process' Game1.player. It deliberately has no remote-player, teleport,
 /// or world-goal API. ExecutionManager is its sole owner.
 /// </summary>
+internal readonly record struct ReachabilityVerdict(bool TargetEnclosed);
+
 internal sealed class StardewBodyController
 {
     private readonly Action<ExecutionState, string, string?> transition;
@@ -42,6 +44,17 @@ internal sealed class StardewBodyController
     /// (freezePause, tool animation) keeps the execution running while inside it
     /// and only falls through to the regular rulings once it expires.</summary>
     private const int TransientWindowMs = 2000;
+
+    /// <summary>
+    /// Upper bound for the derived reachability probe. A target is reported as
+    /// enclosed only after the actor's whole component has been enumerated, and an
+    /// open map's component is as large as the map itself (the target version's
+    /// Farm is roughly 80x65 tiles), so the budget must cover a full location or
+    /// the claim would be undecidable in exactly the case it exists for. 8000 stays
+    /// below the native finder's own 10000-node limit, and only the already-failing
+    /// no_native_path path pays for it.
+    /// </summary>
+    private const int ReachabilityProbeLimit = 8000;
 
     /// <summary>WIA §4.4 wall-clock anchor (Unix ms) of the transient window. 0 =
     /// not armed; every non-transient frame resets it, so a fresh lock starts a
@@ -93,6 +106,14 @@ internal sealed class StardewBodyController
             // severed from this component). The evidence names both ends.
             reasonCode = "no_native_path";
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
+            if (plannedPath.pathToEndPoint is null)
+            {
+                ReachabilityVerdict? verdict = AssessNativeReachability(localPlayer, specification);
+                if (verdict is ReachabilityVerdict assessed)
+                {
+                    evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood";
+                }
+            }
             return false;
         }
 
@@ -364,6 +385,100 @@ internal sealed class StardewBodyController
     {
         int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
         return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DetectStalledBy(localPlayer)}";
+    }
+
+    private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification)
+    {
+        GameLocation? location = localPlayer.currentLocation;
+        if (location is null)
+            return null;
+
+        try
+        {
+            var layer = location.map.Layers[0];
+            Point actorTile = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+            Point targetTile = new((int)specification.TargetTile.X, (int)specification.TargetTile.Y);
+
+            return AssessReachability(
+                actorTile,
+                targetTile,
+                tile => tile.X >= 0
+                    && tile.Y >= 0
+                    && tile.X < layer.LayerWidth
+                    && tile.Y < layer.LayerHeight
+                    && !location.isCollidingPosition(
+                        new Microsoft.Xna.Framework.Rectangle(tile.X * 64 + 1, tile.Y * 64 + 1, 62, 62),
+                        Game1.viewport,
+                        localPlayer is Farmer,
+                        0,
+                        glider: false,
+                        localPlayer,
+                        pathfinding: true,
+                        skipCollisionEffects: true),
+                ReachabilityProbeLimit);
+        }
+        catch
+        {
+            // A missing/invalid live map cannot support a derived claim. The
+            // native failure and its existing evidence remain authoritative.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Computes the actor's bounded component using the supplied native-planning
+    /// walkability predicate. A null result means the component exceeded the hard
+    /// probe budget before it could be exhausted, so no enclosure claim is made.
+    /// </summary>
+    internal static ReachabilityVerdict? AssessReachability(
+        Point actorTile,
+        Point targetTile,
+        Func<Point, bool> canTraverse,
+        int maxVisited)
+    {
+        if (maxVisited <= 0)
+            return null;
+        if (actorTile == targetTile)
+            return new ReachabilityVerdict(false);
+        if (canTraverse(targetTile))
+            return new ReachabilityVerdict(false);
+
+        // PathFindController expands all eight surrounding tiles in the target
+        // version (the same Chebyshev neighbourhood used by its measured adjacent
+        // goal). Keep the probe's component semantics aligned with that planner.
+        Point[] neighbours =
+        {
+            new(-1, -1), new(0, -1), new(1, -1),
+            new(-1, 0),                  new(1, 0),
+            new(-1, 1),  new(0, 1),  new(1, 1),
+        }; 
+        bool IsTargetNeighbour(Point tile) =>
+            Math.Abs(tile.X - targetTile.X) <= 1
+            && Math.Abs(tile.Y - targetTile.Y) <= 1
+            && tile != targetTile;
+        var visited = new HashSet<Point> { actorTile };
+        var pending = new Queue<Point>();
+        pending.Enqueue(actorTile);
+
+        while (pending.Count > 0)
+        {
+            Point current = pending.Dequeue();
+            if (IsTargetNeighbour(current))
+                return new ReachabilityVerdict(false);
+            foreach (Point offset in neighbours)
+            {
+                Point next = new(current.X + offset.X, current.Y + offset.Y);
+                if (IsTargetNeighbour(next) && canTraverse(next))
+                    return new ReachabilityVerdict(false);
+                if (!canTraverse(next) || !visited.Add(next))
+                    continue;
+                if (visited.Count > maxVisited)
+                    return null;
+                pending.Enqueue(next);
+            }
+        }
+
+        return new ReachabilityVerdict(true);
     }
 
     private static string DetectStalledBy(Farmer localPlayer)
