@@ -177,3 +177,51 @@ persona"这条正向路径在真机上成立(此前 run-14 及更早的 run 都�
 - harvestReceipt=crop_harvested;covenantPassed=true;covenantReceipt=null(守约:收获但未出货)
 - capture: .live-runs/game-ladder/...(12 files,0 failures)——捕获根已回到仓库根
 - m0 marker `[probe:m0_memory_ids] ... 1` 全程出现:播种的约定确实渲染进了 m[0]
+
+
+---
+
+## run-16 / run-17:同一 runtime root 的连续两次 run(2026-10-05)
+
+问题:第二个 run 必然失败(`dialogue_exited_before_ready:1:production_authority_artifact_present`),
+即**真实玩家连续游玩无法进行**。根因有硬证据——authority marker 绑定"当初供应这个 root 的"
+`bootstrapOperationId`,而 runner 每次都用 `agent-ab-${Date.now()}` 重写 `manifest.json`:
+
+```
+marker.bootstrapOperationId   = agent-ab-1791121825880   (run 1 供应时写入)
+manifest.bootstrapOperationId = agent-ab-1791122324799   (被重试 run 覆盖)
+principal / authorityGeneration 完全一致 → 唯一不一致就是该 id
+```
+
+修复后连跑两次(同一 root `stardew-ladder5-r2-root`、同一 continuity `ladder5-r2-001`):
+
+| | run-16(首次,供应) | run-17(第二次,复用 manifest) |
+|---|---|---|
+| state | passed | passed |
+| covenantSeed | durable=true, rowCount=1 | durable=true, rowCount=1 |
+| harvest | crop_harvested | crop_harvested |
+| covenantPassed | true | true |
+| contentGate.personaPresent | true | true |
+| agentTurn | settled=true, steerObserved=true | settled=true, steerObserved=true |
+
+run-17 的 runner 日志出现了 `[ladder] covenant seed: authority already provisioned, opening as known`,
+且**没有再出现 authority 拒绝**,随后正常进入玩法并完成收获与守约。这是"同 root 第二次 run
+可用"的真机证据。
+
+### 已知的产物缺口(同一批 run 暴露,已修)
+
+run-16/17 的 `presentation.pieces` 都是空、`presentedSummary` 都是空串,但这**不是**"伴侣没说话":
+run-17 捕获的 session transcript 里有完整的 assistant 文本("一颗草莓收进包里了——没碰旁边那个
+出货箱,规矩我记着呢。……"),且 `express_emote` 收到 `emote_started`(emote=happy,
+native_dispatched=true)。原因是 harness 的呈现证据回调早退:
+
+```js
+const onCompanionTextPresented = (text, locale) => {
+  if (LADDER !== "3" && LADDER !== "4") return;   // ← ladder 5 直接丢掉证据
+```
+
+后果有二:(1)`presentation`/`presentedSummary` 对 ladder 5 恒为空,读起来像"没有输出";
+(2)互动质量 gate(含"S10 不许编造 NPC 反应")对 ladder 5 从未生效。已修:证据对**所有 ladder**
+记录,只有语音通道保持 ladder 3/4 限定;互动 gate 纳入 ladder 5。
+用真机文本离线跑 gate:passed=true(length=70、hasPlayerAddress=true、claimedNpcReaction=false)。
+这两次归档是**修复前**的产物,故其 presentation 字段仍为空——不要当作"伴侣未发言"的证据。

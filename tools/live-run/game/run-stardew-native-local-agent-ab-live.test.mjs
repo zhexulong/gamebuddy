@@ -131,6 +131,16 @@ test("the runner emits system findings as a first-class health signal", () => {
   // (real run evidence: marker agent-ab-1791121825880 vs manifest
   // agent-ab-1791122324799 -> production_authority_artifact_present).
   assert.match(RUNNER_SOURCE, /import \{ explainAuthorityIdentityMismatch \} from "\.\.\/core\/authority-identity\.mjs";/);
+  // Presentation evidence is recorded for EVERY ladder: gating it on ladder 3/4
+  // made ladder-5 runs report an empty presentation block even when the Agent
+  // had spoken (real run: presentation.pieces=[] while the session transcript
+  // held the full Chinese reply). Only the VOICE lane stays ladder-scoped.
+  assert.match(RUNNER_SOURCE, /presentationPieces\.push\(Object\.freeze\(\{ index: presentationPieces\.length, text, locale, elapsedMs \}\)\)/);
+  assert.match(RUNNER_SOURCE, /if \(LADDER !== "3" && LADDER !== "4"\) return;\n  if \(voiceStarted\) return;/);
+  assert.doesNotMatch(RUNNER_SOURCE, /const onCompanionTextPresented = \(text, locale\) => \{\n  if \(LADDER !== "3" && LADDER !== "4"\) return;/);
+  // Ladder 5 dialogue is covered by the interaction gate too (its reply is the
+  // covenant answer to the player); before this it was never assessed at all.
+  assert.match(RUNNER_SOURCE, /\(LADDER === "3" \|\| LADDER === "4" \|\| LADDER === "5"\)/);
   assert.match(RUNNER_SOURCE, /function withAuthorityIdentityMismatch\(error, root, manifest\) \{\n  return explainAuthorityIdentityMismatch\(error, root, manifest\);/);
   assert.match(RUNNER_SOURCE, /throw withAuthorityIdentityMismatch\(knownError, root, deploymentManifest\);/);
   assert.match(RUNNER_SOURCE, /const deploymentManifest = await loadHostDeploymentManifest\(manifestPath\);/);
