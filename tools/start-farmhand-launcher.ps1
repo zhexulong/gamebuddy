@@ -265,9 +265,18 @@ function Get-PreviewFailureCode([string]$Path) {
     # Preview stderr may contain config and bridge details. Publish only a
     # known typed Error code; never retain or echo the raw child output.
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "preview_failure_code_unavailable" }
-    $content = [IO.File]::ReadAllText($Path)
-    $match = [regex]::Match($content, '(?m)\b(farmhand_[a-z0-9_]+|invalid_farmhand_companion_preview_config|stardew_[a-z0-9_]+|integration_[a-z0-9_]+|production_[a-z0-9_]+|bridge_[a-z0-9_]+|pipe_[a-z0-9_]+|unexpected_[a-z0-9_]+|ERR_[A-Z0-9_]+)\b')
-    if ($match.Success) { return $match.Groups[1].Value }
+    # The child - or the redirect handle the launcher itself handed it - can still
+    # hold the log open just after exit. Measured 2026-10-05: ReadAllText threw an
+    # IOException ('being used by another process') and killed a run that was making
+    # progress on attempt 13 of the bounded retry. An unreadable log is a missing
+    # code, never a launcher crash.
+    try { $content = [IO.File]::ReadAllText($Path) } catch { return "preview_failure_code_unreadable" }
+    $match = [regex]::Match($content, '(?m)\b(farmhand_[a-z0-9_]+|invalid_farmhand_companion_preview_config|stardew_[a-z0-9_]+|integration_[a-z0-9_]+|production_[a-z0-9_]+|bridge_[a-z0-9_]+|pipe_[a-z0-9_]+|unexpected_[a-z0-9_]+|ERR_[A-Z0-9_]+)(:[A-Za-z0-9_.-]{1,96})?')
+    # Keep the bounded reason suffix: `bridge_disconnected:<reason>` names WHY the
+    # bridge dropped, and truncating it at the colon reports the symptom only
+    # (measured 2026-10-05 - the same truncation that hid a stale fixture lock for
+    # three weeks).
+    if ($match.Success) { return $match.Groups[0].Value }
     # An ENOENT message includes an absolute private runtime path. Its basename
     # is useful for diagnostics but the path itself may encode identity data.
     # Publish only an allowlisted filename and syscall; never echo the path.
@@ -460,6 +469,11 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Write-LauncherPhase "aiClientBridgePipeVisible"
+    # The AI client's own boot consumed part of the startup budget. Give the
+    # preview attempts their own bounded window from HERE so a slow (but healthy)
+    # farmhand boot cannot starve them: measured 2026-10-06, the pipe appeared
+    # 17.6s after the AI launch, leaving ~72s of the original 90s budget.
+    $previewDeadline = [DateTimeOffset]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     # The Mod creates its named-pipe listener during its normal SMAPI startup.
     # The first Preview process is the sole safe readiness probe: only a typed
     # Windows named-pipe `connect` ENOENT may be retried. Any other Preview
@@ -533,7 +547,15 @@ try {
                 # only transient named-pipe connect condition.
                 $failureCode = Get-PreviewFailureCode $previewStderrPath
                 $lastPreviewFailureCode = $failureCode
-                if ($failureCode -ne "preview_enoent_connect" -or [DateTimeOffset]::UtcNow -ge $previewDeadline -or $previewReady) {
+                # Two classes are transient BY CONSTRUCTION while readiness has never
+                # been observed: `preview_enoent_connect` (no pipe yet) and
+                # `bridge_disconnected:<reason>` (measured 2026-10-05: the AI
+                # client's pipe NAME existed ~15.8s after its launch, yet the
+                # preview's connect was still dropped - the other end publishes its
+                # pipe before it serves it). A disconnect AFTER a readiness marker
+                # remains terminal, and the bounded deadline still closes the window.
+                $transientPreviewFailure = $failureCode -eq "preview_enoent_connect" -or $failureCode -like "bridge_disconnected*"
+                if (-not $transientPreviewFailure -or [DateTimeOffset]::UtcNow -ge $previewDeadline -or $previewReady) {
                     throw "preview_start_or_run_failed:$failureCode"
                 }
                 break
@@ -552,7 +574,10 @@ try {
                 continue
             }
             if ([DateTimeOffset]::UtcNow -ge $previewDeadline) {
-                throw "preview_start_or_run_failed:preview_listener_start_timeout"
+                # Name the last real failure: a bare timeout hides WHY every attempt
+                # failed, which is the same diagnostic gap the reason suffix closed
+                # for a single attempt.
+                throw "preview_start_or_run_failed:preview_listener_start_timeout:$lastPreviewFailureCode"
             }
             Start-Sleep -Milliseconds 100
         }

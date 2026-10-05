@@ -253,7 +253,11 @@ test("launcher retries only the bounded AI pipe-listener connect race before the
   );
   assert.match(
     launcher,
-    /\$failureCode -ne "preview_enoent_connect" -or \[DateTimeOffset\]::UtcNow -ge \$previewDeadline/,
+    /\$transientPreviewFailure = \$failureCode -eq "preview_enoent_connect" -or \$failureCode -like "bridge_disconnected\*"/,
+  );
+  assert.match(
+    launcher,
+    /if \(-not \$transientPreviewFailure -or \[DateTimeOffset\]::UtcNow -ge \$previewDeadline -or \$previewReady\) \{/,
   );
   assert.match(launcher, /Proof has no meaning before receipt-backed Preview readiness/);
   assert.match(launcher, /throw "preview_start_or_run_failed:\$failureCode"/);
@@ -356,4 +360,30 @@ test("the launcher waits for the AI client's bridge pipe instead of letting the 
   const previewLoopIndex = launcher.indexOf("while (-not $previewReady)");
   assert.ok(aiLaunchIndex > 0 && waitIndex > aiLaunchIndex && previewLoopIndex > waitIndex,
     "the pipe wait must run after the AI client launch and before the preview loop");
+});
+
+test("the preview failure classifier keeps the bounded reason suffix", () => {
+  // `bridge_disconnected:<reason>` carries WHY the bridge dropped; truncating at
+  // the colon reported only the symptom (measured 2026-10-05). Scoped substring
+  // assertions, so this pin cannot be broken by escaping layers; the negative
+  // check stays inside the preview classifier, because other classifiers in this
+  // script legitimately match their own allowlist with group 1.
+  const start = launcher.indexOf("function Get-PreviewFailureCode");
+  assert.ok(start > 0, "the preview failure classifier exists");
+  const classifier = launcher.slice(start, launcher.indexOf("function ", start + 10));
+  assert.ok(classifier.includes("(:[A-Za-z0-9_.-]{1,96})?"), "the classifier keeps a bounded reason suffix");
+  assert.ok(classifier.includes("$match.Groups[0].Value"), "the classifier returns the whole match");
+});
+
+test("a pre-readiness bridge disconnect is retried, a post-readiness one is terminal", () => {
+  // The pipe NAME can exist before the other end serves it, so an immediate
+  // `bridge_disconnected` is transient while readiness has never been observed
+  // (measured 2026-10-05); a disconnect after readiness, or any other class, must
+  // stay terminal, and the bounded deadline still closes the retry window.
+  assert.ok(launcher.includes("$transientPreviewFailure = $failureCode -eq \"preview_enoent_connect\" -or $failureCode -like \"bridge_disconnected*\""));
+  assert.ok(launcher.includes("if (-not $transientPreviewFailure -or [DateTimeOffset]::UtcNow -ge $previewDeadline -or $previewReady) {"));
+  // The retry window and the readiness guard must both survive in that condition.
+  const retryLine = launcher.slice(launcher.indexOf("$transientPreviewFailure ="), launcher.indexOf("$transientPreviewFailure =") + 900);
+  assert.ok(retryLine.includes("$previewDeadline"), "the deadline still bounds the retry");
+  assert.ok(retryLine.includes("$previewReady"), "a post-readiness disconnect is still terminal");
 });
