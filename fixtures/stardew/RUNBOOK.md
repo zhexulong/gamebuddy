@@ -1672,3 +1672,37 @@ The Agent worked productively the whole time (39 dispatches, 16 crops) but never
 a closing report, and `presentedSummary` was the single 10-character line
 `我先看看周围有什么。` — which the interaction gate passes. A play session that never
 settles must not be reported as a completed session; see §39.
+
+## 39. A session the harness cut off is not a completed session (2026-10-05)
+
+Run E (§38) reported `state: passed` while `sessionTurns[0].turn.error` was
+`agent_turn_timeout`: the turn had been cut off at the harness's 600 s wait, the
+companion had done 39 productive actions, and the only text it ever delivered was the
+10-character fragment `我先看看周围有什么。` — which the interaction gate passes, because
+that gate measures how a line is written, not whether a session finished. The verdict
+was true about the ACTIONS and false about the SESSION.
+
+Two changes:
+
+- **The verdict now requires a settled session.** `ladderSixPassed` needs a real attempt
+  AND `sessionVerdict === "completed"`; the artifact publishes
+  `sessionVerdict` (`completed` | `turn_timeout` | `turn_unsettled` | `no_turns`) and
+  `sessionTurnErrors`, so a reader can always tell "the play session finished" from "the
+  harness stopped waiting". Findings still never fail the rung — a truncated session does.
+- **Ladder 6 gets a play-session budget.** The 600 s default is a scripted rung's bound;
+  an open session doing dozens of native actions legitimately runs longer, so ladder 6
+  defaults to 1800 s (still overridable with `GAMEBUDDY_AGENT_WAIT_SECONDS`). This is a
+  harness bound, not a product verdict: a timeout is a gate/harness fact, never a claim
+  about the companion.
+
+- **The length budget the gate enforces is now stated in the goal.** Run F's session settled
+  properly (`sessionVerdict: completed`, 9/9 attempted capabilities succeeded,
+  `blockedBySystem: []`) and its closing report was a genuine play report — 202 characters
+  naming what it did, where it got stuck ("田心那片：石头、杂草、枯枝和树把格子堵得太密"),
+  and what it would do next. It was rejected by `summary_too_long`, because
+  `tools/lib/companion-interaction-gate.mjs` caps a summary at **120 code points** and the
+  goal had never said so. Runs C (176) and F (202) were both rejected by an unstated rule,
+  so ladder 6's goal now states the budget directly (a speaking-length contract, not a tool
+  sequence — the rung's "no smuggled tool sequence" test still holds). The gate itself is
+  untouched: it protects other rungs' verdicts too, and loosening a shared threshold to make
+  one rung pass would be exactly the kind of silent relaxation this file's contract forbids.
