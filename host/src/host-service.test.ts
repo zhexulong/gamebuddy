@@ -1378,13 +1378,22 @@ test("an older STOP cannot reopen admission after a newer STOP takes over", asyn
   releaseFirst();
   await first.settled;
   assert.equal(interruption.capture().open, false);
-  await service.acceptPlayerInput({ sourceEventId: "between_stops", text: "must remain sealed", locale: "en-US" });
+  // A refusal while the epoch is sealed must be REPORTED, not silent: the caller
+  // has to be able to tell "the player's message was admitted" from "it was
+  // dropped", which is exactly what a void signature could not express.
+  assert.deepEqual(
+    await service.acceptPlayerInput({ sourceEventId: "between_stops", text: "must remain sealed", locale: "en-US" }),
+    { accepted: false, reasonCode: "player_input_integration_unavailable" },
+  );
   assert.deepEqual(harness.inputs, []);
 
   releaseSecond();
   await second.settled;
   assert.equal(interruption.capture().open, true);
-  await service.acceptPlayerInput({ sourceEventId: "after_latest_stop", text: "must be admitted", locale: "en-US" });
+  assert.deepEqual(
+    await service.acceptPlayerInput({ sourceEventId: "after_latest_stop", text: "must be admitted", locale: "en-US" }),
+    { accepted: true },
+  );
   assert.equal(harness.inputs.length, 1);
   service.close();
 });
@@ -1404,7 +1413,11 @@ test("Host service rejects player text after overflow or close without deliverin
   };
   const overflowService = new CompanionHostService(overflowLoop as never, overflowAdapter.events);
   overflowAdapter.emit(snapshot(1));
-  await overflowService.acceptPlayerText("after overflow", "en-US", 1);
+  // A revoked integration admission refuses, and says which refusal it was.
+  assert.deepEqual(await overflowService.acceptPlayerText("after overflow", "en-US", 1), {
+    accepted: false,
+    reasonCode: "player_input_integration_unavailable",
+  });
   assert.deepEqual(overflowHarness.inputs, []);
   assert.equal(overflowHarness.flushes, 0);
   overflowService.close();
@@ -1413,7 +1426,10 @@ test("Host service rejects player text after overflow or close without deliverin
   const closedHarness = fakeLoop();
   const closedService = new CompanionHostService(closedHarness.loop as never, closedAdapter.events);
   closedService.close();
-  await closedService.acceptPlayerText("after close", "en-US", 2);
+  assert.deepEqual(await closedService.acceptPlayerText("after close", "en-US", 2), {
+    accepted: false,
+    reasonCode: "player_input_session_closed",
+  });
   assert.deepEqual(closedHarness.inputs, []);
   assert.equal(closedHarness.flushes, 0);
 });
