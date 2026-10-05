@@ -364,10 +364,43 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         registration.lifecycle === "published" && registration.kind === "read_only");
   }
 
-  public async execute(request: ExecutionRequest): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
+  /**
+   * Dispatch one game action.
+   *
+   * `stale_snapshot` is the Mod's revision CAS refusing the request **before any side effect**
+   * (`BridgeSession.IsFreshExecutionRequest`), and it means exactly one thing: the caller's view of
+   * the action-transaction revision is behind. The Mod mints a fresh revision for every durable
+   * receipt — including ones this Host may not have carried — so a well-formed request can still
+   * arrive one revision late. Live evidence: a play session lost three `harvest_crop` dispatches
+   * to this refusal while the surrounding actions succeeded.
+   *
+   * So a stale refusal is answered the way it is meant to be: re-observe ONCE, then re-dispatch the
+   * same envelope with the refreshed revision. The retry is bounded (one), keyed to that single
+   * authoritative reason code, and safe by construction — the first attempt never ran, so the
+   * idempotency identity it carries still has nothing to remember. Every other refusal, and every
+   * timeout, is surfaced unchanged: an unknown outcome must never be re-dispatched.
+   */
+  public async execute(
+    request: ExecutionRequest,
+    options: { reobserveOnStaleSnapshot?: boolean } = {},
+  ): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
     this.requireAuthenticated();
     const response = await this.request("execution_request", request);
-    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type === "error") {
+      if (response.payload.reasonCode === "stale_snapshot" && options.reobserveOnStaleSnapshot !== false) {
+        const refreshed = await this.observe();
+        if (refreshed.revision !== request.expectedRevision) {
+          const retried = await this.request("execution_request", {
+            ...request,
+            expectedRevision: refreshed.revision,
+          });
+          if (retried.type === "error") throw new Error(`bridge_rejected:${retried.payload.reasonCode}`);
+          if (retried.type !== "execution_receipt") throw new Error("unexpected_execution_response");
+          return retried.payload;
+        }
+      }
+      throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    }
     if (response.type !== "execution_receipt") throw new Error("unexpected_execution_response");
     return response.payload;
   }
