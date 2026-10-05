@@ -120,6 +120,16 @@ jobs:
         run: pnpm --dir dialogue-web exec playwright test tests/reference-pipeline-browser.spec.ts tests/management-pipeline-browser.spec.ts --project=chromium --workers=1
         env:
           GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+      # The product journeys that mount twice and spend real provider time: a real
+      # provider turn through the shipped UI, the same conversation surviving a
+      # full app restart on one root, and the keyboard/layout floor. They are their
+      # own step because the SSE/replay suite above is timing-sensitive and stays
+      # lean. The two provider journeys skip (loudly) when the credential is absent.
+      - name: Tavern product journeys
+        run: pnpm --dir dialogue-web exec playwright test tests/companion-turn-browser.spec.ts --project=chromium --workers=1
+        env:
+          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
       # Screenshots, traces and the page snapshots of any failure, so a broken
       # journey is diagnosable from the run without a local reproduction.
       - name: Upload browser journey failures
