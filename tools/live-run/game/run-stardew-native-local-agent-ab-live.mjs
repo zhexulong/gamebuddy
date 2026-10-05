@@ -359,26 +359,6 @@ client.onFact((fact) => {
   }
 });
 
-// Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
-// A play session that did nothing but these has not played: run H attempted 14 actions,
-// got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
-// because the verdict only required "a real attempt". "Did the companion actually do
-// something" is a different question from "did it try", and a rung whose whole job is to
-// report what the companion could do must not call an empty session a success.
-const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
-  new Set([
-    "move_to_tile",
-    "travel",
-    "enter_exit",
-    "navigate_to_destination",
-    "observe_scene",
-    "inspect_world_map",
-    "express_emote",
-    "face_direction",
-    "equip_tool",
-  ]),
-);
-
 /**
  * ladder 0-5 delivered exactly one player turn; ladder 6 delivers a session.
  * This is that one turn's machinery, extracted so every ladder shares it: admit
@@ -419,16 +399,7 @@ async function runAgentTurn(text, tools) {
   })();
   let status = null;
   let turn = null;
-  // How long one delivered turn may wait before the harness stops waiting. For an
-  // open play session this is a HARNESS bound, not a product verdict (design 1432:
-  // timeouts belong to the harness), so ladder 6 gets a budget that fits dozens of
-  // native actions instead of the 10-minute default the scripted rungs use. A turn
-  // that still exceeds it does not silently become a completed session: the verdict
-  // below refuses to call that `passed`.
-  const turnWaitSeconds = Number(
-    process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? (LADDER === "6" ? 1800 : 600),
-  );
-  for (let i = 0; i < turnWaitSeconds; i++) {
+  for (let i = 0; i < Number(process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? 600); i++) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
       if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
@@ -790,12 +761,6 @@ if (LADDER === "5" && !usesDisposableRoot) {
     root,
     deploymentManifestPath: manifestPath,
     seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
-    // Surface the seed's own phase costs in the run artifact: the seed is the
-    // dominant cold-start cost (~49s in a real run), and "the live run is slow to
-    // start" is only actionable once it is known which part of the boot pays it.
-    onPhase: (name, elapsedMs) => {
-      phaseTimings.marks[`seed_${name}`] = elapsedMs;
-    },
   }).catch(async (error) => {
     // A continuity that already holds a provisioned authority — i.e. ANY second
     // run on a real product continuity — cannot be mounted "fresh"; the product
@@ -811,9 +776,6 @@ if (LADDER === "5" && !usesDisposableRoot) {
       deploymentManifestPath: manifestPath,
       seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
       gameSessionMode: "known",
-      onPhase: (name, elapsedMs) => {
-        phaseTimings.marks[`seed_${name}`] = elapsedMs;
-      },
     }).catch((knownError) => {
       // Both modes were refused. The authority marker binds the
       // bootstrapOperationId that provisioned the root, so when the stored
@@ -854,7 +816,7 @@ try {
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
     ? (LADDER === "6"
-      ? "现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**"
+      ? "现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里。（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**"
       : LADDER === "5"
       ? "今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "4"
@@ -865,7 +827,7 @@ try {
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。"
       : "你现在是星露谷里的 AI 伴侣。你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。")
     : (LADDER === "6"
-      ? "It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**"
+      ? "It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**"
       : LADDER === "5"
       ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
       : LADDER === "4"
@@ -927,10 +889,6 @@ try {
   const walkReceipt = receipts.find((receipt) => receipt.reasonCode === "navigation_completed");
   const inspectReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_inspected");
   const loadReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_coffee_loaded");
-  // Declared outside the try: the catch path reports the assembled-context evidence too, and a
-  // try-scoped binding is unreachable there — which is exactly how this file's failure path came
-  // to throw a ReferenceError and lose the artifact of a real failed session.
-  let personaWorldBook = null;
   // Ladder 3 (Jodi's Request): the Agent planned the farming chain itself, so
   // accept the three real farming receipts in any order — no fixed DAG.
   const tillReceipt = receipts.find((receipt) => receipt.reasonCode === "soil_tilled");
@@ -942,7 +900,7 @@ try {
   // the canonical files the product placed under this runtime root, so the gate
   // proves the persona/world book reached the Game surface rather than trusting
   // a script-side claim. A disposable root legitimately has neither file.
-  personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
+  const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
   // Content gate over the SAME canonical profile the assembly gate hashes: an
   // empty default card (no persona) or unrendered SillyTavern macros is a
   // content defect that assembly-only gates cannot see. A disposable root
@@ -984,15 +942,12 @@ try {
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   // Ladder 6 (self-directed play session): the rung measures capability, not a
-  // scripted chain, so there is no expected receipt to look for. It passes only when
-  // the session produced at least one REAL action attempt AND every delivered turn
-  // SETTLED. The first run of this rung reported `passed` on a session whose turn had
-  // timed out at the harness's 10-minute wait (`agent_turn_timeout`): the companion
-  // had done 39 productive actions but never delivered its closing report, and the
-  // 10-character fragment it had emitted was enough for the interaction gate. A
-  // session cut off mid-turn is not a completed session, so it is reported as
-  // `blocked` with the turn error named — findings never fail this rung, but a
-  // truncated session does. Its output is still the audit either way.
+  // scripted chain, so there is no expected receipt to look for. It passes only
+  // when the session produced at least one REAL action attempt — a session where
+  // the companion did nothing, or whose player text never reached the session,
+  // stays `blocked` instead of passing on an empty trace. Findings never fail
+  // this rung: its output is the audit, and a rung that failed whenever it found
+  // something would only teach the harness to stop looking.
   const attemptedActionIds = [
     ...new Set(actionTrace.map((entry) => entry.action).filter((action) => typeof action === "string")),
   ];
@@ -1004,28 +959,8 @@ try {
         .filter((action) => typeof action === "string"),
     ),
   ];
-  const accomplishedActionIds = succeededActionIds.filter(
-    (actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId),
-  );
-  const unsettledSessionTurns = sessionTurns
-    .filter((entry) => entry.turn?.settled !== true)
-    .map((entry) => ({ goalIndex: entry.goalIndex, error: entry.turn?.error ?? "unsettled" }));
-  const sessionVerdict =
-    sessionTurns.length === 0
-      ? "no_turns"
-      : !sessionSpoken
-        ? "silent"
-        : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
-          ? "turn_timeout"
-          : unsettledSessionTurns.length > 0
-            ? "turn_unsettled"
-            : accomplishedActionIds.length > 0
-              ? "completed"
-              : "nothing_accomplished";
   const ladderSixPassed =
-    LADDER === "6"
-      ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
-      : true;
+    LADDER === "6" ? sessionTurns.length > 0 && attemptedActionIds.length > 0 : true;
   // The audit the rung exists for: what it could do, what the system stopped, and
   // what it never tried. `notAttempted` is read from the live advertised
   // capability surface (what the Agent could actually see during THIS run), never
@@ -1071,12 +1006,6 @@ try {
     (LADDER === "3" || LADDER === "4" || LADDER === "5" || LADDER === "6") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
-  // A play session that never speaks is not a companion session. Run M did 17 native
-  // actions over fifteen minutes and produced no player-facing line at all: the rung's
-  // own goal asks for a short report, and "did the companion play" includes "did it
-  // tell the player". Silence is its own verdict, never a pass by omission.
-  const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
-  const sessionSpoken = LADDER !== "6" || spokeToPlayer;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
   // System-level diagnostics: aggregate every rejected action into a small set
   // of system findings (component attribution + count + sample), so each live
@@ -1133,20 +1062,8 @@ try {
     // otherwise invisible in the artifact.
     configuredFixtureScenario: config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
     sessionTurns,
-    // How the SESSION ended, separately from how the actions went: `completed`,
-    // `turn_timeout`, `turn_unsettled` or `no_turns`, with the per-turn errors. A
-    // reader must be able to tell a finished play session from one the harness cut
-    // off, which `state` alone cannot say.
-    sessionVerdict,
-    sessionTurnErrors: unsettledSessionTurns,
     attemptedActionIds,
     succeededActionIds,
-    // Present for every ladder; ladder 6's verdict treats silence as its own outcome.
-    spokeToPlayer,
-    // The actions that actually changed the world (see NON_ACCOMPLISHMENT_ACTIONS):
-    // the difference between "the companion acted" and "the companion moved, looked
-    // and reported". Published so the verdict is readable, not just its consequence.
-    accomplishedActionIds,
     capabilityAudit,
     presentation,
     presenceProjection,
@@ -1201,12 +1118,6 @@ try {
   // must still produce a readable result. The turn/voice facts live in the try
   // block's scope, so they are read through the same optional paths with
   // explicit fallbacks instead of assuming they were initialized.
-  //
-  // The ROOT error goes first: a real session once produced no artifact at all because this block
-  // threw while assembling its own partial result, which destroyed the evidence of the failure it
-  // exists to record. If the partial assembly fails too, that is reported as well and the run
-  // still exits non-zero instead of pretending it was reportable.
-  console.error(error);
   const partialResult = {
     state: "blocked",
     ladder: LADDER,

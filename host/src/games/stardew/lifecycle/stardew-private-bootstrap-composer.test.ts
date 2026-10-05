@@ -44,6 +44,7 @@ import {
   materializeAiClientProfileAfterManifestAdmissionForTesting,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
+import { FarmhandBridgeConnectionNotAvailableError } from "../../../containment/runtime/contract/game-runtime.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
@@ -3674,6 +3675,36 @@ test("fresh Farmhand activation refuses to arm without an ended activation and a
   assert.deepEqual(rearmed, { launchGeneration: "generation-3" });
   assert.deepEqual(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.aiClient.launchGeneration, "generation-3");
   await fixture.testCore.abandonFarmhandAiClientActivation(fixture.owner);
+});
+
+/**
+ * The one message text `stardew_farmhand_bridge_connection_not_available` is
+ * reported by two different probes, and each Host-side reader classifies its own
+ * reading of it: the connection consume is read as "this attach cannot be built
+ * here", the fresh-activation arm as "the previous activation never ended". The
+ * shared typed identity from the platform contract is what keeps those two
+ * readings independent of the text, so every site reporting the code must carry
+ * it -- including the consume refusal, whose reader still matches the text today
+ * and would silently stop deferring a resume attach if the class here were ever
+ * replaced by a plain Error.
+ */
+test("both Farmhand Bridge connection refusals carry the platform contract's typed identity", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  // (a) Arming a fresh activation is refused because no activation ended yet.
+  await assert.rejects(
+    () => fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner),
+    (error: unknown) => error instanceof FarmhandBridgeConnectionNotAvailableError,
+  );
+  // (b) Consuming the bridge connection is refused once the one-shot connection
+  // was consumed by the first activation.
+  const consumed = await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+    Object.freeze({ close: () => undefined }));
+  assert.equal(typeof consumed.close, "function");
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+      Object.freeze({ close: () => undefined })),
+    (error: unknown) => error instanceof FarmhandBridgeConnectionNotAvailableError,
+  );
 });
 
 test("connected no-live C1 composition privately provisions Bridge scope before exact AI launch", async () => {

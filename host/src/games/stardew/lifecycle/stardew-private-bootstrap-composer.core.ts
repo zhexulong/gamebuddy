@@ -49,7 +49,10 @@ import {
 import { readStrictJsonFile } from "../../../strict-json-reader.js";
 import type { Scope } from "../../../protocol.js";
 import { createStardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
-import { ContainmentRoleAlreadyContainedError } from "../../../containment/runtime/contract/game-runtime.js";
+import {
+  ContainmentRoleAlreadyContainedError,
+  FarmhandBridgeConnectionNotAvailableError,
+} from "../../../containment/runtime/contract/game-runtime.js";
 import type {
   TypedPrivateGameAuthorizationProducer,
   TypedPrivateGameFacts,
@@ -2290,7 +2293,7 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
   if (facts.quarantine.started) throw new Error("stardew_owned_player_host_bootstrap_owner_quarantined");
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
   if (facts.bridgeConnectionState.value !== "available")
-    throw new Error("stardew_farmhand_bridge_connection_not_available");
+    throw new FarmhandBridgeConnectionNotAvailableError("stardew_farmhand_bridge_connection_not_available");
   if (readAiClientStatus().kind !== "awaiting_ai_client_attestation")
     throw new Error("stardew_farmhand_bridge_ai_client_not_awaiting_attestation");
   if (facts.aiClientRegistration.launchGeneration !== facts.durableOwner.record.aiClient.launchGeneration)
@@ -2407,8 +2410,11 @@ async function prepareFreshFarmhandAiClientActivation(
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
   // A fresh generation may be claimed only after an ended activation: a never
   // consumed or still-binding machine has no ended activation to supersede.
+  // The refusal carries the shared typed identity so the lifecycle classifies
+  // this state by identity; the message text stays for the other consumers of
+  // this probe, which still read it as a deferred attach (see the class doc).
   if (facts.bridgeConnectionState.value !== "consumed" || facts.launchStates.aiClient !== "consumed")
-    throw new Error("stardew_farmhand_bridge_connection_not_available");
+    throw new FarmhandBridgeConnectionNotAvailableError("stardew_farmhand_bridge_connection_not_available");
   if (facts.privateBridgeMaterial.value === null)
     throw new Error("stardew_ai_client_bridge_material_unavailable");
 
