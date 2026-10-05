@@ -41,6 +41,8 @@ import type {
    ProductionGameSessionMetadata,
    ProductionGameSessionWorldBinding,
    ProductionGameSessionWorldBindingInput,
+   ProductionGameSessionWorldBindingSlotHolder,
+   ProductionGameSessionWorldBindingSlotReleaseInput,
    ProductionGameSessionWorldBindingTerminalInput,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
@@ -1358,7 +1360,21 @@ export type SemanticGameProductionAuthority = Readonly<{
    markGameSessionWorldBindingTerminal(
      input: ProductionGameSessionWorldBindingTerminalInput,
    ): Promise<ProductionGameSessionWorldBinding>;
-   close(): Promise<void>;
+   /**
+    * design/105 Slice 0 world-slot surface, projected exactly like the members
+    * above. The read hands back whatever holder the store has, including the
+    * handle a release demands; the release forwards the caller's holder handle
+    * and its correlated native-lease proof unchanged. Neither invents, derives,
+    * defaults or substitutes a handle, and a store refusal reaches the caller as
+    * its own bounded code rather than a generic error or a falsy return.
+    */
+   readGameSessionWorldBindingSlotHolder(
+     input: Readonly<{ integrationId: string; bindingRef: string }>,
+   ): Promise<ProductionGameSessionWorldBindingSlotHolder | null>;
+   releaseGameSessionWorldBindingSlot(
+     input: ProductionGameSessionWorldBindingSlotReleaseInput,
+   ): Promise<ProductionGameSessionWorldBinding>;
+  close(): Promise<void>;
 }>;
 /** Only the S4 construction zone may supply facts drawn from its active binding execution. */
 export type GameEffectFacts = Readonly<{
@@ -3032,6 +3048,14 @@ function createKnownGameAuthority(
      input: ProductionGameSessionWorldBindingTerminalInput,
    ): Promise<ProductionGameSessionWorldBinding> =>
      begin(() => locked(() => provision.store.markGameSessionWorldBindingTerminal(input)));
+   const readGameSessionWorldBindingSlotHolder = (
+     input: Readonly<{ integrationId: string; bindingRef: string }>,
+   ): Promise<ProductionGameSessionWorldBindingSlotHolder | null> =>
+     begin(() => locked(() => provision.store.readGameSessionWorldBindingSlotHolder(input)));
+   const releaseGameSessionWorldBindingSlot = (
+     input: ProductionGameSessionWorldBindingSlotReleaseInput,
+   ): Promise<ProductionGameSessionWorldBinding> =>
+     begin(() => locked(() => provision.store.releaseGameSessionWorldBindingSlot(input)));
   return Object.freeze({
     authority: "SEMANTIC" as const,
     prepareEnter,
@@ -3049,6 +3073,8 @@ function createKnownGameAuthority(
      registerGameSessionWorldBinding,
      readGameSessionWorldBinding,
      markGameSessionWorldBindingTerminal,
+     readGameSessionWorldBindingSlotHolder,
+     releaseGameSessionWorldBindingSlot,
      close: () => {
       if (closePromise !== undefined) return closePromise;
       closing = true;
