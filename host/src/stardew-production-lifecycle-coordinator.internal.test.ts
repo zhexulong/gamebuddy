@@ -35,6 +35,7 @@ import {
   createStardewProductionLifecycleCoordinator,
   type StardewGameSessionCreationAuthority,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
+import { STARDEW_GAME_WORLD_CREATION_SLOT_MISSING } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type {
   ProductionGameSessionMetadata,
@@ -777,6 +778,42 @@ async function ownerRecord(runtimeRoot: string) {
   )) as { state: string; cleanupDisposition: string; managedPaths: string[] };
 }
 
+/** The join request identity currently on disk, or null when none was issued yet. */
+async function attachmentRequestId(runtimeRoot: string): Promise<string | null> {
+  const path = join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "session", "stardew-attachment-request.json");
+  try {
+    const request = JSON.parse(await readFile(path, "utf8")) as { requestId?: unknown };
+    return typeof request.requestId === "string" ? request.requestId : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/**
+ * Publishes the join manifest for the NEXT attachment request the coordinator
+ * issues. Every admitted handoff (a cabin confirmation and the create path's own
+ * manifest re-admission) mints a fresh request identity, and a manifest is bound
+ * to exactly the request it was issued for, so a re-issued handoff needs its own
+ * publication instead of the previous request's manifest.
+ */
+async function publishNextAttachmentAdmission(
+  runtimeRoot: string,
+  previousRequestId: string | null,
+  cabin: PublishedCabin,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const current = await attachmentRequestId(runtimeRoot);
+    if (current !== null && current !== previousRequestId) {
+      await publishAttachmentAdmission(runtimeRoot, { requestId: current }, cabin);
+      return;
+    }
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5));
+  }
+  throw new Error("publish_next_attachment_admission_timeout");
+}
+
 test("activation stages the durable Player Host profile without spawning and returns a frozen redacted revision-3 snapshot", async () => {
   const fixture = await createFixture();
   try {
@@ -1455,12 +1492,48 @@ test("production lifecycle coordinator has no direct-spawn fallback and both rol
   assert.match(productionFactory, /stardew_ai_client_launch_runtime_unavailable/);
   assert.match(productionFactory, /containedRuntimeTeardownFromCollaborator/);
   assert.doesNotMatch(productionFactory, /installationDiscoveryOverlay/);
-  // Loop 4 composition seam: the production factory forwards the one semantic
-  // Game authority, while deliberately leaving the not-yet-real Stardew world
-  // producer unmounted. This keeps create fail-closed rather than fabricating a
-  // binding merely to make the provider path appear live.
+  // Loop 4 composition seams: the production factory forwards the one semantic
+  // Game authority and mounts the Loop 4 path B' world-creation seam built from
+  // that same authority, so the create path no longer carries an unmounted seam
+  // argument. What is pinned here is that the ONE owner-bound seam reaches
+  // createCoordinator.
   assert.match(productionFactory, /createStardewWorldBindingResolverFromGameAuthority\(game\)/);
-  assert.match(productionFactory, /\n\s*game,\n\s*undefined,\n\s*containedRuntimeTeardown/);
+  assert.match(productionFactory, /\n\s*game,\n\s*createWorldBindingSeam,\n\s*containedRuntimeTeardown/);
+  assert.equal(/\n\s*game,\n\s*undefined,\n\s*containedRuntimeTeardown/.test(productionFactory), false);
+  // The mounted seam is the integration-private production one: it is built per
+  // create from the owner-bound attachment flow (whose staged session material
+  // signs and scopes the manifest read) and the join request identity this
+  // create's own admission minted.
+  assert.match(productionFactory, /createStardewWorldCreationBindingSeam\(/);
+  assert.match(productionFactory, /createStardewIssuedJoinManifestSource\(/);
+  assert.match(productionFactory, /internal\.createOwnedPlayerHostAttachmentFlow\(owner\)/);
+  assert.match(productionFactory, /StardewWorldCreationSeamFactory/);
+  // The create path itself builds that seam per create, only after its own
+  // manifest handoff admission and before any durable registration.
+  const createPathStart = source.indexOf("const createGameSession: StardewProductionLifecycleActivationOwner[\"createGameSession\"]");
+  assert.notEqual(createPathStart, -1);
+  const createPath = source.slice(createPathStart, source.indexOf("const cancelResume: StardewProductionLifecycleActivationOwner"));
+  const admissionIndex = createPath.indexOf("handoffCoordinator.confirmAndAdmit(choice.selection");
+  const joinRequestIndex = createPath.indexOf("joinRequestId: handoffCoordinator.readAdmittedJoinRequestId(handoffOwner, manifestAdmission)");
+  const seamIndex = createPath.indexOf("createWorldBindingSeamFactory({");
+  const seamCallIndex = createPath.indexOf("worldCreationSeam.createWorldBinding({");
+  const registerIndex = createPath.indexOf("creationAuthority.registerGameSessionWorldBinding({");
+  const completeIndex = createPath.indexOf("creationAuthority.completeGameSessionBinding({");
+  const materializeIndex = createPath.indexOf("materializeAiClientProfileAfterManifestAdmission(handoffOwner, manifestAdmission)");
+  for (const [name, index] of [
+    ["manifest handoff admission", admissionIndex],
+    ["admitted join request identity", joinRequestIndex],
+    ["per-create seam construction", seamIndex],
+    ["world binding creation", seamCallIndex],
+    ["binding registration", registerIndex],
+    ["session completion", completeIndex],
+    ["AI-client profile materialization", materializeIndex],
+  ] as const) assert.notEqual(index, -1, `${name} missing from the create path`);
+  assert.ok(seamIndex < joinRequestIndex && joinRequestIndex < seamCallIndex, "the per-create seam is built from the admitted join request identity");
+  assert.ok(admissionIndex < seamIndex, "the manifest handoff admission precedes the world-binding seam");
+  assert.ok(admissionIndex < seamCallIndex && seamCallIndex < registerIndex, "the seam runs after the admission and before registration");
+  assert.ok(registerIndex < completeIndex, "the durable create protocol order is preserved");
+  assert.ok(completeIndex < materializeIndex, "the AI-client profile is materialized only after the session completed");
 });
 
 test("Game launch rejects a different key while the first launch is pending", async () => {
@@ -3853,10 +3926,18 @@ test("game.create fails closed as unavailable with a failed pending row when wor
             },
     });
     try {
-      const result = await fixture.coordinator.activationOwner.createGameSession(
+      const creating = fixture.coordinator.activationOwner.createGameSession(
         fixture.broker.issue("game_create"),
         { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
       );
+      if (seamMode === "throwing") {
+        // The manifest handoff admission now precedes the seam (Loop 4 path
+        // B'), so a mounted-seam create publishes and waits for its own
+        // attachment request before the seam runs.
+        const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+        await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+      }
+      const result = await creating;
       assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
       assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
       if (seamMode === "absent" || seamMode === "authority-only") {
@@ -4081,10 +4162,15 @@ test("game.create after a clean disconnect attaches the first activation at gene
     // runEnter → committed ingress). Consumer: register/complete settle the
     // durable rows before the attach. Verifier: result attached, generation 1,
     // actions paused, fresh per-activation launch generation, rows resumable.
-    const result = await fixture.coordinator.activationOwner.createGameSession(
+    // The create re-admits its own manifest handoff before its seam, so it
+    // mints a fresh attachment request identity that needs its own publication.
+    const previousRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const creating = fixture.coordinator.activationOwner.createGameSession(
       fixture.broker.issue("game_create"),
       { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
     );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
+    const result = await creating;
     assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
     assert.equal(result.status, "attached");
     assert.match(result.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
@@ -4130,10 +4216,13 @@ test("game.create attach failure after registration goes terminal binding + fail
     // and the session completed: the D2 post-registration failure path applies
     // (binding terminal rev2 + metadata failed rev3), never a resumable
     // half-record, and the wire reports unavailable with no session handle.
-    const result = await fixture.coordinator.activationOwner.createGameSession(
+    const previousRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const creating = fixture.coordinator.activationOwner.createGameSession(
       fixture.broker.issue("game_create"),
       { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
     );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
+    const result = await creating;
     assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
     assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
     const sessions = fake.sessions();
@@ -4186,11 +4275,15 @@ test("game.create clears the previous resume lineage so the new session can be r
       status: "attached", generation: 2, connectionStatus: "failed",
     });
     // Start new game creates a NEW session; the old lineage's in-memory guard
-    // must not shadow the fresh session's retry/resume admission.
-    const created = await fixture.coordinator.activationOwner.createGameSession(
+    // must not shadow the fresh session's retry/resume admission. The create
+    // re-admits its own manifest handoff, so it publishes its own request.
+    const previousRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const creating = fixture.coordinator.activationOwner.createGameSession(
       fixture.broker.issue("game_create"),
       { apiVersion: 1, idempotencyKey: "lineage-create", integrationId: "stardew", continuityIdentityId: null },
     );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
+    const created = await creating;
     assert.equal(created.status, "attached");
     const newSessionId = created.gameSessionId!;
     assert.equal(newSessionId === "session-abc", false);
@@ -4504,6 +4597,263 @@ test("duplicate or payload-drift headless admission cannot rematerialize or laun
     assert.equal(fixture.spawnCalls.length, 1);
     assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
     await lease.close();
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+// ─── Loop 4 path B': the mounted create seam and the unified failure closure ──
+
+test("game.create runs the owner-bound world-creation seam only after its own manifest handoff admission", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  let pathFixture!: Awaited<ReturnType<typeof prepareCabinCoordinator>>;
+  const seamObservations: Array<Readonly<{ joinedRequestId: string | null; admittedManifest: boolean }>> = [];
+  pathFixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      // The production seam reports the observed slot from the join manifest and
+      // fails closed with bounded codes; this stand-in fails with the seam's own
+      // absent-slot code, so what is proven here is the wiring: the seam runs
+      // after this create's admission, and its failure settles durably.
+      createWorldBinding: async () => {
+        const joinedRequestId = await attachmentRequestId(pathFixture.runtimeRoot);
+        const manifest = JSON.parse(await readFile(join(
+          pathFixture.runtimeRoot,
+          "stardew-private-bootstrap",
+          "bootstrap-coordinator-1",
+          "session",
+          "stardew-farmhand-manifest.json",
+        ), "utf8")) as { requestId?: unknown };
+        seamObservations.push(Object.freeze({
+          joinedRequestId,
+          admittedManifest: joinedRequestId !== null && manifest.requestId === joinedRequestId,
+        }));
+        throw new Error(STARDEW_GAME_WORLD_CREATION_SLOT_MISSING);
+      },
+    },
+  });
+  try {
+    const creating = pathFixture.coordinator.activationOwner.createGameSession(
+      pathFixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(pathFixture.runtimeRoot);
+    await publishAttachmentAdmission(pathFixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await creating;
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    // The seam saw this create's OWN admitted manifest: the request identity on
+    // disk is the one the issued manifest is signed for. A seam that ran before
+    // the admission would have seen no manifest for that request at all.
+    assert.equal(seamObservations.length, 1);
+    assert.equal(seamObservations[0]!.admittedManifest, true);
+    // A bounded seam failure never fabricates a binding: pending intent settled
+    // as failed with no binding row and nothing resumable.
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    assert.deepEqual(sessions[0], {
+      gameSessionId: sessions[0]!.gameSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
+    });
+    assert.equal(fake.readBinding(sessions[0]!.gameSessionId), null);
+    assert.deepEqual(fake.listResumable(), []);
+    assert.deepEqual(fake.inputs(), ["create", "fail"]);
+    assert.deepEqual(pathFixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+  } finally {
+    await pathFixture.coordinator.close();
+    await pathFixture.broker.close();
+  }
+});
+
+test("game.create drives the ONE durable failure closure when registration fails after an admitted manifest", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: Object.freeze({
+        ...fake.authority,
+        registerGameSessionWorldBinding: async () => { throw new Error("controlled-registration-failure"); },
+      }),
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await creating;
+    // The world was observed and admitted, but registration never landed: the
+    // closure fails the pending intent and leaves no binding row, never a
+    // resumable half-record and never a bare accepted.
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    assert.deepEqual(sessions[0], {
+      gameSessionId: sessions[0]!.gameSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
+    });
+    assert.equal(fake.readBinding(sessions[0]!.gameSessionId), null);
+    assert.deepEqual(fake.listResumable(), []);
+    assert.deepEqual(fake.inputs(), ["create", "fail"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create never reports a clean unavailable outcome when its durable failure closure cannot be applied", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: Object.freeze({
+        ...fake.authority,
+        completeGameSessionBinding: async () => { throw new Error("controlled-completion-failure"); },
+      }),
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // The binding is registered, so the closure must mark it terminal together
+    // with the metadata in one store transaction. That transition is defined only
+    // from a completed session (the store requires `resumable` revision 2,
+    // continuity-semantic-production-store.ts markGameSessionWorldBindingTerminal),
+    // and the other legal shape (`failGameSessionCreation`) refuses a session that
+    // already has a binding row. The closure therefore cannot be applied to a
+    // registration-without-completion defect, and design card 114 requires a
+    // terminal create failure here instead of a clean `unavailable` - which is
+    // exactly what the wire reports, with the half-settled rows left visible.
+    await assert.rejects(creating, /stardew_game_create_failed/);
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]!.status, "pending");
+    assert.equal(fake.readBinding(sessions[0]!.gameSessionId)?.status, "registered");
+    assert.deepEqual(fake.listResumable(), []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("close during create settles the interrupted create through the same durable closure", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const completionEntered = deferredVoid();
+  const completionGate = deferredVoid();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: Object.freeze({
+        ...fake.authority,
+        completeGameSessionBinding: async (
+          input: Parameters<StardewGameSessionCreationAuthority["completeGameSessionBinding"]>[0],
+        ) => {
+          completionEntered.resolve();
+          await completionGate.promise;
+          return fake.authority.completeGameSessionBinding(input);
+        },
+      }),
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // Parked inside the completion step: the binding is registered and the
+    // session is one step short of `resumable`.
+    await completionEntered.promise;
+    assert.equal(fake.sessions()[0]!.status, "pending");
+    assert.equal(fake.readBinding(fake.sessions()[0]!.gameSessionId)?.status, "registered");
+    // Design card 114: an unfinished create stops before close and is settled by
+    // the durable failure rules. close() joins this attempt, so the closure runs
+    // before any teardown and the post-close state is terminal + failed, never a
+    // registered binding with resumable metadata behind.
+    const closing = fixture.coordinator.close();
+    completionGate.resolve();
+    await assert.rejects(creating, /stardew_lifecycle_closing/);
+    await closing;
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    const sessionId = sessions[0]!.gameSessionId;
+    assert.deepEqual(fake.readBinding(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+    });
+    assert.deepEqual(fake.listResumable(), []);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create after a failed FIRST AI launch re-arms a fresh activation instead of retrying consumed reservations", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    // The very first AI-client spawn of this lifecycle fails.
+    aiSpawnFailureAt: 1,
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    const firstCreating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const firstRequest = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, firstRequest, availableCabins[0]!);
+    const first = await firstCreating;
+    // The first create settled post-registration as unavailable: terminal
+    // binding + failed metadata (the D2 shape, driven by the ONE closure).
+    assert.deepEqual(first, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls[0]!.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-1");
+    const firstSessionId = fake.sessions()[0]!.gameSessionId;
+    assert.equal(fake.readBinding(firstSessionId)?.status, "terminal");
+    assert.equal(fake.readMetadata(firstSessionId)?.status, "failed");
+    // The failed launch still consumed the owner's one-shot AI-client launch and
+    // bridge connection reservations. A later create in the same lifecycle must
+    // therefore re-arm a fresh activation generation instead of retrying them
+    // (which would fail closed with stardew_ai_client_launch_not_available).
+    const secondRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const secondCreating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, secondRequestId, availableCabins[0]!);
+    const second = await secondCreating;
+    assert.equal(second.status, "attached");
+    assert.notEqual(second.gameSessionId, firstSessionId);
+    assert.match(second.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
+    assert.deepEqual(
+      fixture.spawnCalls.map((call) => call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION),
+      ["ai-generation-1", "ai-generation-2"],
+    );
+    assert.equal(fake.readMetadata(second.gameSessionId!)?.status, "resumable");
+    assert.equal(fake.readBinding(second.gameSessionId!)?.status, "registered");
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    // The Player world is untouched by either create or by the failed launch.
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
