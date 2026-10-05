@@ -4082,7 +4082,7 @@ export async function openRecoverableStardewBootstrapOwner(
     throw new Error("stardew_bootstrap_owner_recovery_principal_mismatch");
   }
   if (record.state === "contained" || record.state === "quarantined") {
-    throw new Error("stardew_bootstrap_owner_recovery_terminal");
+    throw new Error(STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL);
   }
   return Object.freeze({
     ownerPath,
@@ -4100,6 +4100,83 @@ export async function openRecoverableStardewBootstrapOwner(
     // one: the handle's record, fence and CAS revision are the exact predecessor
     // the returned transition port continues from.
     owner: composeRecoverablePlayerHostOwner(durableOwnerStateOver(ownerPath, root, record)),
+  });
+}
+
+/**
+ * The one bounded refusal of "this attempt's durable record is not recoverable".
+ *
+ * A `contained` record has terminated and drained both roles, and a
+ * `quarantined` one is the residue of a cleanup that could not finish, so
+ * neither may yield anything a caller could read as recoverable. The opener and
+ * the recovery-binding projection meet that one fact at two moments -- opening
+ * the attempt, and reading its post-CAS binding -- and they name it with this
+ * one code: a consumer that had to tell two names for one decision would
+ * eventually read one of them as "the record is fine here", which is exactly
+ * the fabricated success this seam must never produce.
+ */
+export const STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL = "stardew_bootstrap_owner_recovery_terminal";
+
+/**
+ * The post-CAS recovery binding of an already-opened crashed attempt, projected
+ * out of that attempt's own durable record.
+ *
+ * The opener alone cannot feed a recovery drive: it hands out the record it read
+ * when it opened the attempt, while the wire needs the binding facts of the
+ * CURRENT record -- the successor the durable `recovering` CAS wrote, read
+ * before the one-shot post-CAS classification frame. Those facts exist only
+ * inside this attempt's strict v4 record, whose validator is module-private, so
+ * this reads them through the very same `readAndValidateOwner` the opener itself
+ * uses: one read path, one validator, one durable seam, and no second copy of
+ * either.
+ *
+ * The read is bound to the composer-minted credential the handle carries rather
+ * than to the handle's exposed path, so it can only ever read the record OF that
+ * attempt: a handle that is not this module's credential refuses with
+ * `stardew_owned_player_host_bootstrap_owner_not_registered` instead of reading
+ * some other `owner.json`. A record that is terminal refuses with
+ * `STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL` and returns nothing.
+ *
+ * What comes back is exactly the fact set the drive's `readRecoveryBinding`
+ * contract consumes -- the five Guardian binding facts and the two role states
+ * the platform's post-CAS frame encodes -- and nothing else: no path, no process
+ * identity, no launch generation, and no lease material beyond the lease NAME
+ * the native gate must already name. The absent fields are as much part of that
+ * contract as the present ones, because this value reaches a native frame and
+ * every extra key would widen what a recovery driver can see with no reader on
+ * the other side.
+ *
+ * Unlike the opener, the read takes no path lock: the opener locks because it
+ * sources a CAS cursor and an immutable fence that must belong to one
+ * generation, while this is a one-frame snapshot whose durability the engine
+ * itself re-checks -- every recovery CAS re-reads the record and validates its
+ * exact revision, so a record that moves after this read fails that CAS instead
+ * of driving a stale binding.
+ */
+export async function readRecoverableStardewBootstrapOwnerRecoveryBinding(
+  opened: StardewRecoverableBootstrapOwner,
+): Promise<TypedPrivateGameFacts> {
+  if (typeof opened !== "object" || opened === null) {
+    throw new TypeError("invalid_stardew_recoverable_bootstrap_owner_handle");
+  }
+  const { durableOwner } = requireOwnedPlayerHostBootstrapFacts(opened.owner);
+  // `<transactionRoot>/stardew-private-bootstrap/<bootstrapId>` is the exact
+  // directory the opener read, and its grandparent is the containment root that
+  // boundary-verifies it -- the same two steps the settlement seam above takes
+  // from the same durable facts.
+  const root = dirname(dirname(durableOwner.transactionDirectory));
+  const record = await readAndValidateOwner(join(durableOwner.transactionDirectory, OWNER_FILE), root);
+  if (record.state === "contained" || record.state === "quarantined") {
+    throw new Error(STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL);
+  }
+  return Object.freeze({
+    bindingRevision: record.guardian.bindingRevision,
+    ownerRecordRevision: record.ownerRecordRevision,
+    leaseName: record.guardian.leaseName,
+    playerJobName: record.guardian.playerJobName,
+    aiJobName: record.guardian.aiJobName,
+    playerHostState: record.playerHostState,
+    aiClientState: record.aiClientState,
   });
 }
 
