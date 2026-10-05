@@ -3673,12 +3673,16 @@ function createProductionStardewBootstrapOwnerTransitionPrimitives(
 }
 
 /**
- * One CAS-cursor port over the durable transition engine. The live owner binding
- * and the recoverable-owner opener share this construction so a recovery driver
- * sees the identical surface on both: every named transition advances the
- * closure-held revision and the successor record then reaches the caller's own
- * side effect (the live owner replaces its in-memory record; the opener has
- * none, because it never holds an owner object).
+ * One CAS-cursor port over the durable transition engine, used by the
+ * recoverable-owner opener.
+ *
+ * The live owner binding exposes the same surface but does not route through
+ * here: `createStardewBootstrapGuardianOwnerBinding` re-implements this cursor
+ * and advance against its own primitive instance, because it also has to hand
+ * every successor record to `replaceRecord` and fix up the binding's recorded
+ * revision while the opener has no in-memory record at all. The two surfaces are
+ * therefore equal by duplication today, not by sharing this function, so a change
+ * to the cursor or to the transition names belongs in both places.
  */
 function createStardewBootstrapOwnerTransitionPort(
   primitives: StardewOwnerTransitionPrimitives,

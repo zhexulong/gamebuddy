@@ -178,7 +178,17 @@ function requireRecoveryRoleState(facts: TypedPrivateGameFacts, key: string): st
   return value;
 }
 
-/** Encodes one recovery body with the exact ordinal key order the native parser reads. */
+/**
+ * Encodes one recovery body with the key order both bodies are documented in.
+ *
+ * That order is a convention rather than a gate: the only place it is checked is
+ * the Desktop broker's tokenless pre-CAS check (which compares the five body keys
+ * as an ordinal sequence), while the native parser is key-set based
+ * (`GuardianProtocol.RequireExactKeys` compares the key count and the membership)
+ * and nothing checks the order of the post-CAS body that
+ * `GuardianRecoveryIngress.ParsePostCas` reads. Emitting it in this order keeps
+ * both bodies readable and matches what the one order-checking consumer expects.
+ */
 function encodeRecoveryBody(body: Readonly<Record<string, string | number>>, name: string): Uint8Array {
   const encoded = JSON.stringify(body);
   if (encoded === undefined) throw new Error(`contained game runtime: ${name} encoding failed`);
