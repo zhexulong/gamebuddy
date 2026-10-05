@@ -124,3 +124,20 @@ Watching a run therefore cannot be guaranteed by asking Windows harder: the
 honest outcomes are "activated", "raised", "taskbar entry flashed", or "no usable
 window yet". If none of the first three happens, watch the game through the
 taskbar or make that window the active one yourself.
+
+**Open question, with the evidence that raised it.** With the enumeration in
+place, a run logged
+
+    window mode foreground: game window class=SDL_app.
+    window mode foreground: SetForegroundWindow=refused; raised to the top of the z-order.
+
+and an independent probe of that same process then found exactly ONE visible
+top-level window: class `SDL_app`, size **158x26**, titled with the game version -
+i.e. the SMAPI console window, not a game-sized rendering window, and
+`topmost=False`. So the raise reports success on a window that cannot be what a
+person watches, and the topmost flag does not persist.
+
+Answer "which window is the game actually rendering into under
+`StardewModdingAPI.exe`" before any further raise work: unless the real game
+window (or a child of it) can be identified, `foreground` cannot be made to mean
+"a human is watching this". Until then treat `foreground` as best-effort.
