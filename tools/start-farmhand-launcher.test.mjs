@@ -318,3 +318,42 @@ test("a helper failure without a known code names its real reason, and cleanup c
   assert.match(launcher, /if \(\$null -eq \$primaryFailure\) \{ throw \}/);
   assert.match(launcher, /\[launcher-failure\] run failed: /);
 });
+
+test("the preview identity carries the companion continuity id, and its absence fails closed", () => {
+  // The preview contract now REQUIRES identity.continuityId (it partitions Memory
+  // and the runtime identity), while the attachment manifest carries none: a real
+  // run died at the preview step with `invalid_farmhand_companion_preview_config`,
+  // which names nothing about which field was missing. The launcher therefore
+  // takes the value from the ladder convention (GAMEBUDDY_COMPANION_CONTINUITY_ID)
+  // or an explicit parameter, and fails closed rather than inventing an identity.
+  assert.match(launcher, /\[string\]\$CompanionContinuityId = ""/);
+  assert.match(launcher, /GAMEBUDDY_COMPANION_CONTINUITY_ID/);
+  assert.match(launcher, /continuityId = \$companionContinuityId;/);
+  assert.match(launcher, /throw "farmhand_companion_continuity_id_required"/);
+  assert.match(launcher, /\^\[A-Za-z0-9_-\]\{1,128\}\$/);
+  // The refusal happens before any process is started.
+  const continuityIndex = launcher.indexOf("farmhand_companion_continuity_id_required");
+  const hostLaunchIndex = launcher.indexOf('$hostProcess = Start-Process -FilePath $smapi');
+  assert.ok(continuityIndex > 0 && hostLaunchIndex > 0 && continuityIndex > hostLaunchIndex,
+    "the continuity guard must sit with the later preview-config construction, not before the host launch");
+});
+
+test("the launcher waits for the AI client's bridge pipe instead of letting the preview fail terminally", () => {
+  // Measured: the preview was started ~1s after the AI client and died with
+  // `bridge_disconnected` - a class the retry rule treats as terminal on purpose -
+  // because the AI client (a full game instance, host equivalent 18-27s) had not
+  // created its pipe yet. Waiting for pipe EXISTENCE does not weaken readiness:
+  // the preview's authenticated connect stays the authority.
+  assert.match(launcher, /function Test-NamedPipeExists\(\[string\]\$Name\)/);
+  assert.match(launcher, /\[System\.IO\.Directory\]::GetFiles\("[^"]*pipe[^"]*"\)/);
+  assert.match(launcher, /while \(-not \(Test-NamedPipeExists \$pipeName\)\)/);
+  assert.match(launcher, /throw "ai_client_bridge_pipe_timeout"/);
+  assert.match(launcher, /throw "ai_client_exited_before_bridge"/);
+  assert.match(launcher, /Write-LauncherPhase "aiClientBridgePipeVisible"/);
+  // The wait must sit between the AI launch and the preview loop.
+  const waitIndex = launcher.indexOf("Test-NamedPipeExists $pipeName");
+  const aiLaunchIndex = launcher.indexOf('Write-LauncherPhase "aiClientLaunched"');
+  const previewLoopIndex = launcher.indexOf("while (-not $previewReady)");
+  assert.ok(aiLaunchIndex > 0 && waitIndex > aiLaunchIndex && previewLoopIndex > waitIndex,
+    "the pipe wait must run after the AI client launch and before the preview loop");
+});

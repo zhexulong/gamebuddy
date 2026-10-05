@@ -19,6 +19,12 @@ param(
     # default.
     [string]$HostWindowMode = "visible",
     [string]$FarmhandWindowMode = "background",
+    # The preview contract requires the companion continuity id (it partitions
+    # Memory and the runtime identity), but the attachment manifest does not
+    # carry one. The ladder runners already use GAMEBUDDY_COMPANION_CONTINUITY_ID
+    # as the convention, so the launcher accepts the same value; a run without it
+    # fails closed instead of inventing an identity.
+    [string]$CompanionContinuityId = "",
     [switch]$RequireActiveStopProof
 )
 
@@ -93,6 +99,12 @@ function Get-BoundedFailureDetail([string]$Raw) {
         return $collapsed
     }
     return "unavailable"
+}
+function Test-NamedPipeExists([string]$Name) {
+    # Read-only presence check. The preview remains the only AUTHENTICATED readiness
+    # authority; this only answers "has the other end created its pipe yet".
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    try { return [System.IO.Directory]::GetFiles("\\.\pipe\") -contains ("\\.\pipe\" + $Name) } catch { return $false }
 }
 function Stop-OwnedProcess($Process) {
     if ($null -eq $Process) { return }
@@ -420,7 +432,9 @@ try {
 
     $sha256 = [System.Security.Cryptography.SHA256]::Create()
     try { $manifestSha256 = (-join ($sha256.ComputeHash($manifestBytes) | ForEach-Object { $_.ToString("x2") })) } finally { $sha256.Dispose() }
-    $previewConfig = @{ schemaVersion = 1; runtimeRoot = $HostRuntimeRoot; runtimeInstanceId = ("preview_" + [guid]::NewGuid().ToString("N")); requiredPresentationLocale = $PresentationLocale; identity = @{ playerId = [string]$manifest.farmhandId; companionId = [string]$manifest.companionId; saveId = [string]$manifest.saveId; worldId = [string]$manifest.worldId }; bridge = @{ pipeName = $pipeName; bridgeToken = $bridgeToken }; evidence = @{ path = $evidencePath; manifestSha256 = $manifestSha256 } }
+    $companionContinuityId = if ($CompanionContinuityId.Length -gt 0) { $CompanionContinuityId } else { [string]$env:GAMEBUDDY_COMPANION_CONTINUITY_ID }
+    if ($companionContinuityId -notmatch '^[A-Za-z0-9_-]{1,128}$') { throw "farmhand_companion_continuity_id_required" }
+    $previewConfig = @{ schemaVersion = 1; runtimeRoot = $HostRuntimeRoot; runtimeInstanceId = ("preview_" + [guid]::NewGuid().ToString("N")); requiredPresentationLocale = $PresentationLocale; identity = @{ playerId = [string]$manifest.farmhandId; companionId = [string]$manifest.companionId; continuityId = $companionContinuityId; saveId = [string]$manifest.saveId; worldId = [string]$manifest.worldId }; bridge = @{ pipeName = $pipeName; bridgeToken = $bridgeToken }; evidence = @{ path = $evidencePath; manifestSha256 = $manifestSha256 } }
     Write-PrivateJson $previewConfigPath $previewConfig
 
     # The AI-client role also requires its own fresh generation. The Host
@@ -432,6 +446,20 @@ try {
     $env:GAMEBUDDY_WINDOW_MODE = $FarmhandWindowMode
     $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -PassThru
     Write-LauncherPhase "aiClientLaunched"
+    # The AI client is a FULL game instance: it needs its own startup (measured
+    # 18-27s) before its Mod creates the bridge pipe. Starting the preview sooner
+    # made it fail with `bridge_disconnected` - a class the retry rule below treats
+    # as terminal, deliberately - so the run aborted about a second after launching
+    # the AI client (measured 2026-10-05). Wait, boundedly, for the pipe to exist;
+    # the preview's authenticated connect stays the readiness authority.
+    $bridgePipeDeadline = [DateTimeOffset]::UtcNow.AddSeconds($StartupTimeoutSeconds)
+    while (-not (Test-NamedPipeExists $pipeName)) {
+        if ([DateTimeOffset]::UtcNow -ge $bridgePipeDeadline) { throw "ai_client_bridge_pipe_timeout" }
+        $aiProcess.Refresh()
+        if ($aiProcess.HasExited) { throw "ai_client_exited_before_bridge" }
+        Start-Sleep -Milliseconds 250
+    }
+    Write-LauncherPhase "aiClientBridgePipeVisible"
     # The Mod creates its named-pipe listener during its normal SMAPI startup.
     # The first Preview process is the sole safe readiness probe: only a typed
     # Windows named-pipe `connect` ENOENT may be retried. Any other Preview
