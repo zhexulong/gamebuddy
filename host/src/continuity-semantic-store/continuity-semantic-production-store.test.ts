@@ -296,6 +296,271 @@ test("Pure Game materialization rejects terminal binding with failed revision 2 
   }
 });
 
+test("A session whose completion never landed still settles terminally after registration", () => {
+  const root = canonicalTestRootSync("production-game-session-registered-settle-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  let controlClosed = false;
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const session = store.createGameSessionMetadata({
+      creationRequestId: "create-settle-registered",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    store.registerGameSessionWorldBinding({
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-settle-ref",
+      operationId: "bind-settle-01",
+    });
+    // Completion is the only writer that makes a session resumable, so the shape
+    // a create leaves behind when completion fails after registration is exactly
+    // this: a registered binding with pending revision 1 metadata.
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: session.gameSessionId }), session);
+    assert.throws(
+      () =>
+        store.failGameSessionCreation({
+          creationRequestId: "create-settle-registered",
+          gameSessionId: session.gameSessionId,
+          expectedRevision: 1,
+        }),
+      /game_session_metadata_conflict/,
+    );
+    const terminal = store.markGameSessionWorldBindingTerminal({
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      expectedRevision: 1,
+      operationId: "bind-settle-01",
+    });
+    assert.deepEqual(terminal, {
+      gameSessionId: session.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "opaque-settle-ref",
+      status: "terminal",
+      revision: 2,
+    });
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: session.gameSessionId }), {
+      ...session,
+      status: "failed",
+      revision: 3,
+    });
+    assert.deepEqual(store.listResumableGameSessions(), []);
+    // Terminal is sticky: the same settle reads back, and a late completion can
+    // never revive the settled session.
+    assert.deepEqual(
+      store.markGameSessionWorldBindingTerminal({
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        expectedRevision: 1,
+        operationId: "bind-settle-01",
+      }),
+      terminal,
+    );
+    assert.throws(
+      () =>
+        store.completeGameSessionBinding({
+          creationRequestId: "create-settle-registered",
+          gameSessionId: session.gameSessionId,
+          expectedRevision: 1,
+        }),
+      /game_session_metadata_conflict/,
+    );
+    control.close();
+    controlClosed = true;
+    // The settled row pair must survive the store's own materialization rules,
+    // which are the authority on which durable row pairs are legal.
+    const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+    try {
+      const reopenedStore = reopenedControl.bindBootstrapContext({
+        bootstrap,
+        metadata: reopenedControl.validateBootstrap(bootstrap),
+      });
+      assert.deepEqual(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: session.gameSessionId, integrationId: "stardew" }),
+        terminal,
+      );
+      assert.deepEqual(reopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }), {
+        ...session,
+        status: "failed",
+        revision: 3,
+      });
+      assert.deepEqual(reopenedStore.listResumableGameSessions(), []);
+    } finally {
+      reopenedControl.close();
+    }
+  } finally {
+    if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("A world slot held by a live session is rejected for a second session and reused only once terminal", () => {
+  const root = canonicalTestRootSync("production-game-session-duplicate-slot-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  let controlClosed = false;
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const first = store.createGameSessionMetadata({
+      creationRequestId: "create-duplicate-first",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    const firstBinding = store.registerGameSessionWorldBinding({
+      gameSessionId: first.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_389124477",
+      operationId: "bind-duplicate-first",
+    });
+    // The legitimate same-session replay is the store-owned operation identity,
+    // and it must never be mistaken for a foreign claim on the slot.
+    assert.deepEqual(
+      store.registerGameSessionWorldBinding({
+        gameSessionId: first.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "Farm_389124477",
+        operationId: "bind-duplicate-first",
+      }),
+      firstBinding,
+    );
+    // A second binding for the same session stays that session's own conflict.
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: first.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "bind-duplicate-first-replay",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    const second = store.createGameSessionMetadata({
+      creationRequestId: "create-duplicate-second",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: second.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "bind-duplicate-second",
+        }),
+      /game_session_world_binding_duplicate/,
+    );
+    // The rejected registration wrote nothing, so the second session can only
+    // settle through the pre-registration shape: failed with no binding row.
+    assert.equal(
+      store.readGameSessionWorldBinding({ gameSessionId: second.gameSessionId, integrationId: "stardew" }),
+      null,
+    );
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: second.gameSessionId }), second);
+    store.failGameSessionCreation({
+      creationRequestId: "create-duplicate-second",
+      gameSessionId: second.gameSessionId,
+      expectedRevision: 1,
+    });
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: second.gameSessionId }), {
+      ...second,
+      status: "failed",
+      revision: 2,
+    });
+    // The same reference under another integration is another world, not a claim
+    // on this one.
+    const foreign = store.createGameSessionMetadata({
+      creationRequestId: "create-duplicate-foreign",
+      integrationId: "other-integration",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.equal(
+      store.registerGameSessionWorldBinding({
+        gameSessionId: foreign.gameSessionId,
+        integrationId: "other-integration",
+        bindingRef: "Farm_389124477",
+        operationId: "bind-duplicate-foreign",
+      }).status,
+      "registered",
+    );
+    // The first session completes while its binding still holds the slot, and it
+    // stays the one resumable session for that world.
+    assert.equal(
+      store.completeGameSessionBinding({
+        creationRequestId: "create-duplicate-first",
+        gameSessionId: first.gameSessionId,
+        expectedRevision: 1,
+      }).status,
+      "resumable",
+    );
+    assert.deepEqual(
+      store.listResumableGameSessions().map((row) => row.gameSessionId),
+      [first.gameSessionId],
+    );
+    // Once the holder is settled (terminal binding + failed metadata) the slot is
+    // free for a later create: the residual save belongs to the native game, not
+    // to any session.
+    store.markGameSessionWorldBindingTerminal({
+      gameSessionId: first.gameSessionId,
+      integrationId: "stardew",
+      expectedRevision: 1,
+      operationId: "bind-duplicate-first",
+    });
+    const third = store.createGameSessionMetadata({
+      creationRequestId: "create-duplicate-third",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    const thirdBinding = store.registerGameSessionWorldBinding({
+      gameSessionId: third.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_389124477",
+      operationId: "bind-duplicate-third",
+    });
+    assert.equal(thirdBinding.status, "registered");
+    assert.equal(
+      store.completeGameSessionBinding({
+        creationRequestId: "create-duplicate-third",
+        gameSessionId: third.gameSessionId,
+        expectedRevision: 1,
+      }).status,
+      "resumable",
+    );
+    assert.deepEqual(
+      store.listResumableGameSessions().map((row) => row.gameSessionId),
+      [third.gameSessionId],
+    );
+    control.close();
+    controlClosed = true;
+    const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+    try {
+      const reopenedStore = reopenedControl.bindBootstrapContext({
+        bootstrap,
+        metadata: reopenedControl.validateBootstrap(bootstrap),
+      });
+      assert.equal(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: first.gameSessionId, integrationId: "stardew" })
+          ?.status,
+        "terminal",
+      );
+      assert.equal(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: third.gameSessionId, integrationId: "stardew" })
+          ?.status,
+        "registered",
+      );
+      assert.deepEqual(
+        reopenedStore.listResumableGameSessions().map((row) => row.gameSessionId),
+        [third.gameSessionId],
+      );
+    } finally {
+      reopenedControl.close();
+    }
+  } finally {
+    if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("Game recovery requires explicit OS-proven owner death and exact owner tuple", () => {
   const root = canonicalTestRootSync("production-game-recovery-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
