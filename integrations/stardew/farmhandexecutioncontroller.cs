@@ -631,7 +631,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
         if (profile is not AdmissionActionabilityProfile.Modal
-            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution))
+            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null
+            // Three long-lived slots were missing here, which meant a mount pending, a bus
+            // ride in flight, or an owned overnight could coexist with any action admitted
+            // through this path: two executions owning one body. Each of those actions
+            // checked only its own slot inline, so nothing caught the overlap.
+            || this.activeMountTransport is not null || this.activeBusRide is not null
+            || this.activeDayAdvance is not null || this.controller.HasActiveExecution))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
         return null;

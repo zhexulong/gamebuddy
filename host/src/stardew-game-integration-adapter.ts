@@ -202,13 +202,25 @@ function hasStardewCompletionEvidence(
   // than treating a succeeded receipt or a matching substring as completion.
   switch (actionId) {
     case "equip_tool":
+      // The frozen contract is ["tool_equipped","already_equipped"]
+      // (farmhandactiondevelopmentcontract.cs:74) and the Mod emits exactly those
+      // (farmhandexecutioncontroller.resourcetoolactions.cs:434/444). This branch
+      // previously required "tool_selected" and a "slot" evidence key, neither of
+      // which exists on the production path, so equip_tool could never be judged
+      // complete — and the fixtures were built from the same stale literals, which is
+      // why every test stayed green. equip_tool/v2 deliberately made slot Mod-private
+      // and reports the resolved tool instead.
+      //
+      // "already_equipped" is a deterministic success with before == expected == after,
+      // so the shared clauses below cover both.
       return (
-        receipt.reasonCode === "tool_selected" &&
+        (receipt.reasonCode === "tool_equipped" ||
+          receipt.reasonCode === "already_equipped") &&
         exactEvidence(
           detail,
-          ["slot", "before", "expected", "after"],
+          ["tool", "before", "expected", "after"],
           (e) =>
-            validSlot(e.slot) &&
+            hasOpaqueEvidenceValue(e.tool) &&
             isToolSelectionBeforeValue(e.before) &&
             hasOpaqueEvidenceValue(e.expected) &&
             e.after === e.expected,

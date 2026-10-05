@@ -363,7 +363,7 @@ catalogRevision: 1,
         actionId: "equip_tool",
         requestId: request.requestId,
         state: "succeeded",
-        reasonCode: "tool_selected",
+        reasonCode: "tool_equipped",
         revision: 4,
         evidence: { before: "(W) Axe", expected: "(W) Axe", after: "(W) Axe" },
       };
@@ -386,7 +386,7 @@ catalogRevision: 1,
   assert.equal((received as { args: { tool: string } }).args.tool, "axe");
   // Wire consistency: the tool-emitted request must pass the wire validator unchanged.
   assert.equal(validateExecutionRequest(received, integration.state.snapshot!), null);
-  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /tool_selected/);
+  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /tool_equipped/);
 });
 
 test("enter_exit mounts from a live capability and forwards the door tile", async () => {

@@ -831,7 +831,7 @@ change the same request warped straight into the Greenhouse. This is
 `equip_tool` ran on the event-free
 `GameBuddyFixtureStable_445936768` disposable copy: a fresh snapshot selected
 `(T)Hoe` in slot `1`; its same-execution receipt was
-`succeeded/tool_selected` with `expected=(T)Hoe;after=(T)Hoe`; and its fresh
+`tool_equipped` with `expected=(T)Hoe;after=(T)Hoe`; and its fresh
 post-observe reported `currentTool=(T)Hoe`. `travel` is a distinct action, not
 an alias for `move_to_tile`: a separate prerequisite move reached the
 FarmHouse source warp `(3,12)`, then travel's own execution reached
@@ -1761,3 +1761,35 @@ Two changes:
   sequence — the rung's "no smuggled tool sequence" test still holds). The gate itself is
   untouched: it protects other rungs' verdicts too, and loosening a shared threshold to make
   one rung pass would be exactly the kind of silent relaxation this file's contract forbids.
+
+### 38.1 The verdict still passed a session that accomplished nothing (run H, fixed)
+
+Run H (14 dispatches, **14 refusals**, one successful walk, nothing harvested) reported
+`state: passed`. The verdict required "a real attempt and a settled session" — true, and
+still the wrong thing to call a played session. Run H's own closing line is the honest
+report of a failed session: "刚迈步下地，动作就卡住了…一棵花椰菜都没收到".
+
+The verdict now also requires at least one action that **changed the world**:
+`accomplishedActionIds` = terminals outside a declared non-accomplishment set
+(`move_to_tile`, `travel`, `enter_exit`, `navigate_to_destination`, `observe_scene`,
+`inspect_world_map`, `express_emote`, `face_direction`, `equip_tool`), and a session
+without one is `sessionVerdict: nothing_accomplished` → `blocked`. The set is published
+in the artifact next to the ids it filters, so the rule is readable rather than implied.
+
+Replayed over every stored run, the criterion separates exactly the intended cases:
+
+| run | accomplishments | sessionVerdict | state |
+|---|---|---|---|
+| C (before the move fix) | 5 families | completed | blocked (interaction length) |
+| D | 4 | completed | blocked |
+| E | 2 | **turn_timeout** (609 s cut-off) | blocked |
+| F | 6 | completed | blocked (interaction length) |
+| G | 4 | completed | passed |
+| H | **0** | **nothing_accomplished** | **blocked** |
+
+Run H also exposed the last refusals' character: with the planner-walkability predicate in
+place, its two `no_native_path` receipts read
+`target_standable=false;target_walkable=true;probe_says_reachable=true` — the *tile* is
+walkable and the flood probe reached a neighbour, but the native path finder found no
+route from where the actor stood. That is a **path** fact, not a tile fact, and it is now
+visible in the evidence instead of being collapsed into "unreachable".
