@@ -72,9 +72,20 @@ export type RecoveryOperation = Readonly<{
  * role it classified. `unavailable` means the recovery could not be driven to
  * that state: the attempt is still unproven, so an uncertain native recovery is
  * never reported as containment and is never silently retried.
+ *
+ * `gate_held` is the recovery gate's own refusal, separated from `unavailable`
+ * because it is the only answer the conversation reports about the LEASE rather
+ * than about the recovery. A held gate means a live handle exists at the lease
+ * name, which proves only that the holder was NOT PROVEN GONE. It is never proof
+ * that the owner is alive: the handle may be a recovery gate the Host itself
+ * opened, so a consumer must not invert it into a liveness verdict. Nothing
+ * native ran, the previous lease stays authority, and the attempt is refused
+ * exactly as `unavailable` refuses it - a consumer that only asks "did the
+ * recovery run" may read the two alike, and one that consumes this verdict as a
+ * lease probe must not.
  */
 export type RedactedRecoveryOutcome = Readonly<{
-  readonly status: "recovered" | "unavailable";
+  readonly status: "recovered" | "unavailable" | "gate_held";
 }>;
 
 export type ContainedGameRuntime = Readonly<{
