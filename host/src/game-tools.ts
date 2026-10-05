@@ -605,10 +605,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.move_to_tile,
         label: "Move Farmhand to Tile",
         description:
-          "Request the player-enabled move_to_tile capability. Inspect its authoritative receipt before saying movement succeeded. " +
-          "A tile that holds an object (crop, weed, chest, machine) is approached from a standable neighbouring tile: the receipt then reports target_reached with adjacent_arrival=true and names the requested tile. " +
-          "If the actor is already at the destination (or already within the approach ring of a substituted one), the receipt reports target_reached with already_at_target=true — nothing moved because nothing needed to. " +
-          "A refusal (no_native_path) names the cause: blocked_by=<item>@x,y, target_standable, and probe_says_reachable.",
+          "Request the player-enabled move_to_tile capability. Inspect its authoritative receipt before saying movement succeeded.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
