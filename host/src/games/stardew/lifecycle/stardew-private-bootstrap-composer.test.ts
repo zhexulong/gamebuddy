@@ -652,6 +652,167 @@ test("recoverable owner opener refuses a foreign principal and a CAS-inconsisten
 });
 
 /**
+ * The recovery binding projection is the one read a crash-recovery drive needs
+ * before it can build a request, and it is the same strict v4 read the opener
+ * itself performs: the attempt's CURRENT record -- here the post-CAS successor a
+ * `recovering` CAS wrote -- projected into exactly the facts the platform
+ * encodes into its post-CAS frame. The values below are the ones the platform's
+ * own test obtains by reading this same durable record, asserted field for field
+ * and then against the literals the fixture wrote, so neither side of the
+ * comparison can drift into agreeing on a wrong record.
+ */
+test("the recovery binding projection returns the strict record's post-CAS binding facts and nothing wider", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  // A crash mid-recovery: the durable `recovering` CAS ran, one role is already
+  // classified contained while the other is still active, so the record is
+  // exactly the post-CAS successor the platform reads its classification
+  // binding from before it writes the one-shot post-CAS frame.
+  const actor = "5c8e1f2b-0a4d-4e7c-9b31-6d2f8a3c7e50";
+  await transition.arm(1);
+  await transition.activate("playerHost", 2);
+  await transition.activate("aiClient", 3);
+  await transition.beginRecovery(4, actor);
+  await transition.containRecoveringRole("playerHost", 5, actor);
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  const binding = await productionCore.readRecoverableStardewBootstrapOwnerRecoveryBinding(opened);
+
+  // The record exactly as it stands on disk, read directly here.
+  const persisted = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  const guardian = persisted.guardian as Record<string, unknown>;
+  assert.equal(binding.bindingRevision, guardian.bindingRevision);
+  assert.equal(binding.ownerRecordRevision, persisted.ownerRecordRevision);
+  assert.equal(binding.leaseName, guardian.leaseName);
+  assert.equal(binding.playerJobName, guardian.playerJobName);
+  assert.equal(binding.aiJobName, guardian.aiJobName);
+  assert.equal(binding.playerHostState, persisted.playerHostState);
+  assert.equal(binding.aiClientState, persisted.aiClientState);
+  assert.deepEqual(binding, {
+    bindingRevision: "revision-1",
+    ownerRecordRevision: 6,
+    leaseName: "Local\\GameBuddy-Test-Lease-1",
+    playerJobName: "Local\\GameBuddy-Test-PlayerJob-1",
+    aiJobName: "Local\\GameBuddy-Test-AiJob-1",
+    playerHostState: "contained",
+    aiClientState: "active",
+  });
+  // Exactly the fact set the drive's contract consumes. No owner path, no
+  // transaction directory, no launch generation, no Guardian instance identity
+  // and no lease secret: a recovery driver that could see those would be seeing
+  // durable material the native frame has no reader for.
+  assert.deepEqual(Object.keys(binding).sort(), [
+    "aiClientState", "aiJobName", "bindingRevision", "leaseName", "ownerRecordRevision", "playerHostState", "playerJobName",
+  ]);
+  assert.equal(Object.isFrozen(binding), true);
+});
+
+/**
+ * A terminal record is never read as a recoverable one, even when the credential
+ * was handed out while the attempt was still live: the projection re-checks the
+ * CURRENT record rather than trusting what the opener saw.
+ */
+test("the recovery binding projection refuses a record that went terminal after the opener handed out its credential", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  await transition.arm(1);
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  // The attempt is closed out underneath the credential, exactly as a competing
+  // recovery or the explicit endgame would.
+  await transition.beginControlledClose(2);
+  await transition.containControlledRole("playerHost", 3);
+  await transition.containControlledRole("aiClient", 4);
+  await transition.finalizeControlledContained(5);
+  const containedBytes = await readFile(path, "utf8");
+
+  await assert.rejects(
+    () => productionCore.readRecoverableStardewBootstrapOwnerRecoveryBinding(opened),
+    (error: unknown) => error instanceof Error && error.message === "stardew_bootstrap_owner_recovery_terminal",
+    "a contained record is refused with the boundedly named terminal code",
+  );
+  assert.equal(await readFile(path, "utf8"), containedBytes, "a refused binding read rewrites nothing");
+});
+
+test("the recovery binding projection refuses a quarantined record", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  await transition.arm(1);
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  await transition.quarantine(2);
+  const quarantinedBytes = await readFile(path, "utf8");
+
+  await assert.rejects(
+    () => productionCore.readRecoverableStardewBootstrapOwnerRecoveryBinding(opened),
+    (error: unknown) => error instanceof Error && error.message === "stardew_bootstrap_owner_recovery_terminal",
+    "a quarantined record is refused with the boundedly named terminal code",
+  );
+  assert.equal(await readFile(path, "utf8"), quarantinedBytes, "a refused binding read rewrites nothing");
+});
+
+/**
+ * The credential, not the path the handle exposes, is what the read is bound to.
+ * A handle that names another attempt's `owner.json` therefore still projects
+ * the attempt its credential stands for, so no caller can turn this projection
+ * into a reader for a record it does not own.
+ */
+test("the recovery binding projection reads the credential's own attempt instead of the path a handle names", async () => {
+  const first = createHarness({
+    guardianLeaseNames: ["Local\\GameBuddy-First-Lease"],
+    guardianPlayerJobNames: ["Local\\GameBuddy-First-PlayerJob"],
+    guardianAiJobNames: ["Local\\GameBuddy-First-AiJob"],
+  });
+  const second = createHarness({
+    guardianLeaseNames: ["Local\\GameBuddy-Second-Lease"],
+    guardianPlayerJobNames: ["Local\\GameBuddy-Second-PlayerJob"],
+    guardianAiJobNames: ["Local\\GameBuddy-Second-AiJob"],
+  });
+  const firstRoot = await createRoot();
+  const secondRoot = await createRoot();
+  await reserveFresh(first, firstRoot);
+  await reserveFresh(second, secondRoot);
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: firstRoot,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+
+  const binding = await productionCore.readRecoverableStardewBootstrapOwnerRecoveryBinding({
+    ...opened,
+    ownerPath: ownerPath(secondRoot),
+  });
+
+  assert.equal(binding.leaseName, "Local\\GameBuddy-First-Lease");
+  assert.equal(binding.playerJobName, "Local\\GameBuddy-First-PlayerJob");
+  assert.equal(binding.aiJobName, "Local\\GameBuddy-First-AiJob");
+});
+
+/**
  * The second half of a recovery, on the durable engine: a finalize the engine
  * refuses is never turned into a terminal record by invention. The recovery's
  * own failure closure quarantines it instead, and the bounded refusal travels
