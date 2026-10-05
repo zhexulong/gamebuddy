@@ -561,6 +561,216 @@ test("A world slot held by a live session is rejected for a second session and r
   }
 });
 
+/**
+ * Documents a KNOWN WEDGE. This test pins the behaviour observed today so the
+ * evidence stays reproducible; it does NOT claim the behaviour is correct. The
+ * repair semantics is an open decision (the fix is not in the store yet), and
+ * this test is expected to change with it.
+ *
+ * The wedge: the cross-session duplicate-slot rule refuses a slot another
+ * session holds while its binding is `registered` (:4214-4219), but
+ * `registered` is paired with `pending|resumable` metadata (:1126-1132), which
+ * includes the abandoned `pending revision 1 + registered revision 1` shape a
+ * death between `registerGameSessionWorldBinding` and
+ * `completeGameSessionBinding` - or a create whose settle closure could not be
+ * applied - leaves behind. Nothing then releases the slot:
+ * `failGameSessionCreation` refuses a session that already has a binding row
+ * (:4120-4121), `markGameSessionWorldBindingTerminal` requires the per-command
+ * `operationId` (:4283) that no readback exposes, `completeGameSessionBinding`
+ * makes the holder resumable while the binding still holds the slot, and the
+ * store's only two `DELETE`s are on `production_game_lease` (no operation
+ * deletes a session metadata or world binding row). The holder is not even
+ * discoverable: `listResumableGameSessions` returns `[]` for that shape.
+ */
+test("KNOWN WEDGE: a slot held by an abandoned registered binding blocks every later create", () => {
+  const root = canonicalTestRootSync("production-game-session-slot-wedge-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  let controlClosed = false;
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    // Session A registers the slot; its per-command operationId is dropped here
+    // exactly as a process death would (the coordinator mints it with
+    // randomBytes(32) inside an in-memory idempotency slot).
+    const first = store.createGameSessionMetadata({
+      creationRequestId: "wedge-create-first",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.deepEqual(
+      store.registerGameSessionWorldBinding({
+        gameSessionId: first.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "Farm_389124477",
+        operationId: "wedge-bind-first",
+      }),
+      {
+        gameSessionId: first.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "Farm_389124477",
+        status: "registered",
+        revision: 1,
+      },
+    );
+    // The abandoned pair is not discoverable as resumable, and no readback
+    // carries the operationId the terminal settle demands.
+    assert.deepEqual(store.listResumableGameSessions(), []);
+    assert.deepEqual(
+      Object.keys(
+        store.readGameSessionWorldBinding({ gameSessionId: first.gameSessionId, integrationId: "stardew" })!,
+      ).sort(),
+      ["bindingRef", "gameSessionId", "integrationId", "revision", "status"],
+    );
+    // A later create is refused by the surviving holder.
+    const second = store.createGameSessionMetadata({
+      creationRequestId: "wedge-create-second",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: second.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "wedge-bind-second",
+        }),
+      /game_session_world_binding_duplicate/,
+    );
+    // The pre-registration settle refuses because the binding row exists (this
+    // is the isolated binding-row predicate: the creation request is the true
+    // one, so the identity/ revision checks above it pass).
+    assert.throws(
+      () =>
+        store.failGameSessionCreation({
+          creationRequestId: "wedge-create-first",
+          gameSessionId: first.gameSessionId,
+          expectedRevision: 1,
+        }),
+      /game_session_metadata_conflict/,
+    );
+    // The terminal settle refuses without the lost operationId.
+    assert.throws(
+      () =>
+        store.markGameSessionWorldBindingTerminal({
+          gameSessionId: first.gameSessionId,
+          integrationId: "stardew",
+          expectedRevision: 1,
+          operationId: "wedge-bind-first-lost",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    // The one transition reachable without the operationId makes the holder
+    // resumable and still does not free the slot.
+    assert.equal(
+      store.completeGameSessionBinding({
+        creationRequestId: "wedge-create-first",
+        gameSessionId: first.gameSessionId,
+        expectedRevision: 1,
+      }).status,
+      "resumable",
+    );
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: second.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "wedge-bind-second-again",
+        }),
+      /game_session_world_binding_duplicate/,
+    );
+    assert.throws(
+      () =>
+        store.markGameSessionWorldBindingTerminal({
+          gameSessionId: first.gameSessionId,
+          integrationId: "stardew",
+          expectedRevision: 1,
+          operationId: "wedge-bind-first-lost",
+        }),
+      /game_session_world_binding_conflict/,
+    );
+    // The refused create settles the pre-registration way and stays refused.
+    assert.deepEqual(
+      store.failGameSessionCreation({
+        creationRequestId: "wedge-create-second",
+        gameSessionId: second.gameSessionId,
+        expectedRevision: 1,
+      }),
+      { ...second, status: "failed", revision: 2 },
+    );
+    const third = store.createGameSessionMetadata({
+      creationRequestId: "wedge-create-third",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.throws(
+      () =>
+        store.registerGameSessionWorldBinding({
+          gameSessionId: third.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "wedge-bind-third",
+        }),
+      /game_session_world_binding_duplicate/,
+    );
+    control.close();
+    controlClosed = true;
+    // A restart neither repairs nor quarantines the abandoned pair: the
+    // materialization rules accept `resumable rev2 + registered rev1`, and the
+    // slot stays held for every later create.
+    const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+    try {
+      const reopenedStore = reopenedControl.bindBootstrapContext({
+        bootstrap,
+        metadata: reopenedControl.validateBootstrap(bootstrap),
+      });
+      assert.deepEqual(reopenedStore.listResumableGameSessions(), [{ ...first, status: "resumable", revision: 2 }]);
+      const fourth = reopenedStore.createGameSessionMetadata({
+        creationRequestId: "wedge-create-fourth",
+        integrationId: "stardew",
+        continuityIdentityId: principal.continuityId,
+      });
+      assert.throws(
+        () =>
+          reopenedStore.registerGameSessionWorldBinding({
+            gameSessionId: fourth.gameSessionId,
+            integrationId: "stardew",
+            bindingRef: "Farm_389124477",
+            operationId: "wedge-bind-fourth",
+          }),
+        /game_session_world_binding_duplicate/,
+      );
+      // The holder is now discoverable - but only because this test kept the
+      // operationId; a real restart does not, and every settle still refuses.
+      assert.throws(
+        () =>
+          reopenedStore.failGameSessionCreation({
+            creationRequestId: "wedge-fresh-creation-request",
+            gameSessionId: first.gameSessionId,
+            expectedRevision: 2,
+          }),
+        /game_session_metadata_conflict/,
+      );
+      assert.throws(
+        () =>
+          reopenedStore.markGameSessionWorldBindingTerminal({
+            gameSessionId: first.gameSessionId,
+            integrationId: "stardew",
+            expectedRevision: 1,
+            operationId: "wedge-bind-first-lost",
+          }),
+        /game_session_world_binding_conflict/,
+      );
+    } finally {
+      reopenedControl.close();
+    }
+  } finally {
+    if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("Game recovery requires explicit OS-proven owner death and exact owner tuple", () => {
   const root = canonicalTestRootSync("production-game-recovery-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
