@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -36,7 +36,7 @@ async function loadGenerationModules(artifactRoot: string) {
     load("tavern/persona-management/persona-management.js"),
     load("tavern/scenario-management/scenario-management.js"),
     load("tavern/greeting-management/greeting-management.js"),
-    load("tavern/companion-detail/companion-detail-service.js"),
+    load("tavern/st-card-import-service.js"),
     load("tavern/library-service.js"),
     load("tavern/new-companion-service.js"),
     load("tavern/tavern-paths.js"),
@@ -91,7 +91,7 @@ async function startMountedManagementComposition(
     personaManagementModule,
     scenarioManagementModule,
     greetingManagementModule,
-    companionDetailModule,
+    stCardImportModule,
     libraryServiceModule,
     newCompanionModule,
     tavernPathsModule,
@@ -156,6 +156,10 @@ async function startMountedManagementComposition(
             "chat.archive",
             "chat.restore",
             "chat.trash",
+            "character.import.stage",
+            "character.import.read",
+            "character.import.review",
+            "character.import.confirm",
           ]
         : []),
     ],
@@ -188,6 +192,10 @@ async function startMountedManagementComposition(
             "chat.archive",
             "chat.restore",
             "chat.trash",
+            "character.import.stage",
+            "character.import.read",
+            "character.import.review",
+            "character.import.confirm",
           ]
         : []),
     ],
@@ -216,9 +224,8 @@ async function startMountedManagementComposition(
   let scenarioService: ReturnType<typeof scenarioManagementModule.createScenarioManagementService> | undefined;
   let greetingService: ReturnType<typeof greetingManagementModule.createGreetingManagementService> | undefined;
   let libraryService: Readonly<{ listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]> }> | undefined;
-  let companionDetailService:
-    | Readonly<{ read(handle: string): Promise<Readonly<{ name: string }> | null> }>
-    | undefined;
+  let stCardImportService: InstanceType<typeof stCardImportModule.StCardImportService> | undefined;
+  let confirmStCardImport: ((importId: string) => Promise<Readonly<{ name: string }>>) | undefined;
   let newCompanionProvisioner: Readonly<{ create(name: string): Promise<Readonly<{ name: string }>> }> | undefined;
   if (options.withCharacters === true) {
     const tavernPaths = tavernPathsModule.resolveTavernPaths(
@@ -258,14 +265,30 @@ async function startMountedManagementComposition(
         );
       },
     });
-    const companionDetailBase = companionDetailModule.createCompanionDetailService(tavernPaths, artifactStore);
-    companionDetailService = Object.freeze({
-      async read(handle: string) {
-        if (handle !== companionHandleFor(currentCompanionId)) return null;
-        const detail = await companionDetailBase.read();
-        return Object.freeze({ name: detail.name });
-      },
-    });
+    // Companion detail is deliberately not bound here: the production owner
+    // projects the mounted companion's own runtime identity (see
+    // desktop-presentation-admission-owner), which this fixture has no mount
+    // identity for, and no journey reads the detail route. Leaving it unbound
+    // makes that route answer 404 per request, exactly as the owner does for a
+    // handle it cannot resolve.
+    //
+    // The reviewed ST-card import mirrors the production owner: the service owns
+    // the staged artifacts, and confirm re-reads the exact reviewed candidate and
+    // provisions it (profile plus the reviewed world book) into a new
+    // Host-owned namespace through the same library threads.
+    stCardImportService = new stCardImportModule.StCardImportService(artifactStore, tavernPaths);
+    confirmStCardImport = async (importId: string) => {
+      const imported = await stCardImportService!.read(importId);
+      const review = await stCardImportService!.confirmedReview(importId);
+      const provision = await newCompanionModule.provisionNewCompanion(
+        root,
+        principal.playerId,
+        imported.candidate.artifact,
+        review,
+        libraryThreads,
+      );
+      return Object.freeze({ name: provision.companion.name });
+    };
     newCompanionProvisioner = Object.freeze({
       async create(name: string) {
         const provision = await newCompanionModule.provisionDirectNewCompanion(root, principal.playerId, name);
@@ -329,13 +352,16 @@ async function startMountedManagementComposition(
     ...(scenarioService === undefined ? {} : { scenarioService }),
     ...(greetingService === undefined ? {} : { greetingService }),
     ...(libraryService === undefined ? {} : { libraryService }),
-    ...(companionDetailService === undefined ? {} : { companionDetailService }),
     ...(newCompanionProvisioner === undefined ? {} : { newCompanionProvisioner }),
+    ...(stCardImportService === undefined ? {} : { stCardImportService }),
+    ...(confirmStCardImport === undefined ? {} : { confirmStCardImport }),
     profile,
     bootstrapToken,
   });
   return {
     server,
+    /** The fixture runtime root: every durable read-back reads it directly. */
+    root,
     async appendPlayerMessageToLockWorldInfo() {
       const store = chatThreadStoreModule.createChatThreadStore(root, runtime.identityKey(principal));
       await store.appendPlayer(lease.chatThreadId, {
@@ -1231,6 +1257,119 @@ test("management browser with the Characters surface archives and trashes the mo
     // corrupt the management surface) and the drawer stays empty.
     await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
     await expect(page.locator("[data-characters-panel]")).toBeVisible();
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+/** Depth-first search for one file name under a fixture root. */
+async function findFile(directory: string, fileName: string): Promise<string | null> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const child = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      const found = await findFile(child, fileName);
+      if (found !== null) return found;
+    } else if (entry.name === fileName) return child;
+  }
+  return null;
+}
+
+/**
+ * A synthetic CCv3 card carrying exactly the two things the reviewed import has
+ * to prove: one reviewable persona field, and one always-on world-book entry
+ * that must reach the provisioned companion's durable book (the S3 link into the
+ * Tier 2 m[0] baseline).
+ */
+const IMPORTED_CARD = Object.freeze({
+  spec: "chara_card_v3",
+  data: Object.freeze({
+    name: "Imported Rae",
+    description: "Quiet, attentive, fond of the valley.",
+    mes_example: "<START>\n{{user}}: Morning!\n{{char}}: A quiet start; I like it.",
+    character_book: Object.freeze({
+      entries: [
+        Object.freeze({
+          keys: [] as readonly string[],
+          content: "Imported Rae knows every footpath around the valley.",
+          extensions: Object.freeze({}),
+          name: "Footpaths",
+          constant: true,
+          comment: "Always-on world book entry.",
+        }),
+      ],
+    }),
+  }),
+});
+
+test("management browser imports a reviewed character card and provisions the companion it names", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition({ withCharacters: true });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const calls: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/tavern/v1/")) calls.push(`${request.method()} ${url.pathname}`);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-characters-panel]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+    const cardImport = panel.locator("[data-card-import]");
+    await expect(cardImport).toBeVisible();
+
+    // The card itself is the player's only input: nothing is supplied out of band.
+    await cardImport.locator("textarea").fill(JSON.stringify(IMPORTED_CARD));
+    await cardImport.getByRole("button", { name: "Review card" }).click();
+
+    // The player reviews visible evidence, never card body text: the reviewable
+    // persona field, the world-book field the always-on entry travels as, and the
+    // inert dispositions for what is not included.
+    const fields = cardImport.locator("[data-import-fields]");
+    await expect(fields).toContainText("persona_core");
+    await expect(fields).toContainText("profile_eligible_after_explicit_review");
+    await expect(fields).toContainText("worldbook_");
+    // The dispositions sit behind the panel's own disclosure: open it the way a
+    // player does, then assert it names what was kept and what was not, by
+    // classification only (never card body text).
+    const excluded = cardImport.locator("details").filter({ hasText: "Not included" }).first();
+    await excluded.locator("summary").click();
+    const dispositions = cardImport.locator("[data-import-dispositions]");
+    await expect(dispositions).toBeVisible();
+    await expect(dispositions).toContainText(
+      /(accepted_typed|preserved_opaque|dropped_unsupported|rejected_invalid)/u,
+    );
+    await expect(cardImport).toContainText("Imported Rae");
+
+    await cardImport.getByRole("button", { name: "Confirm & create companion" }).click();
+    await expect(cardImport.getByRole("status")).toContainText("Imported companion created.");
+
+    // The provisioned companion joins the library under the name the card
+    // carried: approving the reviewed name is what makes that true.
+    await expect(panel.locator("[data-companion-entry]").first()).toContainText("Imported Rae");
+
+    // Durable read-back: the reviewed always-on world book the card carried is on
+    // disk for the provisioned companion. That file is the S3 link the Chat
+    // surface materializes into Tier 2 m[0].
+    const provisioned = await findFile(mounted.root, "worldbook.json");
+    assert.ok(provisioned !== null, "the provisioned companion's world book is durable");
+    const book = JSON.parse(await readFile(provisioned, "utf8")) as {
+      entries: readonly { constant?: boolean; content?: string }[];
+    };
+    assert.equal(
+      book.entries.some((entry) => entry.constant === true && (entry.content ?? "").includes("every footpath")),
+      true,
+    );
+
+    // A reload proves the companion is durable library state, not optimistic DOM.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    await expect(page.locator("[data-companion-entry]").first()).toContainText("Imported Rae");
+
+    // Every step was a real mounted route: stage, the signed review, then confirm.
+    assert.equal(calls.filter((entry) => entry === "POST /api/tavern/v1/imports").length, 1);
+    assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/review$/u.test(entry)).length, 1);
+    assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/confirm$/u.test(entry)).length, 1);
   } finally {
     await browser.close();
     await mounted.close();
