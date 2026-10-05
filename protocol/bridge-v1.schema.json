@@ -4541,6 +4541,29 @@
       "additionalProperties": false,
       "maxProperties": 0
     },
+    "shopPurchaseArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedTargetId",
+        "expectedQualifiedItemId",
+        "quantity"
+      ],
+      "properties": {
+        "expectedTargetId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "useMineElevatorArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5792,11 +5815,23 @@
                 "const": "ride_bus"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "shop_purchase"
+              }
+            }
           },
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/rideBusArgs"
+                "$ref": "#/$defs/shopPurchaseArgs"
               }
             }
           }
@@ -5898,6 +5933,7 @@
             "equip_tool",
             "travel",
             "ride_minecart",
+            "shop_purchase",
             "select_mine_elevator_floor",
             "use_raft",
             "mount_transport",

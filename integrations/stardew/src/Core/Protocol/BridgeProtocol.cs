@@ -1853,6 +1853,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     // ride_bus targets the ticket machine of the current location, so it carries
     // no client-supplied arguments either.
     "ride_bus" => Array.Empty<string>(),
+    // shop_purchase carries an opaque shop target, the good's wire identity, and how
+    // many units to buy. There is deliberately no coordinate: it buys from a shop the
+    // actor already stands next to (walking is move_to_tile's job).
+    "shop_purchase" => new[] { "expectedTargetId", "expectedQualifiedItemId", "quantity" },
     "answer_dialogue" => new[] { "responseKey" },
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.

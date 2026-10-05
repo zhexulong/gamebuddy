@@ -1552,6 +1552,28 @@ export function createStardewActionTools(
   }
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "shop_purchase",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("shop_purchase", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("shop_purchase", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.shop_purchase,
+          label: "Buy from a shop",
+          description:
+            "Buy goods from a shop whose owner is standing within reach. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. Move into reach first; the action does not walk.",
+          parameters: schema,
+          action: "shop_purchase",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "select_mine_elevator_floor",
     );
     if (

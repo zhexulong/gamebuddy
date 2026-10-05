@@ -524,6 +524,7 @@ public sealed class BridgeProtocolSerializationTests
             CookingStationTargets: null,
             MinecartTargets: null,
             MineElevatorFloorTargets: null,
+            ShopTargets: null,
             BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null,
             PedestalTargets: null, FenceGateTargets: null,
             CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null,
