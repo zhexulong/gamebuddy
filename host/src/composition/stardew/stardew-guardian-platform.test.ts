@@ -6,7 +6,7 @@ import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntim
 import type { DesktopGuardianRecovery, DesktopGuardianSession, GuardianAck, GuardianRecoveryAck } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
-import { containedRuntimeTeardownFromCollaborator } from "../../stardew-production-lifecycle-coordinator.internal.js";
+import { containedRuntimeTeardownFromCollaborator, driveStardewOwnedPlayerHostRecovery } from "../../stardew-production-lifecycle-coordinator.internal.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
@@ -892,11 +892,18 @@ test("a refused recovery rejects the returned promise instead of throwing synchr
 });
 
 /**
- * The native recovery conversation can fail after it already ran: the gate can
- * stay held by the previous lease, a role can be classified not contained, or
- * the transport can reject the conversation outright. None of those is
- * containment, so each must report `unavailable` and must not be re-driven —
- * an uncertain native recovery may already have mutated the attempt.
+ * The native recovery conversation can fail after it already ran: a role can be
+ * classified not contained, or the transport can reject the conversation
+ * outright. None of those is containment, so each must report `unavailable` and
+ * must not be re-driven - an uncertain native recovery may already have mutated
+ * the attempt.
+ *
+ * The gate that never opened is the one position reported under its own name:
+ * `gate_held` says a live handle exists at the lease name, so the holder was NOT
+ * proven gone. It is still a refusal - the drive is never retried and no durable
+ * step runs - and the durable record is the proof: a held gate leaves the
+ * attempt `reserved`, while every scenario that got past the gate advanced it to
+ * `recovering`.
  */
 test("a recovery that does not reach terminal containment fails closed and is never retried", async () => {
   const actor = "c4d9a3f1-58b2-4c67-9e0a-1b7f3d6c8e24";
@@ -906,16 +913,19 @@ test("a recovery that does not reach terminal containment fails closed and is ne
   const scenarios: readonly Readonly<{
     name: string;
     recover: (input: DesktopGuardianRecovery) => Promise<GuardianRecoveryAck>;
+    expectedOutcome: Readonly<{ status: string }>;
     expectedRecord: Readonly<Record<string, unknown>>;
   }>[] = [
     {
       name: "the session rejects the recovery",
       recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      expectedOutcome: { status: "unavailable" },
       expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
     },
     {
       name: "the recovery gate is still held by the previous lease",
       recover: async () => Object.freeze({ outcome: "gate_held" as const }),
+      expectedOutcome: { status: "gate_held" },
       expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
     },
     {
@@ -926,6 +936,7 @@ test("a recovery that does not reach terminal containment fails closed and is ne
         await input.beginRecovery();
         return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
       },
+      expectedOutcome: { status: "unavailable" },
       expectedRecord: { state: "recovering", revision: 2, recovery: actor, playerHost: "reserved", aiClient: "reserved" },
     },
   ];
@@ -960,7 +971,7 @@ test("a recovery that does not reach terminal containment fails closed and is ne
       readRecoveryBinding: async () =>
         recoveryBindingFacts(JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>),
     });
-    assert.deepEqual(outcome, { status: "unavailable" }, scenario.name);
+    assert.deepEqual(outcome, scenario.expectedOutcome, scenario.name);
     assert.equal(calls.length, 1, `${scenario.name}: the failure is not retried`);
     const record = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
     assert.deepEqual(
@@ -975,4 +986,172 @@ test("a recovery that does not reach terminal containment fails closed and is ne
       scenario.name,
     );
   }
+});
+
+/**
+ * The two directions of the native gate verdict, pinned at the seam a recovery
+ * trigger consumes.
+ *
+ * The recovery wire answers the gate position with the same `unavailable` text
+ * it uses for a role the native classified as not contained, and separates the
+ * two by the position the conversation reached. The platform must keep that
+ * separation: `gate_held` is the lease verdict and nothing else, while every
+ * other failure keeps the existing `unavailable`. Collapsing them would leave a
+ * release trigger unable to tell "the holder is not proven gone" from "the
+ * recovery did not reach containment", and reporting a generic failure as held
+ * would be worse still: it would read as a lease verdict that was never
+ * observed. The converse direction is pinned here too - a stated containment is
+ * never reported as the held gate.
+ */
+test("the native gate verdict is reported as its own outcome and no other failure is", async () => {
+  const actor = "d8c2f5b1-4e79-4c3a-9f6b-2a7e0d4c8b19";
+  const guardianRevision = "5a1e7c3d-8b04-4f92-a6d1-0c3e9f2a7b58";
+  const scenarios: readonly Readonly<{
+    name: string;
+    recover: (input: DesktopGuardianRecovery) => Promise<GuardianRecoveryAck>;
+    expectedOutcome: Readonly<{ status: string }>;
+  }>[] = [
+    {
+      // The gate never opened, so this answer is about the lease and not about
+      // the recovery: a live handle exists at the lease name and the holder was
+      // therefore NOT proven gone. It is never read as the owner being alive.
+      name: "the recovery gate refused to open",
+      recover: async () => Object.freeze({ outcome: "gate_held" as const }),
+      expectedOutcome: { status: "gate_held" },
+    },
+    {
+      // The sharpest case: the wire's status text at this position is the very
+      // `unavailable` the held gate answers with, and only the position tells
+      // them apart. Reporting this as `gate_held` would invent a lease verdict
+      // the native side never gave.
+      name: "a role was classified unavailable after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+      },
+      expectedOutcome: { status: "unavailable" },
+    },
+    {
+      name: "a role was quarantined after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "quarantined" as const });
+      },
+      expectedOutcome: { status: "unavailable" },
+    },
+    {
+      name: "the authenticated session rejected the conversation",
+      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      expectedOutcome: { status: "unavailable" },
+    },
+    {
+      // A stated containment is the one success, and it must not carry the
+      // lease verdict either.
+      name: "the recovery reached containment",
+      recover: async (input) => {
+        await input.beginRecovery();
+        await input.roleContained("playerHost");
+        await input.roleContained("aiClient");
+        return Object.freeze({ outcome: "contained" as const });
+      },
+      expectedOutcome: { status: "recovered" },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = createHarness({ guardianRevisions: [guardianRevision] });
+    const root = await createRoot();
+    const triple = mintOwnedTriple(harness.composition);
+    const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
+    );
+    const calls: string[] = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      arm: async () => ack("arm"),
+      launch: async (input) => ack("launch", input.role),
+      contain: async (input) => ack("contain", input.role),
+      recover: (input) => {
+        calls.push("recover");
+        return scenario.recover(input);
+      },
+      close: async () => {},
+    });
+    const drive = readStardewOwnerRecoveryDriver(
+      createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+    );
+    assert.notEqual(drive, undefined, scenario.name);
+    const outcome = await drive!.recover(owner, {
+      recoveryInstanceId: actor,
+      readRecoveryBinding: async () =>
+        recoveryBindingFacts(JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>),
+    });
+    assert.deepEqual(outcome, scenario.expectedOutcome, scenario.name);
+    assert.equal(calls.length, 1, `${scenario.name}: the native conversation is driven exactly once`);
+  }
+});
+
+/**
+ * A held gate is a distinguishable outcome, not a different decision.
+ *
+ * The gate is an exclusion gate whose whole job is to keep a second recovery off
+ * a lease whose holder was not proven gone, so the product path must refuse it
+ * exactly as it refuses every other failure: no finalization, no retry, and no
+ * durable step taken on the strength of a verdict that only says the holder is
+ * unproven. The attempt record is the proof - a held gate never advances it.
+ */
+test("a held gate still refuses the product-path recovery and drives nothing durable", async () => {
+  const actor = "1c7a4f90-6b2d-4e83-8a55-9d0f3e8b1c46";
+  const guardianRevision = "9e4b2d17-3c85-4a06-b7f2-5d8c1a9e6b03";
+  const harness = createHarness({ guardianRevisions: [guardianRevision] });
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const recordBefore = await readFile(ownerPath(root), "utf8");
+  const calls: string[] = [];
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: (input) => {
+      calls.push("recover");
+      // The held verdict answers a real request for this exact recovery actor:
+      // the platform forwards the answer the native side gave instead of
+      // inventing a gate verdict, and the durable `recovering` CAS may only run
+      // while the gate is held, which this gate never was.
+      assert.equal(input.recoveryInstanceId, actor, "the held verdict answers the exact request that was driven");
+      assert.equal(calls.length, 1, "a held gate is never re-driven");
+      return Promise.resolve(Object.freeze({ outcome: "gate_held" as const }));
+    },
+    close: async () => {},
+  });
+  const teardown = containedRuntimeTeardownFromCollaborator(
+    createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+  );
+  const request = Object.freeze({
+    recoveryInstanceId: actor,
+    readRecoveryBinding: async () =>
+      recoveryBindingFacts(JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>),
+  });
+
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(teardown, owner, request),
+    // The code itself belongs to the lifecycle lane; what this seam must
+    // guarantee is that the refusal is a bounded machine-readable error and not
+    // a resolved outcome, and that a held gate never finalizes the attempt.
+    (error: unknown) => error instanceof Error && /^stardew_[a-z0-9_]+$/.test(error.message),
+    "a held gate refuses the recovery instead of finalizing it",
+  );
+  assert.equal(calls.length, 1, "the refusal is never retried");
+  const record = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  assert.equal(record.state, "reserved", "a held gate leaves the attempt exactly as it was");
+  assert.equal(record.recoveryInstanceId, null, "no recovery actor was ever recorded");
+  assert.equal(await readFile(ownerPath(root), "utf8"), recordBefore, "a held gate writes nothing durable");
 });

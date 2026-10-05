@@ -419,11 +419,16 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
          * for. The platform owns the frame order and the bounded waits, the
          * operation carries the typed gate facts and the two durable steps, and
          * only the platform's terminal containment is reported as `recovered`.
-         * Every other position and every failure is `unavailable` and is never
-         * retried here: an uncertain native recovery may already have mutated
-         * the attempt, so a retry would repeat a native effect this layer cannot
-         * prove. The generic core cannot supply this member itself, because it
-         * holds no owner binding and no durable transition port.
+         * The gate's own refusal is reported as `gate_held`, because it is the
+         * only answer about the lease rather than about the recovery: a live
+         * handle exists at the lease name, so the holder was NOT proven gone -
+         * never that the owner is alive, since that handle may be a recovery
+         * gate this Host itself opened. Every other position and every failure
+         * is `unavailable`, and none of the three is retried here: an uncertain
+         * native recovery may already have mutated the attempt, so a retry
+         * would repeat a native effect this layer cannot prove. The generic
+         * core cannot supply this member itself, because it holds no owner
+         * binding and no durable transition port.
          *
          * A recovery drives an attempt that already crashed, so it runs before
          * any role launch on this runtime rather than interleaving with the
@@ -438,6 +443,18 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
               beginRecovery: operation.beginRecovery,
               roleContained: operation.roleContained,
             });
+            // The wire's terminal positions are not this contract's outcomes:
+            // `contained` is the only containment, and a role the native
+            // classified as not contained is exactly as unproven as a
+            // conversation that failed outright. The gate's refusal is the one
+            // position carried through under its own name, because it is the
+            // only answer that reports on the lease instead of on the recovery:
+            // a held gate says a live handle exists at the lease name, so the
+            // holder was NOT proven gone - never that the owner is alive, since
+            // that handle may be the recovery gate this Host itself opened.
+            if (acknowledgement.outcome === "gate_held") {
+              return Object.freeze({ status: "gate_held" as const });
+            }
             return Object.freeze({
               status: acknowledgement.outcome === "contained" ? "recovered" as const : "unavailable" as const,
             });
@@ -496,8 +513,9 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
      * alone holds — the recorded recovery actor and the post-CAS binding facts of
      * its own durable record. A request the durable engine cannot accept is
      * refused with a bounded error and nothing is driven; a recovery that the
-     * platform cannot take to terminal containment reports `unavailable` and is
-     * never retried here.
+     * platform cannot take to terminal containment reports `unavailable` - or,
+     * when the recovery gate refused to open at all, the separate `gate_held`
+     * that says the holder was not proven gone - and is never retried here.
      */
     async recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome> {
       // The actor reaches a durable CAS and one native field the platform encodes
