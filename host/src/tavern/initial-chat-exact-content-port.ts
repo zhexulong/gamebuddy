@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import {
   type ChatThreadState,
   type CreateChatThreadRequest,
+  type TavernStableWorldBookBinding,
   classifyInitialChatExactContentFailure,
   createChatThreadStore,
   createInitialChatExactContentCapability,
@@ -67,6 +71,43 @@ export type ManifestDerivedInitialChatExactContent = Readonly<{
 
 const trustedReceipts = new WeakSet<object>();
 
+/**
+ * The companion's own reviewed world book, for a thread creation that names none.
+ *
+ * The reviewed ST-card import writes `<runtimeCwd>/worldbook.json`, and the Game
+ * surface compiles that file into its Tier 2 m[0] unconditionally. The Chat
+ * surface materializes only what the thread binds, so a companion provisioned
+ * from a card carried its backdrop in Game and silently lost it in Chat.
+ *
+ * The binding is PERSISTED on the thread rather than injected when the catalog is
+ * materialized: acceptance re-materializes against the stored thread and refuses
+ * a world-info source whose thread carries no binding
+ * (`tavern_stable_context_worldbook_binding_mismatch`), so a transient override
+ * makes the two disagree and every turn fail closed. Defaulting it here keeps the
+ * stored thread, the materialized catalog and the acceptance check in agreement.
+ *
+ * A missing book is ordinary - a companion need not have one - and yields nothing
+ * to bind. A present but unreadable book fails closed rather than silently
+ * emptying the backdrop.
+ */
+async function companionOwnWorldBookBinding(
+  manifest: HostDeploymentManifest,
+): Promise<TavernStableWorldBookBinding | undefined> {
+  const worldBookPath = join(
+    resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).runtimeCwd,
+    "worldbook.json",
+  );
+  if (!existsSync(worldBookPath)) return undefined;
+  const book = await readWorldBook(worldBookPath);
+  const metadata = worldBookMetadata(book);
+  return Object.freeze({
+    worldBookId: metadata.worldBookId,
+    revision: metadata.revision,
+    canonicalHash: metadata.canonicalHash,
+    provenance: "reviewed-import" as const,
+  });
+}
+
 /** Matching data, cloning, serialization, and proxies never become trusted receipts. */
 export function isTrustedTavernExactContentReceipt(value: unknown): value is TavernExactContentReceipt {
   return !!value && typeof value === "object" && trustedReceipts.has(value);
@@ -88,8 +129,18 @@ export function createManifestDerivedInitialChatExactContentPort(
     },
   });
   let closed = false;
+  const inner = createInitialChatExactContentPort(
+    createInitialChatExactContentCapability(store, profileMetadataReader),
+  );
   return Object.freeze({
-    port: createInitialChatExactContentPort(createInitialChatExactContentCapability(store, profileMetadataReader)),
+    port: Object.freeze({
+      resumeExact: inner.resumeExact,
+      createExplicit: async (request: CreateChatThreadRequest) => {
+        if (request.worldBookBinding !== undefined) return inner.createExplicit(request);
+        const binding = await companionOwnWorldBookBinding(manifest);
+        return inner.createExplicit(binding === undefined ? request : { ...request, worldBookBinding: binding });
+      },
+    }),
     close: () => {
       if (closed) return;
       closed = true;
