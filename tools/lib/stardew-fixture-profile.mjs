@@ -36,10 +36,27 @@ const BUNDLE_FILE_NAMES = Object.freeze([
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
+
+/**
+ * Backup identity for one bundle file.
+ *
+ * It previously hand-mapped each file to a token ("dll" / "manifest" / "deps"),
+ * which is NOT injective: two different files in one profile collapse to the same
+ * name, so they shared one backup file and the second write overwrote the first.
+ * Restore then verified the first entry's recorded digest against the overwritten
+ * bytes and failed with `fixture_backup_hash_mismatch` on EVERY run — measured on
+ * 2026-10-05, where `A-host-mod-deps` appeared twice in one manifest, one entry
+ * matching and one not. Deriving the identity from the real file name keeps it
+ * injective by construction and removes the token map entirely.
+ */
+function bundleTargetName(profile, kind, fileName) {
+  return `${profile}-${kind}-${fileName.replace(/\.json$/u, "")}`;
+}
+
 const SIDECAR_BUNDLE_TARGETS = Object.freeze(
   PROFILE_NAMES.flatMap((profile) =>
     BUNDLE_FILE_NAMES.map((fileName) => ({
-      name: `${profile}-sidecar-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
+      name: bundleTargetName(profile, "sidecar", fileName),
       profile,
       relativePath: ["GameBuddy", fileName],
     })),
@@ -48,13 +65,21 @@ const SIDECAR_BUNDLE_TARGETS = Object.freeze(
 const MOD_BUNDLE_TARGETS = Object.freeze(
   PROFILE_NAMES.flatMap((profile) =>
     BUNDLE_FILE_NAMES.map((fileName) => ({
-      name: `${profile}-mod-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
+      name: bundleTargetName(profile, "mod", fileName),
       profile,
       relativePath: ["Mods", "GameBuddy", fileName],
     })),
   ),
 );
 const MANAGED_PROFILE_TARGETS = Object.freeze([...CONFIG_TARGETS, ...SIDECAR_BUNDLE_TARGETS, ...MOD_BUNDLE_TARGETS]);
+
+/**
+ * The managed target list, exported so its identity invariant can be asserted:
+ * every target needs a DISTINCT name (it becomes the backup file name), or two
+ * targets share one backup file and restore fails on the overwritten digest.
+ * Read-only: the list is frozen.
+ */
+export const FIXTURE_MANAGED_TARGETS = MANAGED_PROFILE_TARGETS;
 const TRANSACTION_LOCK_DIRECTORY = ".stardew-fixture-profile.lock";
 const TRANSACTION_LOCK_FILE = "transaction.json";
 const TRANSACTION_LOCK_VERSION = 1;
