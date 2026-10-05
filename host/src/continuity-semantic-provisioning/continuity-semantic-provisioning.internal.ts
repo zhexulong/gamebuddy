@@ -18,6 +18,7 @@ import {
   PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
   type ProductionBootstrapInput,
   type ProductionContinuityStore,
+  type ProductionGameSessionWorldBindingSlotAuthority,
   type ProductionSagaStore,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 
@@ -52,8 +53,15 @@ export type CanonicalProductionAuthorityAdmission = Readonly<{
   authorityRootIdentity: string;
 }>;
 
-/** Production callers receive only typed authority commands, never lifecycle or adoption internals. */
-type ProductionContinuitySemanticStore = ProductionSagaStore;
+/**
+ * Production callers receive only typed authority commands, never lifecycle or
+ * adoption internals. The world-slot read and release are part of this
+ * projection because the Game authority reaches the store only through this
+ * wrapper: `bindBootstrapContext` already returns that surface, so forwarding it
+ * here is the same hand-written projection every other member uses and not a
+ * second mechanism. Nothing about the release depends on where it is declared.
+ */
+type ProductionContinuitySemanticStore = ProductionSagaStore & ProductionGameSessionWorldBindingSlotAuthority;
 
 export type FreshContinuityProvision = Readonly<{
   store: ProductionContinuitySemanticStore;
@@ -379,7 +387,15 @@ function provision(
        requireOpen();
        return rawStore.markGameSessionWorldBindingTerminal(input);
      },
-  });
+     readGameSessionWorldBindingSlotHolder(input) {
+       requireOpen();
+       return rawStore.readGameSessionWorldBindingSlotHolder(input);
+     },
+     releaseGameSessionWorldBindingSlot(input) {
+       requireOpen();
+       return rawStore.releaseGameSessionWorldBindingSlot(input);
+     },
+   });
   return Object.freeze({
     store,
     runtimeCwd,

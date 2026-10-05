@@ -8,12 +8,19 @@ import test, { before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createUnmountedDialogueSemanticFacade } from "../continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.js";
-import { createCanonicalProductionAuthorityAdmission } from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
 import {
+  createCanonicalProductionAuthorityAdmission,
+  provisionFreshProductionContinuity,
+} from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
+import {
+  mintGameSessionWorldBindingSlotLeaseVerdict,
   openProductionContinuityStore,
+  productionGameSessionWorldBindingSlotLeaseVerdict,
   type ProductionBootstrapInput,
   type ProductionChatRuntimeOwner,
   type ProductionChatRuntimeRequest,
+  type ProductionGameSessionWorldBindingSlotReleaseInput,
+  type ProductionGameSessionWorldBindingSlotReleaseProof,
   type TavernExactContentReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
@@ -129,6 +136,24 @@ function manifest(root: string): string {
     }),
   );
   return manifestPath;
+}
+
+/**
+ * A native-lease verdict for one holder, in the shape the future trigger will
+ * obtain it from the real same-name probe. This lane runs no probe, so the
+ * release is exercised end to end with a synthetic `holder_gone` verdict minted
+ * through the store's own minting function - the only honest way to reach it
+ * without a dead process. The `holderHandle` is always the caller's own value,
+ * never a derived one, because the release's correlation check is what makes the
+ * verdict non-substitutable.
+ */
+function slotReleaseProof(holderHandle: string): ProductionGameSessionWorldBindingSlotReleaseProof {
+  return Object.freeze({
+    verdict: mintGameSessionWorldBindingSlotLeaseVerdict(
+      productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
+    ),
+    holderHandle,
+  });
 }
 
 test("v38 coordinator Chat request boundary reaches the actual store with an exact writable vector copy", () => {
@@ -527,8 +552,10 @@ test(
           "prepareEnter",
            "readGameSessionMetadata",
            "readGameSessionWorldBinding",
+           "readGameSessionWorldBindingSlotHolder",
            "recoverDeadOwner",
            "registerGameSessionWorldBinding",
+           "releaseGameSessionWorldBindingSlot",
         ]);
         const facts = Object.freeze({
           world: Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" }),
@@ -1018,3 +1045,403 @@ test("Game coordinator source constructs independent enter and close requests wi
   assert.match(source, /kind: "enter" as const/);
   assert.match(source, /kind: "close" as const/);
 });
+
+test("provisioning wrapper exposes the world-slot read and release and reaches the real bound store", () => {
+  const root = canonicalTestRootSync("semantic-slot-wrapper-");
+  let provision: ReturnType<typeof provisionFreshProductionContinuity> | undefined;
+  try {
+    const runtimeRoot = join(root, "runtime");
+    mkdirSync(runtimeRoot);
+    provision = provisionFreshProductionContinuity(
+      Object.freeze({
+        runtimeCwd: runtimeRoot,
+        principal,
+        bootstrapOperationId: "bootstrap_01",
+        authorityGeneration: 1,
+      }),
+    );
+    const store = provision.store;
+    // The projection exists at all: a wrapper that dropped either member would
+    // leave the Game authority with no way to reach the store's slot surface.
+    assert.equal(typeof store.readGameSessionWorldBindingSlotHolder, "function");
+    assert.equal(typeof store.releaseGameSessionWorldBindingSlot, "function");
+    // The call reaches the real store rather than a stub: an unheld slot reads as
+    // absent and releases with the store's own bounded refusal.
+    assert.equal(
+      store.readGameSessionWorldBindingSlotHolder(
+        Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+      ),
+      null,
+    );
+    assert.throws(
+      () =>
+        store.releaseGameSessionWorldBindingSlot(
+          Object.freeze({
+            integrationId: "stardew",
+            bindingRef: "opaque_world_ref",
+            holderHandle: "holder_wrapper_01",
+            proof: slotReleaseProof("holder_wrapper_01"),
+          }),
+        ),
+      (error: unknown) => (error as Error).message === "game_session_world_binding_slot_missing",
+    );
+    const session = store.createGameSessionMetadata(
+      Object.freeze({
+        creationRequestId: "wrapper_creation_01",
+        integrationId: "stardew",
+        continuityIdentityId: principal.continuityId,
+      }),
+    );
+    store.registerGameSessionWorldBinding(
+      Object.freeze({
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "opaque_world_ref",
+        operationId: "wrapper_binding_01",
+        holderHandle: "holder_wrapper_01",
+      }),
+    );
+    assert.equal(
+      store.readGameSessionWorldBindingSlotHolder(
+        Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+      )?.holderHandle,
+      "holder_wrapper_01",
+    );
+    assert.equal(
+      store.releaseGameSessionWorldBindingSlot(
+        Object.freeze({
+          integrationId: "stardew",
+          bindingRef: "opaque_world_ref",
+          holderHandle: "holder_wrapper_01",
+          proof: slotReleaseProof("holder_wrapper_01"),
+        }),
+      ).status,
+      "terminal",
+    );
+    // The wrapper's own lifecycle guard is the same one every other member uses,
+    // so the new members cannot touch a closed store.
+    provision.close();
+    assert.throws(
+      () =>
+        store.readGameSessionWorldBindingSlotHolder(
+          Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+        ),
+      /production_store_already_closed/,
+    );
+    assert.throws(
+      () =>
+        store.releaseGameSessionWorldBindingSlot(
+          Object.freeze({
+            integrationId: "stardew",
+            bindingRef: "opaque_world_ref",
+            holderHandle: "holder_wrapper_01",
+            proof: slotReleaseProof("holder_wrapper_01"),
+          }),
+        ),
+      /production_store_already_closed/,
+    );
+  } finally {
+    try {
+      provision?.close();
+    } catch {
+      /* the lifecycle assertions above already closed it */
+    }
+    cleanup(root);
+  }
+});
+
+test(
+  "known Game authority projects the world-slot holder read and the release onto the bound store",
+  { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-known-game-slot-");
+    let game:
+      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
+      | undefined;
+    try {
+      const deployment = await loadHostDeploymentManifest(manifest(root));
+      const chat = await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      await chat.close();
+      game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(deployment);
+      const authority = game;
+      const session = await authority.createGameSessionMetadata(
+        Object.freeze({
+          creationRequestId: "slot_creation_01",
+          integrationId: "stardew",
+          continuityIdentityId: principal.continuityId,
+        }),
+      );
+      const registered = await authority.registerGameSessionWorldBinding(
+        Object.freeze({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "opaque_world_ref",
+          operationId: "slot_binding_01",
+          holderHandle: "holder_slot_01",
+        }),
+      );
+      assert.equal(registered.status, "registered");
+      // The read hands back exactly the holder the store wrote, including the
+      // handle a release demands; the authority invents and derives nothing, and
+      // it forwards the store's own frozen readback rather than re-wrapping it.
+      const holder = await authority.readGameSessionWorldBindingSlotHolder(
+        Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+      );
+      assert.deepEqual(holder, {
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "opaque_world_ref",
+        status: "registered",
+        revision: 1,
+        holderHandle: "holder_slot_01",
+      });
+      assert.equal(Object.isFrozen(holder), true);
+      // A slot nobody holds is not this operation's business: the store's
+      // `null` reaches the caller as `null`, not as a thrown or falsy stand-in.
+      assert.equal(
+        await authority.readGameSessionWorldBindingSlotHolder(
+          Object.freeze({ integrationId: "stardew", bindingRef: "opaque_absent_ref" }),
+        ),
+        null,
+      );
+      // The release reaches the store: the holder lands on the canonical
+      // terminal shape the store's own settle produces, and the authority's
+      // independent reads observe it.
+      const released = await authority.releaseGameSessionWorldBindingSlot(
+        Object.freeze({
+          integrationId: "stardew",
+          bindingRef: "opaque_world_ref",
+          holderHandle: "holder_slot_01",
+          // Synthetic `holder_gone` verdict; the real probe belongs to the future
+          // trigger, which is not part of this lane.
+          proof: slotReleaseProof("holder_slot_01"),
+        }),
+      );
+      assert.deepEqual(released, {
+        gameSessionId: session.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "opaque_world_ref",
+        status: "terminal",
+        revision: 2,
+      });
+      assert.equal(Object.isFrozen(released), true);
+      assert.equal(
+        (
+          await authority.readGameSessionWorldBinding(
+            Object.freeze({ gameSessionId: session.gameSessionId, integrationId: "stardew" }),
+          )
+        )?.status,
+        "terminal",
+      );
+      assert.equal(
+        (
+          await authority.readGameSessionWorldBindingSlotHolder(
+            Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+          )
+        )?.status,
+        "terminal",
+      );
+      // One transaction: the session the released holder belonged to is failed at
+      // revision 3, so no settled binding outlives a live session.
+      assert.equal(
+        (await authority.readGameSessionMetadata(Object.freeze({ gameSessionId: session.gameSessionId })))?.status,
+        "failed",
+      );
+      // The new members are gated exactly like every other member: after close
+      // they refuse with the authority's own bounded code.
+      await authority.close();
+      await assert.rejects(
+        authority.readGameSessionWorldBindingSlotHolder(
+          Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+        ),
+        /semantic_game_authority_closed/,
+      );
+      await assert.rejects(
+        authority.releaseGameSessionWorldBindingSlot(
+          Object.freeze({
+            integrationId: "stardew",
+            bindingRef: "opaque_world_ref",
+            holderHandle: "holder_slot_01",
+            proof: slotReleaseProof("holder_slot_01"),
+          }),
+        ),
+        /semantic_game_authority_closed/,
+      );
+    } finally {
+      await game?.close().catch(() => undefined);
+      cleanup(root);
+    }
+  },
+);
+
+test(
+  "known Game authority surfaces each world-slot refusal with its own bounded code",
+  { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-known-game-slot-refusals-");
+    let game:
+      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
+      | undefined;
+    try {
+      const deployment = await loadHostDeploymentManifest(manifest(root));
+      const chat = await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      await chat.close();
+      game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(deployment);
+      const authority = game;
+      const session = await authority.createGameSessionMetadata(
+        Object.freeze({
+          creationRequestId: "refusal_creation_01",
+          integrationId: "stardew",
+          continuityIdentityId: principal.continuityId,
+        }),
+      );
+      await authority.registerGameSessionWorldBinding(
+        Object.freeze({
+          gameSessionId: session.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "opaque_world_ref",
+          operationId: "refusal_binding_01",
+          holderHandle: "holder_refusal_01",
+        }),
+      );
+      const codeOf = async (work: () => Promise<unknown>): Promise<string> => {
+        try {
+          await work();
+          return "no_refusal";
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      // Each refusal keeps its own code. Collapsing them into one generic error
+      // would make a missing slot indistinguishable from a guessed handle and
+      // from a lease that was not shown to be free.
+      assert.equal(
+        await codeOf(() =>
+          authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_absent_ref",
+              holderHandle: "holder_refusal_01",
+              proof: slotReleaseProof("holder_refusal_01"),
+            }),
+          ),
+        ),
+        "game_session_world_binding_slot_missing",
+      );
+      assert.equal(
+        await codeOf(() =>
+          authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_world_ref",
+              holderHandle: "holder_guessed_01",
+              proof: slotReleaseProof("holder_guessed_01"),
+            }),
+          ),
+        ),
+        "game_session_world_binding_slot_handle_mismatch",
+      );
+      assert.equal(
+        await codeOf(() =>
+          authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_world_ref",
+              holderHandle: "holder_refusal_01",
+              proof: Object.freeze({
+                verdict: mintGameSessionWorldBindingSlotLeaseVerdict(
+                  productionGameSessionWorldBindingSlotLeaseVerdict.leaseNotProvenFree,
+                ),
+                holderHandle: "holder_refusal_01",
+              }),
+            }),
+          ),
+        ),
+        "game_session_world_binding_slot_holder_not_proven_gone",
+      );
+      // A caller-asserted string is not a verdict: the refusal is the proof's own
+      // bounded code, never an optimistic reading of whatever was presented. The
+      // forged proof is deliberately not a legal input, so the test casts it in
+      // rather than widening the release's own type to admit it.
+      assert.equal(
+        await codeOf(() =>
+          authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_world_ref",
+              holderHandle: "holder_refusal_01",
+              proof: Object.freeze({ verdict: "holder_gone", holderHandle: "holder_refusal_01" }),
+            }) as unknown as ProductionGameSessionWorldBindingSlotReleaseInput,
+          ),
+        ),
+        "game_session_world_binding_slot_proof_invalid",
+      );
+      // A refusal is not a half-write, and it is not a falsy success: the holder
+      // is exactly where it was, so the same slot still releases with its own
+      // handle and its own verdict.
+      assert.equal(
+        (
+          await authority.readGameSessionWorldBindingSlotHolder(
+            Object.freeze({ integrationId: "stardew", bindingRef: "opaque_world_ref" }),
+          )
+        )?.holderHandle,
+        "holder_refusal_01",
+      );
+      assert.equal(
+        (
+          await authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_world_ref",
+              holderHandle: "holder_refusal_01",
+              proof: slotReleaseProof("holder_refusal_01"),
+            }),
+          )
+        ).status,
+        "terminal",
+      );
+      // A repeated call after success is the terminal refusal, not a silent no-op
+      // that would report success for a call that released nothing.
+      assert.equal(
+        await codeOf(() =>
+          authority.releaseGameSessionWorldBindingSlot(
+            Object.freeze({
+              integrationId: "stardew",
+              bindingRef: "opaque_world_ref",
+              holderHandle: "holder_refusal_01",
+              proof: slotReleaseProof("holder_refusal_01"),
+            }),
+          ),
+        ),
+        "game_session_world_binding_slot_holder_terminal",
+      );
+      // The new members run the same store validation layer every other member
+      // runs before its bounded refusals: a malformed slot and a malformed handle
+      // are refused by that layer's own code, not by a member-specific one. Note
+      // that these codes are produced after the store's own bootstrap-bound
+      // transaction has opened (`validateExpectedBootstrap` + `rejectQuarantined`
+      // run first inside it), so receiving them proves the bootstrap-bound path
+      // executed on these members too.
+      await assert.rejects(
+        authority.readGameSessionWorldBindingSlotHolder(
+          Object.freeze({ integrationId: "stardew", bindingRef: "not an opaque ref" }),
+        ),
+        /invalid_game_session_world_binding/,
+      );
+      await assert.rejects(
+        authority.releaseGameSessionWorldBindingSlot(
+          Object.freeze({
+            integrationId: "stardew",
+            bindingRef: "opaque_world_ref",
+            holderHandle: "not an opaque handle",
+            proof: slotReleaseProof("holder_refusal_01"),
+          }),
+        ),
+        /invalid_game_session_world_binding/,
+      );
+    } finally {
+      await game?.close().catch(() => undefined);
+      cleanup(root);
+    }
+  },
+);
