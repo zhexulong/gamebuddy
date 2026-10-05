@@ -60,3 +60,23 @@ export type ContainedGameRuntime = Readonly<{
   settle(): Promise<RedactedSettlementOutcome>;
   close(): Promise<void>;
 }>;
+
+/**
+ * The durable containment transition refuses to record a role as contained a
+ * second time: a recovery resumed after a crash between a role's durable CAS
+ * and that role's CAS acknowledgement meets the same role classified contained
+ * again while the record already holds it.
+ *
+ * That refusal is a shared typed identity rather than a message both sides
+ * compare, because the two sides are independent projections of this port: the
+ * durable engine belongs to a game composition, the recovery wire is
+ * deliberately generic. A message literal only the engine can see cannot be
+ * checked by the other side, so renaming it would silently turn the one refusal
+ * a resumed recovery tolerates back into a closed session.
+ */
+export class ContainmentRoleAlreadyContainedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ContainmentRoleAlreadyContainedError";
+  }
+}

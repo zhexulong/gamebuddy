@@ -11,6 +11,7 @@ import type {
   GuardianRecoveryRole,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
+import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/contract/game-runtime.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
 import { connectHealthyVoiceGateway } from "../../voice-bootstrap.js";
@@ -60,12 +61,13 @@ const MAX_GUARDIAN_OPERATION_WAIT_BUDGET_MS = 300_000;
 // a recovery ack identifies the recovery actor instead of a containment role.
 const recoveryAcknowledgementKeys = ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"] as const;
 // The durable role CAS reports "this record already holds this role as contained"
-// with its own error token instead of re-transitioning. Only that token is
-// tolerated by the recovery conversation, and it is matched as an error identity
-// rather than by idiomatic type because the durable engine belongs to the
-// composition while this wire is deliberately generic: the focused source-shape
-// test refuses any occurrence of the game's name in this file.
-const roleAlreadyContainedError = /(?:^|_)role_already_contained$/;
+// with its own typed refusal instead of re-transitioning. Only that refusal is
+// tolerated by the recovery conversation, and it is matched by the identity the
+// platform contract exports rather than by the engine's message text: the engine
+// belongs to a game composition while this wire is deliberately generic (the
+// focused source-shape test refuses any occurrence of the game's name in this
+// file), and a message literal only that engine can rename would silently turn
+// the one refusal a resumed recovery tolerates back into a closed session.
 
 type DesktopRootLayout = Readonly<{
   programRoot: string;
@@ -681,7 +683,7 @@ function roleClassified(role: GuardianRecoveryRole, classification: string | und
  * A recovery that crashed between a role's durable CAS and that role's CAS
  * acknowledgement comes back with the native side classifying the role
  * contained again while the durable record already says so too. The durable
- * engine reports exactly that case with its own error token instead of
+ * engine reports exactly that case with its shared typed refusal instead of
  * re-transitioning, and the record agreeing with the native classification is
  * not a failure, so the conversation continues at the same acknowledgement
  * position.
@@ -695,7 +697,7 @@ async function recordRecoveredRole(input: DesktopGuardianRecovery, role: Guardia
   try {
     await input.roleContained(role);
   } catch (error) {
-    if (!(error instanceof Error) || !roleAlreadyContainedError.test(error.message)) throw error;
+    if (!(error instanceof ContainmentRoleAlreadyContainedError)) throw error;
   }
 }
 
