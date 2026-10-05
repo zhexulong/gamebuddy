@@ -106,12 +106,23 @@ internal sealed class StardewBodyController
             // severed from this component). The evidence names both ends.
             reasonCode = "no_native_path";
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
+            // A refusal is only actionable if it names WHY. The bare verdict plus
+            // a probe field that can contradict it (target_enclosed=false means the
+            // probe found a traversable neighbour!) sent a live agent into ten
+            // blind re-aims at neighbouring occupied tiles, which it then described
+            // as a maze. The refusal now carries the occupancy cause, the
+            // standability of the named tile, and the probe's own reading.
+            evidence += $";target_standable={(StardewBodyController.IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
+            evidence += $";target_walkable={(StardewBodyController.IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
+            evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
             if (plannedPath.pathToEndPoint is null)
             {
                 ReachabilityVerdict? verdict = AssessNativeReachability(localPlayer, specification);
                 if (verdict is ReachabilityVerdict assessed)
                 {
-                    evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood";
+                    // `probe_says_reachable` states the disagreement explicitly
+                    // instead of leaving a reader to derive it from target_enclosed.
+                    evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
                 }
             }
             return false;
@@ -385,6 +396,67 @@ internal sealed class StardewBodyController
     {
         int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
         return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DetectStalledBy(localPlayer)}";
+    }
+
+    /// <summary>
+    /// Can the actor stand on this tile? The same predicate the native planner uses
+    /// (<c>isCollidingPosition</c> with <c>pathfinding: true</c> and collision effects
+    /// skipped), so "the planner can walk there" and "we may substitute an approach
+    /// there" cannot disagree. A stricter, object-occupancy test would refuse tiles the
+    /// farmer can legally walk on -- a cropped HoeDirt is exactly that, and the Mod's own
+    /// reachability probe already reports those as reachable (probe_says_reachable=true).
+    /// </summary>
+    internal static bool IsWalkableTile(GameLocation location, Farmer? actor, Vector2 tile)
+    {
+        if (actor is null || !location.isTileOnMap(tile))
+            return false;
+        // The actor's own tile is walkable by definition: they are standing on it, and
+        // asking the collision test about the character's own footprint is the one case
+        // where its answer cannot be trusted to mean "someone else is in the way".
+        if (actor.Tile == tile)
+            return true;
+        return !location.isCollidingPosition(
+            new Microsoft.Xna.Framework.Rectangle((int)tile.X * 64 + 1, (int)tile.Y * 64 + 1, 62, 62),
+            Game1.viewport,
+            actor is Farmer,
+            0,
+            glider: false,
+            actor,
+            pathfinding: true,
+            skipCollisionEffects: true);
+    }
+
+    /// <summary>
+    /// The standable-tile test shared by the move handler and this controller: on
+    /// the map, natively passable, and not occupied by anything else. The actor's
+    /// own tile counts as standable -- it is where they already are. This is the
+    /// stricter, OBJECT-occupancy reading, kept for evidence: it says "the tile is
+    /// free", which is a different (and more demanding) fact than
+    /// <see cref="IsWalkableTile"/>'s "the planner will walk there".
+    /// </summary>
+    internal static bool IsStandableTile(GameLocation location, Farmer? actor, Vector2 tile)
+    {
+        if (!location.isTileOnMap(tile))
+            return false;
+        if (actor is not null && actor.Tile == tile)
+            return true;
+        return location.isTilePassable(tile)
+            && !location.IsTileOccupiedBy(tile, (CollisionMask)255, (CollisionMask)0, false);
+    }
+
+    /// <summary>
+    /// Names what stands on a refused destination tile, so the refusal is
+    /// actionable: <c>&lt;qualifiedItemId&gt;@x,y</c> for an object,
+    /// <c>terrain:&lt;type&gt;</c> for a terrain feature, or <c>none</c>.
+    /// </summary>
+    internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile)
+    {
+        Point point = new((int)tile.X, (int)tile.Y);
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
+            return $"{item.QualifiedItemId}@{point.X},{point.Y}";
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
+            return $"terrain:{feature.GetType().Name}@{point.X},{point.Y}";
+        return "none";
     }
 
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification)

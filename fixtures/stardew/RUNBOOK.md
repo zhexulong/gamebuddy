@@ -1585,7 +1585,7 @@ the action under test is the one that selects a floor.
   landing tile) but the native layout may consume and reset it during the warp, so
   it is now observed, never asserted.
 
-## 36. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
+## 37. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
 
 Ladder 6 answers a different question from ladders 0-5. Those accept a scripted
 chain; ladder 6 hands the Agent an **open play goal** in a real save, lets it choose,
@@ -1786,6 +1786,32 @@ Replayed over every stored run, the criterion separates exactly the intended cas
 | F | 6 | completed | blocked (interaction length) |
 | G | 4 | completed | passed |
 | H | **0** | **nothing_accomplished** | **blocked** |
+| L (all fixes) | 3 | completed | blocked (interaction length) |
+
+**Run L is the run that closed this line**, and it also found the blocker that had been
+masquerading as a companion failure: `I`, `J` and `K` produced **zero** attempts because the
+Host's logical-action recovery journal had filled its 256-record cap with settled history
+and, having no eviction, refused every later action creation
+(`recovery_journal_budget_exceeded` — the companion reported it as "动作没建起来"). Fixed in
+`e4dbb8a`; run L, on the same world and goal, reached **6/6 capabilities with a terminal**
+(`blockedBySystem: []`), harvested 6 cauliflowers, cut 2 weed clusters, broke 2 rocks, and
+said so in a report that names the real obstacle:
+
+> 收了 6 株花椰菜，割掉 2 丛杂草，敲了 2 块石头。麻烦在地中间那片：石头和杂草把路围死，
+> 人挤不进去，里面的花椰菜够不着；让伙伴替我先跑一趟，也卡在寻路上，白磨掉不少时间
+> （现在都快傍晚了）。要我把外围一圈清干净，再往中间推吗？
+
+Its remaining 4 `no_native_path` refusals now read as the distinction this section built:
+`to=3,12;target_standable=false;target_walkable=true;blocked_by=terrain:HoeDirt@3,12` (a cropped
+tile, walkable, and still unrouted) and `to=5,8;target_standable=true;target_walkable=true;blocked_by=none`
+— **a completely free tile the native path finder still could not route to** from the pocket
+the actor stands in. That is a path/search fact, not a tile fact, and it is the next thing to
+investigate (the native controller's A* node limit on a densely walled field), not a refusal
+to invent a workaround for.
+
+The rung's own verdict stayed `blocked` for one reason only: the closing report was 132
+characters against the interaction gate's 120. The goal now states that budget, and the model
+overshot it by 12 — which is the gate doing its job on a real quality axis, not a harness bug.
 
 Run H also exposed the last refusals' character: with the planner-walkability predicate in
 place, its two `no_native_path` receipts read
