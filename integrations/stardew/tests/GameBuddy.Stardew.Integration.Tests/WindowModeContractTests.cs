@@ -37,6 +37,24 @@ public sealed class WindowModeContractTests
     }
 
     [Fact]
+    public void EveryRaiseOutcomeIsReportedInItsOwnWords()
+    {
+        // The three real outcomes must be distinguishable in the log: claiming
+        // "foreground applied" while Windows refused both focus and z-order is
+        // exactly the silent lie this reporting exists to prevent.
+        string activated = ModEntry.DescribeRaiseOutcome(ModEntry.WindowRaiseOutcome.Activated);
+        string raised = ModEntry.DescribeRaiseOutcome(ModEntry.WindowRaiseOutcome.Raised);
+        string signalled = ModEntry.DescribeRaiseOutcome(ModEntry.WindowRaiseOutcome.Signalled);
+        string noWindow = ModEntry.DescribeRaiseOutcome(ModEntry.WindowRaiseOutcome.NoWindow);
+
+        new[] { activated, raised, signalled, noWindow }.Distinct().Should().HaveCount(4);
+        activated.Should().Contain("accepted");
+        raised.Should().Contain("z-order");
+        signalled.Should().Contain("flashed");
+        noWindow.Should().Contain("not usable");
+    }
+
+    [Fact]
     public void TheFiveModesAreNotCollapsed()
     {
         int[] commands =
