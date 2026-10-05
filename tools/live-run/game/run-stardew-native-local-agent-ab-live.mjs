@@ -927,6 +927,10 @@ try {
   const walkReceipt = receipts.find((receipt) => receipt.reasonCode === "navigation_completed");
   const inspectReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_inspected");
   const loadReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_coffee_loaded");
+  // Declared outside the try: the catch path reports the assembled-context evidence too, and a
+  // try-scoped binding is unreachable there — which is exactly how this file's failure path came
+  // to throw a ReferenceError and lose the artifact of a real failed session.
+  let personaWorldBook = null;
   // Ladder 3 (Jodi's Request): the Agent planned the farming chain itself, so
   // accept the three real farming receipts in any order — no fixed DAG.
   const tillReceipt = receipts.find((receipt) => receipt.reasonCode === "soil_tilled");
@@ -938,7 +942,7 @@ try {
   // the canonical files the product placed under this runtime root, so the gate
   // proves the persona/world book reached the Game surface rather than trusting
   // a script-side claim. A disposable root legitimately has neither file.
-  const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
+  personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
   // Content gate over the SAME canonical profile the assembly gate hashes: an
   // empty default card (no persona) or unrendered SillyTavern macros is a
   // content defect that assembly-only gates cannot see. A disposable root
@@ -1197,6 +1201,12 @@ try {
   // must still produce a readable result. The turn/voice facts live in the try
   // block's scope, so they are read through the same optional paths with
   // explicit fallbacks instead of assuming they were initialized.
+  //
+  // The ROOT error goes first: a real session once produced no artifact at all because this block
+  // threw while assembling its own partial result, which destroyed the evidence of the failure it
+  // exists to record. If the partial assembly fails too, that is reported as well and the run
+  // still exits non-zero instead of pretending it was reportable.
+  console.error(error);
   const partialResult = {
     state: "blocked",
     ladder: LADDER,
