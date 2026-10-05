@@ -4194,6 +4194,29 @@ function registerGameSessionWorldBinding(
       .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
       .get(input.gameSessionId) as any;
     if (existing) throw new Error("game_session_world_binding_conflict");
+    // One world slot is held by at most one non-terminal session: resume resolves
+    // the registered `(gameSessionId, integrationId, bindingRef)` tuple, so a
+    // second live session registering a slot another live session already holds
+    // would resolve two sessions to the same world. The store owns this rule
+    // because a caller only ever sees its own session, and it rejects the write
+    // instead of handing back a special outcome: no binding row is inserted, so
+    // the rejected session can never become a second resumable session and the
+    // shared settle path (pending rev1 -> failed rev2, no binding row) stays the
+    // only shape a rejected registration can leave. The code is distinct from
+    // `game_session_world_binding_conflict` because a duplicated slot is a
+    // foreign session's claim while a conflict is this session's own stale or
+    // replayed write. A `registered` binding is by construction a non-terminal
+    // session (materialization pairs `registered` with pending/resumable metadata
+    // and `terminal` with failed revision 3), while a terminal binding belongs to
+    // an already settled session, whose residual save the native game owns, so it
+    // never blocks a later create. Slots are integration-scoped: the same
+    // bindingRef under another integration is another world.
+    const duplicate = db
+      .prepare(
+        "SELECT game_session_id FROM production_game_session_world_binding WHERE integration_id=? AND binding_ref=? AND status='registered' AND game_session_id<>?",
+      )
+      .get(input.integrationId, input.bindingRef, input.gameSessionId) as any;
+    if (duplicate) throw new Error("game_session_world_binding_duplicate");
     db.prepare(
       "INSERT INTO production_game_session_world_binding(game_session_id,integration_id,binding_ref,operation_id,status,revision) VALUES(?,?,?,?, 'registered',1)",
     ).run(input.gameSessionId, input.integrationId, input.bindingRef, input.operationId);
@@ -4224,6 +4247,24 @@ function readGameSessionWorldBinding(
     return row ? gameSessionWorldBindingReadback(row) : null;
   });
 }
+/**
+ * Terminal settle of a session that owns a world binding: the binding becomes
+ * terminal and the session metadata becomes failed inside this one transaction.
+ *
+ * A registered binding reaches this settle from two live shapes, and both are
+ * the same durable fact (the world this session bound is finished together with
+ * the session): a completed session (`resumable` rev2) that failed after
+ * registration, and a session whose completion never landed (`pending` rev1) -
+ * `game.create` registers the world binding and only then completes the
+ * session, so a completion that fails leaves exactly that shape. No other
+ * operation can settle it: `failGameSessionCreation` refuses a session that
+ * already has a binding row, and `completeGameSessionBinding` only ever makes a
+ * session resumable. Both shapes settle on the one canonical terminal metadata
+ * revision 3 that the materialization rules pair with a terminal binding, so a
+ * reopen accepts the settled session instead of rejecting it as a corrupt row
+ * pair; a row pair that matches neither shape fails closed rather than being
+ * guessed at.
+ */
 function markGameSessionWorldBindingTerminal(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
@@ -4253,9 +4294,12 @@ function markGameSessionWorldBindingTerminal(
       )
       .run(input.gameSessionId, input.integrationId, input.operationId, input.expectedRevision);
     if (updated.changes !== 1) throw new Error("game_session_world_binding_conflict");
+    // The metadata the terminal binding belongs to is failed here, in this same
+    // transaction, so a settled binding never outlives a live session: only the
+    // two legal pre-settle revisions are accepted and both land on revision 3.
     const metadataUpdated = db
       .prepare(
-        "UPDATE production_game_session_metadata SET status='failed',revision=revision+1 WHERE game_session_id=? AND integration_id=? AND status='resumable' AND revision=2",
+        "UPDATE production_game_session_metadata SET status='failed',revision=3 WHERE game_session_id=? AND integration_id=? AND ((status='pending' AND revision=1) OR (status='resumable' AND revision=2))",
       )
       .run(input.gameSessionId, input.integrationId);
     if (metadataUpdated.changes !== 1) throw new Error("game_session_world_binding_conflict");
