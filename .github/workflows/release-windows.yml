@@ -120,6 +120,16 @@ jobs:
         run: pnpm --dir dialogue-web exec playwright test tests/reference-pipeline-browser.spec.ts tests/management-pipeline-browser.spec.ts --project=chromium --workers=1
         env:
           GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+      # The frontend criteria, and the corpus itself, as one gate: the shipped
+      # suites must run (no silent skip, no shrunk corpus), and the criteria they
+      # are instances of - accessibility baseline, keyboard reach, layout floor,
+      # a quiet walk - must hold on the real generation. Authority:
+      # design/architecture/tavern-frontend-criteria.md.
+      - name: Tavern frontend conformance gate
+        run: node tools/run-tavern-frontend-conformance.mjs --report tavern-frontend-conformance.json
+        env:
+          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
       # The product journeys that mount twice and spend real provider time: a real
       # provider turn through the shipped UI, the same conversation surviving a
       # full app restart on one root, and the keyboard/layout floor. They are their

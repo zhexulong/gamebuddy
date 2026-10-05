@@ -1,0 +1,38 @@
+{
+  "$comment": "The Tavern frontend gate's contract. Authority: design/architecture/tavern-frontend-criteria.md. The remote illusion: this file is what makes a frontend requirement impossible to delete quietly - a removed suite, a removed headline journey, a shrunk corpus or a disabled test all fail the gate instead of passing it with less evidence.",
+  "profile": "tavern_frontend_conformance/v1",
+  "surfaces": [
+    {
+      "file": "tests/reference-pipeline-browser.spec.ts",
+      "capability": "B5 Chat lifecycle in the browser",
+      "minimumTests": 8,
+      "requiresCredential": false
+    },
+    {
+      "file": "tests/management-pipeline-browser.spec.ts",
+      "capability": "B1-B3 P9 management surface in the browser",
+      "minimumTests": 13,
+      "requiresCredential": false
+    },
+    {
+      "file": "tests/companion-turn-browser.spec.ts",
+      "capability": "B4/B5/B6 real provider turn, app restart, operability floor and the frontend criteria",
+      "minimumTests": 4,
+      "requiresCredential": true
+    }
+  ],
+  "requiredTitles": [
+    "conformance: chat surface meets the frontend criteria",
+    "conformance: management surface meets the frontend criteria",
+    "management browser imports a reviewed character card and provisions the companion it names",
+    "management browser sets the companion language once, durably, and the runtime reads it",
+    "reference browser mounts the reference surface with live SSE and cookie reload",
+    "reference browser is keyboard operable and does not overflow at phone or desktop width",
+    "reference browser sends a message to the real provider and keeps the answer across a reload",
+    "reference browser keeps the conversation across an app restart on the same root"
+  ],
+  "credentialEnvironment": "CPA_OAI_API_KEY",
+  "credentialTestTitles": [
+    "reference browser sends a message to the real provider and keeps the answer across a reload"
+  ]
+}
