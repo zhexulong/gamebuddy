@@ -160,49 +160,85 @@ test("reference browser is keyboard operable and does not overflow at phone or d
     const page = await browser.newPage({ locale: "en-US", viewport: { width: 1280, height: 800 } });
     await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded" });
 
-    // Landmarks and names are present, so assistive technology has a structure
-    // and every control is announced.
+    // Structure and names: the named controls a player uses are announced, and
+    // the two landmarks exist. The landmarks themselves carry no accessible name
+    // (the app bar and main are bare), which is recorded as open rather than
+    // claimed here.
     await expect(page.getByRole("banner")).toBeVisible();
     await expect(page.getByRole("main")).toBeVisible();
-    await expect(page.getByRole("region", { name: "Chat transcript" })).toBeVisible();
+    const transcript = page.getByRole("region", { name: "Chat transcript" });
+    await expect(transcript).toBeVisible();
     const composer = page.getByRole("textbox", { name: /Type a message/u });
     await expect(composer).toBeVisible();
-    await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+    const send = page.getByRole("button", { name: "Send" });
+    await expect(send).toBeVisible();
 
-    // Keyboard only: reach the composer with the keyboard, type, and send with
-    // Enter. No mouse event is used anywhere in this journey.
-    await page.keyboard.press("Tab");
-    await composer.focus();
-    assert.equal(await composer.evaluate((node) => node === document.activeElement), true);
+    // Keyboard alone, starting from the document: Tab until the composer takes
+    // focus - no programmatic focus(), no mouse event anywhere in this journey.
+    let reachedByTab = false;
+    for (let press = 0; press < 24 && !reachedByTab; press += 1) {
+      await page.keyboard.press("Tab");
+      reachedByTab = await composer.evaluate((node) => node === document.activeElement);
+    }
+    assert.equal(reachedByTab, true, "the composer is reachable with Tab alone");
+
+    // Typing enables the naming control (an empty draft leaves it disabled, so
+    // its visibility alone would prove nothing).
     await page.keyboard.type("Keyboard only, please answer");
+    await expect(send).toBeEnabled({ timeout: 10_000 });
     await page.keyboard.press("Enter");
     await expect.poll(() => mounted.starts, { timeout: 15_000 }).toBe(1);
     await mounted.armCurrentTurn();
     await mounted.settleArmedTurn("release");
-    // The keyboard send reached the surface: its own message is in the transcript.
-    await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("Keyboard only, please answer");
+    await expect(transcript).toContainText("Keyboard only, please answer");
 
-    // No horizontal overflow at either width: a scrollable page here would cut
-    // the transcript or the composer off on a phone.
+    // Layout at both widths. The document must not scroll horizontally, AND the
+    // transcript must not clip its own content: the app hides overflow on its
+    // containers, so a document-level measurement alone would report 0 while
+    // text was being cut off inside.
     for (const viewport of [
       { width: 375, height: 667 },
       { width: 1280, height: 800 },
     ]) {
       await page.setViewportSize(viewport);
-      await expect
-        .poll(() =>
-          page.evaluate(() => ({
-            overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-            composer: document.querySelector("textarea.composer-textarea")?.getBoundingClientRect().width ?? 0,
-          })),
-        )
-        .toEqual({ overflow: 0, composer: expect.any(Number) } as never);
-      const metrics = await page.evaluate(() => ({
-        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-        composer: document.querySelector("textarea.composer-textarea")?.getBoundingClientRect().width ?? 0,
-      }));
-      assert.equal(metrics.overflow, 0, `no horizontal overflow at ${viewport.width}x${viewport.height}`);
-      assert.ok(metrics.composer > 100, `the composer stays usable at ${viewport.width}x${viewport.height}`);
+      const metrics = await page.evaluate(() => {
+        const transcriptNode = document.querySelector("section[aria-label=\"Chat transcript\"], [role=\"region\"]");
+        const composerNode = document.querySelector("textarea.composer-textarea");
+        const rect = composerNode?.getBoundingClientRect();
+        return {
+          documentOverflow:
+            document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          transcriptClipped:
+            transcriptNode === null
+              ? null
+              : transcriptNode.scrollWidth - transcriptNode.clientWidth,
+          composerWidth: rect?.width ?? 0,
+          composerLeft: rect?.left ?? Number.NaN,
+          composerRight: rect?.right ?? Number.NaN,
+          viewportWidth: window.innerWidth,
+        };
+      });
+      const at = `${viewport.width}x${viewport.height}`;
+      assert.equal(metrics.documentOverflow, 0, `the document does not scroll horizontally at ${at}`);
+      assert.ok(
+        metrics.composerWidth > 100,
+        `the composer keeps a usable width at ${at} (${metrics.composerWidth})`,
+      );
+      assert.ok(
+        metrics.composerLeft >= -1 && metrics.composerRight <= metrics.viewportWidth + 1,
+        `the composer stays inside the viewport at ${at} (${metrics.composerLeft}..${metrics.composerRight} of ${metrics.viewportWidth})`,
+      );
+      assert.ok(
+        metrics.transcriptClipped !== null && metrics.transcriptClipped <= 1,
+        `the transcript clips no content at ${at} (${String(metrics.transcriptClipped)})`,
+      );
+      // Visibility is re-asserted at this width: a control can be laid out and
+      // still be hidden, and this loop changes the viewport it was checked at.
+      // The composer is disabled while this journey's synthetic turn is still
+      // held open, which is why the enabled-send claim is made above, before
+      // the turn starts, rather than here.
+      await expect(composer).toBeVisible();
+      await expect(transcript).toBeVisible();
     }
   } finally {
     await browser.close();
