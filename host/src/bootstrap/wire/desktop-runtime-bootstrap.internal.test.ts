@@ -46,6 +46,19 @@ test("desktop bootstrap helper fails closed on an invalid composed surface or ma
   }
 });
 
+/**
+ * The exact ordinal key sequence `DesktopHostBootstrapBroker.ExactObject`
+ * compares for one command frame, copied from the broker's own per-operation key
+ * arrays (`TryParseCommand`, DesktopHostBootstrapBroker.cs): the bounded wait (or
+ * the launch deadline) follows the binding, and the role precedes the private
+ * frame. The broker compares the sequence, not only the set, and the recording
+ * peer parses order-agnostically, so nothing but this assertion pins the order.
+ */
+const commandFrameKeys = (timing: "operationWaitBudgetMs" | "deadlineUnixMs", ...trailing: readonly string[]): readonly string[] => [
+  "schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256",
+  timing, "guardianInstanceId", "guardianEpoch", "attemptId", ...trailing,
+];
+
 test("desktop bootstrap helper performs one authenticated guardian wire roundtrip", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("success");
@@ -57,6 +70,12 @@ test("desktop bootstrap helper performs one authenticated guardian wire roundtri
   assert.equal(typeof result.requests[2]!.deadlineUnixMs, "number");
   assert.equal(Object.hasOwn(result.requests[3]!, "operationWaitBudgetMs"), true);
   assert.equal(Object.hasOwn(result.requests[3]!, "deadlineUnixMs"), false);
+  // Every command frame's key order is protocol: the broker refuses a frame whose
+  // keys are not in its own sequence, so a reordered guardianCommandFrame must
+  // fail here rather than only against the real broker.
+  assert.deepEqual(Object.keys(result.requests[1]!), commandFrameKeys("operationWaitBudgetMs", "privateFrame"));
+  assert.deepEqual(Object.keys(result.requests[2]!), commandFrameKeys("deadlineUnixMs", "role", "privateFrame"));
+  assert.deepEqual(Object.keys(result.requests[3]!), commandFrameKeys("operationWaitBudgetMs", "role"));
   // The wire carries the real composition-armor frame: the arm private frame
   // must contain the approved executable and the native ParseLaunch-style
   // launch frame must reuse that exact executable (ParseArm/ParseLaunch gate).
@@ -207,10 +226,27 @@ test("desktop bootstrap helper drives the recovery conversation over one authent
   assert.doesNotMatch(result.stderr, /desktop_runtime_bootstrap_unavailable/);
 });
 
-async function runWireFixture(scenario: "success" | "recovery-success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
+// The mirror of the resume tolerance: a role CAS the durable record refuses must
+// still fail the whole session closed. The rejected role is the first one, so the
+// conversation stops before that role's CAS acknowledgement and the peer sees the
+// disconnect instead of a containment the record never accepted.
+test("desktop bootstrap helper fails the recovery session closed when the durable role CAS refuses a role", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("recovery-role-rejected");
+  assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+  assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "recover_attempt", "recovery_post_cas", "recover_attempt"]);
+  // The durable step ran and refused, the peer saw the live session close, and no
+  // containment was ever reported: the wire writes no CAS acknowledgement for the
+  // refused role, no finalize and no release frame.
+  assert.match(result.stderr, /recovery_role_contained:playerHost/);
+  assert.equal(result.guardianClosed, true, "a refused role CAS must close the session rather than leave it live");
+  assert.doesNotMatch(result.stderr, /recovery_outcome:/);
+});
+
+async function runWireFixture(scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
-  const bootstrapId = (scenario === "success" ? "d" : scenario === "recovery-success" ? "1" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
+  const bootstrapId = (scenario === "success" ? "d" : scenario === "recovery-success" ? "1" : scenario === "recovery-role-rejected" ? "4" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
   const guardianInstanceId = scenario === "success" ? "11111111-1111-4111-8111-111111111111" : scenario === "malformed-arm" ? "33333333-3333-4333-8333-333333333333" : "55555555-5555-4555-8555-555555555555";
   const attemptId = scenario === "success" ? "22222222-2222-4222-8222-222222222222" : scenario === "malformed-arm" ? "44444444-4444-4444-8444-444444444444" : "66666666-6666-4666-8666-666666666666";
   const rootLayout = {
@@ -247,7 +283,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "shutdo
         buffer = buffer.subarray(newline + 1);
         requests.push(request);
         const operation = request.operation;
-        if (scenario === "recovery-success" && operation !== "hello") {
+        if ((scenario === "recovery-success" || scenario === "recovery-role-rejected") && operation !== "hello") {
           // Answered at the positions the Desktop broker answers: one
           // acknowledgement for the gate, one for the post-CAS + native recover
           // pair, one per contained role, and one terminal acknowledgement after
@@ -258,7 +294,10 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "shutdo
           else if (operation === "recovery_role_cas_ack") status = request.role === "playerHost" ? "ai_contained" : undefined;
           else if (operation === "release") status = "contained";
           if (status !== undefined) socket.write(`${JSON.stringify({ schema: "gamebuddy-desktop-guardian-session/v1", protocolVersion: 1, operation: "recover_attempt", status, bootstrapId, generation: request.generation, inventoryDigest: request.inventoryDigest, runtimeAdmissionSha256: request.runtimeAdmissionSha256, guardianInstanceId: request.guardianInstanceId, guardianEpoch: request.guardianEpoch, attemptId: request.attemptId, recoveryInstanceId: request.recoveryInstanceId })}\n`);
-          if (operation === "release") operationsResolve();
+          // A refused role CAS ends the conversation at that role, so the peer
+          // resolves the operations when it answers the role the test refuses
+          // instead of on a release frame that must never arrive.
+          if (operation === "release" || (scenario === "recovery-role-rejected" && status === "player_contained")) operationsResolve();
           continue;
         }
         if (scenario === "delayed-arm-ack" && operation === "arm_attempt") {
@@ -357,6 +396,15 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "shutdo
     } else if (scenario === "success" || scenario === "recovery-success") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
+    } else if (scenario === "recovery-role-rejected") {
+      await withTimeout(operationsComplete, 10_000, "guardian operations");
+      // The peer must observe the disconnect while the worker is still running:
+      // runDesktopHostBootstrap parks on termination until the fixture signals it,
+      // so a closed peer here is the session's own fail-closed path and not the
+      // process exiting.
+      await withTimeout(guardianPeerClosed, 10_000, "recovery rejection guardian cleanup");
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "recovery rejection close");
     } else if (scenario !== "malformed-arm" && scenario !== "missing-arm-executable") {
       await withTimeout(workerClose, 2_000, `${scenario} rejection`);
     }
@@ -370,7 +418,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "shutdo
   }
 }
 
-function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "recovery-success" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
+function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
   const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
   const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
   const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href;
@@ -381,7 +429,9 @@ function workerSource(moduleDirectory: string, guardianInstanceId: string, attem
     ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, authorization: { role: "player_host", revision: "11111111-1111-4111-8111-111111111111", executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
     : scenario === "recovery-success"
       ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
-    : scenario === "missing-arm-executable"
+      : scenario === "recovery-role-rejected"
+        ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); throw new Error("stardew_bootstrap_owner_transition_mismatch"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
+      : scenario === "missing-arm-executable"
       ? `try { const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" } }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
     : scenario === "composition-failure"
       ? `throw new Error("composition_construction_failed")`
@@ -612,6 +662,131 @@ test("recovery conversation writes the five Desktop frames in exact ordinal key 
     "write:recovery_finalize_ack",
     "write:release",
   ]);
+});
+
+/**
+ * The durable role CAS error token that means "this record already holds this role
+ * as contained" (`containRecoveringRole`, stardew-private-bootstrap-composer.core).
+ * A resumed recovery meets it for every role the crashed conversation had already
+ * recorded before its CAS acknowledgement was written.
+ */
+const recoveryRoleAlreadyContained = "stardew_bootstrap_owner_recovery_role_already_contained";
+
+/** The same conversation input, with the durable role step replaced by the test's own. */
+function resumedRecoveryInput(events: string[], roleContained: (role: GuardianRecoveryRole) => Promise<void>): DesktopGuardianRecovery {
+  return Object.freeze({ ...recoveryInput(events), roleContained });
+}
+
+test("recovery completes a resume whose first role the record already holds as contained", async () => {
+  const harness = recoveryHarness([
+    recoveryAcknowledgement("recovery_accepted"),
+    recoveryAcknowledgement("player_contained"),
+    recoveryAcknowledgement("ai_contained"),
+    recoveryAcknowledgement("contained"),
+  ]);
+  // The crash happened after the Player role's durable CAS and before its CAS
+  // acknowledgement, so the native side classifies that role contained again while
+  // the durable record already holds it and refuses the transition.
+  const outcome = await driveGuardianRecoveryConversation(harness.transport, recoveryBinding, resumedRecoveryInput(harness.events, async (role) => {
+    harness.events.push(`roleContained:${role}`);
+    if (role === "playerHost") throw new Error(recoveryRoleAlreadyContained);
+  }));
+
+  assert.deepEqual(outcome, { outcome: "contained" });
+  // The remaining role is still durably recorded, and the resume repeats nothing:
+  // the frames and durable steps are exactly the ones an uninterrupted
+  // conversation produces, so no native step and no frame is retried.
+  assert.deepEqual(harness.events, [
+    "receive",
+    "write:recover_attempt",
+    "beginRecovery",
+    "receive",
+    "write:recovery_post_cas",
+    "write:recover_attempt",
+    "roleContained:playerHost",
+    "receive",
+    "write:recovery_role_cas_ack",
+    "roleContained:aiClient",
+    "receive",
+    "write:recovery_role_cas_ack",
+    "write:recovery_finalize_ack",
+    "write:release",
+  ]);
+  assert.deepEqual(harness.frames.map((frame) => frame.operation), [
+    "recover_attempt",
+    "recovery_post_cas",
+    "recover_attempt",
+    "recovery_role_cas_ack",
+    "recovery_role_cas_ack",
+    "recovery_finalize_ack",
+    "release",
+  ]);
+});
+
+test("recovery completes a resume whose every recorded role is already contained", async () => {
+  // The crash happened after the AI role's durable CAS and before the finalize
+  // acknowledgement, so both roles are already recorded and both are refused.
+  const harness = recoveryHarness([
+    recoveryAcknowledgement("recovery_accepted"),
+    recoveryAcknowledgement("player_contained"),
+    recoveryAcknowledgement("ai_contained"),
+    recoveryAcknowledgement("contained"),
+  ]);
+  const outcome = await driveGuardianRecoveryConversation(harness.transport, recoveryBinding, resumedRecoveryInput(harness.events, async (role) => {
+    harness.events.push(`roleContained:${role}`);
+    throw new Error(recoveryRoleAlreadyContained);
+  }));
+
+  assert.deepEqual(outcome, { outcome: "contained" });
+  assert.deepEqual(harness.frames.map((frame) => frame.operation), [
+    "recover_attempt",
+    "recovery_post_cas",
+    "recover_attempt",
+    "recovery_role_cas_ack",
+    "recovery_role_cas_ack",
+    "recovery_finalize_ack",
+    "release",
+  ]);
+  assert.deepEqual(harness.events.filter((event) => event.startsWith("roleContained")), ["roleContained:playerHost", "roleContained:aiClient"]);
+});
+
+test("recovery still fails closed on a durable role CAS that was not already recorded", async () => {
+  // A role the record never accepted is not a containment: the refused CAS must
+  // stop the conversation before that role's acknowledgement and never reach a
+  // terminal frame.
+  const playerRefused = recoveryHarness([
+    recoveryAcknowledgement("recovery_accepted"),
+    recoveryAcknowledgement("player_contained"),
+    recoveryAcknowledgement("ai_contained"),
+  ]);
+  await assert.rejects(
+    () => driveGuardianRecoveryConversation(playerRefused.transport, recoveryBinding, resumedRecoveryInput(playerRefused.events, async (role) => {
+      playerRefused.events.push(`roleContained:${role}`);
+      throw new Error("stardew_bootstrap_owner_transition_mismatch");
+    })),
+    /stardew_bootstrap_owner_transition_mismatch/,
+  );
+  assert.deepEqual(playerRefused.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt"]);
+  assert.deepEqual(playerRefused.events.filter((event) => event.startsWith("roleContained")), ["roleContained:playerHost"]);
+
+  // Tolerating the first role's already-recorded CAS must not make the second
+  // role's refusal tolerable: the Player acknowledgement is written, and nothing
+  // after it is.
+  const aiRefused = recoveryHarness([
+    recoveryAcknowledgement("recovery_accepted"),
+    recoveryAcknowledgement("player_contained"),
+    recoveryAcknowledgement("ai_contained"),
+  ]);
+  await assert.rejects(
+    () => driveGuardianRecoveryConversation(aiRefused.transport, recoveryBinding, resumedRecoveryInput(aiRefused.events, async (role) => {
+      aiRefused.events.push(`roleContained:${role}`);
+      if (role === "aiClient") throw new Error("stardew_bootstrap_owner_transition_mismatch");
+      throw new Error(recoveryRoleAlreadyContained);
+    })),
+    /stardew_bootstrap_owner_transition_mismatch/,
+  );
+  assert.deepEqual(aiRefused.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt", "recovery_role_cas_ack"]);
+  assert.deepEqual(aiRefused.events.filter((event) => event.startsWith("roleContained")), ["roleContained:playerHost", "roleContained:aiClient"]);
 });
 
 test("recovery reads the shared `unavailable` status by position, never by its text", async () => {

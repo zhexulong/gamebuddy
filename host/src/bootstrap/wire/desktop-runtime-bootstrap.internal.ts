@@ -59,6 +59,13 @@ const MAX_GUARDIAN_OPERATION_WAIT_BUDGET_MS = 300_000;
 // The recovery wire answers four acknowledgements with one identical key set, and
 // a recovery ack identifies the recovery actor instead of a containment role.
 const recoveryAcknowledgementKeys = ["schema", "protocolVersion", "operation", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"] as const;
+// The durable role CAS reports "this record already holds this role as contained"
+// with its own error token instead of re-transitioning. Only that token is
+// tolerated by the recovery conversation, and it is matched as an error identity
+// rather than by idiomatic type because the durable engine belongs to the
+// composition while this wire is deliberately generic: the focused source-shape
+// test refuses any occurrence of the game's name in this file.
+const roleAlreadyContainedError = /(?:^|_)role_already_contained$/;
 
 type DesktopRootLayout = Readonly<{
   programRoot: string;
@@ -668,6 +675,31 @@ function roleClassified(role: GuardianRecoveryRole, classification: string | und
 }
 
 /**
+ * Runs one durable role CAS, tolerating the one rejection a resumed recovery
+ * legitimately meets.
+ *
+ * A recovery that crashed between a role's durable CAS and that role's CAS
+ * acknowledgement comes back with the native side classifying the role
+ * contained again while the durable record already says so too. The durable
+ * engine reports exactly that case with its own error token instead of
+ * re-transitioning, and the record agreeing with the native classification is
+ * not a failure, so the conversation continues at the same acknowledgement
+ * position.
+ *
+ * Nothing is retried to make that work and no frame is written twice: the
+ * resume repeats no native step. Every other rejection is a live CAS failure
+ * that must still close the session, because a role the durable record did not
+ * accept is not a containment.
+ */
+async function recordRecoveredRole(input: DesktopGuardianRecovery, role: GuardianRecoveryRole): Promise<void> {
+  try {
+    await input.roleContained(role);
+  } catch (error) {
+    if (!(error instanceof Error) || !roleAlreadyContainedError.test(error.message)) throw error;
+  }
+}
+
+/**
  * Drives the complete bounded recovery conversation the Desktop broker serves.
  *
  * The broker answers two written frames with one acknowledgement (the post-CAS
@@ -676,7 +708,9 @@ function roleClassified(role: GuardianRecoveryRole, classification: string | und
  * it belongs to has run, so the waiter for each acknowledgement is installed
  * before the frames it answers are written. A conversation that does not reach
  * its exact terminal acknowledgement fails closed: an uncertain native recovery
- * is never reported as containment.
+ * is never reported as containment. The one durable rejection it does accept is
+ * a role the record already holds as contained, which is what a resumed recovery
+ * meets and not an uncertainty.
  *
  * Exported for the focused protocol test; the frame order above only exists here.
  */
@@ -705,13 +739,13 @@ export async function driveGuardianRecoveryConversation(transport: DesktopGuardi
   const playerStatus = recoveryAcknowledgementStatus(await player, input, binding, ["player_contained", "unavailable", "quarantined"]);
   if (playerStatus === undefined) throw unavailable();
   if (playerStatus !== "player_contained") return roleClassified("playerHost", playerStatus);
-  await input.roleContained("playerHost");
+  await recordRecoveredRole(input, "playerHost");
   const ai = transport.receive();
   transport.write(guardianRecoveryFrame("recovery_role_cas_ack", binding, input, { role: "playerHost" }));
   const aiStatus = recoveryAcknowledgementStatus(await ai, input, binding, ["ai_contained", "unavailable", "quarantined"]);
   if (aiStatus === undefined) throw unavailable();
   if (aiStatus !== "ai_contained") return roleClassified("aiClient", aiStatus);
-  await input.roleContained("aiClient");
+  await recordRecoveredRole(input, "aiClient");
   const settled = transport.receive();
   transport.write(guardianRecoveryFrame("recovery_role_cas_ack", binding, input, { role: "aiClient" }));
   transport.write(guardianRecoveryFrame("recovery_finalize_ack", binding, input));
