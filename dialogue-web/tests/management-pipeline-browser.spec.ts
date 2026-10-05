@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import {
+  assertAccessibilityBaseline,
+  assertQuiet,
+  assertSectionsKeyboardReachable,
+  watchSurface,
+} from "./frontend-criteria.js";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -1425,6 +1431,33 @@ test("management browser sets the companion language once, durably, and the runt
     assert.equal(languageCalls.filter((method) => method === "PUT").length, 2);
     assert.ok(languageCalls.includes("GET"));
   } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("conformance: management surface meets the frontend criteria", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition({ withCharacters: true });
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  try {
+    const page = await context.newPage();
+    const noise = watchSurface(page);
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("[data-language-settings]")).toBeVisible({ timeout: 20_000 });
+
+    // The criteria that need a real walk: the surface is judged as rendered, and
+    // every settings section it shows must be reachable without a pointer. A
+    // panel that a future change wraps in a pointer-only widget fails here.
+    await assertAccessibilityBaseline(page, "management");
+    await assertSectionsKeyboardReachable(page, "section[aria-label]");
+    assertQuiet(noise, "management");
+  } finally {
+    await context.close();
     await browser.close();
     await mounted.close();
   }

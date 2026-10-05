@@ -37,7 +37,16 @@ export function Timeline({
   }, [transcript.length, preview?.text]);
 
   return (
-    <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript}>
+    // The transcript scrolls, and a scrollable region that cannot take focus is
+    // unreachable for a keyboard-only player (axe: scrollable-region-focusable,
+    // serious). tabIndex makes the region itself the scroll target; the label is
+    // already the region's accessible name, so focus announces where it landed.
+    <section
+      ref={sectionRef}
+      className="timeline"
+      aria-label={labels.chatTranscript}
+      tabIndex={0}
+    >
       <div className="timeline-heading">
         <h1>{displayTitle}</h1>
       </div>
