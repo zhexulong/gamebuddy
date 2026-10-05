@@ -82,13 +82,17 @@ function run(command, args, options = {}) {
 /** Flatten the Playwright JSON reporter into one row per test. */
 function collectTests(document) {
   const rows = [];
+  // The reporter names the file relative to its config root and that form has
+  // changed between versions ('x.spec.ts' vs 'tests/x.spec.ts'), so identify a
+  // suite by its basename - the contract's paths are unique per basename.
+  const normalizeFile = (value) => String(value ?? "").replaceAll("\\", "/").split("/").pop() ?? "";
   const visit = (suite) => {
     for (const child of suite.suites ?? []) visit(child);
     for (const spec of suite.specs ?? []) {
       for (const test of spec.tests ?? []) {
         const last = test.results?.at(-1);
         rows.push({
-          file: (spec.file ?? suite.file ?? "").replaceAll("\\", "/"),
+          file: normalizeFile(spec.file ?? suite.file),
           title: spec.title,
           status: test.status,
           lastResultStatus: last?.status,
@@ -158,12 +162,13 @@ for (const row of observed) {
   list.push(row);
   byFile.set(row.file, list);
 }
+const basenameOf = (path) => path.replaceAll("\\", "/").split("/").pop();
 
 const failures = [];
 const declaredSkips = [];
 
 for (const surface of contract.surfaces) {
-  const rows = byFile.get(surface.file) ?? [];
+  const rows = byFile.get(basenameOf(surface.file)) ?? [];
   if (rows.length < surface.minimumTests) {
     failures.push(
       `${surface.file}: ${rows.length} test(s) ran, the contract requires at least ${surface.minimumTests} (${surface.capability})`,
@@ -201,7 +206,7 @@ const report = Object.freeze({
   suites: contract.surfaces.map((surface) => ({
     file: surface.file,
     capability: surface.capability,
-    observed: (byFile.get(surface.file) ?? []).length,
+    observed: (byFile.get(basenameOf(surface.file)) ?? []).length,
     required: surface.minimumTests,
   })),
   requiredTitles: contract.requiredTitles.length,
