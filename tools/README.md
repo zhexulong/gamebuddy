@@ -292,6 +292,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-native-loc
 
 The runner never enables capabilities itself. A passed result requires its exact action-specific terminal evidence and fresh postcondition; it is not a release or whole-product acceptance claim.
 
+### Fixture roots and multi-lane isolation
+
+One lane owns two local roots, both resolved in one shared place
+(`tools/lib/stardew-fixture-roots.mjs`): the **profile root**
+(`%LOCALAPPDATA%\GameBuddy`, holding `stardew-profiles` and the
+`.stardew-fixture-profile.lock` transaction) and the **fixtures root**
+(`%LOCALAPPDATA%\GameBuddy\stardew-fixtures`, holding the native save templates
+and the `.stardew-native-local-player-fixture.lock` transaction). Both keep those
+defaults when nothing overrides them. To run a second lane concurrently, set
+`GAMEBUDDY_STARDEW_PROFILE_ROOT` (the fixtures root then follows it as
+`<root>\stardew-fixtures`) or `GAMEBUDDY_STARDEW_FIXTURE_ROOT`, and pass the
+matching `-FixtureRoot` to the drivers that require one. The entries that compute
+a default (`tools/start-farmhand-launcher.ps1`,
+`tools/launch-stardew-navigation-fixture.ps1`,
+`tools/live-run/game/launch-ladder-live.mjs`) print the resolved roots once per
+run. The game-process guard stays global: no lane starts while any SMAPI or
+Stardew process is running.
+
 ## Windows TTS output gate
 
 The Gateway can use the current Windows default render device only when both a

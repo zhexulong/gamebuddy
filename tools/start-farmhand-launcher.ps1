@@ -309,12 +309,23 @@ $stardewProject = Join-Path $repositoryRoot "integrations\stardew\GameBuddy.Star
     if ($LASTEXITCODE -ne 0) { throw "stardew_release_rebuild_failed" }
     Write-LauncherPhase "modRebuilt"
 
-$fixtureRoot = Join-Path $env:LOCALAPPDATA "GameBuddy"
+# Both fixture roots come from the single shared resolver
+# (tools/lib/stardew-fixture-roots.mjs); its defaults are the historical paths
+# and GAMEBUDDY_STARDEW_PROFILE_ROOT / GAMEBUDDY_STARDEW_FIXTURE_ROOT point one
+# concurrent lane at private roots. This is the launcher's one deliberately
+# path-bearing line: an operator must see which profile root this run holds, or
+# it cannot tell that two lanes are still sharing one transaction.
+$fixtureRootsJson = & node $PSScriptRoot\lib\stardew-fixture-roots.mjs --print-json 2>$null
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($fixtureRootsJson)) { throw "stardew_fixture_roots_unavailable" }
+$fixtureRoots = $fixtureRootsJson | ConvertFrom-Json
+$fixtureRoot = [string]$fixtureRoots.profileRoot
+$profilesRoot = [string]$fixtureRoots.profilesDir
+Write-Output ("[stardew-fixture-roots] profileRoot={0} fixturesRoot={1}" -f $fixtureRoots.profileRoot, $fixtureRoots.fixturesRoot)
 # Preview uses an allowlisted native locale selected by the launcher. The
 # post-save-load fixture receipt below, not this preference, proves it applied.
 Assert-PresentationStartupPreference $PresentationLocale
-$hostModsPath = Join-Path $fixtureRoot "stardew-profiles\A-host"
-$aiModsPath = Join-Path $fixtureRoot "stardew-profiles\A-ai-client"
+$hostModsPath = Join-Path $profilesRoot "A-host"
+$aiModsPath = Join-Path $profilesRoot "A-ai-client"
 $hostConfig = Join-Path $hostModsPath "GameBuddy\config.json"
 $aiConfig = Join-Path $aiModsPath "GameBuddy\config.json"
 foreach ($path in @($fixtureRoot, $hostModsPath, $aiModsPath)) { Assert-AbsoluteDirectory $path "fixture_path" }

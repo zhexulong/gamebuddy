@@ -15,6 +15,21 @@ exchange file. The mandatory Farmhand end-to-end procedure is in
  runbook and its constrained environment are removed, and the
  Farmhand/Portfolio topology boundary language remains only as a historical note.
 
+## Fixture roots
+
+One lane owns two local roots, both resolved in one shared place
+(`tools/lib/stardew-fixture-roots.mjs`): the **profile root**
+(`%LOCALAPPDATA%\GameBuddy`, holding `stardew-profiles` and the
+`.stardew-fixture-profile.lock` transaction) and the **fixtures root**
+(`%LOCALAPPDATA%\GameBuddy\stardew-fixtures`, holding `templates/`, the working
+save and binding artifacts, and the `.stardew-native-local-player-fixture.lock`
+transaction). Those are the defaults. Set `GAMEBUDDY_STARDEW_PROFILE_ROOT` to
+move the profile root — the fixtures root then follows it as
+`<root>\stardew-fixtures` — or `GAMEBUDDY_STARDEW_FIXTURE_ROOT` to move only the
+fixtures root, so a second concurrent lane does not share profiles, Mod bundles,
+backups or locks. The examples below spell the default paths explicitly and keep
+working unchanged. See [`RUNBOOK.md`](RUNBOOK.md) for the multi-lane procedure.
+
 A native action success gate has two independent parts:
 
 1. target-version source/IL and deterministic protocol tests establish the legal

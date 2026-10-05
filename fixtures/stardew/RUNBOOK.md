@@ -21,6 +21,42 @@ single-player fixture safe. Neither lane permits save-XML editing, a
 hand-written receipt, an in-memory `Farmer`, UI automation, or raw native-call
 fallback.
 
+## Fixture roots and multi-lane isolation
+
+One lane owns two local fixture roots, and both are resolved in exactly one
+shared place, `tools/lib/stardew-fixture-roots.mjs`:
+
+| Root | Default | Owns |
+| --- | --- | --- |
+| profile root | `%LOCALAPPDATA%\GameBuddy` | `stardew-profiles` profiles `A-host` / `A-ai-client` / `A-ai-probe`, the `.stardew-fixture-profile.lock` transaction and its backups, and the launcher's `farmhand-companion-preview-*` run roots |
+| fixtures root | `%LOCALAPPDATA%\GameBuddy\stardew-fixtures` | the native save templates, the bootstrap binding artifacts, and the `.stardew-native-local-player-fixture.lock` transaction |
+
+The two locks are different files in different roots; do not confuse them. An
+unset environment keeps these exact paths. Two environment variables move a lane
+onto private roots so two lanes stop sharing one transaction:
+
+- `GAMEBUDDY_STARDEW_PROFILE_ROOT` — the profile root. The fixtures root then
+defaults to `<that root>\stardew-fixtures`, so setting only this variable
+isolates a lane completely.
+- `GAMEBUDDY_STARDEW_FIXTURE_ROOT` — the fixtures root alone.
+
+A configured root must be absolute; a relative one fails closed with
+`stardew_fixture_profile_root_unresolved` / `stardew_fixture_root_unresolved`.
+The launcher and the ladder launcher print the resolved roots once per run
+(`[stardew-fixture-roots] profileRoot=… fixturesRoot=…`), and every helper
+process that resolves them prints the same line once. A lane root must already
+exist before the launcher starts, with its own `stardew-profiles\A-host` and
+`A-ai-client` profiles seeded from the default root. Native-local drivers that
+take an explicit `-FixtureRoot` keep taking the root you pass them; the
+environment variables drive the default-computing entries
+(`tools/launch-stardew-navigation-fixture.ps1`,
+`tools/live-run/game/launch-ladder-live.mjs`) and the launcher.
+
+**What this does not do.** The process guard stays global: a run still refuses
+to start while any `StardewModdingAPI` / `Stardew Valley` process is running,
+whichever root it holds. The two roots only stop two lanes from sharing
+profiles, Mod bundles, backups and locks, not from contending for the game.
+
 ## Farmhand Companion Preview entry (preview-only)
 
 The formal Preview entry is a separate, short-lived Host-first attachment surface. It is not semantic authority, a Portfolio entry, a local bootstrap, or a publication/release gate. The trusted launcher must create an absolute JSON config with exactly this shape and must never source any field from model output:

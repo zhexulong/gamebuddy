@@ -26,6 +26,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 
 const repo = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const args = process.argv.slice(2);
@@ -39,7 +40,15 @@ const action = option("action", "play_session");
 const label = option("label", "");
 const gameDir = option("game", process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley");
 const modsPath = option("mods", process.env.GAMEBUDDY_STARDEW_MODS_DIR ?? path.join(gameDir, "Mods"));
-const fixtureRoot = option("root", path.join(process.env.LOCALAPPDATA, "GameBuddy", "stardew-fixtures"));
+// Both fixture roots come from the single shared resolver
+// (tools/lib/stardew-fixture-roots.mjs). The defaults are the historical paths;
+// GAMEBUDDY_STARDEW_PROFILE_ROOT / GAMEBUDDY_STARDEW_FIXTURE_ROOT point one
+// concurrent lane at private roots, and an explicit --root still wins. The
+// resolved roots are printed once so an operator can see which root this run
+// holds before it takes the fixture transaction.
+const fixtureRoots = resolveStardewFixtureRoots({ fixturesRoot: option("root", null) });
+const fixtureRoot = fixtureRoots.fixturesRoot;
+announceStardewFixtureRoots(fixtureRoots);
 const releaseDir = option("release", path.join(repo, "integrations", "stardew", "bin", "Release", "net6.0"));
 const saveName = option("save", "GameBuddyFixtureNavigation_447088730");
 const backupName = option("backup", `native-local-${action.replaceAll("_", "-")}-fixture-backup`);
