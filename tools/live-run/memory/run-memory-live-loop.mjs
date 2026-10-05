@@ -94,6 +94,9 @@ function assertMarkerContract() {
 assertMarkerContract();
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
+
+/** The run's requested companion language, set by the entry point's `--language`. */
+let requestedLanguage;
 const OUTPUT_ROOT = process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT
   ? resolve(process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT)
   : join(HOST_ROOT, "dist");
@@ -121,6 +124,7 @@ function parseArguments(argv) {
     ["--question", undefined],
     ["--manifest", undefined],
     ["--card", undefined],
+    ["--language", undefined],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -133,6 +137,9 @@ function parseArguments(argv) {
     flags.set(flag, value);
     index += 1;
   }
+  const language = flags.get("--language");
+  if (language !== undefined && language !== "zh-CN" && language !== "en-US")
+    throw new Error(`${usage()} (--language must be zh-CN or en-US)`);
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({
@@ -140,6 +147,7 @@ function parseArguments(argv) {
     reportPath: resolve(reportPath),
     manifestPath: flags.get("--manifest"),
     cardPath: flags.get("--card"),
+    language,
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -281,6 +289,35 @@ async function readMemory(origin, client) {
  * the live-run commit itself, and the runtime treats the on-disk profile as
  * the approved one (readOrCreateIdentityProfile).
  */
+/**
+ * Records the run's requested companion language before anything mounts.
+ *
+ * The run manifest records the presentation profile, so the preference has to be
+ * in place before the FIRST mount: writing it later leaves the first mount's
+ * manifest holding the previous locale and the successor mount refuses to open
+ * the same root (`run_manifest_mismatch`). Uses the product's own store module, so
+ * the path and the stored shape are the product's, not a hand-written file.
+ */
+async function installLanguagePreference(root, locale) {
+  if (locale === undefined) return undefined;
+  const storeDir = new URL("../../../host/dist-test/", import.meta.url);
+  const { LanguagePreferenceStore, companionLocalePath } = await import(
+    new URL("settings/language-preference-store.js", storeDir),
+  );
+  // The store writes under the product's durable path lock, which releases
+  // through the Windows stale-lock reclaimer the runtime binds; this process
+  // writes before any child exists, so it binds the same capability itself.
+  const { bindWindowsStaleLockReclaimer } = await import(new URL("path-lock.js", storeDir));
+  const { createBuildWindowsStaleLockReclaimer } = await import(
+    new URL("windows-stale-lock-reclaimer/index.js", storeDir),
+  );
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  const store = new LanguagePreferenceStore(companionLocalePath(root));
+  const current = await store.read();
+  const written = await store.update(current.revision, { locale });
+  return Object.freeze({ requested: locale, stored: written.locale, revision: written.revision });
+}
+
 async function installCharacterCard(root, identity, cardPath) {
   const cardDir = new URL("../../../host/dist-test/", import.meta.url);
   const { candidateToIdentityProfile, previewStCard } = await import(new URL("st-card-import.js", cardDir));
@@ -352,6 +389,39 @@ function observeCompanionReply(committedText) {
  * 200 whose body contains the row IS the durability evidence - no second query and
  * no direct SQLite read is needed or wanted.
  */
+/**
+ * Writes the companion language through the mounted management route and reads
+ * it back from the durable store. The response IS the read-back (the store
+ * re-reads the written file before projecting), so a returned locale that
+ * equals the request is the product's own confirmation, not the caller's.
+ */
+export async function setCompanionLanguage(origin, client, locale) {
+  const read = async () => {
+    const response = await deadlineFetch(`${origin}/api/tavern/v1/settings/language`, {
+      headers: { Cookie: client.cookie, Origin: origin },
+    });
+    if (!response.ok) throw new Error(`language_read_failed:${response.status}`);
+    return await response.json();
+  };
+  const before = await read();
+  if (typeof before?.revision !== "number") throw new Error("language_revision_unavailable");
+  const written = await deadlineFetch(`${origin}/api/tavern/v1/settings/language`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "x-csrf-token": client.csrf,
+      Cookie: client.cookie,
+      Origin: origin,
+    },
+    body: JSON.stringify({ expectedRevision: before.revision, locale }),
+  });
+  if (!written.ok) throw new Error(`language_update_failed:${written.status}`);
+  const stored = await read();
+  if (stored?.locale !== locale)
+    throw new Error(`language_update_not_durable:${String(stored?.locale)}`);
+  return Object.freeze({ requested: locale, stored: stored.locale, revision: stored.revision });
+}
+
 export async function seedMemory(origin, client, seedTexts, supersedeText) {
   let projectionRevision;
   let last;
@@ -521,7 +591,7 @@ const noopRecorder = Object.freeze({ record() {} });
  * on the SAME root/continuity renders it into m[0] — the cross-surface
  * embodiment path that a chat-only memory loop cannot close by itself.
  */
-export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs, gameSessionMode = "fresh", onPhase } = {}) {
+export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, language, outputRoot, readyTimeoutMs, gameSessionMode = "fresh", onPhase } = {}) {
   const markers = [];
   // Phase marks: the seed is the dominant cold-start cost (~49s measured in a real
   // ladder-5 run), so the caller needs to know WHICH part costs it - booting the
@@ -567,7 +637,13 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
     mark("bootstrapAuthMs");
     const result = await seedMemory(origin, client, seeds, supersedes);
     mark("seedWrittenMs");
-    return Object.freeze({ result, markers: Object.freeze([...markers]), phases: Object.freeze({ ...phases }) });
+    // The player's language choice, written through the same mounted product
+    // route the management UI uses, so the runtime's own read is what phase 2
+    // exercises.
+    const languageResult =
+      language === undefined ? undefined : await setCompanionLanguage(origin, client, language);
+    mark("languageWrittenMs");
+    return Object.freeze({ result, languageResult, markers: Object.freeze([...markers]), phases: Object.freeze({ ...phases }) });
   } finally {
     launch.dispose?.();
     await stopChildGracefully(launch.child);
@@ -851,6 +927,12 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // whale preset is the reference card; installing it BEFORE any surface
     // launch means the runtime constructs with the reviewed persona, the
     // voice-anchor examples and the always-on world book (lorebook_constant).
+    // The companion language the player asked for, recorded before the first mount
+    // for the same reason the card is: the run manifest captures the presentation
+    // profile, and a later write would make the successor mount refuse the root.
+    const installedLanguage = await installLanguagePreference(root, requestedLanguage);
+    if (installedLanguage !== undefined)
+      process.stderr.write(`[memory-loop] language=${String(installedLanguage.stored)}\n`);
     const installedCard =
       cardPath === undefined
         ? undefined
@@ -884,9 +966,17 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       root,
       deploymentManifestPath,
       capture,
-      run: async (origin, client) => seedMemory(origin, client, scenario.seeds, scenario.supersedes),
+      run: async (origin, client) => {
+        return await seedMemory(origin, client, scenario.seeds, scenario.supersedes);
+      },
     });
     const seeded = seededResult.result;
+    const languageEvidence = installedLanguage;
+    if (languageEvidence !== undefined)
+      process.stderr.write(
+        `[memory-loop] phase1 language=${String(languageEvidence.stored)}\n`,
+      );
+    else process.stderr.write(`[memory-loop] phase1 language=<unset>\n`);
     process.stderr.write(`[memory-loop] phase1 durable=${seeded.durable}\n`);
 
     // Resolve the seed's vendor id AFTER phase 1 exited: the product hides it behind
@@ -896,6 +986,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
 
     const observation = {
       distance: scenario.distance,
+      ...(languageEvidence === undefined ? {} : { language: languageEvidence }),
       seedRequired: true,
       seedPresentInReadback: seeded.durable,
       // Restart evidence for a `session`-distance probe. The successor mount is the
@@ -1143,6 +1234,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (parsed.help) {
     process.stdout.write(`${usage()}\n`);
   } else {
+    requestedLanguage = parsed.language;
     const report = await runMemoryLiveLoop({
       reportPath: parsed.reportPath,
       manifestPath: parsed.manifestPath,
