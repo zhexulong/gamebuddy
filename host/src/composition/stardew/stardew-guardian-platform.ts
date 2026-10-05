@@ -17,7 +17,13 @@ import { randomUUID } from "node:crypto";
 
 import type { DesktopGuardianSession } from "../../containment/auth/desktop-guardian-session.internal.js";
 import type { ContainedGameRuntimePlatform } from "../../containment/runtime/core/contained-game-runtime.js";
-import type { TypedPrivateGameFact, TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
+import type {
+  RecoverableContainedGameRuntime,
+  RecoveryOperation,
+  RedactedRecoveryOutcome,
+  TypedPrivateGameFact,
+  TypedPrivateGameFacts,
+} from "../../containment/runtime/contract/game-runtime.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
@@ -239,6 +245,64 @@ function encodeRecoveryPostCasFrame(
 }
 
 /**
+ * The part of a recovery only the calling layer can supply.
+ *
+ * The gate binding and both durable steps deliberately are NOT part of it: they
+ * come from the exact owner's consumed one-shot Guardian binding, so a caller can
+ * neither substitute the gate correlation the native gate must acquire nor
+ * invent a durable transition it does not own.
+ */
+export type StardewOwnerRecoveryRequest = Readonly<{
+  /**
+   * Opaque recovery actor for this attempt. An interrupted recovery resumes its
+   * exact recorded actor instead of minting a new identity.
+   */
+  readonly recoveryInstanceId: string;
+  /**
+   * Durable post-CAS binding facts of the successor record, read after the
+   * `recovering` CAS ran. They are typed game facts only: the composition encodes
+   * them into the post-CAS native body, and the native ingress remains the
+   * authority on the gate correlation they must still match.
+   */
+  readonly readRecoveryBinding: () => Promise<TypedPrivateGameFacts>;
+}>;
+
+/**
+ * The owner-held recovery half of the launch collaborator seam.
+ *
+ * It is declared here and not on the game layer's
+ * `StardewPlayerHostRuntimeLaunchCollaborator`, because a recovery is driven for
+ * the exact owner whose durable attempt is non-terminal, and only this
+ * composition holds that owner's consumed Guardian binding and the authenticated
+ * session. The factory below returns it on the same one-shot collaborator object
+ * it already returns, so a recovery is never a second collaborator, a second
+ * owner path, or a second durable read/write seam.
+ */
+export type StardewOwnerRecoveryDriver = Readonly<{
+  recover(
+    owner: StardewOwnedPlayerHostBootstrap,
+    request: StardewOwnerRecoveryRequest,
+  ): Promise<RedactedRecoveryOutcome>;
+}>;
+
+/**
+ * Reads the recovery half off a collaborator value.
+ *
+ * The collaborator a consumer receives is declared by the game layer, which
+ * cannot name this half, so exactly one reader exists — next to the factory that
+ * installs the member — instead of every consumer casting a shape it cannot
+ * check. A collaborator that does not carry the member reads as `undefined`, and
+ * its consumer must turn that into a refusal: a recovery that cannot be driven
+ * must never be reported as one that ran.
+ */
+export function readStardewOwnerRecoveryDriver(
+  collaborator: StardewPlayerHostRuntimeLaunchCollaborator,
+): StardewOwnerRecoveryDriver | undefined {
+  const candidate = collaborator as Partial<StardewOwnerRecoveryDriver>;
+  return typeof candidate.recover === "function" ? candidate as StardewOwnerRecoveryDriver : undefined;
+}
+
+/**
  * Builds the composition-owned contained launch seam for both roles. The
  * runtime binding uses the Stardew owner's Guardian correlation
  * (guardianInstanceId/guardianEpoch/attemptId) plus the composition's fixed
@@ -251,12 +315,12 @@ function encodeRecoveryPostCasFrame(
  */
 export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   platform: ContainedGameRuntimePlatform,
-): StardewPlayerHostRuntimeLaunchCollaborator {
+): StardewPlayerHostRuntimeLaunchCollaborator & StardewOwnerRecoveryDriver {
   // The Guardian owner binding is one-shot per owner; the contained runtime
   // for that owner is therefore bound once and retained here. A launch retry
   // after a pre-claim failure reuses the exact bound runtime, while a post-
   // claim failure is terminal in the coordinator and never calls back here.
-  const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof createContainedGameRuntime>>();
+  const runtimesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, RecoverableContainedGameRuntime>();
   // The arm frame the contained runtime needs and the durable transition port a
   // recovery drive needs are two halves of the same one-shot binding, so it is
   // consumed exactly once here and both halves are read from that single
@@ -272,6 +336,19 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
     return binding;
   };
   const recoveryDrives = new WeakMap<StardewOwnedPlayerHostBootstrap, StardewBootstrapOwnerRecoveryDrive>();
+  // One drive per owner, read from the same consumption the contained runtime
+  // uses. Both the drive reader and the recovery drive go through this, so a
+  // recovery and a later launch can never open two owner paths or two durable
+  // seams for one attempt.
+  const recoveryDriveFor = (owner: StardewOwnedPlayerHostBootstrap): StardewBootstrapOwnerRecoveryDrive => {
+    let drive = recoveryDrives.get(owner);
+    if (drive === undefined) {
+      const { recoveryGateBinding, transitions } = ownerBindingFor(owner);
+      drive = Object.freeze({ recoveryGateBinding, transitions });
+      recoveryDrives.set(owner, drive);
+    }
+    return drive;
+  };
   // Roles this attempt actually launched. Settlement must catch the durable
   // record up from `armed` through exactly these roles, never an invented one.
   const launchedRolesByOwner = new WeakMap<StardewOwnedPlayerHostBootstrap, Set<"playerHost" | "aiClient">>();
@@ -283,7 +360,7 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
     }
     return roles;
   };
-  const runtimeFor = (owner: StardewOwnedPlayerHostBootstrap) => {
+  const runtimeFor = (owner: StardewOwnedPlayerHostBootstrap): RecoverableContainedGameRuntime => {
     let runtime = runtimesByOwner.get(owner);
     if (runtime === undefined) {
       // The consumed binding is this composition seam's, and this seam is the
@@ -292,12 +369,48 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       // game-layer Guardian owner seam did the same work from the wrong layer
       // and had no production consumer.
       const { armFrame } = ownerBindingFor(owner);
-      runtime = createContainedGameRuntime(platform, Object.freeze({
+      const binding = Object.freeze({
         guardianInstanceId: armFrame.guardianInstanceId,
         guardianEpoch: armFrame.guardianEpoch,
         attemptId: armFrame.attemptId,
         operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
-      }));
+      });
+      const core = createContainedGameRuntime(platform, binding);
+      runtime = Object.freeze({
+        ...core,
+        /**
+         * The owner-held recovery half of this runtime: the generic contract's
+         * `recover` member bound to the exact owner this runtime was created
+         * for. The platform owns the frame order and the bounded waits, the
+         * operation carries the typed gate facts and the two durable steps, and
+         * only the platform's terminal containment is reported as `recovered`.
+         * Every other position and every failure is `unavailable` and is never
+         * retried here: an uncertain native recovery may already have mutated
+         * the attempt, so a retry would repeat a native effect this layer cannot
+         * prove. The generic core cannot supply this member itself, because it
+         * holds no owner binding and no durable transition port.
+         *
+         * A recovery drives an attempt that already crashed, so it runs before
+         * any role launch on this runtime rather than interleaving with the
+         * arm/launch/contain sequence the generic runtime serializes.
+         */
+        async recover(operation: RecoveryOperation): Promise<RedactedRecoveryOutcome> {
+          try {
+            const acknowledgement = await platform.recover({
+              ...binding,
+              recoveryInstanceId: operation.recoveryInstanceId,
+              gateFacts: operation.gateFacts,
+              beginRecovery: operation.beginRecovery,
+              roleContained: operation.roleContained,
+            });
+            return Object.freeze({
+              status: acknowledgement.outcome === "contained" ? "recovered" as const : "unavailable" as const,
+            });
+          } catch {
+            return Object.freeze({ status: "unavailable" as const });
+          }
+        },
+      });
       runtimesByOwner.set(owner, runtime);
     }
     return runtime;
@@ -335,13 +448,48 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
      * Guardian recovery gate; this drive only owns the durable transitions.
      */
     recovery(owner: StardewOwnedPlayerHostBootstrap): StardewBootstrapOwnerRecoveryDrive {
-      let drive = recoveryDrives.get(owner);
-      if (drive === undefined) {
-        const { recoveryGateBinding, transitions } = ownerBindingFor(owner);
-        drive = Object.freeze({ recoveryGateBinding, transitions });
-        recoveryDrives.set(owner, drive);
+      return recoveryDriveFor(owner);
+    },
+    /**
+     * Drives one bounded recovery of the exact owner's non-terminal attempt.
+     *
+     * This is the product-reachable half of the recovery path: the gate binding
+     * and both durable steps come from the same consumed one-shot Guardian owner
+     * binding the contained runtime uses, the typed conversation goes through the
+     * authenticated platform session (which owns the frame order, the bounded
+     * waits and the durable CAS ordering), and the caller supplies only what it
+     * alone holds — the recorded recovery actor and the post-CAS binding facts of
+     * its own durable record. A request the durable engine cannot accept is
+     * refused with a bounded error and nothing is driven; a recovery that the
+     * platform cannot take to terminal containment reports `unavailable` and is
+     * never retried here.
+     */
+    recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome> {
+      // The actor reaches a durable CAS and one native field the platform encodes
+      // into a frame, so it is validated at this boundary: a malformed actor must
+      // refuse here rather than turn into an uncertain native attempt.
+      if (typeof request.recoveryInstanceId !== "string" || !RECOVERY_OPAQUE_GUID.test(request.recoveryInstanceId)) {
+        throw new Error("stardew_owner_recovery_actor_invalid");
       }
-      return drive;
+      const { recoveryGateBinding, transitions } = recoveryDriveFor(owner);
+      return runtimeFor(owner).recover({
+        recoveryInstanceId: request.recoveryInstanceId,
+        gateFacts: Object.freeze({ ...recoveryGateBinding }),
+        beginRecovery: async () => {
+          await transitions.beginRecovery(request.recoveryInstanceId);
+          // The successor facts are read back after the CAS wrote them, never
+          // before: they are the post-CAS binding the native ingress validates
+          // against the exact gate this conversation already holds.
+          return await request.readRecoveryBinding();
+        },
+        roleContained: async (role) => {
+          // The durable engine speaks the two Guardian role tokens; the generic
+          // contract only knows an opaque role, so an unknown one is refused
+          // instead of being recorded as containment.
+          if (role !== "playerHost" && role !== "aiClient") throw new Error("stardew_owner_recovery_role_invalid");
+          await transitions.recoveryRoleContained(role, request.recoveryInstanceId);
+        },
+      });
     },
     /**
      * Protected terminal settlement for the exact owner. The platform session is
