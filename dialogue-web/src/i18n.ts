@@ -156,6 +156,11 @@ const en = {
   voiceOutputDevice: "Output device",
   voiceDefaultOutput: "System default",
   voicePinnedOutputUnlisted: "Selected endpoint (not currently listed)",
+  languageSettings: "Companion language",
+  languageHint: "The language your companion speaks. It applies from the next time your companion starts.",
+  languageChinese: "Chinese (Simplified)",
+  languageEnglish: "English",
+  languageUnavailable: "The companion language preference is unavailable.",
   voiceSettingsUnavailable: "Voice settings are unavailable.",
 
   connectionSettings: "Connection and model",
@@ -416,6 +421,11 @@ const zh: Messages = {
   voiceOutputDevice: "输出设备",
   voiceDefaultOutput: "系统默认",
   voicePinnedOutputUnlisted: "已选端点（当前未列出）",
+  languageSettings: "伴侣语言",
+  languageHint: "伴侣说话使用的语言，下次伴侣启动时生效。",
+  languageChinese: "简体中文",
+  languageEnglish: "English",
+  languageUnavailable: "伴侣语言偏好不可用。",
   voiceSettingsUnavailable: "语音设置不可用。",
 
   connectionSettings: "连接与模型",

@@ -25,6 +25,7 @@ async function loadGenerationModules(artifactRoot: string) {
     load("tavern/connection-service.js"),
     load("tavern/connection-probe.js"),
     load("settings/voice-preference-store.js"),
+    load("settings/language-preference-store.js"),
     load("tavern/world-info-management/world-info-management.js"),
     load("tavern/world-info-binding/world-info-binding-management-service.js"),
     load("tavern/tavern-management-state.js"),
@@ -80,6 +81,7 @@ async function startMountedManagementComposition(
     connectionModule,
     connectionProbeModule,
     voicePreferenceModule,
+    languagePreferenceModule,
     worldInfoManagementModule,
     worldInfoBindingModule,
     stateModule,
@@ -136,6 +138,8 @@ async function startMountedManagementComposition(
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.language.read",
+      "settings.language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",
@@ -172,6 +176,8 @@ async function startMountedManagementComposition(
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.language.read",
+      "settings.language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",
@@ -309,6 +315,11 @@ async function startMountedManagementComposition(
   // production authorities the desktop owner composes (design/28 §5.3): the
   // connection service reports the exact mounted Chat's turn state so an
   // activation cannot switch a running turn.
+  // The same root-level preference the runtime reads at mount: the panel writes
+  // it here, and the companion speaks it.
+  const languagePreferenceStore = new languagePreferenceModule.LanguagePreferenceStore(
+    languagePreferenceModule.companionLocalePath(root),
+  );
   const voicePreferenceStore = new voicePreferenceModule.VoicePreferenceStore(
     resolve(root, "settings", "voice-preference.json"),
   );
@@ -347,6 +358,7 @@ async function startMountedManagementComposition(
     memoryService,
     worldInfoService,
     voicePreferenceStore,
+    languagePreferenceStore,
     connectionService,
     ...(personaService === undefined ? {} : { personaService }),
     ...(scenarioService === undefined ? {} : { scenarioService }),
@@ -1370,6 +1382,48 @@ test("management browser imports a reviewed character card and provisions the co
     assert.equal(calls.filter((entry) => entry === "POST /api/tavern/v1/imports").length, 1);
     assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/review$/u.test(entry)).length, 1);
     assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/confirm$/u.test(entry)).length, 1);
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("management browser sets the companion language once, durably, and the runtime reads it", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const languageCalls: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path === "/api/tavern/v1/settings/language") languageCalls.push(request.method());
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-language-settings]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+
+    // The panel adopts what the Host holds: it never shows a local guess beside a
+    // durable setting. A never-configured root records the language the UI is
+    // already showing, which is the player's browser language here (en-US).
+    const select = panel.getByRole("combobox");
+    await expect(select).toHaveValue("en-US", { timeout: 10_000 });
+
+    // Switching writes through the durable store and reports it.
+    await select.selectOption("zh-CN");
+    await expect(page.locator(".success-banner").first()).toBeVisible({ timeout: 10_000 });
+
+    // Durable read-back on reload: the stored preference, not the local choice.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    await expect(page.locator("[data-language-settings]").getByRole("combobox")).toHaveValue("zh-CN", {
+      timeout: 10_000,
+    });
+
+    // Two writes and no more: the first records the language the panel was
+    // already showing (a never-configured root adopts the browser's), the second
+    // is the player's switch. A third would mean a write loop.
+    assert.equal(languageCalls.filter((method) => method === "PUT").length, 2);
+    assert.ok(languageCalls.includes("GET"));
   } finally {
     await browser.close();
     await mounted.close();
