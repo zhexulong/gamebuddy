@@ -6,6 +6,13 @@
  * journeys are timing-sensitive and deliberately synchronous.
  */
 import assert from "node:assert/strict";
+import {
+  assertAccessibilityBaseline,
+  assertKeyboardReachable,
+  assertLayoutFloor,
+  assertQuiet,
+  watchSurface,
+} from "./frontend-criteria.js";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -241,6 +248,52 @@ test("reference browser is keyboard operable and does not overflow at phone or d
       await expect(transcript).toBeVisible();
     }
   } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("conformance: chat surface meets the frontend criteria", async () => {
+  test.skip(process.platform !== "win32", "requires real Windows production coordinator mount");
+  test.setTimeout(120_000);
+  const mounted = await startMountedReferenceComposition();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  try {
+    const page = await context.newPage();
+    const noise = watchSurface(page);
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded" });
+    const composer = page.getByRole("textbox", { name: /Type a message/u });
+    await expect(composer).toBeVisible({ timeout: 15_000 });
+
+    // Keyboard reach is measured from the document as loaded: no programmatic
+    // focus, no pointer event, and before anything has been typed into the
+    // composer (typing would leave focus there and Tab would walk away from it).
+    await assertKeyboardReachable(page, composer, "the chat composer");
+
+    // Real content first: an empty transcript never overflows, so a scrollable
+    // region that cannot take focus (axe: scrollable-region-focusable) and a
+    // clipped column would both go unnoticed. One committed message makes the
+    // surface the shape the criteria are about.
+    await composer.fill("A message that gives the transcript real content");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(() => mounted.starts, { timeout: 15_000 }).toBe(1);
+    await mounted.armCurrentTurn();
+    await mounted.settleArmedTurn("release");
+    await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
+      "A message that gives the transcript real content",
+    );
+
+    // The criteria, in the order the document lists them. A future Chat screen
+    // that forgets one of these fails here even if no journey covers it.
+    await assertAccessibilityBaseline(page, "chat");
+    await assertLayoutFloor(page);
+    assertQuiet(noise, "chat");
+  } finally {
+    await context.close();
     await browser.close();
     await mounted.close();
   }
