@@ -229,7 +229,7 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /if \(LADDER === "6"\) \{\n    for \(const \[index, goal\] of SESSION_GOALS\.entries\(\)\)/);
   assert.match(
     RUNNER_SOURCE,
-    /const ladderSixPassed =\n    LADDER === "6" \? sessionTurns\.length > 0 && attemptedActionIds\.length > 0 : true;/,
+    /const ladderSixPassed =\n    LADDER === "6"\n      \? sessionTurns\.length > 0 && attemptedActionIds\.length > 0 && sessionVerdict === "completed"\n      : true;/,
   );
   // The audit must read the run's OWN advertised surface, never a build-time
   // table that could drift from the snapshot the Agent actually saw.
@@ -241,6 +241,73 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /capabilityAudit,/);
   const verdictExpression = RUNNER_SOURCE.match(/state: ([^\n]*?)"passed" : "blocked"/)?.[1] ?? "";
   assert.ok(verdictExpression.includes("ladderSixPassed &&"), "verdict must depend on ladderSixPassed");
+  // A session cut off mid-turn must not be reported as a completed session: the first
+  // real run of this rung passed on a 609s `agent_turn_timeout` while the companion had
+  // emitted a 10-character fragment and never delivered its closing report.
+  assert.match(RUNNER_SOURCE, /const sessionVerdict =/);
+  assert.match(RUNNER_SOURCE, /\? "turn_timeout"/);
+  assert.match(RUNNER_SOURCE, /sessionVerdict === "completed"/);
+  assert.match(RUNNER_SOURCE, /sessionTurnErrors: unsettledSessionTurns,/);
+  // Run H attempted 14 actions, got 14 refusals and one successful walk, harvested
+  // nothing, and still passed: a session that only moved/looked/equipped must not be
+  // reported as a played session.
+  assert.match(RUNNER_SOURCE, /const NON_ACCOMPLISHMENT_ACTIONS = Object\.freeze\(/);
+  assert.match(RUNNER_SOURCE, /accomplishedActionIds = succeededActionIds\.filter\(/);
+  assert.match(RUNNER_SOURCE, /: "nothing_accomplished"/);
+  // Run M did 17 native actions over fifteen minutes and never said a word to the player:
+  // a play session that never speaks must not pass as a companion session.
+  assert.match(RUNNER_SOURCE, /const spokeToPlayer = typeof presentedSummary === "string"/);
+  assert.match(RUNNER_SOURCE, /\? "silent"/);
+  assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
+  // The failure path must never be the thing that crashes: run N played twelve actions and wrote
+  // NO artifact because the catch block read a try-scoped binding, losing both the artifact and
+  // the root error.
+  assert.match(RUNNER_SOURCE, /let personaWorldBook = null;/);
+  assert.match(RUNNER_SOURCE, /personaWorldBook = await readAssembledContextEvidence\(gameSessionPaths\);/);
+  assert.match(RUNNER_SOURCE, /console\.error\(error\);\n  const partialResult = \{/);
+  // ORDER, not mere presence: a `let` inside the try is scoped to the try, so the catch that
+  // exists to report a failed run cannot see it (it threw instead, destroying the artifact of a
+  // real failed session), and a const read before its declaration is a temporal dead zone. Both
+  // mistakes produced runs with no artifact at all, so the order is asserted here.
+  const positionOf = (needle) => {
+    const at = RUNNER_SOURCE.indexOf(needle);
+    assert.ok(at >= 0, `runner must contain: ${needle}`);
+    return at;
+  };
+  const hoistAt = positionOf("let personaWorldBook = null;");
+  const afterHoist = RUNNER_SOURCE.slice(RUNNER_SOURCE.indexOf("\n", hoistAt) + 1);
+  assert.match(afterHoist, /^\s*\n?\s*try \{/, "personaWorldBook must be declared immediately outside the run-level try");
+  assert.ok(
+    positionOf("const spokeToPlayer = typeof presentedSummary") < positionOf("const sessionVerdict ="),
+    "spokeToPlayer is read by the verdict, so it must be declared first",
+  );
+  assert.ok(
+    positionOf('const sessionSpoken = LADDER !== "6"') < positionOf("const sessionVerdict ="),
+    "sessionSpoken is read by the verdict, so it must be declared first",
+  );
+  assert.match(RUNNER_SOURCE, /accomplishedActionIds,/);
+  for (const actionId of [
+    "move_to_tile",
+    "travel",
+    "enter_exit",
+    "navigate_to_destination",
+    "observe_scene",
+    "inspect_world_map",
+    "express_emote",
+    "face_direction",
+    "equip_tool",
+  ]) {
+    assert.match(
+      RUNNER_SOURCE,
+      new RegExp(`NON_ACCOMPLISHMENT_ACTIONS = Object\\.freeze\\([^)]*"${actionId}"`),
+      `${actionId} changes nothing in the world and must not count as accomplishment`,
+    );
+  }
+  // Ladder 6 gets a play-session budget (a harness bound, not a product verdict).
+  assert.match(
+    RUNNER_SOURCE,
+    /process\.env\.GAMEBUDDY_AGENT_WAIT_SECONDS \?\? \(LADDER === "6" \? 1800 : 600\)/,
+  );
   // An open goal must not smuggle a tool sequence back in.
   assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "6"[\s\S]{0,240}先检查（inspect）/);
   assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "6"[\s\S]{0,240}先观察 observe/);
@@ -464,6 +531,10 @@ test("the player prompt waits for a real admission, and the run reports startup 
     assert.match(RUNNER_SOURCE, new RegExp(`markPhase\\(\"${phase}\"\\)`), `missing phase mark ${phase}`);
   }
   assert.match(RUNNER_SOURCE, /phaseTimings: Object\.freeze\(\{/);
+  // The seed is the dominant cold-start cost, so its own phases must reach the
+  // artifact instead of only the total.
+  assert.match(RUNNER_SOURCE, /onPhase: \(name, elapsedMs\) => \{/);
+  assert.match(RUNNER_SOURCE, /phaseTimings\.marks\[\`seed_\$\{name\}\`\] = elapsedMs;/);
   // Presentation observation is attached for every ladder: gating it to 3/4 let a
   // ladder-5 run whose session DID contain the companion line report
   // presentation.pieces = [] and presentedSummary = "".
