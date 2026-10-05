@@ -183,7 +183,7 @@ try {
     agentTools.includes("todowrite") &&
     agentSettled.length > 0 &&
     traceTerminalReceipt;
-  const passed = receipt?.state === "succeeded" && receipt.reasonCode === "tool_selected" && evidenceComplete;
+  const passed = receipt?.state === "succeeded" && receipt.reasonCode === "tool_equipped" && evidenceComplete;
   const summary = {
     state: passed ? "passed" : tracePassed ? "trace_passed" : "blocked",
     traceOnly,

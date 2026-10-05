@@ -728,17 +728,18 @@ internal sealed partial class ExecutionManager
         // melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do), so the
         // expected embodied cost is exactly zero, same as cut_weeds.
         float expectedStaminaCost = 0f;
-        // StoreHayInAnySilo returns the count it could NOT store (0 = all stored).
-        int hayUnstored = 0;
-        if (removed && (grassType == 1 || grassType == 7))
-        {
-            // The native path sampled a probability roll already; this read is the
-            // post-cut hay accounting the native player sees via the HUD. We mirror
-            // the same silo query the native path uses to report what happened.
-            int hayProduced = grassType == 7 ? 2 : 1;
-            hayUnstored = GameLocation.StoreHayInAnySilo(hayProduced, location);
-        }
-        string evidence = $"target={expectedTargetId};type=grass;tool=scythe;grass_type={grassType};weeds_before={weedsBefore};weeds_after={(removed ? "removed" : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};hay_unstored={hayUnstored};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+        // Hay accounting is deliberately NOT recomputed here. This used to call
+        // GameLocation.StoreHayInAnySilo to "observe" the cut — but that method is a
+        // WRITE (GameLocation.cs:16511 does currentLocation.tryToAddHay(count) and
+        // increments piecesOfHay), and the native cut already stored the hay inside
+        // Grass.TryDropItemsOnCut (Grass.cs:489). Calling it again added 1-2 hay to a
+        // silo on every successful cut — and added it even when the native probability
+        // roll did not — silently polluting durable world state.
+        //
+        // The outcome of that roll is not observable from here without re-deriving it,
+        // so the receipt reports only what actually changed and is true: the tuft is
+        // gone (and the evidence key below says exactly that).
+        string evidence = $"target={expectedTargetId};type=grass;tool=scythe;grass_type={grassType};weeds_before={weedsBefore};weeds_after={(removed ? "removed" : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};tuft_removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return removed
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "grass_cut", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "grass_cut_postcondition_unavailable", evidence);

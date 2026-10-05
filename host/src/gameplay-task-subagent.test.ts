@@ -186,8 +186,8 @@ test("completion evidence must contain action-specific postcondition keys", () =
     hasActionPostconditionEvidence(
       "equip_tool",
       {
-        reasonCode: "tool_selected",
-        evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+        reasonCode: "tool_equipped",
+        evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
       },
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
@@ -196,7 +196,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
   assert.equal(
     hasActionPostconditionEvidence(
       "equip_tool",
-      { reasonCode: "tool_selected", evidence: { detail: "slot=1;after=Axe" } },
+      { reasonCode: "tool_equipped", evidence: { detail: "tool=Axe;before=Axe;expected=Axe;after=Axe" } },
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
@@ -206,7 +206,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
       "equip_tool",
       {
         reasonCode: "unexpected_success",
-        evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+        evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
       },
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
@@ -680,9 +680,9 @@ test("Gameplay worker fake session blocks a second action until the owned receip
             executionId: "execution_1",
             actionId: "equip_tool",
             state: "succeeded",
-            reasonCode: "tool_selected",
+            reasonCode: "tool_equipped",
             revision: 7,
-            evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+            evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
           };
           await invoke(tools, "stardew_move_to_tile", {
             x: 2,
@@ -756,9 +756,9 @@ test("Gameplay worker permits repeated actions in one family after each receipt 
             executionId: "execution_1",
             actionId: "equip_tool",
             state: "succeeded",
-            reasonCode: "tool_selected",
+            reasonCode: "tool_equipped",
             revision: 7,
-            evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+            evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
           };
              await invoke(tools, "stardew_equip_tool", {
                tool: "pickaxe",
@@ -851,9 +851,9 @@ test("task-owned terminal waiter uses an exact wake only after rereading the own
     requestId: "request_01",
     executionId: "execution_01",
     state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
     revision: 7,
-    evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+    evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
   };
   for (const listener of listeners)
     listener({
@@ -861,13 +861,13 @@ test("task-owned terminal waiter uses an exact wake only after rereading the own
       requestId: "request_01",
       executionId: "execution_01",
       state: "succeeded",
-      reasonCode: "tool_selected",
+      reasonCode: "tool_equipped",
     });
   assert.deepEqual(await waiting, {
     requestId: "request_01",
     executionId: "execution_01",
     state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
   });
   assert.ok(Date.now() - startedAt < 200);
 });
@@ -1448,9 +1448,9 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
       executionId: "execution_terminal",
       actionId: "equip_tool",
       state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
     revision: 7,
-    evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+    evidence: { detail: "tool=Axe;before=none;expected=Axe;after=Axe" },
   };
   parent.abort("player_stop");
   resolveDispatch(state.latestReceipt);
