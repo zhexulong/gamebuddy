@@ -102,6 +102,32 @@ jobs:
         run: node tools/run-tavern-release-live-gate.mjs --orchestrate --mounted-profile tavern-operation-evidence.json.profile.json --operation-evidence-mapping tavern-operation-evidence.json --report tavern-release-live-gate.json
         env:
           CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+      # The player-visible side of the same release claim: the mounted browser
+      # journeys mount the real management composition on a fresh root and drive
+      # the shipped UI in Chromium (draft/rename, World Info bind and pending
+      # state, two-page consistency, stale-revision conflicts, zh-CN at 375x667,
+      # connection create/test/activate/model, Characters CRUD, lifecycle
+      # retention, and the reviewed card import end to end). They resolve their
+      # generation from GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT, which without this
+      # step defaults to host/dist - a checked-in directory whose generation is
+      # older than the code under test, which is why they fail to load locally.
+      - name: Install the browser journeys' Chromium
+        run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
+      - name: Tavern mounted browser journeys
+        run: pnpm --dir dialogue-web exec playwright test --project=chromium --workers=1
+        env:
+          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+      # Screenshots, traces and the page snapshots of any failure, so a broken
+      # journey is diagnosable from the run without a local reproduction.
+      - name: Upload browser journey failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tavern-browser-journey-failures
+          if-no-files-found: ignore
+          path: |
+            dialogue-web/test-results
+            dialogue-web/playwright-report
       # The gate report and the mapping it was decided on are the release's
       # Chat/Tavern live claim; keep them with the run instead of a runner scratch
       # path. Uploaded on every outcome so a failure is still auditable.
