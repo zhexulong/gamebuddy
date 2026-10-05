@@ -357,6 +357,20 @@ export type StardewManifestHandoffCoordinator = Readonly<{
     selection: StardewManifestHandoffSelection,
     confirmation: Readonly<{ confirmed: true }>,
   ): Promise<StardewManifestAdmission>;
+  /**
+   * Owner-bound join request identity of an admission THIS composition minted.
+   * The integration-private world-creation seam can only read the observed save
+   * slot from the signed join manifest that was issued for one specific
+   * attachment request, so the request identity must come from the admission
+   * itself: it is minted inside `confirmAndAdmit` and is exposed only for the
+   * exact owner and composition it was admitted for. A forged, foreign,
+   * quarantined or expired admission fails closed; a caller can therefore never
+   * name a request whose manifest belongs to another world or another surface.
+   */
+  readAdmittedJoinRequestId(
+    owner: StardewOwnedPlayerHostBootstrap,
+    admission: StardewManifestAdmission,
+  ): string;
 }>;
 
 type StardewManifestAdmissionValue = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
@@ -1773,6 +1787,23 @@ function createManifestHandoffCoordinatorCore(
         if (facts.state === "confirming") facts.state = "terminal";
         throw redactManifestHandoffError(error);
       }
+    },
+    readAdmittedJoinRequestId(
+      owner: StardewOwnedPlayerHostBootstrap,
+      admission: StardewManifestAdmission,
+    ): string {
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+      const admissionFacts = admissions.get(admission);
+      if (
+        admissionFacts === undefined ||
+        admissionFacts.compositionIdentity !== compositionIdentity ||
+        admissionFacts.owner !== owner ||
+        ownerFacts.bindingState.value !== "bound" ||
+        ownerFacts.quarantine.started ||
+        ownerFacts.expiresAtMs <= readClock() ||
+        admissionFacts.expiresAtMs <= readClock()
+      ) throw new Error("stardew_admitted_join_request_not_admissible");
+      return admissionFacts.requestId;
     },
   } satisfies StardewManifestHandoffCoordinator;
   const materialize: MaterializeAiClientProfileAfterManifestAdmission = async (owner, admission) => {

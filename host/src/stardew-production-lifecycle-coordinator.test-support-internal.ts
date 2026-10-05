@@ -12,6 +12,7 @@ import {
   type StardewLifecycleAiClientLaunch,
   type StardewLifecyclePlayerHostLaunch,
   type StardewProductionLifecycleCoordinator,
+  type StardewWorldCreationSeamFactory,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
@@ -24,7 +25,6 @@ import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/
 import type { StardewInstallationDiscoveryProvider } from "./windows-stardew-installation-discovery/index.js";
 import {
   createStardewWorldBindingResolver,
-  type CreateWorldBindingSeam,
   type StardewWorldBindingResolver,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 import type { ProductionGameSessionWorldBinding } from "./continuity-semantic-store/continuity-semantic-production-store.js";
@@ -120,9 +120,13 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
   const worldBindingResolver: StardewWorldBindingResolver = createStardewWorldBindingResolver(
     overrides.worldBindingResolver ?? (async () => null),
   );
-  const createWorldBindingSeam: CreateWorldBindingSeam | undefined = overrides.createWorldBinding === undefined
+  // The testing adapter injects a fixed fake seam (the wiring/order/rollback
+  // reference); production builds the real per-create owner-bound seam from the
+  // production composition instead, so this override never models the Stardew
+  // world-creation implementation itself.
+  const createWorldBindingSeam: StardewWorldCreationSeamFactory | undefined = overrides.createWorldBinding === undefined
     ? undefined
-    : Object.freeze({ createWorldBinding: overrides.createWorldBinding });
+    : () => Object.freeze({ createWorldBinding: overrides.createWorldBinding! });
   const aiClientLaunch: StardewLifecycleAiClientLaunch = overrides.runtimeLaunchContained === undefined
     ? (owner, installation) => internal.launchMaterializedAiClient(owner, installation)
     : (owner, installation) => internal.launchMaterializedAiClientContained(

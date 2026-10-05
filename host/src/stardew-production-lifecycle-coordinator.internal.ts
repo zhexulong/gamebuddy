@@ -65,6 +65,10 @@ import {
   STARDEW_GAME_INTEGRATION_ID,
   type StardewWorldBindingResolver,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
+import {
+  createStardewIssuedJoinManifestSource,
+  createStardewWorldCreationBindingSeam,
+} from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type {
   ProductionGameSessionBindingInput,
@@ -132,6 +136,69 @@ export type StardewGameSessionCreationAuthority = Readonly<{
   failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   markGameSessionWorldBindingTerminal(input: ProductionGameSessionWorldBindingTerminalInput): Promise<ProductionGameSessionWorldBinding>;
 }>;
+
+/**
+ * Integration-private PER-CREATE world-creation seam builder (Loop 4 path B').
+ *
+ * The Stardew seam may only report the physical save slot the exact launched
+ * Player Host observed, and the only authority for that slot is the signed join
+ * manifest the Player Host issued for THIS create's own attachment request. The
+ * builder therefore receives the admitted join request identity and the exact
+ * owner that manifest belongs to, and returns the seam for that one create: the
+ * coordinator can never hand it a caller-supplied world identity, and a create
+ * that has no admitted manifest has no seam to call. The returned seam is
+ * bounded by the coordinator's own create deadline.
+ */
+export type StardewWorldCreationSeamFactory = (
+  input: Readonly<{
+    owner: StardewOwnedPlayerHostBootstrap;
+    joinRequestId: string;
+    deadlineMs: number;
+  }>,
+) => CreateWorldBindingSeam;
+
+/**
+ * The single durable failure closure of an admitted create attempt.
+ *
+ * Both legal failure shapes of the frozen create protocol (design card 114,
+ * "Create durable protocol") live here and nowhere else: a failure before the
+ * world binding was registered fails the pending metadata intent and leaves no
+ * binding row, while a failure after registration marks the binding terminal and
+ * fails the metadata inside the store's own single transaction. The repository
+ * never removes a save the native game may already have produced, and a create
+ * whose failure cannot be durably applied is never reported as a clean
+ * unavailable outcome: its caller turns this throw into the terminal
+ * `stardew_game_create_failed`.
+ */
+async function settleFailedCreateAttempt(input: Readonly<{
+  authority: StardewGameSessionCreationAuthority | undefined;
+  creationRequestId: string;
+  integrationId: string;
+  operationId: string;
+  metadata: ProductionGameSessionMetadata | null;
+  bindingRegistered: boolean;
+}>): Promise<void> {
+  const authority = input.authority;
+  // An unmounted seam/authority fails the create before any durable write, so
+  // there is nothing this closure may settle.
+  if (authority === undefined) return;
+  if (input.bindingRegistered) {
+    await authority.markGameSessionWorldBindingTerminal({
+      gameSessionId: input.metadata!.gameSessionId,
+      integrationId: input.integrationId,
+      expectedRevision: 1,
+      operationId: input.operationId,
+    });
+    return;
+  }
+  if (input.metadata !== null) {
+    await authority.failGameSessionCreation({
+      creationRequestId: input.creationRequestId,
+      gameSessionId: input.metadata.gameSessionId,
+      expectedRevision: 1,
+    });
+  }
+}
 
 /**
  * Narrowest coordinator-owned launch-readiness fact: the exact expected Player
@@ -488,7 +555,7 @@ function createCoordinator(
   playerHostLaunch: StardewLifecyclePlayerHostLaunch,
   aiClientLaunch: StardewLifecycleAiClientLaunch,
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
-  createWorldBindingSeam?: CreateWorldBindingSeam,
+  createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   installationDiscovery?: StardewInstallationDiscoveryProvider,
 ): StardewProductionLifecycleCoordinator {
@@ -575,11 +642,15 @@ function createCoordinator(
    */
   let aiClientProfileMaterialized = false;
   /**
-   * True once this lifecycle launched the AI client for its exact owner, i.e.
-   * the owner's one-shot AI-client launch and bridge connection reservations
-   * were consumed by an activation. Only such an owner may be re-armed for a
-   * fresh generation; an owner whose reservations are still untouched must be
-   * activated through its first (initial) launch instead.
+   * True once this lifecycle consumed the owner's one-shot AI-client launch and
+   * bridge connection reservations, i.e. the composition's own
+   * `launchStates.aiClient`/`bridgeConnectionState` are `consumed`. Only such an
+   * owner may be re-armed for a fresh generation; an owner whose reservations
+   * are still untouched must be activated through its first (initial) launch
+   * instead. It mirrors the composition's consumed transition exactly, so every
+   * path that consumes it without a successful launch sets it too
+   * (`abandonAiClientActivation`); otherwise a failed FIRST launch would leave
+   * the owner's consumed reservations permanently unreachable.
    */
   let aiClientActivationConsumed = false;
   const gameReopens = new Map<string, Readonly<{
@@ -1278,6 +1349,31 @@ function createCoordinator(
   });
 
   /**
+   * Rolls an AI-client activation this lifecycle armed (or whose reservations
+   * the owner still held untouched) back to the composition's consumed base, and
+   * mirrors that transition in the re-arm latch above.
+   *
+   * The composition consumes the owner's one-shot AI-client launch and bridge
+   * connection reservations unconditionally here -- including when the FIRST
+   * launch of this owner failed -- so both states are `consumed` afterwards no
+   * matter how far the attempt got. A later create must therefore re-arm a fresh
+   * activation generation (`prepareFreshFarmhandAiClientActivation`) instead of
+   * retrying reservations that are already consumed, which would fail closed
+   * with `stardew_ai_client_launch_not_available` for the rest of the lifecycle.
+   */
+  const abandonAiClientActivation = async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
+    try {
+      await internal.abandonFarmhandAiClientActivation(owner);
+    } catch {
+      // The composition rejects a forged, unknown or cross-composition owner
+      // before the consumed transition, so the latch must not claim a state the
+      // owner never reached.
+      return;
+    }
+    aiClientActivationConsumed = true;
+  };
+
+  /**
    * Closes any stale previous-activation attachment (facade/lease) through the
    * shared teardown machinery before the fresh resume activation is minted, so
    * no old-activation in-memory objects outlive the new activation. A facade
@@ -1343,7 +1439,7 @@ function createCoordinator(
           if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
         } catch (error) {
           if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
-          await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+          await abandonAiClientActivation(owner);
           throw error;
         }
         while (farmhandGameRuntimeFacade === undefined) {
@@ -1359,11 +1455,11 @@ function createCoordinator(
               if (isResumeAttachDeferredError(error)) {
                 // A deferred error after arming closes the armed activation so
                 // the next resume can prepare again; the attempt stays accepted.
-                await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+                await abandonAiClientActivation(owner);
                 attachmentConnectionStatus = "reconnecting";
                 return false;
               }
-              await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+              await abandonAiClientActivation(owner);
               throw error;
             }
             // Cancel epoch check before every retry wait (card D3.3): a cancel
@@ -1503,21 +1599,25 @@ function createCoordinator(
 
   /**
    * Coordinator-owned start-new-game seam (boundary card D1/D2). Admitted
-   * creates persist the binding intent (pending rev1), invoke the selected
-   * integration's private createWorldBinding seam, register the world binding
-   * (registered rev1), complete the session (resumable rev2), ensure the AI
-   * client profile is materialized and then run the first activation
-   * (generation 1) with actions paused (ready-actions-paused; only game.reopen
-   * reopens). The two failure paths are mutually exclusive and store-enforced:
-   * before registration the pending intent fails closed to failed rev2 with no
-   * binding row; after registration the binding goes terminal (rev2) with the
-   * metadata failed (rev3) in one transaction. The result is never `attached`
-   * unless the first activation completed; a closed/unmounted createWorldBinding
-   * seam or any phase failure yields `unavailable` with a null gameSessionId.
-   * Create is a post-launch operation (path B'): it is admitted only over the
-   * exact Player Host this lifecycle already launched and attested, and the
-   * opaque bindingRef it persists is the one the private seam derived from the
-   * slot that launched Player Host observed.
+   * creates persist the binding intent (pending rev1), re-admit their own
+   * manifest handoff, invoke the selected integration's private
+   * createWorldBinding seam, register the world binding (registered rev1),
+   * complete the session (resumable rev2), ensure the AI client profile is
+   * materialized and then run the first activation (generation 1) with actions
+   * paused (ready-actions-paused; only game.reopen reopens). The two failure
+   * paths are mutually exclusive and store-enforced, and both are driven by the
+   * ONE closure `settleFailedCreateAttempt`: before registration the pending
+   * intent fails closed to failed rev2 with no binding row; after registration
+   * the binding goes terminal (rev2) with the metadata failed (rev3) in one
+   * transaction. The result is never `attached` unless the first activation
+   * completed; a closed/unmounted createWorldBinding seam or any phase failure
+   * yields `unavailable` with a null gameSessionId. Create is a post-launch
+   * operation (path B'): it is admitted only over the exact Player Host this
+   * lifecycle already launched and attested, and the opaque bindingRef it
+   * persists is the one the private seam derived from the slot that launched
+   * Player Host observed - the slot published in the signed join manifest this
+   * create's own handoff admission issued, never a caller-supplied, derived or
+   * reassembled world identity.
    */
   const createGameSession: StardewProductionLifecycleActivationOwner["createGameSession"] = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -1564,18 +1664,20 @@ function createCoordinator(
     const creationRequestId = randomBytes(32).toString("base64url");
     const operationId = randomBytes(32).toString("base64url");
     const createDeadlineMs = Math.min(sessionExpiryMs, Date.now() + 60_000);
+    // Resolved once per admitted command so the failure closure below always
+    // reaches the same durable surface and the same seam builder the attempt
+    // started with, after the attempt's own block scope has unwound.
+    const creationAuthority = gameSessionCreationAuthority;
+    const createWorldBindingSeamFactory = createWorldBindingSeam;
     let attempt!: Promise<GameCreateResultV1>;
     attempt = (async (): Promise<GameCreateResultV1> => {
       let metadata: ProductionGameSessionMetadata | null = null;
       let bindingRegistered = false;
       try {
-        const authority = gameSessionCreationAuthority;
-        const seam = createWorldBindingSeam;
         // A closed/unmounted integration seam fails the create before any
         // durable write: never a fabricated attached result, never a resumable
-        // half-record (the Stardew implementation is a later integration
-        // task; the fake second integration implements the same seam).
-        if (authority === undefined || seam === undefined)
+        // half-record (the fake second integration implements the same seam).
+        if (creationAuthority === undefined || createWorldBindingSeamFactory === undefined)
           throw new Error("stardew_game_world_creation_unavailable");
         // Owner ruling (d): re-attest the same exact owner's Player Host
         // session before consuming it. The world this create now binds must be
@@ -1587,16 +1689,46 @@ function createCoordinator(
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         // Phase 1: persist the binding intent (pending rev1 + store-minted
         // gameSessionId). The id is opaque; every later durable step re-verifies
-        // it through the store's own CAS checks.
-        metadata = await authority.createGameSessionMetadata({
+        // it through the store's own CAS checks. It is written first, before the
+        // game is asked for a world, so a create that has already reached the
+        // native handoff always has a durable row the failure closure can settle.
+        metadata = await creationAuthority.createGameSessionMetadata({
           creationRequestId,
           integrationId: command.integrationId,
           continuityIdentityId: command.continuityIdentityId,
         });
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        // Phase 2a: the selected integration creates the actual world and only
-        // then returns an opaque bindingRef.
-        const world = await seam.createWorldBinding({
+        // Phase 2a: admit THIS create's own manifest handoff before the
+        // integration-private world-binding seam. The seam's only authority for
+        // the observed slot is the signed join manifest the exact launched
+        // Player Host issued for this create's own attachment request, and that
+        // manifest exists only once this admission has confirmed the cabin and
+        // waited for it to be issued; running the seam first would make it read
+        // a manifest that belongs to another request (or to no request at all)
+        // and it would fail closed on every create. This mirrors the proven
+        // cabin-handoff order - `confirmAndAdmit` first, then the owner-scoped
+        // work that depends on the admitted manifest (the headless topology's
+        // list/confirmAndAdmit/materialize sequence). The exact owner is
+        // re-checked here because the activation guard above ran synchronously.
+        const handoffOwner = exactOwner;
+        if (handoffOwner === undefined) throw new Error("stardew_game_create_player_host_unavailable");
+        const choices = await handoffCoordinator.list(handoffOwner);
+        const choice = choices[0];
+        if (choice === undefined) throw new Error("stardew_game_create_cabin_unavailable");
+        const manifestAdmission = await handoffCoordinator.confirmAndAdmit(choice.selection, { confirmed: true });
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        // Phase 2b: the selected integration creates the actual world and only
+        // then returns an opaque bindingRef. The seam is built per create from
+        // the same production composition, closed over the exact owner and the
+        // join request identity this create's admission minted; the builder
+        // never receives a caller-supplied world identity and the seam never
+        // names, derives or reassembles a slot.
+        const worldCreationSeam = createWorldBindingSeamFactory({
+          owner: handoffOwner,
+          joinRequestId: handoffCoordinator.readAdmittedJoinRequestId(handoffOwner, manifestAdmission),
+          deadlineMs: createDeadlineMs,
+        });
+        const world = await worldCreationSeam.createWorldBinding({
           gameSessionId: metadata.gameSessionId,
           integrationId: command.integrationId,
           // No integration-private world request exists on this wire; the
@@ -1604,9 +1736,9 @@ function createCoordinator(
           worldRequest: Object.freeze({}),
         });
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        // Phase 2b: register the world binding under the coordinator-minted
+        // Phase 2c: register the world binding under the coordinator-minted
         // operation identity (registered rev1).
-        await authority.registerGameSessionWorldBinding({
+        await creationAuthority.registerGameSessionWorldBinding({
           gameSessionId: metadata.gameSessionId,
           integrationId: command.integrationId,
           bindingRef: world.bindingRef,
@@ -1614,41 +1746,33 @@ function createCoordinator(
         });
         bindingRegistered = true;
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        // Phase 2c: complete the session (resumable rev2).
-        await authority.completeGameSessionBinding({
+        // Phase 2d: complete the session (resumable rev2).
+        await creationAuthority.completeGameSessionBinding({
           creationRequestId,
           gameSessionId: metadata.gameSessionId,
           expectedRevision: 1,
         });
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        // Owner ruling (c): the first activation builds a fresh authenticated
-        // AI-client connection, which requires the owner's AI-client bridge
-        // profile to be materialized first. A Player Host that never admitted
-        // a cabin has no materialized profile, so re-admit the manifest
-        // handoff and materialize it exactly like the handoff paths do (the
-        // create command carries no cabin choice, and this surface owns one AI
-        // Farmhand attachment, so the first available cabin is selected the
-        // same way the headless operational topology selects it). The
-        // composition materializes a profile at most once per owner, so an
-        // owner whose profile already exists (create after a disconnected
-        // activation) keeps it. Without this step the first activation would
-        // fail deferred with `stardew_farmhand_bridge_profile_not_materialized`
-        // and the create would only ever report `accepted`.
+        // Phase 2e (owner ruling (c)): the first activation builds a fresh
+        // authenticated AI-client connection, which requires the owner's
+        // AI-client bridge profile to be materialized first. A Player Host that
+        // never admitted a cabin has no materialized profile, so materialize it
+        // from the manifest admission this create already holds, exactly like the
+        // handoff paths do (the create command carries no cabin choice, and this
+        // surface owns one AI Farmhand attachment, so the first available cabin
+        // is selected the same way the headless operational topology selects it). The
+        // composition materializes a profile at most once per owner, so an owner
+        // whose profile already exists (create after a disconnected activation)
+        // keeps it and only this create's fresh admission was used for the new
+        // world binding. Without this step the first activation would fail
+        // deferred with `stardew_farmhand_bridge_profile_not_materialized` and
+        // the create would only ever report `accepted`.
         if (!aiClientProfileMaterialized) {
-          // The exact owner is re-checked inside the attempt: the admission
-          // guard above ran synchronously, and the owner must still be the one
-          // that was launched and attested when the handoff is driven.
-          const handoffOwner = exactOwner;
-          if (handoffOwner === undefined) throw new Error("stardew_game_create_player_host_unavailable");
-          const choices = await handoffCoordinator.list(handoffOwner);
-          const choice = choices[0];
-          if (choice === undefined) throw new Error("stardew_game_create_cabin_unavailable");
-          const manifestAdmission = await handoffCoordinator.confirmAndAdmit(choice.selection, { confirmed: true });
           await internal.materializeAiClientProfileAfterManifestAdmission(handoffOwner, manifestAdmission);
           aiClientProfileMaterialized = true;
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
         }
-        // Phase 2d: first activation (generation 1 from a clean surface, else
+        // Phase 2f: first activation (generation 1 from a clean surface, else
         // strictly incrementing). This is a new world session, not a resume:
         // the previous resume lineage's in-memory guard is cleared so it can
         // never shadow the new session, and actions stay paused until a fresh
@@ -1669,30 +1793,28 @@ function createCoordinator(
           gameSessionId: metadata.gameSessionId,
         });
       } catch (error) {
-        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        // The ONE durable failure closure of an admitted create, driven by every
+        // failure exit above - including a create that close interrupted, since
+        // close joins this attempt before it tears anything down. An unfinished
+        // create is therefore settled by the durable failure rules instead of
+        // leaving a registered binding with resumable metadata behind.
         try {
-          // Card D2 failure matrix: before registration the pending intent
-          // fails closed (failed rev2, no binding row); after registration the
-          // binding goes terminal with the metadata failed in one transaction.
-          if (bindingRegistered) {
-            await gameSessionCreationAuthority!.markGameSessionWorldBindingTerminal({
-              gameSessionId: metadata!.gameSessionId,
-              integrationId: command.integrationId,
-              expectedRevision: 1,
-              operationId,
-            });
-          } else if (metadata !== null) {
-            await gameSessionCreationAuthority!.failGameSessionCreation({
-              creationRequestId,
-              gameSessionId: metadata.gameSessionId,
-              expectedRevision: 1,
-            });
-          }
+          await settleFailedCreateAttempt({
+            authority: creationAuthority,
+            creationRequestId,
+            integrationId: command.integrationId,
+            operationId,
+            metadata,
+            bindingRegistered,
+          });
         } catch (failureError) {
           // A failure path that cannot be durably applied must never be
           // reported as a clean unavailable outcome.
           throw new Error("stardew_game_create_failed", { cause: failureError });
         }
+        // The close that interrupted this create still reaches its caller; the
+        // durable state above is already settled.
+        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
         return Object.freeze({ apiVersion: 1, status: "unavailable", gameSessionId: null });
       } finally {
         if (createPromise === attempt) createPromise = undefined;
@@ -1743,7 +1865,7 @@ function createCoordinator(
       // reconnect epoch. Both are idempotent against the attempt's own
       // cancelled cleanup and never touch the Player world or durable state.
       if (owner !== undefined) {
-        await internal.abandonFarmhandAiClientActivation(owner).catch(() => undefined);
+        await abandonAiClientActivation(owner);
       }
       await closePartialAttachment().catch(() => undefined);
       // The attempt settles at its next safe point; no stale reconnect can
@@ -2071,6 +2193,10 @@ function createCoordinator(
     if (launch !== undefined) await launch.catch(() => undefined);
     const resume = resumePromise;
     if (resume !== undefined) await resume.catch(() => undefined);
+    // Joining the in-flight create is what makes close drive the create path's
+    // own durable failure closure: an interrupted create settles its rows (no
+    // registered binding with resumable metadata may survive a close) before
+    // this close starts tearing anything down.
     const create = createPromise;
     if (create !== undefined) await create.catch(() => undefined);
     const confirmationKey = cabinConfirmationKey;
@@ -2204,7 +2330,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   aiClientLaunch: StardewLifecycleAiClientLaunch = (owner, installation) =>
     internal.launchMaterializedAiClient(owner, installation),
   gameSessionCreationAuthority?: StardewGameSessionCreationAuthority,
-  createWorldBindingSeam?: CreateWorldBindingSeam,
+  createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
 ): StardewProductionLifecycleCoordinator {
@@ -2257,6 +2383,28 @@ export function createStardewProductionLifecycleCoordinator(
   const containedRuntimeTeardown = runtimeLaunchPlayerHost === undefined
     ? undefined
     : containedRuntimeTeardownFromCollaborator(runtimeLaunchPlayerHost);
+  /**
+   * Loop 4 path B' world-creation seam, built per create from the one
+   * production authority (owner ruling 2026-10-04):
+   *
+   * - the owner-bound attachment flow carries the staged private session
+   *   directory and session token, so the joint manifest is read (and its
+   *   signature verified) against the exact owner this lifecycle launched;
+   * - the join request identity comes from the admission the coordinator just
+   *   minted, so only the manifest issued for THIS create's own request can
+   *   become its bindingRef;
+   * - the seam itself returns only the observed physical save-slot basename
+   *   from that manifest and fails closed with bounded codes otherwise. It
+   *   never reads worldRequest, never names a slot, and never writes a save.
+   */
+  const createWorldBindingSeam: StardewWorldCreationSeamFactory = ({ owner, joinRequestId, deadlineMs }) =>
+    createStardewWorldCreationBindingSeam({
+      manifestSource: createStardewIssuedJoinManifestSource({
+        attachmentFlow: internal.createOwnedPlayerHostAttachmentFlow(owner),
+        requestId: joinRequestId,
+      }),
+      deadlineMs,
+    });
   return createCoordinator(
     manifest,
     internal,
@@ -2266,12 +2414,11 @@ export function createStardewProductionLifecycleCoordinator(
     createStardewWorldBindingResolverFromGameAuthority(game),
     playerHostLaunch,
     aiClientLaunch,
-    // Create consumes the injected Slice-0 store facade slice; the Stardew
-    // createWorldBinding implementation (new world/save creation) is a later
-    // integration task, so the seam stays unmounted and every create fails
-    // closed as unavailable — never a fabricated attached result.
+    // Create consumes the injected Slice-0 store facade slice, and the
+    // owner-bound seam below is the only world-creation authority: no caller,
+    // provider, mock or second integration can inject one.
     game,
-    undefined,
+    createWorldBindingSeam,
     containedRuntimeTeardown,
     createStardewInstallationDiscoveryProvider({ source: createWindowsSteamInstallationSource() }),
   );
