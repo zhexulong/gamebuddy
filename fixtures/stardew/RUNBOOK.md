@@ -1613,3 +1613,62 @@ repeat. `notAttempted` names 59 capabilities the session never touched, and 8 of
 *playable* by this evidence. The interaction verdict is a length threshold, not a
 judgement of the report's content. Model non-determinism is uncontrolled; a second run
 will differ in both coverage and wording.
+
+## 38. move_to_tile was refusing work it had already done (2026-10-05, fixed + verified live)
+
+The §36 play session reported ten `no_native_path` refusals and the companion told the
+player the farm was "围成了迷宫". Reading the trace against the Mod's own evidence, both
+halves of that were the Mod's fault:
+
+1. **FALSE REFUSAL.** Six of the ten requests named a tile the actor was *already inside
+   the arrival contract of* (the requested tile, or — when adjacency is allowed — one of
+   its neighbours). The native planner then has nothing to plan, its `pathToEndPoint`
+   comes back empty, and an empty path was reported as "unreachable". The Mod's own
+   probe contradicted that verdict in the same evidence string: `target_enclosed=false`
+   means the probe found a traversable neighbour — the one the actor was standing on.
+2. **UNAPPROACHABLE TARGET.** The rest named a tile that holds the object the caller
+   wants to touch (a crop). Every other interaction in this Mod is a native action from
+   an adjacent tile, so "walk to the object" was asking for something the action could
+   not express.
+
+Fixes (`farmhandexecutioncontroller.movementactions.cs`, `StardewBodyController.cs`):
+
+- A satisfied arrival contract is now **success**: `target_reached;already_at_target=true`
+  (checked on the effective destination, after any substitution). Nothing native moves,
+  because nothing needs to.
+- An unstandable named tile is **approached from a standable cardinal neighbour**
+  (deterministic: nearest to the actor, ties keeping the declared left/right/up/down
+  order), and the receipt says so: `target=<approach>;requested=<asked>;adjacent_arrival=true`.
+  The substitution is never silent.
+- Refusals now name **why**: `target_standable`, `blocked_by=<qualifiedItemId>@x,y` or
+  `terrain:<Type>@x,y` (or `none`), plus an explicit `probe_says_reachable` so the
+  probe/verdict disagreement is visible instead of derivable.
+
+Three consecutive real sessions, same ladder-6 play-session goal and fixture world:
+
+| | run C (before) | run D | run E (final) |
+|---|---|---|---|
+| `move_to_tile` dispatches | 16 | 12 | 17 |
+| `no_native_path` refusals | **10** | 1 | **2** |
+| immediate `target_reached` | 0 (impossible) | — | **7** |
+| `adjacent_arrival` substitutions | 0 (feature absent) | 24 receipts | 2 |
+| `move_to_tile` verdict | **blocked** (0 terminals) | blocked | **succeeded** |
+| `blockedBySystem` | `[move_to_tile]` | `[move_to_tile]` | **`[]`** |
+| crops harvested | 2 | 3 | **16** |
+| rung state | blocked (interaction) | blocked | **passed** |
+
+The two refusals that remain are **genuine** and now self-explanatory:
+`from=6,8;to=8,10;target_standable=false;blocked_by=terrain:…` and
+`from=10,11;to=11,13;…;blocked_by=terrain:…` — real terrain blockers, named, instead of an
+unexplained "no path". The companion's report stopped describing a maze and started naming
+what blocks it and what to clear first.
+
+Arithmetic covered by `MoveApproachSubstitutionTests` (8 cases; two mutations — tie-break
+weakened to `<=`, distance preference removed — each fail exactly the intended test).
+
+**Residual found while reading run E's own artifact:** the rung reported `passed` on a
+session whose turn **timed out** (`agent_turn_timeout` at 609 s ≈ the 600 s default wait).
+The Agent worked productively the whole time (39 dispatches, 16 crops) but never produced
+a closing report, and `presentedSummary` was the single 10-character line
+`我先看看周围有什么。` — which the interaction gate passes. A play session that never
+settles must not be reported as a completed session; see §39.
