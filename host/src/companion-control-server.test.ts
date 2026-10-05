@@ -326,6 +326,75 @@ test("live helper stdout loss seals, cancels waiters, and permits no late writes
   }
 });
 
+test("a Host-side player-input refusal reaches the caller instead of being reported as accepted", async () => {
+  const helper = new FakeHelper();
+  const target = {
+    // The Host answers with a refusal disposition (it does not throw): the
+    // control channel used to reply `accepted: player_input` unconditionally,
+    // so the message vanished with no sign to the player or to a harness.
+    acceptPlayerInput: async () => ({ accepted: false, reasonCode: "player_input_integration_unavailable" }),
+    stopAll: () => ({ admission: { accepted: true }, settled: Promise.resolve() }),
+  };
+  const server = startCompanionControlServer(launch, target, {
+    platform: "win32",
+    spawnHelper: () => helper as never,
+    requestTimeoutMs: 50,
+  });
+  try {
+    const hello = await frame(helper, "connection_01", {
+      type: "hello",
+      protocolVersion: 1,
+      launchToken: launch.launchToken,
+    });
+    assert.deepEqual(
+      await frame(helper, "connection_01", {
+        type: "player_input",
+        requestId: "request_refused",
+        runtimeInstanceId: hello.runtimeInstanceId as string,
+        sourceEventId: "source_refused",
+        text: "must not look accepted",
+        locale: "en-US",
+      }),
+      { ok: false, code: "player_input_integration_unavailable" },
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("a legacy target returning void is still reported as accepted", async () => {
+  const helper = new FakeHelper();
+  const target = {
+    acceptPlayerInput: async () => {},
+    stopAll: () => ({ admission: { accepted: true }, settled: Promise.resolve() }),
+  };
+  const server = startCompanionControlServer(launch, target, {
+    platform: "win32",
+    spawnHelper: () => helper as never,
+    requestTimeoutMs: 50,
+  });
+  try {
+    const hello = await frame(helper, "connection_01", {
+      type: "hello",
+      protocolVersion: 1,
+      launchToken: launch.launchToken,
+    });
+    assert.deepEqual(
+      await frame(helper, "connection_01", {
+        type: "player_input",
+        requestId: "request_legacy",
+        runtimeInstanceId: hello.runtimeInstanceId as string,
+        sourceEventId: "source_legacy",
+        text: "legacy",
+        locale: "en-US",
+      }),
+      { ok: true, accepted: "player_input" },
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("duplicate arriving just before the original deadline has its own per-frame deadline and executes once", async () => {
   const helper = new FakeHelper();
   const scheduler = new ManualFrameScheduler();

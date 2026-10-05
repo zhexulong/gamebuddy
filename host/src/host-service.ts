@@ -15,6 +15,14 @@ import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
+/** Frozen disposition singletons: one shared value, never a fresh object per call. */
+const ACCEPTED_PLAYER_INPUT: PlayerInputDisposition = Object.freeze({ accepted: true } as const);
+const REFUSED_PLAYER_INPUT = Object.freeze({
+  session_closed: Object.freeze({ accepted: false, reasonCode: "player_input_session_closed" }),
+  integration_unavailable: Object.freeze({ accepted: false, reasonCode: "player_input_integration_unavailable" }),
+  empty: Object.freeze({ accepted: false, reasonCode: "player_input_empty" }),
+} as const);
+
 /**
  * Voice-local playback observations (v2 push lane). The Host only derives a
  * bounded "上一句语音被打断" note for the next prompt assembly; it never
@@ -28,6 +36,37 @@ export type VoicePlaybackObservationSource = Readonly<{
 
 /** Host-owned outcome of a newly admitted STOP, derived only from Pi consumption state. */
 export type StopOutcome = "active_turn_cancelled" | "queued_turn_cancelled" | "no_active_turn";
+
+/**
+ * Why the Host refused a player message.
+ *
+ * The Host deliberately refuses input it cannot honestly deliver: while the
+ * integration admission is closed the world view is stale (an overflow or a
+ * disconnect revoked it), and a STOP-free session that is already closed has no
+ * reader at all. What must NEVER happen is refusing SILENTLY:
+ *
+ *   - a real player typing into the game would lose their message with no sign,
+ *   - a harness would see "accepted" and report a turn that never happened.
+ *
+ * Measured on a real ladder-5 run (2026-10-05): the runner submitted its prompt
+ * into a closed admission, `acceptPlayerInput` returned void, the call site
+ * resolved in ~1s with no snapshot (revision 0), no tool call and no receipt,
+ * and the result read like "the companion chose to do nothing".
+ */
+export type PlayerInputRefusalCode =
+  | "player_input_session_closed"
+  | "player_input_integration_unavailable"
+  | "player_input_empty";
+
+/**
+ * Admission outcome of one player message. `accepted` means ENQUEUED for
+ * delivery, never "the model answered": a later transport/provider failure is
+ * still reported by throwing, because then the message was admitted but not
+ * delivered.
+ */
+export type PlayerInputDisposition =
+  | Readonly<{ accepted: true }>
+  | Readonly<{ accepted: false; reasonCode: PlayerInputRefusalCode }>;
 
 /** Source-owned settlement emitted only after exact Host/Mod STOP correlation. */
 export type StopSettledPayload = Readonly<{
@@ -335,8 +374,14 @@ export class CompanionHostService {
   /** Authenticated control ingress retains its source event through Pi consumption. */
   public async acceptPlayerInput(
     input: Readonly<{ sourceEventId: string; text: string; locale: string; timestampMs?: number }>,
-  ): Promise<void> {
-    if (this.#closed || !this.#integrationAdmissionOpen || input.text.trim().length === 0) return;
+  ): Promise<PlayerInputDisposition> {
+    // Refusals are reported, never silent (see PlayerInputRefusalCode). The
+    // check order is the honest precedence: a closed session cannot take input at
+    // all, a closed admission would deliver against a revoked world view, and a
+    // blank message has nothing to deliver.
+    if (this.#closed) return REFUSED_PLAYER_INPUT.session_closed;
+    if (!this.#integrationAdmissionOpen) return REFUSED_PLAYER_INPUT.integration_unavailable;
+    if (input.text.trim().length === 0) return REFUSED_PLAYER_INPUT.empty;
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(input.sourceEventId)) throw new Error("invalid_player_source_event_id");
     this.#injectVoiceInterruptionNote();
     this.loop.pump.enqueuePlayerInput({
@@ -348,11 +393,12 @@ export class CompanionHostService {
       timestampMs: input.timestampMs ?? Date.now(),
     });
     await this.flushSoon();
+    return ACCEPTED_PLAYER_INPUT;
   }
 
   /** Internal callers without authenticated ingress receive a fresh Host event id. */
-  public async acceptPlayerText(text: string, locale = "zh-CN", timestampMs = Date.now()): Promise<void> {
-    await this.acceptPlayerInput({ sourceEventId: randomUUID(), text, locale, timestampMs });
+  public async acceptPlayerText(text: string, locale = "zh-CN", timestampMs = Date.now()): Promise<PlayerInputDisposition> {
+    return await this.acceptPlayerInput({ sourceEventId: randomUUID(), text, locale, timestampMs });
   }
 
   /** Explicit STOP remains sealed after its old epoch has settled. */

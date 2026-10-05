@@ -18,7 +18,16 @@ const TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
 
 export type ProductControlLaunch = Readonly<{ pipeName: string; launchToken: string }>;
 export type ProductControlTarget = Readonly<{
-  acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<void>;
+  /**
+   * Returns the admission outcome. A refusal is a real answer, not an error: the
+   * control channel must report it instead of claiming the player's message was
+   * accepted (see `PlayerInputRefusalCode` in host-service.ts for why the Host
+   * refuses). A `void` return stays supported for legacy test doubles, which
+   * report no outcome and are therefore treated as accepted.
+   */
+  acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<
+    Readonly<{ accepted: boolean; reasonCode?: string }> | void
+  >;
   stopAll(input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>): Readonly<{
     admission: Readonly<{ accepted: boolean }>;
     /** Present for the Host-owned Pi lifecycle implementation; absent only in legacy test doubles. */
@@ -290,11 +299,18 @@ export function startCompanionControlServer(
           // Do not cross the Host-to-target authority boundary after any
           // asynchronous transport seal, including stdout EOF residual lines.
           if (closed) return;
-          await target.acceptPlayerInput({
+          const disposition = await target.acceptPlayerInput({
             sourceEventId: request.sourceEventId,
             text: request.text,
             locale: request.locale,
           });
+          // Report what actually happened. The control channel used to answer
+          // `accepted: player_input` unconditionally, so a Host-side refusal
+          // (closed session, revoked integration admission, blank text) reached
+          // the caller as success and the player's message vanished with no sign.
+          if (disposition !== undefined && disposition.accepted !== true) {
+            throw new Error(disposition.reasonCode ?? "control_player_input_refused");
+          }
           reply = { ok: true, accepted: "player_input" };
         } else if (request.type === "stop_all") {
           // Keep this immediately adjacent to synchronous control admission:
