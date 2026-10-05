@@ -312,6 +312,15 @@ export function readStardewOwnerRecoveryDriver(
  * Player Host and AI-client roles share the exact arm/launch/contain/close
  * sequence on that runtime, so no owner ever reuses another owner's state
  * and the platform session closes exactly once.
+ *
+ * Every member of the returned collaborator that the contract declares to
+ * resolve a `Promise` is `async`, so its guards (an unknown owner, a consumed
+ * owner binding, a malformed recovery actor) refuse as a rejection. The
+ * collaborator is forwarded by non-async adapters that only attach `.then()`,
+ * so a synchronous throw here would escape as an unhandled exception in the
+ * consumer's frame instead of an awaited failure. The one member that is not a
+ * promise is the synchronous `recovery(owner)` accessor, whose own refusal
+ * shape is unchanged.
  */
 export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   platform: ContainedGameRuntimePlatform,
@@ -421,22 +430,22 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
     return runtime;
   };
   return Object.freeze({
-    launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
+    async launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
       return runtimeFor(owner).launchRole("player_host", operation, launch.provideAuthorization).then((result) => {
         if (result.status === "succeeded") launchedRolesFor(owner).add("playerHost");
         return result;
       });
     },
-    launchAiClient(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
+    async launchAiClient(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
       return runtimeFor(owner).launchRole("ai_client", operation, launch.provideAuthorization).then((result) => {
         if (result.status === "succeeded") launchedRolesFor(owner).add("aiClient");
         return result;
       });
     },
-    containPlayerHost(owner: StardewOwnedPlayerHostBootstrap) {
+    async containPlayerHost(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).containRole("player_host");
     },
-    containAiClient(owner: StardewOwnedPlayerHostBootstrap) {
+    async containAiClient(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).containRole("ai_client");
     },
     /**
@@ -464,10 +473,14 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
      * platform cannot take to terminal containment reports `unavailable` and is
      * never retried here.
      */
-    recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome> {
+    async recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome> {
       // The actor reaches a durable CAS and one native field the platform encodes
       // into a frame, so it is validated at this boundary: a malformed actor must
-      // refuse here rather than turn into an uncertain native attempt.
+      // refuse here rather than turn into an uncertain native attempt. This
+      // member is async for the same reason every member declared to resolve a
+      // `Promise` is: a `.catch()`-only consumer must observe a rejection, and a
+      // synchronous throw out of this seam would escape as an unhandled
+      // exception instead (the adapter that forwards this member is not async).
       if (typeof request.recoveryInstanceId !== "string" || !RECOVERY_OPAQUE_GUID.test(request.recoveryInstanceId)) {
         throw new Error("stardew_owner_recovery_actor_invalid");
       }
@@ -503,7 +516,7 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       if (settled.status !== "settled") throw new Error("stardew_contained_runtime_settlement_unavailable");
       await settleOwnedPlayerHostContainedRuntimeAttempt(owner, [...launchedRolesFor(owner)]);
     },
-    close(owner: StardewOwnedPlayerHostBootstrap) {
+    async close(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).close();
     },
   });

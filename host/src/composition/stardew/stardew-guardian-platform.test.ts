@@ -677,6 +677,78 @@ test("a recovery refuses with a bounded error when the collaborator cannot drive
 });
 
 /**
+ * A refused recovery must arrive as a REJECTION on the value the collaborator
+ * returns, never as a synchronous throw out of the call itself.
+ *
+ * The reason this is a separate guarantee from the bounded error code: the
+ * product forwards this member through `containedRuntimeTeardownFromCollaborator`,
+ * which returns `recoveryDriver.recover(owner, request)` unchanged from a
+ * non-async arrow and attaches no try/catch of its own. A consumer of that seam
+ * either awaits it or attaches a rejection handler and no catch block, so a
+ * synchronous throw from the composition guard would not be the rejection those
+ * consumers observe — it would escape their frame as an unhandled exception.
+ * The defect this pins: `recover` was declared to return
+ * `Promise<RedactedRecoveryOutcome>` (as `StardewOwnerRecoveryDriver` requires)
+ * but was not `async`, so its actor validation threw before a promise existed.
+ */
+test("a refused recovery rejects the returned promise instead of throwing synchronously at the caller", async () => {
+  const sessionCalls: string[] = [];
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: async () => {
+      sessionCalls.push("recover");
+      return Object.freeze({ outcome: "contained" as const });
+    },
+    close: async () => {},
+  });
+  const harness = createHarness();
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const recordBefore = await readFile(ownerPath(root), "utf8");
+  const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+    createDesktopGuardianGameRuntimePlatform(session),
+  );
+
+  // The call is deliberately made outside any `await` and any `try`, so a
+  // synchronous throw on the next line fails this test as an out-of-band
+  // exception rather than as a rejected promise.
+  const returned = collaborator.recover(owner, {
+    recoveryInstanceId: "not-an-actor",
+    readRecoveryBinding: async () => Object.freeze({}),
+  });
+  // `.catch()`-only, exactly like the consumers above: no await, no try/catch.
+  // A resolved promise would hand the unknown here instead of the refusal.
+  const observed: unknown = await returned.catch((error: unknown) => error);
+  assert.ok(observed instanceof Error, "the refusal arrives as an Error rejection");
+  // The refusal is still the same bounded code; only the shape it travels in
+  // changed from a synchronous throw to a rejection.
+  assert.equal(observed.message, "stardew_owner_recovery_actor_invalid");
+
+  // The same member has a second guard that used to throw synchronously: the
+  // one-shot owner binding another consumer already took. It must arrive as a
+  // rejection on the returned value for the same reason.
+  consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+  const consumedBindingReturned = collaborator.recover(owner, {
+    recoveryInstanceId: "7b1f0c0e-1e6a-4d5a-9f2b-2a6d5e0c9a11",
+    readRecoveryBinding: async () => Object.freeze({}),
+  });
+  const consumedBindingObserved: unknown = await consumedBindingReturned.catch((error: unknown) => error);
+  assert.ok(consumedBindingObserved instanceof Error, "the consumed owner binding refuses as a rejection too");
+  assert.equal(consumedBindingObserved.message, "stardew_bootstrap_guardian_owner_binding_unavailable");
+
+  assert.deepEqual(sessionCalls, []);
+  assert.equal(await readFile(ownerPath(root), "utf8"), recordBefore, "a refused recovery writes nothing durable");
+});
+
+/**
  * The native recovery conversation can fail after it already ran: the gate can
  * stay held by the previous lease, a role can be classified not contained, or
  * the transport can reject the conversation outright. None of those is
