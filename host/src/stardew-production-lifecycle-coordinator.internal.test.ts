@@ -4801,6 +4801,177 @@ test("close during create settles the interrupted create through the same durabl
   }
 });
 
+/**
+ * Explicit-endgame lifecycle setup for the close/create interaction tests below:
+ * activate, launch and attest the Player Host, bind the semantic attachment
+ * through the cabin confirmation, then drive the successful explicit endgame.
+ * The endgame terminates the world but leaves `activationState` at
+ * `awaiting_player_host_attestation` and the exact owner in place, which is why
+ * a create is still admissible afterwards.
+ */
+async function startEndgameLifecycle(fixture: Awaited<ReturnType<typeof createFixture>>): Promise<void> {
+  await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+  await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", availableCabins, Date.now() + 5 * 60_000);
+  await fixture.coordinator.activationOwner.setupPlayerHost(
+    fixture.broker.issue("game_setup"),
+    { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" },
+  ).then(() => fixture.coordinator.activationOwner.launchPlayerHost(
+    fixture.broker.issue("game_launch"),
+    { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+  ));
+  await confirmFirstCabin(fixture);
+  assert.deepEqual(
+    await fixture.coordinator.activationOwner.endgameGame(fixture.broker.issue("game_endgame"), {
+      apiVersion: 1, idempotencyKey: "endgame-key-1", expectedAttachmentGeneration: 1, confirm: true,
+    }),
+    { apiVersion: 1, status: "gameended" },
+  );
+}
+
+function containedGuardianSessionRecorder(sessionCalls: string[]): DesktopGuardianSession {
+  return Object.freeze({
+    async arm() { sessionCalls.push("arm"); return containedSessionAck("arm_attempt"); },
+    async launch(input) { sessionCalls.push("launch"); return containedSessionAck("launch_role", input.role); },
+    async contain(input) { sessionCalls.push("contain"); return containedSessionAck("contain_role", input.role); },
+    // These launches never drive a recovery, but the session contract carries
+    // it and an honest literal fake answers it explicitly.
+    async recover() { sessionCalls.push("recover"); return Object.freeze({ outcome: "contained" as const }); },
+    async close() { sessionCalls.push("close"); },
+  });
+}
+
+test("close after an explicit endgame joins an in-flight create so its durable rows settle before close resolves", async () => {
+  await withWindowsPlatform(async () => {
+    const fake = fakeGameSessionCreationAuthority();
+    const completionEntered = deferredVoid();
+    const completionGate = deferredVoid();
+    const sessionCalls: string[] = [];
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(containedGuardianSessionRecorder(sessionCalls)),
+    );
+    const fixture = await createFixture({
+      overrides: {
+        runtimeLaunchContained: collaborator,
+        gameSessionCreationAuthority: Object.freeze({
+          ...fake.authority,
+          completeGameSessionBinding: async (
+            input: Parameters<StardewGameSessionCreationAuthority["completeGameSessionBinding"]>[0],
+          ) => {
+            completionEntered.resolve();
+            await completionGate.promise;
+            return fake.authority.completeGameSessionBinding(input);
+          },
+        }),
+        createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+      },
+    });
+    try {
+      await startEndgameLifecycle(fixture);
+      const previousRequestId = await attachmentRequestId(fixture.runtimeRoot);
+      const creating = fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+      );
+      let createSettled = false;
+      void creating.then(() => { createSettled = true; }, () => { createSettled = true; });
+      await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
+      // Parked inside the completion step: the binding is registered and the
+      // session is one step short of `resumable`.
+      await completionEntered.promise;
+      const sessionId = fake.sessions()[0]!.gameSessionId;
+      assert.equal(fake.readMetadata(sessionId)?.status, "pending");
+      assert.equal(fake.readBinding(sessionId)?.status, "registered");
+      const closing = fixture.coordinator.close();
+      completionGate.resolve();
+      await closing;
+      // Nothing was awaited between `close()` and these assertions, so they run
+      // at the exact instant close resolved -- that ordering is the point: the
+      // endgame branch of close used to return without joining the create, so it
+      // could resolve while the create's durable settle was still pending.
+      // close() joins the in-flight create on EVERY path, so the create's own
+      // failure closure has already run here.
+      assert.equal(createSettled, true);
+      assert.deepEqual(fake.readBinding(sessionId), {
+        gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "terminal", revision: 2,
+      });
+      assert.deepEqual(fake.readMetadata(sessionId), {
+        gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+      });
+      assert.deepEqual(fake.listResumable(), []);
+      await assert.rejects(creating, /stardew_lifecycle_closing/);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("close after an explicit endgame leaves no facade or lease open for the create it drained", async () => {
+  await withWindowsPlatform(async () => {
+    const fake = fakeGameSessionCreationAuthority();
+    const seamEntered = deferredVoid();
+    const seamGate = deferredVoid();
+    const sessionCalls: string[] = [];
+    const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+      createDesktopGuardianGameRuntimePlatform(containedGuardianSessionRecorder(sessionCalls)),
+    );
+    const fixture = await createFixture({
+      overrides: {
+        runtimeLaunchContained: collaborator,
+        gameSessionCreationAuthority: fake.authority,
+        // Parked in the world-creation seam, i.e. BEFORE registration: the other
+        // mutually exclusive durable create failure shape.
+        createWorldBinding: async () => {
+          seamEntered.resolve();
+          await seamGate.promise;
+          return Object.freeze({ bindingRef: "Farm_389124477" });
+        },
+      },
+    });
+    try {
+      await startEndgameLifecycle(fixture);
+      const previousRequestId = await attachmentRequestId(fixture.runtimeRoot);
+      const creating = fixture.coordinator.activationOwner.createGameSession(
+        fixture.broker.issue("game_create"),
+        { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+      );
+      let createSettled = false;
+      void creating.then(() => { createSettled = true; }, () => { createSettled = true; });
+      await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
+      await seamEntered.promise;
+      const sessionId = fake.sessions()[0]!.gameSessionId;
+      assert.equal(fake.readBinding(sessionId), null);
+      const closing = fixture.coordinator.close();
+      seamGate.resolve();
+      await closing;
+      // Immediately after close resolved, without awaiting the create first.
+      assert.equal(createSettled, true);
+      assert.deepEqual(fake.readMetadata(sessionId), {
+        gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
+      });
+      assert.equal(fake.readBinding(sessionId), null);
+      assert.deepEqual(fake.listResumable(), []);
+      // No facade/lease is left open. On this path the drained create cannot mint
+      // one at all: the endgame already drove the durable owner record to
+      // `contained`, so the AI-client launch and the bridge consumption it would
+      // need both fail closed before `attachResumedWorld` can reach :1449/:1485.
+      // The assertions below show the whole path is drained: the only facade and
+      // lease this lifecycle built came from the cabin confirmation, the
+      // endgame's own teardown closed the facade exactly once, and the drained
+      // create left no second, unclosed one behind.
+      assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+        status: "none", generation: 0, connectionStatus: "none",
+      });
+      assert.equal(fixture.bridgeConnectCalls.length, 1);
+      assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+      assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
 test("game.create after a failed FIRST AI launch re-arms a fresh activation instead of retrying consumed reservations", async () => {
   const fake = fakeGameSessionCreationAuthority();
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
