@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "./stardew-fixture-roots.mjs";
 
 const PROFILE_NAMES = Object.freeze(["A-host", "A-ai-client", "A-ai-probe"]);
 const ALLOWED_FIXTURE_SCENARIOS = Object.freeze([
@@ -296,12 +297,14 @@ async function restoreFixtureProfileUnlocked(context, backupDir, { removeBackup 
 }
 
 function resolveContext(options = {}) {
-  const local = options.root ?? (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "GameBuddy") : null);
-  if (!local) throw new Error("LOCALAPPDATA_missing");
-  const profiles = options.profiles ?? join(local, "stardew-profiles");
+  // The root is resolved in exactly one shared place so a concurrent lane can
+  // point its profiles and backups at private paths (see stardew-fixture-roots).
+  const roots = resolveStardewFixtureRoots({ profileRoot: options.root });
+  announceStardewFixtureRoots(roots);
+  const profiles = options.profiles ?? roots.profilesDir;
   const releaseDir = options.releaseDir ?? "E:/projects/ai-game-companion/integrations/stardew/bin/Release/net6.0";
   return Object.freeze({
-    root: local,
+    root: roots.profileRoot,
     profiles,
     releaseDir,
     hostSidecar: configPath({ profiles }, "A-host", ["GameBuddy", "config.json"]),

@@ -8,14 +8,17 @@
 #   -RepositoryRoot  path to the ai-game-companion checkout (default: this repo)
 #   -ReleaseDir      built mod output (default: <root>/integrations/stardew/bin/Release/net6.0)
 #   -GameDir         Stardew Valley install root (required; default from GAMEBUDDY_STARDEW_GAME_DIR)
-#   -FixtureRoot     fixture staging root (default: %LOCALAPPDATA%\GameBuddy\stardew-fixtures)
+#   -FixtureRoot     fixture staging root (default: the shared resolved
+#                    stardew-fixtures root, %LOCALAPPDATA%\GameBuddy\stardew-fixtures
+#                    unless GAMEBUDDY_STARDEW_FIXTURE_ROOT or
+#                    GAMEBUDDY_STARDEW_PROFILE_ROOT points this lane elsewhere)
 #   -SaveName        fixture save name (default: GameBuddyFixtureNavigation_447088730)
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot,
     [string]$ReleaseDir,
     [string]$GameDir = $env:GAMEBUDDY_STARDEW_GAME_DIR,
-    [string]$FixtureRoot = (Join-Path $env:LOCALAPPDATA "GameBuddy\stardew-fixtures"),
+    [string]$FixtureRoot,
     [string]$SaveName = "GameBuddyFixtureNavigation_447088730"
 )
 
@@ -30,7 +33,16 @@ if ([string]::IsNullOrWhiteSpace($GameDir)) {
     throw "GameDir is required: pass -GameDir or set GAMEBUDDY_STARDEW_GAME_DIR"
 }
 
-$ModsPath = Join-Path $env:LOCALAPPDATA "GameBuddy\stardew-profiles\native-local-navigation"
+# Both roots come from the single shared resolver (lib/stardew-fixture-roots.mjs)
+# so a concurrent lane can point its profiles, templates and locks at private
+# paths. The defaults are the historical ones; an explicit -FixtureRoot wins.
+$fixtureRootsJson = & node (Join-Path $PSScriptRoot "lib/stardew-fixture-roots.mjs") --print-json 2>$null
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($fixtureRootsJson)) { throw "stardew_fixture_roots_unavailable" }
+$fixtureRoots = $fixtureRootsJson | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($FixtureRoot)) { $FixtureRoot = [string]$fixtureRoots.fixturesRoot }
+Write-Host ("[stardew-fixture-roots] profileRoot={0} fixturesRoot={1}" -f $fixtureRoots.profileRoot, $FixtureRoot)
+
+$ModsPath = Join-Path ([string]$fixtureRoots.profilesDir) "native-local-navigation"
 $BindingPath = Join-Path $FixtureRoot "$SaveName.native-local-binding.json"
 
 Write-Host "Stopping any running SMAPI..."

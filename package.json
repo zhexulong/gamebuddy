@@ -54,6 +54,7 @@
     "check:dialogue-web-boundaries": "depcruise --config .dependency-cruiser.dialogue-web.cjs dialogue-web/src/main.tsx",
     "test:dialogue-web-boundaries": "node --test tools/check-dialogue-web-boundaries.test.mjs",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
+    "test:stardew-fixture-roots": "node --test tools/stardew-fixture-roots.test.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
     "inspect:stardew-fixture-transaction": "node tools/inspect-stardew-fixture-transaction.mjs",
     "test:stardew-attachment-telemetry": "powershell.exe -NoProfile -File tools/stardew-attachment-telemetry.test.ps1",
