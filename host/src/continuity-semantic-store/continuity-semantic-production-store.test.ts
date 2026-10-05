@@ -562,12 +562,44 @@ test("A world slot held by a live session is rejected for a second session and r
 });
 
 /**
- * Documents a KNOWN WEDGE. This test pins the behaviour observed today so the
- * evidence stays reproducible; it does NOT claim the behaviour is correct. The
- * repair semantics is an open decision (the fix is not in the store yet), and
- * this test is expected to change with it.
+ * The slot wedge: still unrepaired, and now blocked on a fact that does not
+ * exist rather than on an open decision.
  *
- * The wedge: the cross-session duplicate-slot rule refuses a slot another
+ * The repair decision has been taken - release a slot by slot identity
+ * (integrationId + bindingRef) plus a verifiable death/liveness determination,
+ * reusing the store's existing single-transaction terminal path, with no schema
+ * change and no row deletion. The store cannot execute it honestly, because the
+ * world-binding holder has no durable liveness fact for a proof to be checked
+ * against:
+ *
+ * - The holder's whole durable footprint is two owner-free rows, one in
+ *   `production_game_session_metadata` and one in
+ *   `production_game_session_world_binding` (schema above, :481-482); neither
+ *   table has an owner/pid/liveness column, and the binding's only foreign key
+ *   points at the metadata row. `ProductionGameRecoveryProof` (:316) is bound
+ *   to a `ProductionGameOwner` tuple, and `recoverGame` can only use it because
+ *   it compares that tuple against the durable `owner_json` of the permit's own
+ *   row (:3884). A slot lookup has no such row, so an outcome-only check accepts
+ *   a genuine proof about any process the caller chooses to ask the OS about -
+ *   a caller-assertable gate, not evidence about THIS holder.
+ * - `production_game_lease` cannot supply the missing liveness half either: it
+ *   is keyed by `continuity_id` (:483), so it can never describe one holder
+ *   among several; it does not exist while a create is in flight (the create
+ *   path never performs the activation that writes it); it is deleted on
+ *   ordinary close (:3835) and on recovery (:3916) while the slot stays held;
+ *   and its `deadline_at_ms` is the request deadline the caller passed to
+ *   `prepareGame` (:3729-3740), never renewed while a live session runs. Neither
+ *   the row's presence nor its deadline distinguishes a live holder from a dead
+ *   one.
+ *
+ * A holder-scoped liveness fact (an owner tuple or its digest, written when the
+ * binding is registered, plus a way for the successor Host to obtain it) is
+ * durable content this store cannot invent: the register path outside the store
+ * is the only place the holder's owner exists, and design/105 Slice 0 keeps the
+ * session record free of PIDs and paths. Until that is re-decided this test
+ * keeps pinning today's behaviour as evidence instead of asserting a repair.
+ *
+ * The wedge itself: the cross-session duplicate-slot rule refuses a slot another
  * session holds while its binding is `registered` (:4214-4219), but
  * `registered` is paired with `pending|resumable` metadata (:1126-1132), which
  * includes the abandoned `pending revision 1 + registered revision 1` shape a
@@ -582,7 +614,9 @@ test("A world slot held by a live session is rejected for a second session and r
  * deletes a session metadata or world binding row). The holder is not even
  * discoverable: `listResumableGameSessions` returns `[]` for that shape.
  */
-test("KNOWN WEDGE: a slot held by an abandoned registered binding blocks every later create", () => {
+test(
+  "SLOT WEDGE, UNREPAIRED (no holder-scoped liveness fact exists): a slot held by an abandoned registered binding blocks every later create",
+  () => {
   const root = canonicalTestRootSync("production-game-session-slot-wedge-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   let controlClosed = false;
