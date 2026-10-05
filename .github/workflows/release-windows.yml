@@ -114,7 +114,10 @@ jobs:
       - name: Install the browser journeys' Chromium
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
       - name: Tavern mounted browser journeys
-        run: pnpm --dir dialogue-web exec playwright test --project=chromium --workers=1
+        # Exactly the two suites that need no game: the management surface and the
+        # Chat surface. The composed-reference-game and installation-discovery
+        # specs require a real Stardew installation and belong to that gate.
+        run: pnpm --dir dialogue-web exec playwright test tests/reference-pipeline-browser.spec.ts tests/management-pipeline-browser.spec.ts --project=chromium --workers=1
         env:
           GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
       # Screenshots, traces and the page snapshots of any failure, so a broken
