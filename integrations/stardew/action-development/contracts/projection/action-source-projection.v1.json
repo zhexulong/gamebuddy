@@ -230,6 +230,37 @@
         "handlerGroup": null
       },
       {
+        "actionId": "select_mine_elevator_floor",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "select_mine_elevator_floor",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "mine_elevator_floor_selected"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "use_raft",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2510,6 +2541,7 @@
       "travel",
       "ride_minecart",
       "ride_bus",
+      "select_mine_elevator_floor",
       "use_raft",
       "mount_transport",
       "enter_mine",
@@ -2573,6 +2605,7 @@
       "travel",
       "ride_minecart",
       "ride_bus",
+      "select_mine_elevator_floor",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -2679,6 +2712,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "ship_item",
       "till_soil",
       "travel",
@@ -2738,6 +2772,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -2803,6 +2838,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -2868,6 +2904,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -2933,6 +2970,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -2998,6 +3036,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -3157,6 +3196,7 @@
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
+      "select_mine_elevator_floor",
       "set_sign_display",
       "shake_tree",
       "ship_item",
@@ -3217,6 +3257,7 @@
       "navigate_to_destination",
       "ride_bus",
       "ride_minecart",
+      "select_mine_elevator_floor",
       "travel",
       "use_raft"
     ],
@@ -3492,6 +3533,11 @@
         "actionId": "ride_bus",
         "runner": "run-stardew-native-local-player-ride-bus-smoke.mjs",
         "fixtureScenario": "native_ride_bus_v1"
+      },
+      {
+        "actionId": "select_mine_elevator_floor",
+        "runner": "run-stardew-native-local-player-mine-elevator-smoke.mjs",
+        "fixtureScenario": "native_mine_elevator_v1"
       },
       {
         "actionId": "cut_grass",

@@ -1529,8 +1529,63 @@ Promoted to `live_verified` on this evidence
   (`manifest.json` included), so staging only the DLLs fails with
   `release_bundle_missing`. Both that code and the underlying error are now
   published instead of collapsing into `native_local_fixture_preparation_failed`.
+## 36. select_mine_elevator_floor live proof: the mine elevator as a typed action
 
-## 37. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
+Scenario `native_mine_elevator_v1`, runner
+`run-stardew-native-local-player-mine-elevator-smoke.mjs`, 2026-10-05. First pass,
+737 ms.
+
+The Lane L3 card (§3.7) ruled that `enter_mine` keeps its tile semantics and that
+the elevator becomes its **own** action if the product wants "any already-unlocked
+floor" — letting `enter_mine` take a level would make it an arbitrary-level
+teleport that bypasses `lowestLevelReached`. This is that action.
+
+```
+accepted                     (revision 0)  <- the warp has started, not finished
+succeeded / mine_elevator_floor_selected (revision 1)
+```
+
+Receipt evidence:
+
+```
+expected=UndergroundMine10:6,6;actual=UndergroundMine10:12,6;level=10
+```
+
+Four things proven, independently checked by the runner:
+
+1. **The world moved.** Fresh post-terminal snapshot: `location=UndergroundMine10`,
+   `terminalLevel=10`, `originFloor=5`. The landing tile is the native layout's
+   choice (12,6, not the requested 6,6) — the same phenomenon already recorded for
+   `enter_mine` ("verified live at 10,4 vs the requested 6,6"), which is why the
+   postcondition is the LEVEL and not a fixed tile.
+2. **Progress gates the offer, and the projection follows.** `floorsBefore=0/5*/10`
+   → `floorsAfter=0/5/10*`: the current-floor marker migrated to the arrival floor.
+3. **The native facility was really there.** The dispatch receipt reports
+   `elevatorTile=10,5` — tile 112 freshly observed in that MineShaft's Buildings
+   layer, which is the native elevator (MineShaft.cs:3057/3066).
+4. **Floor 0 is not "level 0".** The implementation routes it to
+   `Game1.warpFarmer("Mine", 17, 4)` (the mine entrance) rather than
+   `Game1.enterMine(0)` → `UndergroundMine0`.
+
+The fixture stages mine progress to floor 10 (`lowestLevelReached`), **fails closed
+if `mine_lowestLevelReachedForOrder` is not its untouched `-1`**, and places the
+actor on `UndergroundMine5` via the game's own `warpFarmer`. It emits no receipt —
+the action under test is the one that selects a floor.
+
+### What this gate caught (both were real defects, in code I had just written)
+
+- **`enterMine` is asynchronous.** The first live attempt read
+  `Game1.CurrentMineLevel` in the same frame and got the OLD level
+  (`expected_floor=10;actual_floor=5`). Fixed by taking the travel family's shape:
+  accept, hand the specification to `activeTravel`, and let
+  `CompleteTravelAfterWarp` mint the single terminal on the Warped edge.
+- **The runner asserted an implementation detail as a contract.** It required the
+  accepted receipt's `ridingMineElevator` to be true. That flag is a real
+  implementation requirement (the mine entrance reads it to choose the elevator
+  landing tile) but the native layout may consume and reset it during the warp, so
+  it is now observed, never asserted.
+
+## 36. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
 
 Ladder 6 answers a different question from ladders 0-5. Those accept a scripted
 chain; ladder 6 hands the Agent an **open play goal** in a real save, lets it choose,
@@ -1613,3 +1668,96 @@ repeat. `notAttempted` names 59 capabilities the session never touched, and 8 of
 *playable* by this evidence. The interaction verdict is a length threshold, not a
 judgement of the report's content. Model non-determinism is uncontrolled; a second run
 will differ in both coverage and wording.
+
+## 38. move_to_tile was refusing work it had already done (2026-10-05, fixed + verified live)
+
+The §36 play session reported ten `no_native_path` refusals and the companion told the
+player the farm was "围成了迷宫". Reading the trace against the Mod's own evidence, both
+halves of that were the Mod's fault:
+
+1. **FALSE REFUSAL.** Six of the ten requests named a tile the actor was *already inside
+   the arrival contract of* (the requested tile, or — when adjacency is allowed — one of
+   its neighbours). The native planner then has nothing to plan, its `pathToEndPoint`
+   comes back empty, and an empty path was reported as "unreachable". The Mod's own
+   probe contradicted that verdict in the same evidence string: `target_enclosed=false`
+   means the probe found a traversable neighbour — the one the actor was standing on.
+2. **UNAPPROACHABLE TARGET.** The rest named a tile that holds the object the caller
+   wants to touch (a crop). Every other interaction in this Mod is a native action from
+   an adjacent tile, so "walk to the object" was asking for something the action could
+   not express.
+
+Fixes (`farmhandexecutioncontroller.movementactions.cs`, `StardewBodyController.cs`):
+
+- A satisfied arrival contract is now **success**: `target_reached;already_at_target=true`
+  (checked on the effective destination, after any substitution). Nothing native moves,
+  because nothing needs to.
+- An unstandable named tile is **approached from a standable cardinal neighbour**
+  (deterministic: nearest to the actor, ties keeping the declared left/right/up/down
+  order), and the receipt says so: `target=<approach>;requested=<asked>;adjacent_arrival=true`.
+  The substitution is never silent.
+- Refusals now name **why**: `target_standable`, `blocked_by=<qualifiedItemId>@x,y` or
+  `terrain:<Type>@x,y` (or `none`), plus an explicit `probe_says_reachable` so the
+  probe/verdict disagreement is visible instead of derivable.
+
+Three consecutive real sessions, same ladder-6 play-session goal and fixture world:
+
+| | run C (before) | run D | run E (final) |
+|---|---|---|---|
+| `move_to_tile` dispatches | 16 | 12 | 17 |
+| `no_native_path` refusals | **10** | 1 | **2** |
+| immediate `target_reached` | 0 (impossible) | — | **7** |
+| `adjacent_arrival` substitutions | 0 (feature absent) | 24 receipts | 2 |
+| `move_to_tile` verdict | **blocked** (0 terminals) | blocked | **succeeded** |
+| `blockedBySystem` | `[move_to_tile]` | `[move_to_tile]` | **`[]`** |
+| crops harvested | 2 | 3 | **16** |
+| rung state | blocked (interaction) | blocked | **passed** |
+
+The two refusals that remain are **genuine** and now self-explanatory:
+`from=6,8;to=8,10;target_standable=false;blocked_by=terrain:…` and
+`from=10,11;to=11,13;…;blocked_by=terrain:…` — real terrain blockers, named, instead of an
+unexplained "no path". The companion's report stopped describing a maze and started naming
+what blocks it and what to clear first.
+
+Arithmetic covered by `MoveApproachSubstitutionTests` (8 cases; two mutations — tie-break
+weakened to `<=`, distance preference removed — each fail exactly the intended test).
+
+**Residual found while reading run E's own artifact:** the rung reported `passed` on a
+session whose turn **timed out** (`agent_turn_timeout` at 609 s ≈ the 600 s default wait).
+The Agent worked productively the whole time (39 dispatches, 16 crops) but never produced
+a closing report, and `presentedSummary` was the single 10-character line
+`我先看看周围有什么。` — which the interaction gate passes. A play session that never
+settles must not be reported as a completed session; see §39.
+
+## 39. A session the harness cut off is not a completed session (2026-10-05)
+
+Run E (§38) reported `state: passed` while `sessionTurns[0].turn.error` was
+`agent_turn_timeout`: the turn had been cut off at the harness's 600 s wait, the
+companion had done 39 productive actions, and the only text it ever delivered was the
+10-character fragment `我先看看周围有什么。` — which the interaction gate passes, because
+that gate measures how a line is written, not whether a session finished. The verdict
+was true about the ACTIONS and false about the SESSION.
+
+Two changes:
+
+- **The verdict now requires a settled session.** `ladderSixPassed` needs a real attempt
+  AND `sessionVerdict === "completed"`; the artifact publishes
+  `sessionVerdict` (`completed` | `turn_timeout` | `turn_unsettled` | `no_turns`) and
+  `sessionTurnErrors`, so a reader can always tell "the play session finished" from "the
+  harness stopped waiting". Findings still never fail the rung — a truncated session does.
+- **Ladder 6 gets a play-session budget.** The 600 s default is a scripted rung's bound;
+  an open session doing dozens of native actions legitimately runs longer, so ladder 6
+  defaults to 1800 s (still overridable with `GAMEBUDDY_AGENT_WAIT_SECONDS`). This is a
+  harness bound, not a product verdict: a timeout is a gate/harness fact, never a claim
+  about the companion.
+
+- **The length budget the gate enforces is now stated in the goal.** Run F's session settled
+  properly (`sessionVerdict: completed`, 9/9 attempted capabilities succeeded,
+  `blockedBySystem: []`) and its closing report was a genuine play report — 202 characters
+  naming what it did, where it got stuck ("田心那片：石头、杂草、枯枝和树把格子堵得太密"),
+  and what it would do next. It was rejected by `summary_too_long`, because
+  `tools/lib/companion-interaction-gate.mjs` caps a summary at **120 code points** and the
+  goal had never said so. Runs C (176) and F (202) were both rejected by an unstated rule,
+  so ladder 6's goal now states the budget directly (a speaking-length contract, not a tool
+  sequence — the rung's "no smuggled tool sequence" test still holds). The gate itself is
+  untouched: it protects other rungs' verdicts too, and loosening a shared threshold to make
+  one rung pass would be exactly the kind of silent relaxation this file's contract forbids.

@@ -305,6 +305,28 @@ public sealed record BridgeMinecartTarget(
 
 public sealed record BridgeRaftTarget(string TargetId, int X, int Y);
 public sealed record BridgeHorseTarget(string TargetId, int X, int Y, string Name);
+
+/// <summary>
+/// <para>
+/// One selectable mine-elevator floor. The set is NOT a client-supplied range: it
+/// is a pure function of the live <c>MineShaft.lowestLevelReached</c> — floor 0
+/// plus every multiple of 5 up to min(lowestLevelReached, 120) — which is exactly
+/// the enumeration <c>MineElevatorMenu</c> builds (MineElevatorMenu.cs:16/37). The
+/// Mod re-derives it on the game thread and refuses an unadvertised floor, so the
+/// action cannot be used to teleport to a level the player has not reached.
+/// </para>
+/// <para>
+/// <c>IsMineEntrance</c> is floor 0's real meaning: it is not "go home" but "return
+/// to the mine entrance", and the native handler refuses it outside a MineShaft
+/// (MineElevatorMenu.cs:80-88). <c>IsCurrentFloor</c> records the native no-op
+/// (MineElevatorMenu.cs:90-93) so the Agent can avoid submitting it.
+/// </para>
+/// </summary>
+public sealed record BridgeMineElevatorFloorTarget(
+    string TargetId,
+    int Floor,
+    bool IsCurrentFloor,
+    bool IsMineEntrance);
 public sealed record BridgeMineEntranceTarget(string TargetId, int X, int Y);
 public sealed record BridgePetBowlTarget(string TargetId, int X, int Y);
 
@@ -441,6 +463,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeRecipeTarget>? CookingRecipeTargets,
     IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
     IReadOnlyList<BridgeMinecartTarget>? MinecartTargets,
+    IReadOnlyList<BridgeMineElevatorFloorTarget>? MineElevatorFloorTargets,
     IReadOnlyList<BridgeBushTarget>? BushTargets,
     IReadOnlyList<BridgeFruitTreeTarget>? FruitTreeTargets,
     IReadOnlyList<BridgeShakeTreeTarget>? ShakeTreeTargets,

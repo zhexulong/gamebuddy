@@ -605,7 +605,10 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.move_to_tile,
         label: "Move Farmhand to Tile",
         description:
-          "Request the player-enabled move_to_tile capability. Inspect its authoritative receipt before saying movement succeeded.",
+          "Request the player-enabled move_to_tile capability. Inspect its authoritative receipt before saying movement succeeded. " +
+          "A tile that holds an object (crop, weed, chest, machine) is approached from a standable neighbouring tile: the receipt then reports target_reached with adjacent_arrival=true and names the requested tile. " +
+          "If the actor is already at the destination (or already within the approach ring of a substituted one), the receipt reports target_reached with already_at_target=true — nothing moved because nothing needed to. " +
+          "A refusal (no_native_path) names the cause: blocked_by=<item>@x,y, target_standable, and probe_says_reachable.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1542,6 +1545,28 @@ export function createStardewActionTools(
             "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
           parameters: schema,
           action: "ride_bus",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "select_mine_elevator_floor",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("select_mine_elevator_floor", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("select_mine_elevator_floor", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.select_mine_elevator_floor,
+          label: "Use the Mine Elevator",
+          description:
+            "Select an already-reached floor on the mine elevator. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
+          parameters: schema,
+          action: "select_mine_elevator_floor",
           toArgs: () => ({}),
         }),
       );

@@ -378,6 +378,9 @@ export function fixtureActions(action) {
   // ride_bus needs no movement: the fixture already stands the actor beside the
   // ticket machine, so the whole contract is the ride itself.
   if (action === "ride_bus") return ["ride_bus"];
+  // The elevator fixture already leaves the actor on a mine floor that carries the
+  // elevator tile, so the whole contract is the floor selection.
+  if (action === "select_mine_elevator_floor") return ["select_mine_elevator_floor"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
@@ -613,6 +616,7 @@ export function fixtureScenario(actions, action) {
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ride_bus") return "native_ride_bus_v1";
+  if (action === "select_mine_elevator_floor") return "native_mine_elevator_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Ladder 6 (self-directed play session). This MUST be an action-keyed branch in
   // this block: the play-session action set publishes harvest_crop AND ship_item,

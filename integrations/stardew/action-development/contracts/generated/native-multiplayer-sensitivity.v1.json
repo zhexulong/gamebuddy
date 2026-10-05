@@ -54,6 +54,7 @@
     "travel",
     "ride_minecart",
     "ride_bus",
+    "select_mine_elevator_floor",
     "use_raft",
     "mount_transport",
     "enter_mine",
@@ -202,6 +203,23 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "select_mine_elevator_floor",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Game1.cs",
+          "signature": "public static void enterMine(int whatLevel, int? forceLayout = null)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "sets the per-actor Farmer.ridingMineElevator flag then warps the local player into a generated mine level (or, for floor 0, to the mine entrance); the body reads shared mine progress but writes no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     },
     {
       "actionId": "use_raft",

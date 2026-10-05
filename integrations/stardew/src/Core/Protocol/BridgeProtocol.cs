@@ -1818,6 +1818,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             // the station tile while expectedTargetId selects one advertised
             // (station, destination) ride.
             "ride_minecart" => new[] { "x", "y", "expectedTargetId" },
+            // select_mine_elevator_floor has no coordinate: the whole intent is WHICH already
+            // reached floor, and the native floor set is derived from live
+            // MineShaft.lowestLevelReached on the game thread.
+            "select_mine_elevator_floor" => new[] { "expectedTargetId" },
             "use_raft" => new[] { "slot", "x", "y" },
             "mount_transport" or "enter_mine" => new[] { "x", "y", "expectedTargetId" },
             "equip_tool" => new[] { "tool" },

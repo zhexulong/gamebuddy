@@ -49,13 +49,19 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Ride one advertised native minecart objective from a live station tile; the Mod re-resolves the network, destination and price on the game thread.",
     ["minecart_station"],
   ),
-  actionAdapter("use_raft", "Launch a raft"  actionAdapter(
+  actionAdapter(
+    "select_mine_elevator_floor",
+    "Use the mine elevator",
+    "Select an already-reached floor on the mine elevator. The offered floors are derived by the Mod from the live lowest level reached, so a level the player has not unlocked cannot be requested.",
+    ["mine_elevator_floor"],
+  ),
+  actionAdapter(
     "ride_bus",
     "Ride the bus",
     "Ride the native bus from the Bus Stop ticket machine to the desert; the Mod checks the vault, the driver and the fare itself and drives the game's own ticket interaction.",
     ["bus_ticket_machine"],
   ),
-, "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
+  actionAdapter("use_raft", "Launch a raft", "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
   actionAdapter("mount_transport", "Mount a named horse", "Mount one advertised named native horse.", ["horse"]),
   actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance without selecting a level.", ["mine_entrance"]),
   actionAdapter(
@@ -371,8 +377,9 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   equip_tool: "stardew_equip_tool",
   navigate_to_destination: "stardew_navigate_to_destination",
   travel: "stardew_travel",
-  ride_minecart: "stardew_ride_minecart",  ride_bus: "stardew_ride_bus",
-
+  ride_minecart: "stardew_ride_minecart",
+  select_mine_elevator_floor: "stardew_select_mine_elevator_floor",
+  ride_bus: "stardew_ride_bus",
   use_raft: "stardew_use_raft",
   mount_transport: "stardew_mount_transport",
   enter_mine: "stardew_enter_mine",
@@ -558,9 +565,9 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "ride_minecart",
   "dismiss_modal",
   "answer_dialogue",
-] as const);  "ride_bus",
+  "ride_bus",
+  "select_mine_elevator_floor",
 ] as const);
-
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
 

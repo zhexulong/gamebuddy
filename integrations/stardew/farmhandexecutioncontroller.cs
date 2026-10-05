@@ -1424,6 +1424,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private void ArbitrateWorldChangeInterruptions()
     {
+        // The bus is deliberately NOT arbitrated here. Its own ticket interaction
+        // raises a question dialogue, so a Modal disposition during the departure is
+        // the ride's normal flow, not a world interruption; invalidating it would
+        // kill every ride at the first frame. Its terminal is owned by UpdateBusRide
+        // (arrival or deadline), and InvalidateForLifecycle still reaches
+        // InvalidateBusRide for the real lifecycle events (day start, save, bridge
+        // loss) — where the cutscene may already have committed. Measured live
+        // 2026-10-05: arbitrating it produced
+        // uncertain/bus_departure_invalidated 302ms after acceptance.
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
@@ -1540,12 +1549,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
         }
-        if (this.activeToolApproach is not null)
-        {
-            // A tool-family approach invalidated before executing anything native:        // The bus may already have committed its native cutscene, so its terminal is
+        // The bus may already have committed its native cutscene, so its terminal is
         // always Uncertain (see InvalidateBusRide).
         this.InvalidateBusRide(reasonCode);
-
+        if (this.activeToolApproach is not null)
+        {
+            // A tool-family approach invalidated before executing anything native:
             // no world mutation happened, so this is an honest Invalidated terminal.
             LocalApproachSpec specification = this.activeToolApproach;
             this.activeToolApproach = null;
@@ -1823,6 +1832,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
             advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
             advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
+            // The floor set is re-derived from the live lowestLevelReached on this
+            // game-thread read; the client's expectedTargetId is only matched against
+            // it later, never trusted as a level.
+            advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? DiscoverMineElevatorFloors() : null,
             advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
             advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
             advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
@@ -1858,7 +1871,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
-        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, RaftTargets: null,
+        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, MineElevatorFloorTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
         // admission rejects with world_not_ready, so no consumer plans from this.

@@ -4541,6 +4541,19 @@
       "additionalProperties": false,
       "maxProperties": 0
     },
+    "useMineElevatorArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedTargetId"
+      ],
+      "properties": {
+        "expectedTargetId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        }
+      }
+    },
     "answerDialogueArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5795,6 +5808,25 @@
             ],
             "properties": {
               "action": {
+                "const": "select_mine_elevator_floor"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/useMineElevatorArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "answer_dialogue"
               }
             }
@@ -5866,6 +5898,7 @@
             "equip_tool",
             "travel",
             "ride_minecart",
+            "select_mine_elevator_floor",
             "use_raft",
             "mount_transport",
             "enter_mine",
