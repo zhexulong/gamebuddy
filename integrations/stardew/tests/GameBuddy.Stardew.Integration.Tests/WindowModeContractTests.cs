@@ -37,6 +37,35 @@ public sealed class WindowModeContractTests
     }
 
     [Fact]
+    public void TheGameWindowIsSelectedByClassNotByGuessingAtRunnerInternals()
+    {
+        // The previous source (GameRunner.instance.Window.Handle) never produced a
+        // usable window in a real run; selection asks Windows instead. SDL_app is
+        // the class SDL2 - the game's windowing layer - creates.
+        ModEntry.IsGameWindowClass("SDL_app").Should().BeTrue();
+        ModEntry.IsGameWindowClass("SDL_app2").Should().BeFalse();
+        ModEntry.IsGameWindowClass("ConsoleWindowClass").Should().BeFalse();
+
+        const uint self = 4242;
+        var console = new ModEntry.WindowCandidate(new IntPtr(1), self, "ConsoleWindowClass", "SMAPI console", true, 900_000);
+        var game = new ModEntry.WindowCandidate(new IntPtr(2), self, "SDL_app", "Stardew Valley", true, 640_000);
+        var hidden = new ModEntry.WindowCandidate(new IntPtr(3), self, "SDL_app", "hidden", false, 100);
+        var foreign = new ModEntry.WindowCandidate(new IntPtr(4), 9999, "SDL_app", "other app", true, 800_000);
+
+        // The SDL window wins even though the console window is larger: size is only
+        // a fallback, never a reason to raise the wrong window.
+        ModEntry.SelectGameWindow(new[] { console, game }, self).Should().Be(new IntPtr(2));
+        // A hidden or foreign SDL window is not the game's window.
+        ModEntry.SelectGameWindow(new[] { hidden, foreign, console }, self).Should().Be(new IntPtr(1));
+        // No SDL window at all: fall back to this process's largest visible window
+        // so an unexpected class still yields something raiseable.
+        ModEntry.SelectGameWindow(new[] { console }, self).Should().Be(new IntPtr(1));
+        // Another process's window is never returned.
+        ModEntry.SelectGameWindow(new[] { foreign }, self).Should().Be(IntPtr.Zero);
+        ModEntry.SelectGameWindow(Array.Empty<ModEntry.WindowCandidate>(), self).Should().Be(IntPtr.Zero);
+    }
+
+    [Fact]
     public void EveryRaiseOutcomeIsReportedInItsOwnWords()
     {
         // The three real outcomes must be distinguishable in the log: claiming

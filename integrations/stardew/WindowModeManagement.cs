@@ -262,10 +262,18 @@ public sealed partial class ModEntry
 
         try
         {
-            IntPtr hWnd = GameRunner.instance?.Window?.Handle ?? IntPtr.Zero;
-            if (hWnd == IntPtr.Zero)
+            if (!TryFindGameWindow(out IntPtr hWnd, out string windowClass))
             {
+                // Windows creates the game window after the mod's first ticks; not
+                // finding it yet is not a result, so keep retrying.
                 return;
+            }
+            if (RequiresActivation(mode) && !this.windowSourceReported)
+            {
+                // Say WHICH window was found: the open question (why the previous
+                // handle was never usable) is only answerable with this fact.
+                this.windowSourceReported = true;
+                this.Monitor.Log($"GameBuddy window mode {mode}: game window class={windowClass}.", LogLevel.Info);
             }
             Win32WindowInterop.ShowWindowAsync(hWnd, nCmdShow);
             if (RequiresActivation(mode))
@@ -289,6 +297,120 @@ public sealed partial class ModEntry
 
     private string? windowActivationReport;
     private bool windowRaiseSettled;
+    private bool windowSourceReported;
+
+    /// <summary>One top-level window offered to the game-window selector.</summary>
+    internal readonly struct WindowCandidate
+    {
+        public WindowCandidate(IntPtr handle, uint processId, string className, string title, bool visible, int area)
+        {
+            this.Handle = handle;
+            this.ProcessId = processId;
+            this.ClassName = className;
+            this.Title = title;
+            this.Visible = visible;
+            this.Area = area;
+        }
+
+        public IntPtr Handle { get; }
+
+        public uint ProcessId { get; }
+
+        public string ClassName { get; }
+
+        public string Title { get; }
+
+        public bool Visible { get; }
+
+        public int Area { get; }
+    }
+
+    /// <summary>The window class SDL2 - the game's windowing layer - creates.</summary>
+    private const string GameWindowClassName = "SDL_app";
+
+    internal static bool IsGameWindowClass(string className)
+    {
+        return string.Equals(className, GameWindowClassName, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Pick the game's top-level window from this process's windows.
+    ///
+    /// The previous source was <c>GameRunner.instance?.Window?.Handle</c>, and a real
+    /// run showed it is NOT a usable window handle: over ten seconds of retries the
+    /// Mod never obtained one (adding <c>IsWindow</c> turned that silent failure into
+    /// a visible one). Rather than guess at SMAPI/MonoGame internals, ask Windows
+    /// directly: the game's window is the SDL2-class window owned by this process,
+    /// with the largest visible window as a fallback so an unexpected class still
+    /// yields something raiseable.
+    /// </summary>
+    internal static IntPtr SelectGameWindow(IReadOnlyList<WindowCandidate> candidates, uint currentProcessId)
+    {
+        IntPtr largest = IntPtr.Zero;
+        int largestArea = -1;
+        foreach (WindowCandidate candidate in candidates)
+        {
+            if (!candidate.Visible || candidate.ProcessId != currentProcessId)
+                continue;
+            if (IsGameWindowClass(candidate.ClassName))
+                return candidate.Handle;
+            if (candidate.Area > largestArea)
+            {
+                largestArea = candidate.Area;
+                largest = candidate.Handle;
+            }
+        }
+        return largest;
+    }
+
+    private bool TryFindGameWindow(out IntPtr handle, out string className)
+    {
+        handle = IntPtr.Zero;
+        className = "";
+        if (!OperatingSystem.IsWindows())
+            return false;
+
+        uint self = (uint)Environment.ProcessId;
+        List<WindowCandidate> candidates = new();
+        string selectedClass = "";
+        try
+        {
+            Win32WindowInterop.EnumWindows(
+                (hWnd, _) =>
+                {
+                    if (!Win32WindowInterop.IsWindowVisible(hWnd))
+                        return true;
+                    Win32WindowInterop.GetWindowThreadProcessId(hWnd, out uint owner);
+                    if (owner != self)
+                        return true;
+                    char[] classBuffer = new char[64];
+                    int classLength = Win32WindowInterop.GetClassName(hWnd, classBuffer, classBuffer.Length);
+                    char[] titleBuffer = new char[256];
+                    int titleLength = Win32WindowInterop.GetWindowText(hWnd, titleBuffer, titleBuffer.Length);
+                    int area = 0;
+                    if (Win32WindowInterop.GetWindowRect(hWnd, out Win32WindowInterop.RECT rect))
+                    {
+                        area = Math.Max(0, rect.Right - rect.Left) * Math.Max(0, rect.Bottom - rect.Top);
+                    }
+                    string candidateClass = classLength > 0 ? new string(classBuffer, 0, classLength) : "";
+                    string candidateTitle = titleLength > 0 ? new string(titleBuffer, 0, titleLength) : "";
+                    if (IsGameWindowClass(candidateClass))
+                        selectedClass = candidateClass;
+                    candidates.Add(new WindowCandidate(hWnd, owner, candidateClass, candidateTitle, true, area));
+                    return true;
+                },
+                IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameBuddy failed to enumerate game windows: {ex.Message}", LogLevel.Trace);
+            return false;
+        }
+
+        handle = SelectGameWindow(candidates, self);
+        className = selectedClass.Length > 0 ? selectedClass : (handle == IntPtr.Zero ? "" : "fallback");
+        return handle != IntPtr.Zero;
+    }
 
     private void ReportActivation(string mode, WindowRaiseOutcome outcome)
     {
@@ -332,6 +454,38 @@ public sealed partial class ModEntry
 
         public const uint FLASHW_TRAY = 0x00000002;
         public const uint FLASHW_TIMERNOFG = 0x0000000C;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetClassName(IntPtr hWnd, [Out] char[] className, int maxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern int GetWindowText(IntPtr hWnd, [Out] char[] text, int maxCount);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct FLASHWINFO
