@@ -387,6 +387,16 @@ type ActivationState = StardewPrivateActivationSnapshot["state"];
 type MaterializeFarmhandGameSession = StardewOwnedFarmhandGameSessionMaterializer["materialize"];
 
 /**
+ * Which of the two legal AI-client activation shapes a fresh attach asks for.
+ * `re_arm` is the resume shape: a resume is only admitted over an activation
+ * that already ended, so it always arms a genuinely new one-shot generation
+ * first. `core_admitted` is the create shape: the core itself decides between
+ * that fresh generation and the owner's still intact first activation, and the
+ * coordinator is not allowed to guess which one applies.
+ */
+type FreshAiClientActivation = "re_arm" | "core_admitted";
+
+/**
  * Lifecycle-owned launch strategy for the staged Player Host. The coordinator
  * treats it as opaque: the testing composition wires the direct-spawn Stage C
  * consumer (test reference), while the formal Desktop composition wires the
@@ -555,6 +565,19 @@ function isResumeAttachDeferredError(error: unknown): boolean {
   );
 }
 
+/**
+ * The composition's own "this owner has no ended activation to supersede"
+ * rejection. `prepareFreshFarmhandAiClientActivation` fails closed with it
+ * before it reserves a generation, rotates the durable record or stops any
+ * process, so it is also the one side-effect-free answer the coordinator can ask
+ * for: read as "the owner's first one-shot activation is still intact", it is
+ * exactly the state the untouched-reservation launch needs. Any other error is
+ * left alone, so a genuinely unavailable fresh generation still fails closed.
+ */
+function isFirstFarmhandAiClientActivationIntact(error: unknown): boolean {
+  return error instanceof Error && error.message === "stardew_farmhand_bridge_connection_not_available";
+}
+
 /** The resume cancel epoch terminated the in-flight attach; the cancel seam owns its teardown and projection. */
 function isResumeCancelledError(error: unknown): boolean {
   return error instanceof Error && error.message === "stardew_game_resume_cancelled";
@@ -662,18 +685,6 @@ function createCoordinator(
    * rejects as not admissible).
    */
   let aiClientProfileMaterialized = false;
-  /**
-   * True once this lifecycle consumed the owner's one-shot AI-client launch and
-   * bridge connection reservations, i.e. the composition's own
-   * `launchStates.aiClient`/`bridgeConnectionState` are `consumed`. Only such an
-   * owner may be re-armed for a fresh generation; an owner whose reservations
-   * are still untouched must be activated through its first (initial) launch
-   * instead. It mirrors the composition's consumed transition exactly, so every
-   * path that consumes it without a successful launch sets it too
-   * (`abandonAiClientActivation`); otherwise a failed FIRST launch would leave
-   * the owner's consumed reservations permanently unreachable.
-   */
-  let aiClientActivationConsumed = false;
   const gameReopens = new Map<string, Readonly<{
     browserSessionId: string;
     expectedAttachmentGeneration: number;
@@ -1085,7 +1096,6 @@ function createCoordinator(
         );
         if (result.status.kind !== "awaiting_ai_client_attestation")
           throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
-        aiClientActivationConsumed = true;
         if (containedRuntimeTeardown !== undefined) aiClientLaunchThroughRuntime = true;
         while (farmhandGameRuntimeFacade === undefined) {
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
@@ -1370,28 +1380,54 @@ function createCoordinator(
   });
 
   /**
-   * Rolls an AI-client activation this lifecycle armed (or whose reservations
-   * the owner still held untouched) back to the composition's consumed base, and
-   * mirrors that transition in the re-arm latch above.
+   * Rolls a fresh AI-client activation this lifecycle started back to the
+   * composition's fully consumed base, the shape in which the core admits the
+   * next activation.
    *
    * The composition consumes the owner's one-shot AI-client launch and bridge
    * connection reservations unconditionally here -- including when the FIRST
-   * launch of this owner failed -- so both states are `consumed` afterwards no
-   * matter how far the attempt got. A later create must therefore re-arm a fresh
-   * activation generation (`prepareFreshFarmhandAiClientActivation`) instead of
-   * retrying reservations that are already consumed, which would fail closed
-   * with `stardew_ai_client_launch_not_available` for the rest of the lifecycle.
+   * launch of this owner failed, and including a launch that was claimed while
+   * its bridge connection had not been consumed yet -- so both states are
+   * `consumed` afterwards no matter how far the attempt got. Every failure exit
+   * of a started activation therefore runs through this rollback rather than
+   * leaving the core partially consumed.
    */
   const abandonAiClientActivation = async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
     try {
       await internal.abandonFarmhandAiClientActivation(owner);
     } catch {
       // The composition rejects a forged, unknown or cross-composition owner
-      // before the consumed transition, so the latch must not claim a state the
-      // owner never reached.
+      // before the consumed transition. The rollback is best effort and the
+      // failure that caused it stays primary.
       return;
     }
-    aiClientActivationConsumed = true;
+  };
+
+  /**
+   * Leaves the owner's AI-client activation in the one shape the core admits for
+   * a fresh attach: a genuinely new generation when the previous activation
+   * already ran to its end, or the still intact first activation when it never
+   * did. Both shapes then run the same launch below.
+   *
+   * The core is the only authority for that fact -- `launchStates.aiClient` and
+   * `bridgeConnectionState` are its own fields -- and
+   * `prepareFreshFarmhandAiClientActivation` asserts exactly that pair before it
+   * reserves, rotates or stops anything, failing closed with
+   * `stardew_farmhand_bridge_connection_not_available` while the previous
+   * activation was not fully consumed. Asking it here, with no side effect
+   * before its own assertion, is what makes the two impossible to disagree: a
+   * mirrored coordinator latch could not see the composition's partial
+   * transition (a launch that was claimed while its bridge connection was still
+   * armed), and a latch that disagreed made the next create report a permanent
+   * `accepted` that never progresses. Every other failure is a real one and is
+   * never reclassified.
+   */
+  const beginFarmhandAiClientActivation = async (owner: StardewOwnedPlayerHostBootstrap): Promise<void> => {
+    try {
+      await internal.prepareFreshFarmhandAiClientActivation(owner);
+    } catch (error) {
+      if (!isFirstFarmhandAiClientActivationIntact(error)) throw error;
+    }
   };
 
   /**
@@ -1424,12 +1460,13 @@ function createCoordinator(
    * `isCancelRequested` lets a resume cancel epoch terminate the retry loop at
    * every safe point and prevent any stale reconnect from completing; the
    * create path passes a never-requested check (create is not cancellable).
-   * `armFreshAiClientGeneration` selects which of the two legal activation
-   * shapes runs: a resume (or a create over an owner whose previous activation
-   * already ended) re-arms a fresh one-shot launch/connection generation, while
-   * a create that owns the very first activation of its Player Host launches
-   * through the still-untouched reservations (re-arming them would fail closed
-   * in the core, because a never-consumed activation has nothing to supersede).
+   * `aiClientActivation` selects which of the two legal activation shapes runs:
+   * a resume (`re_arm`) arms a fresh one-shot launch/connection generation first
+   * because a resume is only admitted over an activation that already ended,
+   * while a create (`core_admitted`) lets the core admit either that fresh
+   * generation or the owner's still intact first activation, so a create that
+   * owns the very first activation of its Player Host launches through the
+   * still-untouched reservations without the coordinator having to guess.
    * Returns true when the attach completed, false when the attempt stays
    * accepted because the attach cannot be built inside this instance (the
    * profile was never materialized or no prior activation exists to supersede).
@@ -1437,57 +1474,62 @@ function createCoordinator(
   const attachResumedWorld = async (
     deadlineMs: number,
     isCancelRequested: () => boolean,
-    armFreshAiClientGeneration: boolean,
+    aiClientActivation: FreshAiClientActivation,
   ): Promise<boolean> => {
     const owner = exactOwner;
     if (owner === undefined) return false;
     attachmentConnectionStatus = "syncing";
     try {
       if (farmhandGameRuntimeFacade === undefined) {
-        // Fresh activation: prepare a genuinely new generation of the one-shot
-        // connection/launch authority, then relaunch the AI client through the
-        // existing Stage D seam (fresh installation reread before the exact
-        // claim at the launch decision). A deferred error keeps the attempt
-        // accepted; every other failure abandons the armed activation so a
-        // later resume can prepare a new generation again.
-        if (armFreshAiClientGeneration) {
+        // Fresh activation: leave the owner's one-shot activation in the shape
+        // the core admits, then relaunch the AI client through the existing
+        // Stage D seam (fresh installation reread before the exact claim at the
+        // launch decision). Only the arm above can fail without having touched
+        // the activation; from the launch on, every exit is rolled back by the
+        // single catch below.
+        if (aiClientActivation === "re_arm") {
           await internal.prepareFreshFarmhandAiClientActivation(owner);
           if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+        } else {
+          await beginFarmhandAiClientActivation(owner);
         }
         try {
           await withFreshRegisteredInstallation((installation) => aiClientLaunch(owner, installation));
-          aiClientActivationConsumed = true;
           if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+          while (farmhandGameRuntimeFacade === undefined) {
+            if (isClosing()) throw new Error("stardew_lifecycle_closing");
+            if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+            try {
+              farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
+                owner,
+                (connection) => materializeFarmhandGameSession(connection, deadlineMs),
+              );
+            } catch (error) {
+              if (!isTransientFarmhandBridgeConnectError(error)) throw error;
+              // Cancel epoch check before every retry wait (card D3.3): a cancel
+              // terminates the retry loop instead of letting it continue.
+              if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+              await waitForFarmhandBridgeRetry(deadlineMs);
+            }
+          }
         } catch (error) {
           if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
+          // ONE rollback for the whole started activation, so no exit can leave
+          // the core partially consumed: a failed launch, a refused or failed
+          // bridge connection, a deferred error and an expired retry wait alike.
+          // The retry wait used to escape without it -- leaving the AI launch
+          // claimed while its bridge connection stayed armed -- and the next
+          // activation then asked the core for a fresh generation, was refused
+          // as not available, and was reported as a permanent `accepted` that
+          // never progresses.
           await abandonAiClientActivation(owner);
-          throw error;
-        }
-        while (farmhandGameRuntimeFacade === undefined) {
-          if (isClosing()) throw new Error("stardew_lifecycle_closing");
-          if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
-          try {
-            farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
-              owner,
-              (connection) => materializeFarmhandGameSession(connection, deadlineMs),
-            );
-          } catch (error) {
-            if (!isTransientFarmhandBridgeConnectError(error)) {
-              if (isResumeAttachDeferredError(error)) {
-                // A deferred error after arming closes the armed activation so
-                // the next resume can prepare again; the attempt stays accepted.
-                await abandonAiClientActivation(owner);
-                attachmentConnectionStatus = "reconnecting";
-                return false;
-              }
-              await abandonAiClientActivation(owner);
-              throw error;
-            }
-            // Cancel epoch check before every retry wait (card D3.3): a cancel
-            // terminates the retry loop instead of letting it continue.
-            if (isCancelRequested()) throw new Error("stardew_game_resume_cancelled");
-            await waitForFarmhandBridgeRetry(deadlineMs);
+          if (isResumeAttachDeferredError(error)) {
+            // The attempt stays accepted: the fresh attach is pending on the next
+            // layer's fresh connection/launch authority for this owner.
+            attachmentConnectionStatus = "reconnecting";
+            return false;
           }
+          throw error;
         }
         if (isCancelRequested()) {
           await closePartialAttachment();
@@ -1576,7 +1618,7 @@ function createCoordinator(
         attachmentGeneration = nextGeneration;
         attachmentConnectionStatus = "reconnecting";
         actionAuthorityStatus = "paused";
-        const attached = await attachResumedWorld(resumeDeadlineMs, () => resumeCancelRequested, true);
+        const attached = await attachResumedWorld(resumeDeadlineMs, () => resumeCancelRequested, "re_arm");
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         // A cancel epoch that terminated the attempt (deferred path) must
         // never surface as a successful accepted result.
@@ -1797,16 +1839,17 @@ function createCoordinator(
         // strictly incrementing). This is a new world session, not a resume:
         // the previous resume lineage's in-memory guard is cleared so it can
         // never shadow the new session, and actions stay paused until a fresh
-        // explicit Game instruction reopens them. An owner whose reservations
-        // are still untouched runs its first activation; an owner whose
-        // previous activation already ended is re-armed for a fresh one.
+        // explicit Game instruction reopens them. Whether this owner still holds
+        // its intact first activation or must be re-armed onto a fresh one is
+        // not the coordinator's to decide: the attach asks the core, which is
+        // the only owner of that fact (see `beginFarmhandAiClientActivation`).
         resumedGameSessionId = undefined;
         await closeStaleAttachment();
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         attachmentGeneration = Math.max(attachmentGeneration + 1, 1);
         attachmentConnectionStatus = "reconnecting";
         actionAuthorityStatus = "paused";
-        const attached = await attachResumedWorld(createDeadlineMs, () => false, aiClientActivationConsumed);
+        const attached = await attachResumedWorld(createDeadlineMs, () => false, "core_admitted");
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         return Object.freeze({
           apiVersion: 1,
@@ -2094,7 +2137,6 @@ function createCoordinator(
         );
         if (aiResult.status.kind !== "awaiting_ai_client_attestation")
           throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
-        aiClientActivationConsumed = true;
         if (containedRuntimeTeardown !== undefined) aiClientLaunchThroughRuntime = true;
         while (farmhandGameRuntimeFacade === undefined) {
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
