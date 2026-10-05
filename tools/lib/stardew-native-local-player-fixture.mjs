@@ -531,6 +531,7 @@ export function fixtureActions(action) {
   if (action === "chop_stump") return ["equip_tool", "chop_stump"];
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
+  if (action === "play_session") return ["move_to_tile", "travel", "enter_exit", "observe_scene", "cut_weeds", "cut_grass", "break_rock_source", "harvest_crop", "plant_seed", "water_crop", "ship_item"];
   if (action === "cut_grass") return ["equip_tool", "cut_grass"];
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate. Fixture shapes follow the same discipline as
@@ -613,6 +614,12 @@ export function fixtureScenario(actions, action) {
   if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
+  // Ladder 6 (self-directed play session). This MUST be an action-keyed branch in
+  // this block: the play-session action set publishes harvest_crop AND ship_item,
+  // so the later `actions.includes(...)` fallbacks (the strawberry covenant is
+  // exactly that pair) would hijack it and arm the WRONG world — a live run proved
+  // it by arming the strawberry fixture for a play session.
+  if (action === "play_session") return "native_play_session_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this
   // override the `water_crop` check below would select the charged-can scenario

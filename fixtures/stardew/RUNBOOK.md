@@ -1529,3 +1529,87 @@ Promoted to `live_verified` on this evidence
   (`manifest.json` included), so staging only the DLLs fails with
   `release_bundle_missing`. Both that code and the underlying error are now
   published instead of collapsing into `native_local_fixture_preparation_failed`.
+
+## 37. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
+
+Ladder 6 answers a different question from ladders 0-5. Those accept a scripted
+chain; ladder 6 hands the Agent an **open play goal** in a real save, lets it choose,
+and its output is a per-capability audit: what it could do, what the system stopped,
+and what it never tried (`capabilityAudit`,
+`gamebuddy_stardew_play_session_capability_audit/v1`).
+
+**Recipe (one command; the launcher owns order, fixture transaction and teardown):**
+
+```powershell
+node tools/live-run/game/launch-ladder-live.mjs --ladder 6 --action play_session --label c
+```
+
+The launcher restores the native template as the disposable working save, prepares the
+`play_session` fixture into the REAL game `Mods` directory ladder runs attach to,
+launches game + runner through the ladder orchestrator, then restores the transaction.
+It refuses to start on a busy fixture root (waits; renames an ORPHANED transaction
+aside rather than deleting it) and gives each run its own result/log pair.
+
+**Fixture (`native_play_session_v1`).** A farm offering several independent
+affordances and nothing else — no quest, no order, no expected chain — so the audit
+has something to measure. Target-version log line:
+
+```text
+initialized play-session fixture before bridge attachment:
+weed=2,9; weed=2,10; grass=3,9; stone=3,8; ready_crop=3,12;
+tools=hoe+can+scythe; seeds=2; standing=3,9;
+```
+
+Production performs every action; the fixture places objects and gets out of the way.
+
+**The run.** One player turn, 446 s, `steerObserved=true`; fixture recorded in the
+artifact as `configuredFixtureScenario=native_play_session_v1`.
+
+| action | dispatches | terminals | refusals | verdict |
+|---|---|---|---|---|
+| `move_to_tile` | 16 | 0 | `no_native_path` ×10 | **blocked** |
+| `harvest_crop` | 5 | 2 × `crop_harvested` | `target_out_of_range` ×3 | succeeded |
+| `cut_weeds` | 2 | 2 × `weeds_cut` | — | succeeded |
+| `equip_tool` | 2 | 2 × `tool_equipped` | — | succeeded |
+| `break_rock_source` | 1 | `rock_source_broken` | — | succeeded |
+| `cut_grass` | 1 | `grass_cut` | — | succeeded |
+| `plant_seed` | 1 | `seed_planted` | — | succeeded |
+| `express_emote` | 1 | terminal | — | succeeded |
+
+`advertisedCount=67`, `advertisedSampleCount=2`, `advertisedAxisUsable=true`,
+`notAttempted=59 of 67` — the companion used 8 of the 67 capabilities it could see.
+Its own closing report names the stall in player terms: crops and weeds "围成了迷宫",
+so it never reached the house, chests or machines — which is exactly what the audit
+independently shows.
+
+**Outcome: rung `blocked`, on the companion-quality axis only.**
+`interactionAssessment={passed:false, reasons:["summary_too_long"], length:176}`. Every
+action that reached a native terminal is real (inventory/stamina/durability/warp
+postconditions), so this is not a capability failure — it is the companion
+over-reporting after doing the work, which is what the goal's wording forbids. Ladder 6
+is included in the interaction gate precisely so that axis is not off (it was, until
+this run).
+
+**Two harness defects the runs caught (both now fixed and guarded).**
+1. The turn machinery was extracted into a module-level function that referenced `tools`
+   from a **block-scoped** declaration: the first real run failed with
+   `ReferenceError: tools is not defined` at the admission callback. Fixed by passing
+   the handle explicitly. It is a harness defect the rung reported as `blocked`
+   (+`steerObserved=false`, `bridgeFacts=0`) instead of a hollow pass.
+2. `fixtureScenario("play_session", …)` resolved to the **strawberry-covenant**
+   fixture, so an earlier run armed the wrong world and proved nothing about the
+   fixture it was supposed to exercise: the play-session action set publishes
+   `harvest_crop` + `ship_item`, which is exactly the covenant's fallback trigger, and
+   the action-keyed override sat *after* that fallback. Fixed by moving the key into
+   the action-keyed branch group, and guarded by
+   `tools/stardew-fixture-scenario-resolution.test.mjs`, which asserts that every
+   action-keyed branch is reachable through its own action set (mutation-verified: with
+   the ordering restored to the broken shape, the guard fails and names
+   `play_session → native_strawberry_covenant_v1`).
+
+**What this run cannot prove.** One run, one world, one model: no baseline and no
+repeat. `notAttempted` names 59 capabilities the session never touched, and 8 of them
+(`shop`-like, `machine_*`, `chest_*`, `travel`, `observe_scene`…) stay unproven as
+*playable* by this evidence. The interaction verdict is a length threshold, not a
+judgement of the report's content. Model non-determinism is uncontrolled; a second run
+will differ in both coverage and wording.

@@ -15,7 +15,6 @@ import {
 const BUNDLE_FILES = [
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
-  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ];
@@ -388,11 +387,11 @@ test("navigation mutation fixture activates the bridge only inside its reversibl
 
   const prepared = await prepareNativeLocalPlayerFixture(options);
   assert.equal(
-    await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
-    "release-Raffinert.FuzzySharp.dll",
+    await readFile(join(options.modRoot, "GameBuddy.Stardew.deps.json"), "utf8"),
+    "release-GameBuddy.Stardew.deps.json",
   );
   const backupManifest = JSON.parse(await readFile(join(prepared.backup, "manifest.json"), "utf8"));
-  assert.ok(backupManifest.entries.some((entry) => entry.name === "Raffinert.FuzzySharp.dll"));
+  assert.ok(backupManifest.entries.some((entry) => entry.name === "GameBuddy.Stardew.deps.json"));
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.equal(configured.EnableLocalBridge, true);
   assert.deepEqual(configured.EnabledActions, [
@@ -414,8 +413,8 @@ test("navigation mutation fixture activates the bridge only inside its reversibl
   const restored = JSON.parse(await readFile(configPath, "utf8"));
   assert.equal(restored.EnableLocalBridge, false);
   assert.equal(
-    await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
-    "original-Raffinert.FuzzySharp.dll",
+    await readFile(join(options.modRoot, "GameBuddy.Stardew.deps.json"), "utf8"),
+    "original-GameBuddy.Stardew.deps.json",
   );
 });
 

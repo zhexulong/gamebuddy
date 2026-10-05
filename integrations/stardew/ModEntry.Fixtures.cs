@@ -307,7 +307,7 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -973,6 +973,18 @@ public sealed partial class ModEntry : Mod
                 // strawberry is ever shipped. The fixture never harvests, never
                 // ships and never touches the bin.
                 InitializeNativeLocalStrawberryCovenantFixture(player, farm);
+                return;
+            }
+            if (fixture.FixtureScenario == "native_play_session_v1")
+            {
+                // Ladder 6 (self-directed play session). The declared Given is a
+                // farm offering SEVERAL independent affordances plus the tools to
+                // act on them — and nothing else: no quest, no order, no expected
+                // chain. Production alone cuts, breaks, harvests, plants, waters
+                // and ships; the fixture never performs any of it. Its whole job is
+                // to make the session's capability audit meaningful by offering
+                // more than one thing worth doing.
+                InitializeNativeLocalPlaySessionFixture(player, farm);
                 return;
             }
             if (fixture.FixtureScenario == "native_pickup_forage_v1")
@@ -3019,6 +3031,120 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // native-local player fixture to publish its pipe after SaveLoaded.
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized strawberry-covenant fixture before bridge attachment: crop={(int)crop.Value.Key.X},{(int)crop.Value.Key.Y}; protected_harvest={protectedHarvestId}; bin={bin.tileX.Value},{bin.tileY.Value}; bin_empty=true; item_precarried=false; production alone harvests and must never ship the protected item.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// Ladder 6 (self-directed play session) world.
+    ///
+    /// A play session is only auditable if there is more than one thing worth
+    /// doing, so the fixture provisions an independent spread of REAL native
+    /// affordances on the Farm — weeds, a grass tuft, a breakable stone, a mature
+    /// crop, untilled soil, and the tools to work them (Hoe, filled Watering Can,
+    /// Scythe, cauliflower seeds) — and then gets out of the way. It performs no
+    /// action itself: production alone cuts, breaks, harvests, plants, waters and
+    /// ships, exactly as the per-action fixtures do. Nothing here is tailored to a
+    /// chain, which is the point: the rung measures what the companion chooses to
+    /// do with a farm, not whether a scripted sequence ran.
+    /// </summary>
+    private void InitializeNativeLocalPlaySessionFixture(Farmer player, Farm farm)
+    {
+        // Tools first: a session that cannot act is not a session. Same ids and
+        // idempotence as the ladder-3 farming fixture so the world is one a real
+        // player starts with.
+        if (!player.Items.OfType<Hoe>().Any() && player.addItemToInventory(new Hoe()) is not null)
+            throw new InvalidOperationException("fixture_native_local_play_session_hoe_inventory_full");
+        if (!player.Items.OfType<Hoe>().Any())
+            throw new InvalidOperationException("fixture_native_local_play_session_hoe_missing_after_add");
+        WateringCan? can = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+        if (can is null)
+        {
+            if (player.addItemToInventory(new WateringCan()) is not null)
+                throw new InvalidOperationException("fixture_native_local_play_session_watering_can_inventory_full");
+            can = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+        }
+        if (can is null)
+            throw new InvalidOperationException("fixture_native_local_play_session_watering_can_missing_after_add");
+        const string scytheId = "(W)47";
+        if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId)
+            && player.addItemToInventory(ItemRegistry.Create(scytheId, 1)) is not null)
+            throw new InvalidOperationException("fixture_native_local_play_session_scythe_inventory_full");
+        if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId))
+            throw new InvalidOperationException("fixture_native_local_play_session_scythe_missing_after_add");
+        const string cauliflowerSeedId = "(O)474";
+        if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0)
+            && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 2)) is not null)
+            throw new InvalidOperationException("fixture_native_local_play_session_seed_inventory_full");
+
+        // One real mature ordinary crop on the Farm: the target-version GrowCrops
+        // command supplies the mature state as the scenario's starting fact (the
+        // growth duration is scenario setup, not an Agent wait), exactly as the
+        // harvest fixtures do. Everything else on this farm stays untouched soil,
+        // so tilling and planting remain available to the session as well.
+        GameLocation? previousLocation = Game1.currentLocation;
+        try
+        {
+            Game1.currentLocation = farm;
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                || !Game1.game1.parseDebugInput("SpreadSeeds 474", null)
+                || !Game1.game1.parseDebugInput("GrowCrops 12", null))
+                throw new InvalidOperationException("fixture_native_local_play_session_farm_setup_unavailable");
+        }
+        finally
+        {
+            Game1.currentLocation = previousLocation;
+        }
+
+        // Sparse, independently-placeable affordances. Every placement reuses the
+        // same native emptiness/standability probe the per-action fixtures use, so
+        // a tile already claimed by an earlier placement is skipped rather than
+        // stacked; a farm that cannot host them fails closed instead of silently
+        // presenting a poorer world than the audit claims.
+        var provisioned = new List<string>();
+        Vector2? standingTile = null;
+        for (int index = 0; index < 2; index += 1)
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            if (spot is null)
+                throw new InvalidOperationException("fixture_native_local_play_session_weed_spot_missing");
+            StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
+            if (!weed.IsWeeds())
+                throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
+            farm.objects.Add(spot.Value.TargetTile, weed);
+            provisioned.Add($"weed={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            standingTile ??= spot.Value.StandingTile;
+        }
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            if (spot is null)
+                throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
+            farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
+            provisioned.Add($"grass={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            standingTile ??= spot.Value.StandingTile;
+        }
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            if (spot is null)
+                throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
+            farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
+            provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            standingTile ??= spot.Value.StandingTile;
+        }
+        if (standingTile is null)
+            throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
+
+        KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? ready = farm.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                && dirt.crop is not null
+                && !dirt.crop.forageCrop.Value
+                && dirt.readyForHarvest())
+            .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
+            .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
+            .FirstOrDefault();
+
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)    {

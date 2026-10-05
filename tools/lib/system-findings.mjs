@@ -103,29 +103,51 @@ export function summarizeSystemFindings(actionTrace) {
         severity: codes.size === 1 ? "high" : "medium",
         action,
         count: entries.length,
-        detail: `same action rejected ${entries.length}x with ${signatures.size} different args under ${codes.size} reason code(s) — the snapshot likely lacks enough targets`,
-        recommendation: "check discoverable targets for this action (radius/fields) before blaming the model",
+        detail: `same action rejected ${entries.length}x with ${signatures.size} different args under ${codes.size} reason code(s)`,
+        // The mechanism below is a HYPOTHESIS, not a conclusion: a real ladder run
+        // falsified the "the snapshot lacks targets" reading (8 of 10 refusals were
+        // within 2.24 tiles of the actor and the refusal envelope reported
+        // target_enclosed=false; the named tile was simply not a standable
+        // position). Findings must therefore state what would falsify them rather
+        // than assert the observation layer is at fault.
+        mechanismHypothesis:
+          "the observation layer may not expose a standable approach tile for the named target, or the target set may be too sparse to aim at",
+        falsificationCheck:
+          "falsified if refusals cluster within a few tiles of the actor while the refusal envelope reports the target is reachable/not enclosed (then the seam is the refusal cause, not discovery)",
+        recommendation: "compare refusal distances with the refusal envelope before attributing this to discovery",
         sampleCodes: [...codes],
       });
     }
   }
 
   // Finding 2: exact retry of an identical rejected request (no new info).
+  // Aggregated PER ACTION: the earlier per-(action,args,reason) emission produced
+  // findings that were byte-identical for one action while carrying different
+  // counts, which made run-to-run comparison meaningless.
   const identicalRetries = {};
   for (const entry of rejected) {
-    const key = `${entry?.action ?? "?"}|${JSON.stringify(entry?.args ?? null)}|${entry?.reasonCode ?? "?"}`;
-    identicalRetries[key] = (identicalRetries[key] ?? 0) + 1;
+    const action = entry?.action ?? "?";
+    const bucket = (identicalRetries[action] ??= { total: 0, keys: new Set(), codes: new Set() });
+    bucket.keys.add(JSON.stringify(entry?.args ?? null));
+    bucket.codes.add(entry?.reasonCode ?? "?");
   }
-  for (const [key, count] of Object.entries(identicalRetries)) {
-    if (count < 2) continue;
-    const [action] = key.split("|");
+  for (const entry of rejected) {
+    const action = entry?.action ?? "?";
+    const key = `${JSON.stringify(entry?.args ?? null)}|${entry?.reasonCode ?? "?"}`;
+    const bucket = identicalRetries[action];
+    (bucket.counts ??= new Map()).set(key, (bucket.counts?.get(key) ?? 0) + 1);
+  }
+  for (const [action, bucket] of Object.entries(identicalRetries)) {
+    const repeated = [...(bucket.counts ?? new Map()).entries()].filter(([, count]) => count >= 2);
+    if (repeated.length === 0) continue;
+    const count = repeated.reduce((total, [, value]) => total + value, 0);
     findings.push({
       id: "identical_retry",
       component: "orchestration",
       severity: "medium",
       action,
       count,
-      detail: "the exact same rejected request was re-issued — the agent saw no new information between attempts",
+      detail: `${repeated.length} identical rejected request(s) re-issued (${[...bucket.codes].join(",")}) — the agent saw no new information between attempts`,
       recommendation: "rejected requests should carry actionable next-step hints so a retry is never information-free",
     });
   }
@@ -137,7 +159,11 @@ export function summarizeSystemFindings(actionTrace) {
         id: "dominant_rejection",
         component: componentOf(code),
         severity: "high",
-        action: code,
+        // `action` is an action id everywhere else in this shape; a reason code
+        // here was a type lie that a reader (and any comparison tool) would take
+        // for an action name.
+        action: null,
+        reasonCode: code,
         count,
         detail: `${code} is ${Math.round((count / totalRejected) * 100)}% of ${totalRejected} rejections`,
         recommendation: `a single reason dominating the rejection stream usually means a systemic precondition — audit ${componentOf(code)} layer`,
