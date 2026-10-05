@@ -49,6 +49,7 @@ import {
 import { readStrictJsonFile } from "../../../strict-json-reader.js";
 import type { Scope } from "../../../protocol.js";
 import { createStardewRoleLifecycleFacade } from "../../../stardew-role-lifecycle-facade.js";
+import { ContainmentRoleAlreadyContainedError } from "../../../containment/runtime/contract/game-runtime.js";
 import type {
   TypedPrivateGameAuthorizationProducer,
   TypedPrivateGameFacts,
@@ -3631,11 +3632,14 @@ function createStardewBootstrapOwnerTransitionPrimitives(
     containRecoveringRole: (role, revision, recoveryInstanceId) => transition(revision, (current) => {
       if (current.state !== "recovering" || current.guardianState !== "recovering") throw new Error("stardew_bootstrap_owner_transition_invalid");
       // A role this recovery already contained is not a transition that is still
-      // available. It fails closed with its own error so a driver that resumed a
-      // crashed recovery can tell "already contained" from a wrong state and
-      // drive only the roles it actually recovered.
+      // available. It fails closed with its own shared typed refusal so a driver
+      // that resumed a crashed recovery can tell "already contained" from a wrong
+      // state and drive only the roles it actually recovered. The refusal's
+      // identity comes from the platform contract because the recovery wire - the
+      // driver that must tolerate exactly this case - cannot see this engine's
+      // message.
       if ((role === "playerHost" ? current.playerHostState : current.aiClientState) === "contained")
-        throw new Error("stardew_bootstrap_owner_recovery_role_already_contained");
+        throw new ContainmentRoleAlreadyContainedError("stardew_bootstrap_owner_recovery_role_already_contained");
       return changeRole(current, role, "contained");
     }, recoveryInstanceId),
     finalizeControlledContained: (revision) => transition(revision, (current) => {

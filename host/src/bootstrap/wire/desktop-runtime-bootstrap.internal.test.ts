@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,6 +16,13 @@ import type {
   DesktopGuardianRecoveryTransport,
   GuardianRecoveryRole,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
+import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/contract/game-runtime.js";
+// The durable engine on the other side of this wire, imported so the tolerance
+// both share is proven against the refusal the engine actually throws instead of
+// against a copy of its message.
+import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
+import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -333,6 +342,12 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     const containmentCore = join(moduleDirectory, "containment", "runtime", "core", "contained-game-runtime.js");
     await mkdir(dirname(containmentCore), { recursive: true });
     await cp(resolve(compiledRoot, "containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
+    // The recovery wire tolerates the durable engine's refusal by the identity the
+    // platform contract exports, so the bootstrap module imports that contract at
+    // runtime; the fixture copies it the same way it copies the runtime core.
+    const containmentContract = join(moduleDirectory, "containment", "runtime", "contract", "game-runtime.js");
+    await mkdir(dirname(containmentContract), { recursive: true });
+    await cp(resolve(compiledRoot, "containment", "runtime", "contract", "game-runtime.js"), containmentContract);
     const composerCorePath = join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.core.js");
     await mkdir(dirname(composerCorePath), { recursive: true });
     await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports these seams but\n// never invokes them; the fixture keeps the module graph self-contained instead of\n// dragging in the whole composer core closure.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function consumeStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function settleOwnedPlayerHostContainedRuntimeAttempt() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
@@ -454,11 +469,18 @@ function workerSource(moduleDirectory: string, guardianInstanceId: string, attem
   // The composition mock runs the session operations only for scenarios that
   // must exercise the authenticated wire. ack-write/termination scenarios keep
   // the mock inert so the failure under test is observable before any op.
+  //
+  // The operation's rejection is consumed by close(), which is the path the
+  // worker reports and exits on, so the fixture marks it handled at the source.
+  // Left unhandled, Node's default rejection reporter races the fixture's SIGTERM
+  // cleanup and dumps the whole worker module source into stderr; that source
+  // spells the outcome marker the fail-closed assertion below forbids, so the
+  // assertion would read the crash report instead of what the worker wrote.
   const composition = scenario === "composition-failure"
      ? `createDesktopProductComposition() { throw new Error("composition_construction_failed"); }`
      : scenario === "ack-write-failure" || scenario === "termination-failure"
        ? `createDesktopProductComposition(_rootLayoutCapability, session) { return { async close() { await session.close(); } }; }`
-       : `createDesktopProductComposition(_rootLayoutCapability, session, assemblyInput) { process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n"); assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:4444/#profile=reference&boot=fixture"); process.stderr.write("wire_publish_ready:called\\n"); const operationTask = (async () => { ${operation} })(); return { async close() { await operationTask; await session.close(); } }; }`;
+       : `createDesktopProductComposition(_rootLayoutCapability, session, assemblyInput) { process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n"); assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:4444/#profile=reference&boot=fixture"); process.stderr.write("wire_publish_ready:called\\n"); const operationTask = (async () => { ${operation} })(); void operationTask.catch(() => undefined); return { async close() { await operationTask; await session.close(); } }; }`;
   return `${setup}\nimport { mock } from "node:test";\nawait mock.module(${JSON.stringify(compositionUrl)}, { namedExports: { ${composition} } });\nconst { runDesktopHostBootstrap } = await import(${JSON.stringify(bootstrapUrl)});\ntry { await runDesktopHostBootstrap(${JSON.stringify(moduleDirectory)}); } catch (error) { process.stderr.write(String((error instanceof Error ? error.message : error) ?? "desktop_runtime_bootstrap_unavailable") + "\\n"); process.exit(1); }`;
 }
 
@@ -502,6 +524,12 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.match(source, /typeof process\.send !== "function" \|\| process\.connected !== true\)/);
   assert.match(source, /consumeDesktopGuardianSessionCapability\(guardianAuthority\)/);
   assert.doesNotMatch(source, /stardew/);
+  // The recovery wire tolerates the durable engine's refusal by the identity the
+  // platform contract exports: it keeps no message to compare and no game-name
+  // literal to fall back on, because a message match is exactly what silently
+  // re-broke a resumed recovery.
+  assert.match(source, /import \{ ContainmentRoleAlreadyContainedError \} from "\.\.\/\.\.\/containment\/runtime\/contract\/game-runtime\.js"/);
+  assert.doesNotMatch(source, /role_already_contained/);
   assert.doesNotMatch(source, /stardew-production-lifecycle-coordinator/);
   assert.doesNotMatch(source, /stardew-player-host-process-owner/);
   assert.doesNotMatch(source, /stardew-ai-client-process-owner/);
@@ -665,12 +693,15 @@ test("recovery conversation writes the five Desktop frames in exact ordinal key 
 });
 
 /**
- * The durable role CAS error token that means "this record already holds this role
- * as contained" (`containRecoveringRole`, stardew-private-bootstrap-composer.core).
+ * The durable role CAS refusal that means "this record already holds this role as
+ * contained" (`containRecoveringRole`, stardew-private-bootstrap-composer.core).
  * A resumed recovery meets it for every role the crashed conversation had already
- * recorded before its CAS acknowledgement was written.
+ * recorded before its CAS acknowledgement was written, and it reaches the wire as
+ * the platform contract's typed identity rather than as this message: the message
+ * text carries no authority, so nothing here may depend on it.
  */
-const recoveryRoleAlreadyContained = "stardew_bootstrap_owner_recovery_role_already_contained";
+const recoveryRoleAlreadyContained = (): Error =>
+  new ContainmentRoleAlreadyContainedError("stardew_bootstrap_owner_recovery_role_already_contained");
 
 /** The same conversation input, with the durable role step replaced by the test's own. */
 function resumedRecoveryInput(events: string[], roleContained: (role: GuardianRecoveryRole) => Promise<void>): DesktopGuardianRecovery {
@@ -689,7 +720,7 @@ test("recovery completes a resume whose first role the record already holds as c
   // the durable record already holds it and refuses the transition.
   const outcome = await driveGuardianRecoveryConversation(harness.transport, recoveryBinding, resumedRecoveryInput(harness.events, async (role) => {
     harness.events.push(`roleContained:${role}`);
-    if (role === "playerHost") throw new Error(recoveryRoleAlreadyContained);
+    if (role === "playerHost") throw recoveryRoleAlreadyContained();
   }));
 
   assert.deepEqual(outcome, { outcome: "contained" });
@@ -734,7 +765,7 @@ test("recovery completes a resume whose every recorded role is already contained
   ]);
   const outcome = await driveGuardianRecoveryConversation(harness.transport, recoveryBinding, resumedRecoveryInput(harness.events, async (role) => {
     harness.events.push(`roleContained:${role}`);
-    throw new Error(recoveryRoleAlreadyContained);
+    throw recoveryRoleAlreadyContained();
   }));
 
   assert.deepEqual(outcome, { outcome: "contained" });
@@ -781,13 +812,154 @@ test("recovery still fails closed on a durable role CAS that was not already rec
     () => driveGuardianRecoveryConversation(aiRefused.transport, recoveryBinding, resumedRecoveryInput(aiRefused.events, async (role) => {
       aiRefused.events.push(`roleContained:${role}`);
       if (role === "aiClient") throw new Error("stardew_bootstrap_owner_transition_mismatch");
-      throw new Error(recoveryRoleAlreadyContained);
+      throw recoveryRoleAlreadyContained();
     })),
     /stardew_bootstrap_owner_transition_mismatch/,
   );
   assert.deepEqual(aiRefused.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt", "recovery_role_cas_ack"]);
   assert.deepEqual(aiRefused.events.filter((event) => event.startsWith("roleContained")), ["roleContained:playerHost", "roleContained:aiClient"]);
 });
+
+/**
+ * The guard this lane exists for: the refusal the durable engine throws and the
+ * refusal the recovery wire tolerates are connected by one test that runs both
+ * real sides, not by two tests that each restate their own.
+ *
+ * The engine is driven against a real crashed record, the error it actually
+ * throws drives the real recovery conversation, and the wire is then asked for
+ * the same refusal rebuilt as a plain Error - exactly what the retired message
+ * match accepted. Renaming the engine's refusal, re-typing it, or widening the
+ * wire back to a message comparison fails here and nowhere else.
+ */
+test("the durable composer refusal and the recovery wire share one identity, not one message", async () => {
+  // Every `withPathLock` the durable engine runs goes through the bound
+  // stale-lock reclaimer capability, so the guard binds the test-only one.
+  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-recovery-identity-"));
+  const recoveryInstanceId = "66666666-6666-4666-8666-666666666666";
+  try {
+    const persistedOwner = join(root, "stardew-private-bootstrap", "bootstrap-1", "owner.json");
+    await mkdir(dirname(persistedOwner), { recursive: true });
+    // A crash that left the durable attempt mid-recovery with the Player role
+    // already contained and its CAS acknowledgement unwritten: the exact predecessor
+    // a resumed recovery opens, in the composer's strict v4 record shape.
+    await writeFile(persistedOwner, JSON.stringify({
+      schema: "gamebuddy-stardew-private-bootstrap-owner/v4",
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: {
+        bindingRevision: "44444444-4444-4444-8444-444444444444",
+        guardianInstanceId: "11111111-1111-4111-8111-111111111111",
+        guardianEpoch: 1,
+        leaseName: "Local\\GameBuddy-Lease-1",
+        playerJobName: "Local\\GameBuddy-PlayerJob-1",
+        aiJobName: "Local\\GameBuddy-AiJob-1",
+      },
+      ownerRecordRevision: 4,
+      state: "recovering",
+      guardianState: "recovering",
+      playerHostState: "contained",
+      aiClientState: "active",
+      recoveryInstanceId,
+      playerHost: { kind: "external_unattested" },
+      aiClient: { kind: "launch_reserved", launchGeneration: "generation-1" },
+      expiresAtMs: 1_000_000,
+      cleanupDisposition: "pending",
+      managedPaths: ["owner.json"],
+    }), "utf8");
+
+    const opened = await openRecoverableStardewBootstrapOwner({
+      transactionRoot: root,
+      bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+    });
+    let engineRefusal: unknown;
+    try {
+      await opened.transitions.recoveryRoleContained("playerHost", recoveryInstanceId);
+    } catch (error) {
+      engineRefusal = error;
+    }
+    assert.ok(
+      engineRefusal instanceof ContainmentRoleAlreadyContainedError,
+      `the durable engine must refuse an already contained role with the shared platform identity, got ${String(engineRefusal)}`,
+    );
+    const engineRefusalMessage = (engineRefusal as Error).message;
+
+    // The wire tolerates the refusal the engine really threw...
+    const tolerated = recoveryHarness([
+      recoveryAcknowledgement("recovery_accepted"),
+      recoveryAcknowledgement("player_contained"),
+      recoveryAcknowledgement("ai_contained"),
+      recoveryAcknowledgement("contained"),
+    ]);
+    assert.deepEqual(
+      await driveGuardianRecoveryConversation(tolerated.transport, recoveryBinding, resumedRecoveryInput(tolerated.events, async (role) => {
+        tolerated.events.push(`roleContained:${role}`);
+        if (role === "playerHost") throw engineRefusal;
+      })),
+      { outcome: "contained" },
+    );
+
+    // ...and only that identity: the same refusal rebuilt as a plain Error - what a
+    // message comparison accepted - still closes the recovery session, before the
+    // refused role's acknowledgement is written.
+    const lookAlike = recoveryHarness([
+      recoveryAcknowledgement("recovery_accepted"),
+      recoveryAcknowledgement("player_contained"),
+      recoveryAcknowledgement("ai_contained"),
+    ]);
+    await assert.rejects(
+      () => driveGuardianRecoveryConversation(lookAlike.transport, recoveryBinding, resumedRecoveryInput(lookAlike.events, async () => {
+        throw new Error(engineRefusalMessage);
+      })),
+      (error: unknown) => error instanceof Error && error.message === engineRefusalMessage,
+    );
+    assert.deepEqual(lookAlike.frames.map((frame) => frame.operation), ["recover_attempt", "recovery_post_cas", "recover_attempt"]);
+  } finally {
+    bindWindowsStaleLockReclaimer(undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Minimal stale-lock reclaimer helper process for the path-lock release step.
+ *
+ * The real helper is a signed native artifact; its protocol version 1 admits
+ * `release_owned_lock` with the exact owning token, and the test-only capability
+ * exists precisely so focused suites can stand in for it. Only the release step
+ * of the guard's `withPathLock` reaches this, and it must delete the lock leaf
+ * while the token still matches, so the helper speaks that one operation.
+ */
+function simulatedLockHelper(): ChildProcess {
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => true,
+  });
+  child.stdin.on("data", (chunk: Buffer) => {
+    void (async () => {
+      const request = JSON.parse(chunk.toString("utf8")) as Readonly<{ operation: string; token?: string; root: string; segments: readonly string[] }>;
+      const lockPath = resolve(request.root, ...request.segments);
+      let result = "indeterminate";
+      try {
+        const owner = JSON.parse(await readFile(lockPath, "utf8")) as Readonly<{ token?: unknown }>;
+        if (request.operation === "release_owned_lock" && owner.token === request.token) {
+          await rm(lockPath, { force: true });
+          result = "released";
+        } else {
+          result = "kept_token_mismatch";
+        }
+      } catch (error) {
+        result = (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "kept_not_regular";
+      }
+      child.stdout.end(`{"schemaVersion":1,"result":"${result}"}\n`);
+      child.stderr.end();
+      queueMicrotask(() => child.emit("close", 0, null));
+    })();
+  });
+  return child as unknown as ChildProcess;
+}
 
 test("recovery reads the shared `unavailable` status by position, never by its text", async () => {
   // At the gate position the same text means the Guardian refused to open the
