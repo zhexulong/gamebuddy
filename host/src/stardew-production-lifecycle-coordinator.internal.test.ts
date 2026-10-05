@@ -4280,6 +4280,237 @@ test("game.create attach failure after registration goes terminal binding + fail
   }
 });
 
+test("game.create whose first AI activation bridge retry expires settles durably and the next create re-arms through the core", async () => {
+  // N2: the retry wait could expire and escape the activation without rolling
+  // the core back, leaving the owner's AI launch claimed while its bridge
+  // connection stayed armed. The next create then asked the core for a fresh
+  // generation, was refused as "not available", and reported a permanent
+  // `accepted` that never progresses.
+  const fake = fakeGameSessionCreationAuthority();
+  const realDateNow = Date.now;
+  let allowAttach = false;
+  let facadeEnterCalls = 0;
+  let ingressActivationCalls = 0;
+  const connectGenerations: string[] = [];
+  const transientPipeNotReady = Object.assign(new Error("controlled_pipe_not_ready"), { code: "ENOENT" });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+      connectFarmhandGameRuntimeFacade: async (connection) => {
+        connectGenerations.push(connection.launchGeneration);
+        // The AI client is launched and running; only its bridge pipe never
+        // becomes connectable, so every attempt is the transient retry case.
+        if (!allowAttach) throw transientPipeNotReady;
+        return Object.freeze({
+          authority: "SEMANTIC" as const,
+          runEnter: async () => {
+            facadeEnterCalls += 1;
+            return connectedSemanticGameLeaseFixture({ onActivate: () => { ingressActivationCalls += 1; } });
+          },
+          recoverDeadOwner: async () => undefined,
+          close: async () => undefined,
+        });
+      },
+    },
+  });
+  try {
+    // Producer: launch-before-create already attested the Player Host, so this
+    // create re-admits its own manifest handoff and then runs the owner's FIRST
+    // activation: the AI client is launched through the untouched reservation
+    // (ai-generation-1) and the bridge is retried until the create's own
+    // activation deadline expires.
+    const firstRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, firstRequestId, availableCabins[0]!);
+    // Waiting for the launch itself (the connect attempt always follows it) keeps
+    // this bounded well under the create's own activation deadline.
+    await waitFor(() => fixture.spawnCalls.length >= 1, 2_000);
+    // The create's own activation deadline is `min(browser session expiry,
+    // now + 60s)`, so skewing the process clock past it expires the retry wait
+    // immediately instead of letting this test sleep for a minute. Restored
+    // before the second create, which must run on the real clock.
+    Date.now = () => realDateNow() + 60_000;
+    const first = await creating;
+    Date.now = realDateNow;
+    // Consumer/verifier: an expired activation is a real failure of this
+    // create and settles through the ONE durable closure (the post-registration
+    // shape), never a silent `accepted` that leaves a resumable half-record.
+    assert.deepEqual(first, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(first), true);
+    const failed = fake.sessions();
+    assert.equal(failed.length, 1);
+    const failedSessionId = failed[0]!.gameSessionId;
+    assert.deepEqual(fake.readBinding(failedSessionId), {
+      gameSessionId: failedSessionId, integrationId: "stardew",
+      bindingRef: `world-${failedSessionId.slice(0, 8)}`, status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.readMetadata(failedSessionId), {
+      gameSessionId: failedSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+    });
+    assert.deepEqual(fake.listResumable(), []);
+    assert.equal(connectGenerations.filter((generation) => generation === "ai-generation-1").length >= 1, true);
+    assert.equal(facadeEnterCalls, 0);
+    assert.equal(ingressActivationCalls, 0);
+    // Consumer: the next create in the SAME lifecycle must still work. It asks
+    // the core again, and the expired activation was rolled back to the fully
+    // consumed base, so the core admits a genuinely new generation
+    // (ai-generation-2) instead of refusing the re-arm.
+    allowAttach = true;
+    const secondRequestId = await attachmentRequestId(fixture.runtimeRoot);
+    const creatingAgain = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    await publishNextAttachmentAdmission(fixture.runtimeRoot, secondRequestId, availableCabins[0]!);
+    const second = await creatingAgain;
+    assert.equal(second.status, "attached");
+    assert.match(second.gameSessionId ?? "", /^[A-Za-z0-9_-]{32}$/);
+    assert.notEqual(second.gameSessionId, failedSessionId);
+    assert.equal(fake.listResumable().length, 1);
+    // Verifier: the re-arm ended the expired activation's AI client and the
+    // fresh generation reached the launch and the bridge, and the new session
+    // attached with actions paused.
+    assert.deepEqual(
+      fixture.spawnCalls.map((call) => call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION),
+      ["ai-generation-1", "ai-generation-2"],
+    );
+    assert.equal(connectGenerations.at(-1), "ai-generation-2");
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+    assert.equal(facadeEnterCalls, 1);
+    assert.equal(ingressActivationCalls, 1);
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 2, connectionStatus: "connected_idle",
+    });
+  } finally {
+    Date.now = realDateNow;
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+// N3: a launch callback entered before its launch promise failed still consumes
+// the owner's one-shot AI launch in the core, while both paths settle on a
+// quarantined exact owner. No coordinator-side latch survives either attempt --
+// the activation shape is asked of the core at every activation -- so a later
+// create can only fail closed on the terminal owner instead of being admitted
+// on a stale "untouched" decision.
+
+test("a cabin AI launch that claimed its reservation before failing leaves no stale activation for a later create", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    aiSpawnFailureAt: 1,
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      {
+        apiVersion: 1,
+        choiceHandle: choices.choices[0]!.choiceHandle,
+        idempotencyKey: "n3-cabin-launch-key",
+        confirmed: true,
+      },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // The launch was entered (the core consumed the reservation) and its spawn
+    // then failed: the cabin path settles uncertain and quarantines the owner.
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    // Verifier: a create over that exact owner is admitted by the lifecycle
+    // guards and must fail closed on the terminal owner before taking either
+    // activation shape, so no durable row and no second AI launch can appear.
+    const created = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.deepEqual(created, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.deepEqual(fake.inputs(), []);
+    assert.deepEqual(fake.sessions(), []);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    // The create really reached the owner re-attestation and terminated the
+    // exact owner there, rather than being refused earlier by a lifecycle guard.
+    assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+      generation: 0, status: "failed",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("a headless AI launch that claimed its reservation before failing leaves no stale activation for a later create", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  let runtimeRootForSession = "";
+  const fixture = await createFixture({
+    aiSpawnFailureAt: 1,
+    afterPlayerSpawn: () => {
+      publishSignedPlayerHostSessionSync(runtimeRootForSession, "player-generation-1", availableCabins);
+    },
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async (input) => Object.freeze({ bindingRef: `world-${input.gameSessionId.slice(0, 8)}` }),
+    },
+  });
+  runtimeRootForSession = fixture.runtimeRoot;
+  try {
+    const responder = setInterval(() => {
+      void (async () => {
+        try {
+          const request = await waitForAttachmentRequest(runtimeRootForSession);
+          await publishAttachmentAdmission(runtimeRootForSession, request, availableCabins[0]!);
+          clearInterval(responder);
+        } catch { /* transient: the request file appears once the handoff is issued */ }
+      })();
+    }, 10);
+    // The one-shot headless admission launched the Player Host, admitted its
+    // cabin, materialized the profile and then entered the AI launch callback,
+    // which is where the spawn failed.
+    await assert.rejects(
+      () => fixture.coordinator.headlessOperationalGame.activateHeadlessOperationalGame(fixture.manifest),
+      /controlled-ai-spawn-failure/,
+    );
+    clearInterval(responder);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    // Verifier: the later create fails closed on the terminal owner rather than
+    // reporting a permanent `accepted` on the consumed-but-unfinished
+    // activation.
+    const created = await fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    assert.deepEqual(created, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.deepEqual(fake.inputs(), []);
+    assert.deepEqual(fake.sessions(), []);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
+    // The create really reached the owner re-attestation and terminated the
+    // exact owner there, rather than being refused earlier by a lifecycle guard.
+    assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+      generation: 0, status: "failed",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
 test("game.create clears the previous resume lineage so the new session can be resumed without cross-session conflicts", async () => {
   const fake = fakeGameSessionCreationAuthority();
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
