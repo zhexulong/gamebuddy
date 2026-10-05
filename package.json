@@ -64,6 +64,8 @@
     "audit:stardew-native-local-runner-contract": "node tools/audit-stardew-native-local-runner-contract.mjs",
     "audit:stardew-fixture-scenario-wiring": "node tools/check-stardew-fixture-scenario-wiring.mjs",
     "test:stardew-fixture-scenario-wiring": "node --test tools/check-stardew-fixture-scenario-wiring.test.mjs",
+    "test:stardew-fixture-scenario-resolution": "node --test tools/stardew-fixture-scenario-resolution.test.mjs",
+    "test:game-ladder-live": "node --test tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs tools/lib/system-findings.test.mjs",
     "test:stardew-native-local-runner-contract": "node --test tools/audit-stardew-native-local-runner-contract.test.mjs",
     "test:stardew-native-local-runner-fixture-contract": "node --test tools/stardew-native-local-runner-fixture-contract.test.mjs",
     "check:gameplay-capability-catalog": "node tools/check-gameplay-capability-catalog.mjs",

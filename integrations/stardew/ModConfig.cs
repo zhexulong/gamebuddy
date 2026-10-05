@@ -160,6 +160,7 @@ public sealed class NativeLocalPlayerFixtureConfig
         // under test is that no harvested strawberry is ever shipped, so the
         // fixture never ships anything and never touches the bin.
         "native_strawberry_covenant_v1",
+        "native_play_session_v1",
         // Pure embodied-actor expression actions: Farmer.doEmote / Farmer
         // .faceDirection need no world object, inventory slot or prior action,
         // so this scenario provisions no fixture fact at all.

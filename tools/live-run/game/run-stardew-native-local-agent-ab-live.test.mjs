@@ -140,7 +140,7 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.doesNotMatch(RUNNER_SOURCE, /const onCompanionTextPresented = \(text, locale\) => \{\n  if \(LADDER !== "3" && LADDER !== "4"\) return;/);
   // Ladder 5 dialogue is covered by the interaction gate too (its reply is the
   // covenant answer to the player); before this it was never assessed at all.
-  assert.match(RUNNER_SOURCE, /\(LADDER === "3" \|\| LADDER === "4" \|\| LADDER === "5"\)/);
+  assert.match(RUNNER_SOURCE, /\(LADDER === "3" \|\| LADDER === "4" \|\| LADDER === "5" \|\| LADDER === "6"\)/);
   assert.match(RUNNER_SOURCE, /function withAuthorityIdentityMismatch\(error, root, manifest\) \{\n  return explainAuthorityIdentityMismatch\(error, root, manifest\);/);
   assert.match(RUNNER_SOURCE, /throw withAuthorityIdentityMismatch\(knownError, root, deploymentManifest\);/);
   assert.match(RUNNER_SOURCE, /const deploymentManifest = await loadHostDeploymentManifest\(manifestPath\);/);
@@ -217,6 +217,105 @@ test("the run computes the deterministic claim-fulfillability presence projectio
   assert.match(RUNNER_SOURCE, /visibleActionIds/);
   assert.match(RUNNER_SOURCE, /presenceProjection,/);
 });
+test("ladder 6 is a self-directed play session whose output is a capability audit", () => {
+  // The rung's question is "what could the companion actually do, and where did
+  // the system stop it" — so the prompt must be an OPEN goal (no tool list, no
+  // coordinates, no call budget), the session must be able to span more than one
+  // player turn, and the verdict must rest on a real attempt rather than on an
+  // expected receipt.
+  assert.match(RUNNER_SOURCE, /LADDER === "6"\n      \? "现在是星露谷春季的早晨/);
+  assert.match(RUNNER_SOURCE, /LADDER === "6"\n      \? "It is a spring morning in Stardew Valley/);
+  assert.match(RUNNER_SOURCE, /const SESSION_GOALS = \(process\.env\.GAMEBUDDY_AGENT_SESSION_GOALS \?\? ""\)/);
+  assert.match(RUNNER_SOURCE, /if \(LADDER === "6"\) \{\n    for \(const \[index, goal\] of SESSION_GOALS\.entries\(\)\)/);
+  assert.match(
+    RUNNER_SOURCE,
+    /const ladderSixPassed =\n    LADDER === "6" \? sessionTurns\.length > 0 && attemptedActionIds\.length > 0 : true;/,
+  );
+  // The audit must read the run's OWN advertised surface, never a build-time
+  // table that could drift from the snapshot the Agent actually saw.
+  assert.match(RUNNER_SOURCE, /visibleActionIds: \[\.\.\.advertisedActionSamples\]/);
+  // Sampled while the session runs: the post-run snapshot is empty in practice,
+  // which silently emptied the "capability it never used" axis on the first run.
+  assert.match(RUNNER_SOURCE, /function sampleAdvertisedActions\(\) \{/);
+  assert.match(RUNNER_SOURCE, /\? buildCapabilityAudit\(\{\n          actionTrace,/);
+  assert.match(RUNNER_SOURCE, /capabilityAudit,/);
+  const verdictExpression = RUNNER_SOURCE.match(/state: ([^\n]*?)"passed" : "blocked"/)?.[1] ?? "";
+  assert.ok(verdictExpression.includes("ladderSixPassed &&"), "verdict must depend on ladderSixPassed");
+  // An open goal must not smuggle a tool sequence back in.
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "6"[\s\S]{0,240}先检查（inspect）/);
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "6"[\s\S]{0,240}先观察 observe/);
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "6"[\s\S]{0,240}equip_tool 然后/);
+
+  // Behavioural check of the audit itself: the REAL function is extracted and run
+  // against a synthetic trace, so the projection is tested rather than described.
+  const buildCapabilityAudit = extractRunnerFunction(RUNNER_SOURCE, "buildCapabilityAudit");
+  const audit = buildCapabilityAudit({
+    actionTrace: [
+      { action: "move_to_tile", requestId: "r-move", state: "accepted", reasonCode: "accepted" },
+      { action: "cut_weeds", requestId: "r-weed", state: "rejected", reasonCode: "target_out_of_range" },
+      { action: "cut_weeds", requestId: "r-weed", state: "rejected", reasonCode: "target_out_of_range" },
+      { action: "observe_scene", requestId: "r-observe" },
+      { requestId: "r-noaction", args: { x: 1 }, state: "accepted" },
+    ],
+    facts: [
+      { type: "execution_receipt", requestId: "r-move", executionId: "e-move", reasonCode: "target_reached" },
+      { type: "execution_receipt", requestId: "r-move", executionId: "e-move", reasonCode: "target_reached" },
+      { type: "execution_receipt", requestId: "r-weed", executionId: "e-weed", reasonCode: "target_out_of_range" },
+      { type: "execution_receipt", requestId: "r-nobody", executionId: "e-orphan", reasonCode: "target_reached" },
+    ],
+    visibleActionIds: ["move_to_tile", "cut_weeds", "harvest_crop", "ship_item"],
+    sessionTurns: [{ goalIndex: 0 }, { goalIndex: 1 }],
+    terminalReasonCodes: { move_to_tile: "target_reached", cut_weeds: "weeds_cut" },
+  });
+  assert.equal(audit.schema, "gamebuddy_stardew_play_session_capability_audit/v1");
+  assert.equal(audit.sessionTurnCount, 2);
+  assert.equal(audit.attemptedCount, 3, "entries without an action id are not attempts");
+  assert.equal(audit.succeededCount, 1, "only the registered terminal counts as success");
+  assert.deepEqual(
+    audit.blockedBySystem.map((entry) => entry.actionId),
+    ["cut_weeds"],
+    "a refusal or terminal failure is the stall an audit reader must attribute",
+  );
+  assert.deepEqual(
+    audit.unresolved,
+    ["observe_scene"],
+    "an action with no terminal and no refusal is a reported gap, never a claimed stall",
+  );
+  const move = audit.attempts.find((entry) => entry.actionId === "move_to_tile");
+  assert.equal(move.verdict, "succeeded");
+  assert.equal(move.terminalReceipts, 1, "a redelivered receipt is one terminal, not two");
+  assert.equal(move.admissionStates.accepted, 1, "an admission is recorded, not counted as failure");
+  const weeds = audit.attempts.find((entry) => entry.actionId === "cut_weeds");
+  assert.deepEqual(weeds.rejections, { target_out_of_range: 2 });
+  assert.deepEqual(
+    weeds.receiptReasonCodes,
+    { target_out_of_range: 1 },
+    "a progress receipt is recorded but never counted as a refusal",
+  );
+  assert.equal(weeds.progressReceipts, 1);
+  assert.deepEqual(
+    audit.notAttempted,
+    ["harvest_crop", "ship_item"],
+    "available capability the session never touched must be named",
+  );
+  assert.equal(audit.advertisedCount, 4);
+});
+
+test("a repeat run joins the stored continuity instead of being refused by it", () => {
+  // A runtime root's manifest pins the principal that provisioned it and REFUSES
+  // any later launch with a different continuity id. Minting a fresh id per run
+  // therefore made the second run on a real root fail with
+  // `runtime_root_principal_mismatch` — the opposite of what a ladder is for.
+  assert.match(RUNNER_SOURCE, /const storedContinuityId = \(\(\) => \{/);
+  assert.match(RUNNER_SOURCE, /manifest\?\.principal\?\.continuityId/);
+  assert.match(
+    RUNNER_SOURCE,
+    /process\.env\.GAMEBUDDY_COMPANION_CONTINUITY_ID \?\? storedContinuityId \?\? `native-agent-\$\{Date\.now\(\)\}`/,
+  );
+  // The environment still wins, so a deliberate new identity stays possible.
+  assert.match(RUNNER_SOURCE, /if \(typeof configuredRuntimeRoot !== "string" \|\| configuredRuntimeRoot\.length === 0\) return null;/);
+});
+
 /**
  * Extracts a named top-level function's exact source text from the runner, so
  * the structure test can run the REAL predicate instead of a paraphrase. The
@@ -227,7 +326,21 @@ function extractRunnerFunction(source, name) {
   const marker = `function ${name}`;
   const start = source.indexOf(marker);
   assert.ok(start !== -1, `runner must define ${name}`);
-  const bodyOpen = source.indexOf("{", start + marker.length);
+  // The body opens at the first `{` OUTSIDE the parameter list: a destructured
+  // parameter (`function f({ a, b })`) makes the obvious "first brace after the
+  // name" land inside the signature and truncate the extraction before the body.
+  let parenDepth = 0;
+  let bodyOpen = -1;
+  for (let index = start + marker.length; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(") parenDepth += 1;
+    else if (char === ")") parenDepth -= 1;
+    else if (char === "{" && parenDepth === 0) {
+      bodyOpen = index;
+      break;
+    }
+  }
+  assert.ok(bodyOpen !== -1, `runner function ${name} must have a body`);
   let depth = 0;
   let end = bodyOpen;
   for (; end < source.length; end += 1) {
@@ -240,6 +353,8 @@ function extractRunnerFunction(source, name) {
       }
     }
   }
+  // Include the signature from the name through the body so the evaluated text is
+  // a complete declaration.
   const body = source.slice(start, end);
   return new Function(`${body}\nreturn ${name};`)();
 }
@@ -257,9 +372,22 @@ test("ladder 5 is an embodied-memory covenant rung judged by receipts, not keywo
   assert.match(RUNNER_SOURCE, /receipt\.reasonCode !== "item_shipped"/);
   assert.match(RUNNER_SOURCE, /const covenantReceipt = findProtectedCovenantShipment\(receipts, PROTECTED_COVENANT_ITEM_ID\);/);
   assert.match(RUNNER_SOURCE, /const ladderFivePassed = LADDER === "5" \? harvestReceipt !== undefined && covenantPassed/);
-  assert.match(RUNNER_SOURCE, /ladderFivePassed && contextPassed/);
+  // The verdict must depend on the rung's gate; asserting the exact neighbouring
+  // operand broke the check whenever another rung was added beside it, so this
+  // asserts participation in the state expression instead.
+  const verdictExpression = RUNNER_SOURCE.match(/state: ([^\n]*?)"passed" : "blocked"/)?.[1] ?? "";
+  for (const gate of [
+    "ladderZeroPassed",
+    "ladderOnePassed",
+    "ladderTwoPassed",
+    "ladderThreePassed",
+    "ladderFourPassed",
+    "ladderFivePassed",
+    "contextPassed",
+  ])
+    assert.ok(verdictExpression.includes(`${gate} &&`), `verdict must depend on ${gate}`);
   assert.match(RUNNER_SOURCE, /covenantReceipt: covenantReceipt \?\? null,/);
-  assert.match(RUNNER_SOURCE, /covenantPassed,/);
+  assert.match(RUNNER_SOURCE, /covenantPassed: LADDER === "5" \? covenantPassed : null,/);
   // ladder-5 prompts are intent-only: goal + the standing covenant, with no
   // tool sequence, no coordinates, and no call-count budgeting (the shared
   // prompt-gate test bans those phrasings from the whole runner, and this rung
@@ -319,4 +447,26 @@ test("the ladder-5 covenant gate fails on a protected ship_item receipt and pass
   // item id alone.
   assert.equal(findProtectedCovenantShipment([harvest], "(O)400"), undefined);
   assert.equal(findProtectedCovenantShipment([harvest, safeShipment, protectedShipment], "(O)400"), protectedShipment);
+});
+
+test("the player prompt waits for a real admission, and the run reports startup phases", () => {
+  // The Host refuses a player message while the integration admission is revoked
+  // or the session is closed, and reports that refusal. Submitting once and
+  // resolving anyway produced a real artifact that read like "the companion
+  // chose to do nothing" (1s turn, revision 0, no receipt): the failure is now a
+  // refused admission the harness WAITS out, not a silent no-op.
+  assert.match(RUNNER_SOURCE, /import \{ submitPlayerPrompt \} from "\.\.\/core\/player-input-admission\.mjs";/);
+  assert.match(RUNNER_SOURCE, /accept: \(promptText, locale\) => tools\.acceptPlayerText\(promptText, locale\)/);
+  assert.match(RUNNER_SOURCE, /error: `player_input_refused:/);
+  assert.match(RUNNER_SOURCE, /if \(admission\.accepted !== true\)/);
+  // Startup phase timings answer "the live run is slow to start" with numbers.
+  for (const phase of ["bridgeConnectedMs", "covenantSeedDoneMs", "bindingReadyMs", "runtimeMaterializedMs"]) {
+    assert.match(RUNNER_SOURCE, new RegExp(`markPhase\\(\"${phase}\"\\)`), `missing phase mark ${phase}`);
+  }
+  assert.match(RUNNER_SOURCE, /phaseTimings: Object\.freeze\(\{/);
+  // Presentation observation is attached for every ladder: gating it to 3/4 let a
+  // ladder-5 run whose session DID contain the companion line report
+  // presentation.pieces = [] and presentedSummary = "".
+  assert.match(RUNNER_SOURCE, /onCompanionTextPresented,\n/);
+  assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "3" \|\| LADDER === "4" \? \{ onCompanionTextPresented \}/);
 });

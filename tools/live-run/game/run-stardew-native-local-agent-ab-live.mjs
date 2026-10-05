@@ -21,6 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,13 @@ import {
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
+// The registered terminal reason code per action is the only authority that can
+// tell a receipt that FINISHED an action from one that only progressed it. Read it
+// from the published gate table instead of guessing from reason-code wording.
+const TERMINAL_REASON_CODES = Object.freeze(
+  Object.fromEntries(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => [gate.actionId, gate.terminalReasonCode])),
+);
 import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
 import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../../../host/dist-test/stardew-game-integration-adapter.js";
 import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../../../host/dist-test/stardew-integration-launcher.js";
@@ -62,6 +70,7 @@ import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop
 import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
 // runtime root's OWN evidence (identity-profile.json, worldbook.json, the
@@ -100,6 +109,42 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // text. The runner is a single evolving live carrier; later ladders add their
 // own acceptance on top instead of new runners.
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
+// Ladder 6 (self-directed play session): instead of a scripted chain, the Agent
+// is handed an open play goal in a real save and decides what to do itself. The
+// rung's question is not "did chain X run" but "what could the companion
+// actually do, and where did the system stop it" — so it accepts any real
+// action attempt, records a per-capability audit, and stays `blocked` (never a
+// silent pass) when the session produced no attempt at all.
+//
+// Extra goals are delivered as further player turns after the previous one
+// settles, one per `|`-separated entry, so a session can be wide rather than
+// one-shot. Absent, the rung runs the single open goal above.
+const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
+  .split("|")
+  .map((goal) => goal.trim())
+  .filter((goal) => goal.length > 0);
+// Every turn the session delivered, with its own settle result. Only ladder 6
+// runs more than one; the array exists for all ladders so the result shape is
+// uniform.
+const sessionTurns = [];
+// What the companion could actually see during the session. Sampled WHILE the
+// session runs (the surface a turn can rely on), never read after teardown: the
+// post-run snapshot is empty in practice, which silently emptied the audit's
+// "capability it never used" axis on the first real run.
+const advertisedActionSamples = new Set();
+// How many times the surface was sampled and how large it was: without these a
+// reader cannot tell "the axis is empty because nothing was advertised" from "the
+// axis is empty because it was never sampled" — the first run's `advertisedCount:0`
+// was the second case and looked like the first.
+let advertisedSampleCount = 0;
+let advertisedSampleMaxSize = 0;
+function sampleAdvertisedActions() {
+  const advertised = client?.state?.snapshot?.capabilities;
+  if (!Array.isArray(advertised)) return;
+  advertisedSampleCount += 1;
+  advertisedSampleMaxSize = Math.max(advertisedSampleMaxSize, advertised.length);
+  for (const actionId of advertised) if (typeof actionId === "string") advertisedActionSamples.add(actionId);
+}
 // Ladder 5's protected item (design chat-long-horizon-memory-probe-design.md
 // §10.5 class 1): the strawberry qualified id that must never enter the
 // shipping bin. The runner asserts on the Mod receipt evidence field, so this
@@ -131,12 +176,38 @@ const config = JSON.parse(await readFile(configPath, "utf8"));
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
 // The continuity identity is product configuration too: GAMEBUDDY_COMPANION_CONTINUITY_ID
 // joins the companion's existing (Chat-provisioned) continuity so the same
-// identity-profile/worldbook are assembled; absent falls back to a run-scoped id
-// for disposable-root runs that intentionally own no persisted persona.
-const runContinuityId = process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? `native-agent-${Date.now()}`;
+// identity-profile/worldbook are assembled; absent falls back to the stored
+// principal for a configured root, and only then to a run-scoped id.
+//
+// Reusing the STORED principal matters: a runtime root's deployment manifest pins
+// the continuity that provisioned it and refuses any later launch carrying a
+// different one, so minting a fresh id per run made every repeat run on a real
+// root fail with `runtime_root_principal_mismatch` (the first run writes the
+// manifest, the second is refused) — the opposite of what a live-run ladder is
+// for. The environment still overrides this for a deliberate new identity.
+const storedContinuityId = (() => {
+  if (typeof configuredRuntimeRoot !== "string" || configuredRuntimeRoot.length === 0) return null;
+  try {
+    const manifest = JSON.parse(readFileSync(join(configuredRuntimeRoot, "manifest.json"), "utf8"));
+    const stored = manifest?.principal?.continuityId;
+    return typeof stored === "string" && stored.length > 0 ? stored : null;
+  } catch {
+    return null;
+  }
+})();
+const runContinuityId =
+  process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`;
 const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.CompanionId, continuityId: runContinuityId, saveId: config.SaveId, worldId: config.WorldId });
 const deadline = Date.now() + 600_000;
+// Startup phase timings. "The live run is slow to start" needs numbers, not
+// impressions: this separates the phases a reader can act on (bridge connect,
+// covenant seed, runtime materialization, agent turn) instead of one total.
+const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
+const markPhase = (name) => {
+  phaseTimings.marks[name] = Date.now() - phaseTimings.runStartedAtMs;
+};
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
+markPhase("bridgeConnectedMs");
 const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
@@ -289,6 +360,201 @@ client.onFact((fact) => {
 });
 
 /**
+ * ladder 0-5 delivered exactly one player turn; ladder 6 delivers a session.
+ * This is that one turn's machinery, extracted so every ladder shares it: admit
+ * the player text, wait for the turn to settle (or for a submitted program to
+ * reach a terminal), then judge whether the steer was actually OBSERVED.
+ *
+ * Audit MEDIUM-3: distinguish "settled because the session worked" from "settled
+ * but the player input may never have reached the session". The Host refuses a
+ * player message while the integration admission is revoked (overflow/disconnect)
+ * or after the session closed, and it now REPORTS that refusal; the harness waits
+ * for a real acceptance instead of submitting into the void. `steerObserved` stays
+ * an OBSERVED fact — any tool call, receipt or presented companion line means the
+ * steer reached the session; none of them observed means the result must say so
+ * instead of pretending the agent chose to do nothing.
+ */
+async function runAgentTurn(text, tools) {
+  turnStartedAtMs = Date.now();
+  sampleAdvertisedActions();
+  const agentTurn = (async () => {
+    try {
+      const admission = await submitPlayerPrompt({
+        accept: (promptText, locale) => tools.acceptPlayerText(promptText, locale),
+        text,
+        locale: "zh-CN",
+        timeoutMs: Number(process.env.GAMEBUDDY_PLAYER_INPUT_ADMISSION_MS ?? 90_000),
+      });
+      if (admission.accepted !== true) {
+        return {
+          settled: false,
+          error: `player_input_refused:${admission.lastRefusal ?? "unknown"}`,
+          admission,
+        };
+      }
+      return { settled: true, admission };
+    } catch (error) {
+      return { settled: false, error: String(error?.message ?? error), stack: error?.stack };
+    }
+  })();
+  let status = null;
+  let turn = null;
+  for (let i = 0; i < Number(process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? 600); i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
+    } catch {}
+    if (status?.code === "found" && ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)) break;
+    if (i % 10 === 0) console.error(JSON.stringify({ seconds: i, programStatus: status, agentProgramId, revision: client.state.snapshot?.revision }));
+    const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
+    if (quick !== null) { turn = quick; break; }
+  }
+  if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
+  turn.steerObserved =
+    (factLog ?? []).length > 0 ||
+    agentProgramId !== null ||
+    (typeof presentedSummary === "string" && presentedSummary.length > 0);
+  sampleAdvertisedActions();
+  if (turn.settled === true && turn.steerObserved === false)
+    turn.reason = "steer_may_have_been_silently_dropped";
+  return { turn, status };
+}
+
+/**
+ * ladder 6's capability/stall audit.
+ *
+ * A play session is only worth running if its outcome reads as "what the companion
+ * could actually do, what the system stopped, and what it never tried". Two
+ * authorities make that answerable from the trace alone:
+ *
+ *   - `actionTrace` records one entry per DISPATCH the Agent sent: the action, its
+ *     requestId, the admission state, or the throw when the dispatch was refused.
+ *     An admission (`accepted`) is NOT an outcome — the terminal arrives later as a
+ *     receipt fact, so counting admissions as failures invents stalls.
+ *   - `STARDEW_PUBLISHED_ACTION_GATES` names each action's terminal reason code, so
+ *     receipts can be joined to the action that caused them (by requestId, deduped
+ *     by executionId) and judged against the registered terminal rather than
+ *     against a heuristic list of "success-sounding" codes.
+ *
+ * Per action the audit therefore reports dispatches (with admission and rejection
+ * histograms) plus terminal receipts, and classifies:
+ *   blockedBySystem  dispatched, never reached its terminal, and the trace shows a
+ *                    refusal or a terminal failure — the stalls to attribute
+ *   unresolved       dispatched, never reached its terminal, and NO terminal or
+ *                    refusal was observed — a gap to report, never a claimed stall
+ *   failed           dispatched, reached a terminal failure code
+ *   succeeded        reached its registered terminal
+ *   notAttempted     advertised actions the session never dispatched, sampled from
+ *                    the LIVE surface (sampled while the session ran, not after it)
+ */
+function buildCapabilityAudit({
+  actionTrace,
+  facts,
+  visibleActionIds,
+  sessionTurns,
+  terminalReasonCodes = {},
+  advertisedSampleCount = 0,
+  advertisedSampleMaxSize = 0,
+}) {
+  const byAction = new Map();
+  const actionOfRequest = new Map();
+  const stateOf = (value) => (typeof value === "string" && value.length > 0 ? value : "unknown");
+  const bump = (table, key) => {
+    if (typeof key !== "string" || key.length === 0) return;
+    table[key] = (table[key] ?? 0) + 1;
+  };
+  for (const entry of actionTrace ?? []) {
+    if (typeof entry?.action !== "string") continue;
+    const current = byAction.get(entry.action) ?? {
+      actionId: entry.action,
+      dispatches: 0,
+      admissionStates: {},
+      rejections: {},
+      terminalReceipts: 0,
+      terminalReasonCodes: {},
+      // Non-terminal receipts are PROGRESS (accepted/controller_started/
+      // tile_advanced...). They are recorded for the reader but never counted as
+      // failures: only a dispatch refusal is unambiguous evidence of a stop, and
+      // claiming more than that would be the audit inventing a stall.
+      progressReceipts: 0,
+      receiptReasonCodes: {},
+    };
+    current.dispatches += 1;
+    const state = stateOf(entry.state);
+    bump(current.admissionStates, state);
+    // A refused dispatch never becomes a receipt, so its reason is recorded here.
+    if (state === "rejected" || state === "failed" || state === "uncertain") bump(current.rejections, stateOf(entry.reasonCode));
+    if (typeof entry.requestId === "string" && entry.requestId.length > 0)
+      actionOfRequest.set(entry.requestId, entry.action);
+    byAction.set(entry.action, current);
+  }
+
+  // Join receipts back to the action that caused them. The fact log carries no
+  // actionId, but it does carry requestId/executionId; deduplicating by
+  // executionId keeps the bridge's legitimate two-route redelivery from reading as
+  // a second run.
+  const seenExecution = new Set();
+  for (const fact of facts ?? []) {
+    if (fact?.type !== "execution_receipt") continue;
+    const actionId = typeof fact.requestId === "string" ? actionOfRequest.get(fact.requestId) : undefined;
+    if (actionId === undefined) continue;
+    const current = byAction.get(actionId);
+    if (current === undefined) continue;
+    const key = typeof fact.executionId === "string" && fact.executionId.length > 0 ? fact.executionId : `${fact.requestId}:${fact.reasonCode}`;
+    if (seenExecution.has(key)) continue;
+    seenExecution.add(key);
+    const terminal = terminalReasonCodes[actionId];
+    const code = stateOf(fact.reasonCode);
+    bump(current.receiptReasonCodes, code);
+    if (typeof terminal === "string" && code === terminal) {
+      current.terminalReceipts += 1;
+      bump(current.terminalReasonCodes, code);
+    } else {
+      current.progressReceipts += 1;
+    }
+  }
+
+  const reachedTerminal = (entry) => entry.terminalReceipts > 0;
+  const sawFailure = (entry) => Object.keys(entry.rejections).length > 0;
+  const attempted = [...byAction.values()]
+    .map((entry) =>
+      Object.freeze({
+        ...entry,
+        admissionStates: Object.freeze({ ...entry.admissionStates }),
+        rejections: Object.freeze({ ...entry.rejections }),
+        terminalReasonCodes: Object.freeze({ ...entry.terminalReasonCodes }),
+        receiptReasonCodes: Object.freeze({ ...entry.receiptReasonCodes }),
+        verdict: reachedTerminal(entry)
+          ? "succeeded"
+          : sawFailure(entry)
+            ? "blocked"
+            : "unresolved",
+      }),
+    )
+    .sort((left, right) => right.dispatches - left.dispatches || left.actionId.localeCompare(right.actionId));
+  const advertised = Array.isArray(visibleActionIds) ? visibleActionIds.filter((id) => typeof id === "string") : [];
+  return Object.freeze({
+    schema: "gamebuddy_stardew_play_session_capability_audit/v1",
+    sessionTurnCount: (sessionTurns ?? []).length,
+    attempts: Object.freeze(attempted),
+    attemptedCount: attempted.length,
+    succeededCount: attempted.filter(reachedTerminal).length,
+    // "The system blocked it" is a claim that needs evidence behind it: an action
+    // is only reported as a system stall when the trace shows a refusal or a
+    // terminal failure, and as `unresolved` when nothing terminal was observed at
+    // all. An audit that over-claims is worse than one that admits a gap.
+    blockedBySystem: Object.freeze(attempted.filter((entry) => entry.verdict === "blocked")),
+    unresolved: Object.freeze(attempted.filter((entry) => entry.verdict === "unresolved").map((entry) => entry.actionId)),
+    notAttempted: Object.freeze(advertised.filter((actionId) => !byAction.has(actionId)).sort()),
+    advertisedCount: advertised.length,
+    // Proof that the axis above was actually sampled while the session ran.
+    advertisedSampleCount,
+    advertisedSampleMaxSize,
+    advertisedAxisUsable: advertisedSampleCount > 0 && advertised.length > 0,
+  });
+}
+
+/**
  * ladder 2/3: stream one companion line through the configured Voice Gateway
  * and resolve with its terminal playback observation. Voice enablement is
  * configuration, not script content: the shared launcher attaches to a
@@ -398,13 +664,13 @@ const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
   try {
     const receipt = await originalExecute(request);
-    const entry = { action: request?.action, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
+    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
     return receipt;
   } catch (error) {
     const reasonCode = String(error?.message ?? error).replace(/^bridge_rejected:/, "");
-    const entry = { action: request?.action, args: request?.args, state: "rejected", reasonCode };
+    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: "rejected", reasonCode };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
     throw error;
@@ -523,7 +789,9 @@ if (LADDER === "5" && !usesDisposableRoot) {
   covenantSeed = Object.freeze({ durable: seeded.result.durable, rowCount: seeded.result.rowCount, markerCount: seeded.markers.length });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
 }
+markPhase("covenantSeedDoneMs");
 const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: deploymentManifest, launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
+markPhase("bindingReadyMs");
 let runtime;
 // Declared before the try so the failure path can report the same facts instead
 // of losing them when a later stage throws.
@@ -535,13 +803,21 @@ try {
     return createHostGameRuntimeMaterializer({
       gameOperationalGateNonceSha256: "a".repeat(64),
       companionLocale: COMPANION_LOCALE,
-      ...(LADDER === "3" || LADDER === "4" ? { onCompanionTextPresented } : {}),
+      // Attach the presentation observer for EVERY ladder. It was gated to 3/4,
+      // so a ladder-5 run could have the Agent speak (a real captured session
+      // holds its line) while the result reported `presentation.pieces: []` and
+      // `presentedSummary: ""` — an artifact that reads as "the companion said
+      // nothing" and that also means the run never presented the line in-game.
+      onCompanionTextPresented,
     }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
   }));
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
+  markPhase("runtimeMaterializedMs");
   const tools = runtime.connected.host;
   const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
-    ? (LADDER === "5"
+    ? (LADDER === "6"
+      ? "现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里。（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**"
+      : LADDER === "5"
       ? "今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
       : LADDER === "4"
       ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
@@ -550,7 +826,9 @@ try {
       : LADDER === "1" || LADDER === "2"
       ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。"
       : "你现在是星露谷里的 AI 伴侣。你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。")
-    : (LADDER === "5"
+    : (LADDER === "6"
+      ? "It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**"
+      : LADDER === "5"
       ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
       : LADDER === "4"
       ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
@@ -562,36 +840,20 @@ try {
   // Time origin for chunked-presentation TTFB: the moment the agent turn is
   // admitted, so the first companion bubble's elapsed time is measured from the
   // real turn boundary, not from process start.
-  turnStartedAtMs = Date.now();
-  const agentTurn = tools.acceptPlayerText(prompt, "zh-CN").then(() => ({ settled: true })).catch((error) => ({ settled: false, error: String(error?.message ?? error), stack: error?.stack }));
-  let status = null;
-  let turn = null;
-  for (let i = 0; i < Number(process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? 600); i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    try {
-      if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
-    } catch {}
-    if (status?.code === "found" && ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)) break;
-    if (i % 10 === 0) console.error(JSON.stringify({ seconds: i, programStatus: status, agentProgramId, revision: client.state.snapshot?.revision }));
-    const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
-    if (quick !== null) { turn = quick; break; }
+  const firstTurn = await runAgentTurn(prompt, tools);
+  let status = firstTurn.status;
+  agentTurnResult = firstTurn.turn;
+  sessionTurns.push(Object.freeze({ goalIndex: 0, goal: prompt, turn: agentTurnResult }));
+  // Ladder 6 keeps playing: each extra goal is delivered as a NEW player turn
+  // only after the previous one settled, so the session measures a companion
+  // making its own choices across several intents rather than one scripted chain.
+  if (LADDER === "6") {
+    for (const [index, goal] of SESSION_GOALS.entries()) {
+      const next = await runAgentTurn(goal, tools);
+      if (next.status !== null) status = next.status;
+      sessionTurns.push(Object.freeze({ goalIndex: index + 1, goal, turn: next.turn }));
+    }
   }
-  if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
-  // Audit MEDIUM-3: distinguish "settled because the session worked" from
-  // "settled but the player input may never have reached the session".
-  // host-service acceptPlayerInput returns silently when the integration
-  // admission is closed, so a real run can look like a 1s no-op with no
-  // receipt, no tool call and no presented text. `steerObserved` is an
-  // OBSERVED fact — any tool call, receipt or presented companion line means
-  // the steer reached the session; none of them observed means the result must
-  // say so instead of pretending the agent chose to do nothing.
-  turn.steerObserved =
-    (factLog ?? []).length > 0 ||
-    agentProgramId !== null ||
-    (typeof presentedSummary === "string" && presentedSummary.length > 0);
-  if (turn.settled === true && turn.steerObserved === false)
-    turn.reason = "steer_may_have_been_silently_dropped";
-  agentTurnResult = turn;
   // Ladder 2 additionally waits for the voice gateway's terminal playback
   // observation for the companion line streamed on machine_coffee_loaded.
   // The gateway child needs up to ~20s to boot and MiMo probe-ready before the
@@ -679,6 +941,42 @@ try {
   const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
   const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  // Ladder 6 (self-directed play session): the rung measures capability, not a
+  // scripted chain, so there is no expected receipt to look for. It passes only
+  // when the session produced at least one REAL action attempt — a session where
+  // the companion did nothing, or whose player text never reached the session,
+  // stays `blocked` instead of passing on an empty trace. Findings never fail
+  // this rung: its output is the audit, and a rung that failed whenever it found
+  // something would only teach the harness to stop looking.
+  const attemptedActionIds = [
+    ...new Set(actionTrace.map((entry) => entry.action).filter((action) => typeof action === "string")),
+  ];
+  const succeededActionIds = [
+    ...new Set(
+      actionTrace
+        .filter((entry) => entry.state === "succeeded")
+        .map((entry) => entry.action)
+        .filter((action) => typeof action === "string"),
+    ),
+  ];
+  const ladderSixPassed =
+    LADDER === "6" ? sessionTurns.length > 0 && attemptedActionIds.length > 0 : true;
+  // The audit the rung exists for: what it could do, what the system stopped, and
+  // what it never tried. `notAttempted` is read from the live advertised
+  // capability surface (what the Agent could actually see during THIS run), never
+  // from a build-time table, so it cannot drift from the run's own snapshot.
+  const capabilityAudit =
+    LADDER === "6"
+      ? buildCapabilityAudit({
+          actionTrace,
+          facts: factLog,
+          visibleActionIds: [...advertisedActionSamples],
+          sessionTurns,
+          terminalReasonCodes: TERMINAL_REASON_CODES,
+          advertisedSampleCount,
+          advertisedSampleMaxSize,
+        })
+      : null;
   // World-book visibility (audit MEDIUM-2): absence-as-pass is only valid when
   // the product has NO world book configured (expectedWorldBook null). When one
   // IS expected but nothing mounted, that is a real assembly gap and must fail
@@ -705,7 +1003,7 @@ try {
     observedEvents.push("npc_dialogue");
   }
   const interactionAssessment =
-    (LADDER === "3" || LADDER === "4" || LADDER === "5") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
+    (LADDER === "3" || LADDER === "4" || LADDER === "5" || LADDER === "6") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
@@ -757,8 +1055,16 @@ try {
     runManifestModel: personaWorldBook.model,
   });
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && contextPassed && contentPassed && worldBookPassed && interactionPassed ? "passed" : "blocked",
+    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && ladderSixPassed && contextPassed && contentPassed && worldBookPassed && interactionPassed ? "passed" : "blocked",
     ladder: LADDER,
+    // What the fixture config ASKED for, recorded next to what the run did. A run
+    // that armed a different world (a scenario-resolution bug did exactly that) is
+    // otherwise invisible in the artifact.
+    configuredFixtureScenario: config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
+    sessionTurns,
+    attemptedActionIds,
+    succeededActionIds,
+    capabilityAudit,
     presentation,
     presenceProjection,
     programStatus: status,
@@ -771,7 +1077,9 @@ try {
     harvestReceipt: harvestReceipt ?? null,
     offerReceipt: offerReceipt ?? null,
     covenantReceipt: covenantReceipt ?? null,
-    covenantPassed,
+    // Only ladder 5 asserts a covenant; `true` here for other ladders was a vacuous
+    // pass a reader could mistake for evidence.
+    covenantPassed: LADDER === "5" ? covenantPassed : null,
     covenantSeed,
     personaWorldBook,
     contextAssembled,
@@ -785,6 +1093,14 @@ try {
     presentedSummary: presentedSummary ?? null,
     voiceResult,
     agentTurn: agentTurnResult,
+    // Startup phase timings, so "the live run is slow to start" is answerable from
+    // the artifact: bridge connect, covenant seed, runtime materialization and the
+    // agent turn are different costs with different owners.
+    phaseTimings: Object.freeze({
+      runStartedAtMs: phaseTimings.runStartedAtMs,
+      ...phaseTimings.marks,
+      totalMs: Date.now() - phaseTimings.runStartedAtMs,
+    }),
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
