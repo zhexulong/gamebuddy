@@ -71,8 +71,15 @@ public sealed partial class ModEntry
         /// <summary>Focus theft was refused; the window was raised to the top of the z-order instead.</summary>
         Raised,
 
-        /// <summary>Neither worked; the window keeps its current stacking.</summary>
-        Unchanged
+        /// <summary>
+        /// Focus and z-order were both refused (Windows reserves them for the
+        /// foreground process). The taskbar entry was flashed instead - the one
+        /// attention mechanism a background process is allowed.
+        /// </summary>
+        Signalled,
+
+        /// <summary>No usable window handle yet; the caller should try again.</summary>
+        NoWindow,
     }
 
     /// <summary>The reported outcome of a foreground request (testable without a window).</summary>
@@ -82,25 +89,34 @@ public sealed partial class ModEntry
         {
             WindowRaiseOutcome.Activated => "SetForegroundWindow=accepted",
             WindowRaiseOutcome.Raised => "SetForegroundWindow=refused; raised to the top of the z-order",
-            _ => "SetForegroundWindow=refused; window not raised"
+            WindowRaiseOutcome.Signalled => "focus and raise both refused; taskbar entry flashed",
+            _ => "window handle not usable yet"
         };
     }
 
     /// <summary>
-    /// Bring the window in front of the user.
+    /// Bring the window to the user's attention.
     ///
-    /// Measured on Windows (2026-10-05, foreground live run): a background process
-    /// calling <c>SetForegroundWindow</c> is REFUSED - the OS does not let a process
-    /// steal the foreground on demand - and <c>BringWindowToTop</c> only reorders the
-    /// calling thread's own window stack, so the game stayed behind the active window
-    /// while an independent probe kept reporting the other app as foreground.
+    /// Measured on Windows (2026-10-05, twice, the second time with the session
+    /// UNLOCKED): a background process is refused the foreground
+    /// (<c>SetForegroundWindow</c>) AND refused a z-order raise
+    /// (<c>SetWindowPos(HWND_TOPMOST)</c> also fails); an independent probe kept
+    /// reporting the other application as the foreground window and the game at
+    /// z-rank 12. Windows reserves both operations for the foreground process, so
+    /// "watch the run" cannot be solved by asking harder.
     ///
-    /// <c>SetWindowPos(HWND_TOPMOST)</c> needs no foreground right, so it is the
-    /// mechanism that actually makes a run watchable; the topmost flag is dropped
-    /// immediately so the window then behaves like any other.
+    /// <c>FlashWindowEx</c> IS permitted to a background process and is the
+    /// documented way to say "look here", so it is the honest final fallback -
+    /// and the outcome says which of the three actually happened instead of
+    /// claiming the mode was honoured.
     /// </summary>
     private static WindowRaiseOutcome RaiseWindow(IntPtr hWnd)
     {
+        if (!Win32WindowInterop.IsWindow(hWnd))
+        {
+            return WindowRaiseOutcome.NoWindow;
+        }
+
         if (Win32WindowInterop.SetForegroundWindow(hWnd))
         {
             return WindowRaiseOutcome.Activated;
@@ -108,10 +124,23 @@ public sealed partial class ModEntry
 
         const uint flags = Win32WindowInterop.SWP_NOMOVE | Win32WindowInterop.SWP_NOSIZE | Win32WindowInterop.SWP_NOACTIVATE;
         bool raised = Win32WindowInterop.SetWindowPos(hWnd, Win32WindowInterop.HWND_TOPMOST, 0, 0, 0, 0, flags);
-        // Drop the topmost flag either way: a permanently topmost game window would
-        // sit over everything the user does.
-        Win32WindowInterop.SetWindowPos(hWnd, Win32WindowInterop.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
-        return raised ? WindowRaiseOutcome.Raised : WindowRaiseOutcome.Unchanged;
+        if (raised)
+        {
+            // Drop the topmost flag so the window then behaves like any other.
+            Win32WindowInterop.SetWindowPos(hWnd, Win32WindowInterop.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+            return WindowRaiseOutcome.Raised;
+        }
+
+        Win32WindowInterop.FLASHWINFO flash = new()
+        {
+            cbSize = (uint)Marshal.SizeOf<Win32WindowInterop.FLASHWINFO>(),
+            hwnd = hWnd,
+            dwFlags = Win32WindowInterop.FLASHW_TRAY | Win32WindowInterop.FLASHW_TIMERNOFG,
+            uCount = 3,
+            dwTimeout = 0
+        };
+        Win32WindowInterop.FlashWindowEx(ref flash);
+        return WindowRaiseOutcome.Signalled;
     }
 
     private void ApplyWindowModeInitial()
@@ -179,7 +208,12 @@ public sealed partial class ModEntry
 
     private void ApplyWindowModeTick()
     {
-        if (this.windowModeAppliedTicks >= 60)
+        // Windows creates the game window some time AFTER the mod's first update
+        // ticks, so a one-second burst is not enough: measured on a real run the
+        // first tick logged "window handle not usable yet" and the burst ended
+        // before a usable handle existed. Keep trying for ten seconds, then stop
+        // (a persistent failure is reported once, not every frame forever).
+        if (this.windowModeAppliedTicks >= 600)
             return;
 
         this.windowModeAppliedTicks++;
@@ -213,6 +247,12 @@ public sealed partial class ModEntry
         string mode = this.GetEffectiveWindowMode();
         int cmd = ResolveWindowCommand(mode);
         this.EnforceWindowAsync(mode, cmd);
+        // A `NoWindow` attempt means nothing was applied yet; do not let the
+        // dedupe suppress the eventual real outcome.
+        if (RequiresActivation(mode) && this.windowRaiseSettled)
+        {
+            this.windowModeAppliedTicks = 600;
+        }
     }
 
     private void EnforceWindowAsync(string mode, int nCmdShow)
@@ -230,7 +270,15 @@ public sealed partial class ModEntry
             Win32WindowInterop.ShowWindowAsync(hWnd, nCmdShow);
             if (RequiresActivation(mode))
             {
-                this.ReportActivation(mode, RaiseWindow(hWnd));
+                WindowRaiseOutcome outcome = RaiseWindow(hWnd);
+                // The window may not exist yet on the first ticks; that is not a
+                // result, so it must not settle the dedupe and end the retries.
+                if (outcome == WindowRaiseOutcome.NoWindow)
+                {
+                    return;
+                }
+                this.windowRaiseSettled = true;
+                this.ReportActivation(mode, outcome);
             }
         }
         catch (Exception ex)
@@ -240,6 +288,7 @@ public sealed partial class ModEntry
     }
 
     private string? windowActivationReport;
+    private bool windowRaiseSettled;
 
     private void ReportActivation(string mode, WindowRaiseOutcome outcome)
     {
@@ -280,6 +329,27 @@ public sealed partial class ModEntry
         public const uint SWP_NOSIZE = 0x0001;
         public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOACTIVATE = 0x0010;
+
+        public const uint FLASHW_TRAY = 0x00000002;
+        public const uint FLASHW_TIMERNOFG = 0x0000000C;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct FLASHWINFO
+        {
+            public uint cbSize;
+            public IntPtr hwnd;
+            public uint dwFlags;
+            public uint uCount;
+            public uint dwTimeout;
+        }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
