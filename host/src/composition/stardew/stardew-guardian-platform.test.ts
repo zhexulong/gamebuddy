@@ -606,6 +606,13 @@ test("the owner-held recovery is reachable through the coordinator adapter and d
  * used — the collaborator that holds the exact owner's consumed one-shot
  * Guardian binding — against the real durable transition engine and a really
  * bound registration pointer.
+ *
+ * The evidence is what survives a successful finalization: the released
+ * registration pointer and the consumed attempt transaction. The terminal
+ * successor of the parent record is established by the release, which re-reads
+ * and validates the persisted record against the exact expected terminal
+ * revision before it releases anything, rather than by a read of the record the
+ * cleanup has just consumed.
  */
 test("finalizing a driven recovery reaches the terminal record and releases the bound registration pointer", async () => {
   const guardianRevision = "6f2d9c1a-4b3e-4d21-8f77-1c0a5b9e2d34";
@@ -683,38 +690,39 @@ test("finalizing a driven recovery reaches the terminal record and releases the 
     })(),
     { beforeState: "recovering", beforeRevision: 4 },
   );
-  const persisted = await readRecord();
-  assert.deepEqual(
-    {
-      state: persisted.state,
-      guardian: persisted.guardianState,
-      playerHost: persisted.playerHostState,
-      aiClient: persisted.aiClientState,
-      recovery: persisted.recoveryInstanceId,
-      revision: persisted.ownerRecordRevision,
-    },
-    {
-      state: "contained",
-      guardian: "contained",
-      playerHost: "contained",
-      aiClient: "contained",
-      recovery: null,
-      revision: 5,
-    },
-  );
+  // The terminal parent record is deliberately not read back here: a successful
+  // finalization consumes it, because the attempt's own record is one of the
+  // declared managed paths the cleanup runs over, and that cleanup only runs
+  // after both durable steps succeeded. The terminal transition is proven by the
+  // release instead. The settlement re-reads the persisted record under its own
+  // path lock and requires the exact expected terminal revision AND a terminal
+  // state (`contained`/`quarantined`) before it will touch the pointer, and the
+  // finalization above resolved instead of running its quarantine closure, so a
+  // released pointer is only reachable through a record that really did reach
+  // the terminal `contained` successor. The consumed record is the cleanup's own
+  // evidence that the release had already happened.
   const registration = JSON.parse(await readFile(registrationPath, "utf8")) as Record<string, unknown>;
+  assert.equal(registration.state, "ready");
   assert.equal(registration.activeAttempt, null, "the attempt stops occupying the registration");
   assert.equal(registration.revision, 3);
+  await assert.rejects(
+    readFile(ownerPath(root), "utf8"),
+    { code: "ENOENT" },
+    "a finalized attempt's declared transaction is consumed",
+  );
 
   // A repeated finalization refuses instead of fabricating a second terminal
   // transition, and neither durable record is rewritten.
-  const finalizedBytes = await readFile(ownerPath(root), "utf8");
   const registrationBytes = await readFile(registrationPath, "utf8");
   await assert.rejects(
     () => teardown.finalizeRecovered(owner, request),
     /stardew_bootstrap_owner_recovery_finalize_failed/,
   );
-  assert.equal(await readFile(ownerPath(root), "utf8"), finalizedBytes, "a repeated finalization rewrites nothing");
+  await assert.rejects(
+    readFile(ownerPath(root), "utf8"),
+    { code: "ENOENT" },
+    "a repeated finalization rewrites nothing",
+  );
   assert.equal(await readFile(registrationPath, "utf8"), registrationBytes, "a repeated finalization never touches the registration");
   assert.deepEqual(sessionCalls, ["recover"], "a repeated finalization never re-drives the native recovery");
 });
