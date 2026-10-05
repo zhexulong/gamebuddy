@@ -11,6 +11,7 @@ import {
   type ProductionGameRequest,
   type ProductionGameTerminalReceipt,
   productionChatOwnerProvenDead,
+  productionGameSessionWorldBindingSlotRelease,
 } from "./continuity-semantic-production-store.js";
 
 const principal = { continuityId: "continuity1", companionId: "companion1", playerId: "player1" } as const;
@@ -72,6 +73,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
       integrationId: "stardew",
       bindingRef: "opaque-world-ref",
       operationId: "bind-01",
+      holderHandle: "holder-bind-01",
     });
     assert.deepEqual(binding, {
       gameSessionId: session.gameSessionId,
@@ -86,6 +88,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
         integrationId: "stardew",
         bindingRef: "opaque-world-ref",
         operationId: "bind-01",
+        holderHandle: "holder-bind-01",
       }),
       binding,
     );
@@ -100,6 +103,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
           integrationId: "stardew",
           bindingRef: "other-world-ref",
           operationId: "bind-01",
+          holderHandle: "holder-other-bind-01",
         }),
       /game_session_world_binding_conflict/,
     );
@@ -110,6 +114,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
           integrationId: "stardew",
           bindingRef: "other-world-ref",
           operationId: "bind-02",
+          holderHandle: "holder-other-bind-02",
         }),
       /game_session_world_binding_conflict/,
     );
@@ -139,6 +144,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
           integrationId: "stardew",
           bindingRef: "late-world-ref",
           operationId: "late-bind-01",
+          holderHandle: "holder-late-bind-01",
         }),
       /game_session_world_binding_conflict/,
     );
@@ -152,6 +158,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
       integrationId: "stardew",
       bindingRef: "opaque-binding-fail",
       operationId: "binding-fail-01",
+      holderHandle: "holder-binding-fail-01",
     });
     assert.throws(
       () =>
@@ -180,6 +187,7 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
           integrationId: "stardew",
           bindingRef: "late-world-ref",
           operationId: "late-bind-resumable",
+          holderHandle: "holder-late-bind-resumable",
         }),
       /game_session_world_binding_conflict/,
     );
@@ -266,6 +274,7 @@ test("Pure Game materialization rejects terminal binding with failed revision 2 
       integrationId: "stardew",
       bindingRef: "opaque-corrupt-reopen",
       operationId: "bind-corrupt-reopen",
+      holderHandle: "holder-bind-corrupt-reopen",
     });
     store.completeGameSessionBinding({
       creationRequestId: "create-corrupt-reopen",
@@ -313,6 +322,7 @@ test("A session whose completion never landed still settles terminally after reg
       integrationId: "stardew",
       bindingRef: "opaque-settle-ref",
       operationId: "bind-settle-01",
+      holderHandle: "holder-bind-settle-01",
     });
     // Completion is the only writer that makes a session resumable, so the shape
     // a create leaves behind when completion fails after registration is exactly
@@ -412,6 +422,7 @@ test("A world slot held by a live session is rejected for a second session and r
       integrationId: "stardew",
       bindingRef: "Farm_389124477",
       operationId: "bind-duplicate-first",
+      holderHandle: "holder-bind-duplicate-first",
     });
     // The legitimate same-session replay is the store-owned operation identity,
     // and it must never be mistaken for a foreign claim on the slot.
@@ -421,6 +432,7 @@ test("A world slot held by a live session is rejected for a second session and r
         integrationId: "stardew",
         bindingRef: "Farm_389124477",
         operationId: "bind-duplicate-first",
+        holderHandle: "holder-bind-duplicate-first",
       }),
       firstBinding,
     );
@@ -432,6 +444,7 @@ test("A world slot held by a live session is rejected for a second session and r
           integrationId: "stardew",
           bindingRef: "Farm_389124477",
           operationId: "bind-duplicate-first-replay",
+          holderHandle: "holder-bind-duplicate-first-replay",
         }),
       /game_session_world_binding_conflict/,
     );
@@ -447,6 +460,7 @@ test("A world slot held by a live session is rejected for a second session and r
           integrationId: "stardew",
           bindingRef: "Farm_389124477",
           operationId: "bind-duplicate-second",
+          holderHandle: "holder-bind-duplicate-second",
         }),
       /game_session_world_binding_duplicate/,
     );
@@ -480,6 +494,7 @@ test("A world slot held by a live session is rejected for a second session and r
         integrationId: "other-integration",
         bindingRef: "Farm_389124477",
         operationId: "bind-duplicate-foreign",
+        holderHandle: "holder-bind-duplicate-foreign",
       }).status,
       "registered",
     );
@@ -516,6 +531,7 @@ test("A world slot held by a live session is rejected for a second session and r
       integrationId: "stardew",
       bindingRef: "Farm_389124477",
       operationId: "bind-duplicate-third",
+      holderHandle: "holder-bind-duplicate-third",
     });
     assert.equal(thirdBinding.status, "registered");
     assert.equal(
@@ -562,60 +578,39 @@ test("A world slot held by a live session is rejected for a second session and r
 });
 
 /**
- * The slot wedge: still unrepaired, and now blocked on a fact that does not
- * exist rather than on an open decision.
+ * The slot wedge, now repaired for every holder that carries a handle.
  *
- * The repair decision has been taken - release a slot by slot identity
- * (integrationId + bindingRef) plus a verifiable death/liveness determination,
- * reusing the store's existing single-transaction terminal path, with no schema
- * change and no row deletion. The store cannot execute it honestly, because the
- * world-binding holder has no durable liveness fact for a proof to be checked
- * against:
+ * The shape this test pins is the one a crash leaves behind: a create registers
+ * the world binding and only then completes the session, so a death in between
+ * leaves `registered revision 1` over `pending revision 1` - completed later by
+ * nothing but this test - and the per-command `operationId` the terminal settle
+ * demands existed only in the dead process's memory. No store fact can settle
+ * that holder for a successor, and `failGameSessionCreation` refuses a session
+ * that already has a binding row.
  *
- * - The holder's whole durable footprint is two owner-free rows, one in
- *   `production_game_session_metadata` and one in
- *   `production_game_session_world_binding` (schema above, :481-482); neither
- *   table has an owner/pid/liveness column, and the binding's only foreign key
- *   points at the metadata row. `ProductionGameRecoveryProof` (:316) is bound
- *   to a `ProductionGameOwner` tuple, and `recoverGame` can only use it because
- *   it compares that tuple against the durable `owner_json` of the permit's own
- *   row (:3884). A slot lookup has no such row, so an outcome-only check accepts
- *   a genuine proof about any process the caller chooses to ask the OS about -
- *   a caller-assertable gate, not evidence about THIS holder.
- * - `production_game_lease` cannot supply the missing liveness half either: it
- *   is keyed by `continuity_id` (:483), so it can never describe one holder
- *   among several; it does not exist while a create is in flight (the create
- *   path never performs the activation that writes it); it is deleted on
- *   ordinary close (:3835) and on recovery (:3916) while the slot stays held;
- *   and its `deadline_at_ms` is the request deadline the caller passed to
- *   `prepareGame` (:3729-3740), never renewed while a live session runs. Neither
- *   the row's presence nor its deadline distinguishes a live holder from a dead
- *   one.
+ * The owner's ruling (D2-A', 2026-10-05 evening) is that a successor releases
+ * such a slot by presenting the holder's own handle - written at registration,
+ * read back for the slot - together with a native verdict proving the holder's
+ * owner dead, and that the released holder lands on the canonical terminal shape
+ * (binding terminal revision 2 paired with metadata failed revision 3) inside the
+ * store's one settle transaction. The release assertions at the end of this test
+ * are that repair.
  *
- * A holder-scoped liveness fact (an owner tuple or its digest, written when the
- * binding is registered, plus a way for the successor Host to obtain it) is
- * durable content this store cannot invent: the register path outside the store
- * is the only place the holder's owner exists, and design/105 Slice 0 keeps the
- * session record free of PIDs and paths. Until that is re-decided this test
- * keeps pinning today's behaviour as evidence instead of asserting a repair.
+ * Every refusal above them is kept, because each is still true and still the
+ * negative coverage the repair must not weaken: the pre-registration settle and
+ * the command-identified terminal settle still refuse (no operationId), the
+ * duplicate-slot rule still refuses a second live session for the slot, and a
+ * restart neither repairs nor quarantines the abandoned pair on its own.
  *
- * The wedge itself: the cross-session duplicate-slot rule refuses a slot another
- * session holds while its binding is `registered` (:4214-4219), but
- * `registered` is paired with `pending|resumable` metadata (:1126-1132), which
- * includes the abandoned `pending revision 1 + registered revision 1` shape a
- * death between `registerGameSessionWorldBinding` and
- * `completeGameSessionBinding` - or a create whose settle closure could not be
- * applied - leaves behind. Nothing then releases the slot:
- * `failGameSessionCreation` refuses a session that already has a binding row
- * (:4120-4121), `markGameSessionWorldBindingTerminal` requires the per-command
- * `operationId` (:4283) that no readback exposes, `completeGameSessionBinding`
- * makes the holder resumable while the binding still holds the slot, and the
- * store's only two `DELETE`s are on `production_game_lease` (no operation
- * deletes a session metadata or world binding row). The holder is not even
- * discoverable: `listResumableGameSessions` returns `[]` for that shape.
+ * A holder written before the handle column existed cannot be released by this
+ * operation, and that is not closeable here: the handle column is NOT NULL, and a
+ * store written before it existed is refused at open by the physical-signature
+ * check instead of being read with unknown holders or backfilled. A backfill
+ * would have to invent the handle of a dead attempt, which is the guess this
+ * ruling forbids.
  */
 test(
-  "SLOT WEDGE, UNREPAIRED (no holder-scoped liveness fact exists): a slot held by an abandoned registered binding blocks every later create",
+  "A slot abandoned by a dead holder is released by that holder's own handle plus a native death verdict",
   () => {
   const root = canonicalTestRootSync("production-game-session-slot-wedge-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
@@ -637,6 +632,7 @@ test(
         integrationId: "stardew",
         bindingRef: "Farm_389124477",
         operationId: "wedge-bind-first",
+        holderHandle: "holder-wedge-bind-first",
       }),
       {
         gameSessionId: first.gameSessionId,
@@ -668,6 +664,7 @@ test(
           integrationId: "stardew",
           bindingRef: "Farm_389124477",
           operationId: "wedge-bind-second",
+          holderHandle: "holder-wedge-bind-second",
         }),
       /game_session_world_binding_duplicate/,
     );
@@ -711,6 +708,7 @@ test(
           integrationId: "stardew",
           bindingRef: "Farm_389124477",
           operationId: "wedge-bind-second-again",
+          holderHandle: "holder-wedge-bind-second-again",
         }),
       /game_session_world_binding_duplicate/,
     );
@@ -745,6 +743,7 @@ test(
           integrationId: "stardew",
           bindingRef: "Farm_389124477",
           operationId: "wedge-bind-third",
+          holderHandle: "holder-wedge-bind-third",
         }),
       /game_session_world_binding_duplicate/,
     );
@@ -772,6 +771,7 @@ test(
             integrationId: "stardew",
             bindingRef: "Farm_389124477",
             operationId: "wedge-bind-fourth",
+            holderHandle: "holder-wedge-bind-fourth",
           }),
         /game_session_world_binding_duplicate/,
       );
@@ -796,11 +796,392 @@ test(
           }),
         /game_session_world_binding_conflict/,
       );
+      // The repair. The successor reads the holder of the slot it wants to free
+      // - the handle is the only identity of that holder a restart leaves behind
+      // - and releases it with a native verdict that the holder's owner is dead.
+      assert.deepEqual(
+        reopenedStore.readGameSessionWorldBindingSlotHolder({
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+        }),
+        {
+          gameSessionId: first.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          status: "registered",
+          revision: 1,
+          holderHandle: "holder-wedge-bind-first",
+        },
+      );
+      // A guess is refused: the same slot with any other handle is not this
+      // holder, and the refusal leaves the abandoned pair exactly as it was.
+      assert.throws(
+        () =>
+          reopenedStore.releaseGameSessionWorldBindingSlot({
+            integrationId: "stardew",
+            bindingRef: "Farm_389124477",
+            holderHandle: "holder-wedge-bind-guessed",
+            proof: createTestWindowsOwnerDeathVerification(owner, "proven_dead"),
+          }),
+        /game_session_world_binding_slot_handle_mismatch/,
+      );
+      assert.deepEqual(
+        reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }),
+        { ...first, status: "resumable", revision: 2 },
+      );
+      assert.deepEqual(
+        reopenedStore.releaseGameSessionWorldBindingSlot({
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          holderHandle: "holder-wedge-bind-first",
+          proof: createTestWindowsOwnerDeathVerification(owner, "proven_dead"),
+        }),
+        {
+          gameSessionId: first.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          status: "terminal",
+          revision: 2,
+        },
+      );
+      // The released holder landed on the canonical settled pair, and its row is
+      // still there: nothing was deleted.
+      assert.deepEqual(
+        reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }),
+        { ...first, status: "failed", revision: 3 },
+      );
+      assert.deepEqual(reopenedStore.listResumableGameSessions(), []);
+      assert.equal(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: first.gameSessionId, integrationId: "stardew" })
+          ?.status,
+        "terminal",
+      );
+      // The slot is free: the create the duplicate rule refused is accepted.
+      assert.equal(
+        reopenedStore.registerGameSessionWorldBinding({
+          gameSessionId: fourth.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+          operationId: "wedge-bind-fourth",
+          holderHandle: "holder-wedge-bind-fourth",
+        }).status,
+        "registered",
+      );
+      // The slot now resolves to the live holder, not to the settled row that
+      // still carries the same slot: a released handle cannot free the slot its
+      // successor holds.
+      assert.equal(
+        reopenedStore.readGameSessionWorldBindingSlotHolder({
+          integrationId: "stardew",
+          bindingRef: "Farm_389124477",
+        })?.holderHandle,
+        "holder-wedge-bind-fourth",
+      );
+      assert.throws(
+        () =>
+          reopenedStore.releaseGameSessionWorldBindingSlot({
+            integrationId: "stardew",
+            bindingRef: "Farm_389124477",
+            holderHandle: "holder-wedge-bind-first",
+            proof: createTestWindowsOwnerDeathVerification(owner, "proven_dead"),
+          }),
+        /game_session_world_binding_slot_handle_mismatch/,
+      );
     } finally {
       reopenedControl.close();
     }
   } finally {
     if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("World-slot release requires the holder's own handle and a native death verdict, and refuses every weaker call", () => {
+  // The refusal codes are the contract, so they are pinned literally and the
+  // exported bounded set is pinned to be exactly these five.
+  assert.deepEqual(Object.values(productionGameSessionWorldBindingSlotRelease).sort(), [
+    "game_session_world_binding_slot_handle_mismatch",
+    "game_session_world_binding_slot_holder_alive",
+    "game_session_world_binding_slot_holder_terminal",
+    "game_session_world_binding_slot_missing",
+    "game_session_world_binding_slot_proof_invalid",
+  ]);
+  const root = canonicalTestRootSync("production-game-session-slot-release-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  let controlClosed = false;
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const holder = store.createGameSessionMetadata({
+      creationRequestId: "release-create-holder",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    const holderBinding = store.registerGameSessionWorldBinding({
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_771002311",
+      operationId: "release-bind-holder",
+      holderHandle: "holder-release-holder",
+    });
+    // The holder identity has its own slot-addressed surface, so the redacted
+    // binding readback stays exactly as redacted as this suite already pins.
+    assert.deepEqual(Object.keys(holderBinding).sort(), [
+      "bindingRef",
+      "gameSessionId",
+      "integrationId",
+      "revision",
+      "status",
+    ]);
+    const slotHolder = () =>
+      store.readGameSessionWorldBindingSlotHolder({ integrationId: "stardew", bindingRef: "Farm_771002311" });
+    assert.deepEqual(slotHolder(), {
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_771002311",
+      status: "registered",
+      revision: 1,
+      holderHandle: "holder-release-holder",
+    });
+    assert.equal(
+      store.readGameSessionWorldBindingSlotHolder({ integrationId: "stardew", bindingRef: "Farm_000000000" }),
+      null,
+    );
+    assert.equal(
+      store.readGameSessionWorldBindingSlotHolder({ integrationId: "other-integration", bindingRef: "Farm_771002311" }),
+      null,
+    );
+    /** The bounded refusal code of one call, or the released binding's status. */
+    const outcomeOf =
+      (target: typeof store) =>
+      (input: unknown): string => {
+        try {
+          return target.releaseGameSessionWorldBindingSlot(input as never).status;
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+    const outcome = outcomeOf(store);
+    const release = (holderHandle: string, proof: unknown) => ({
+      integrationId: "stardew",
+      bindingRef: "Farm_771002311",
+      holderHandle,
+      proof,
+    });
+    const deadProof = createTestWindowsOwnerDeathVerification(owner, "proven_dead");
+    // A slot nobody holds, and the same slot under another integration, are not
+    // this operation's business.
+    assert.equal(
+      outcome({ integrationId: "stardew", bindingRef: "Farm_000000000", holderHandle: "holder-release-holder", proof: deadProof }),
+      "game_session_world_binding_slot_missing",
+    );
+    assert.equal(
+      outcome({ integrationId: "other-integration", bindingRef: "Farm_771002311", holderHandle: "holder-release-holder", proof: deadProof }),
+      "game_session_world_binding_slot_missing",
+    );
+    // The slot alone is not enough: the handle is the holder's identity, not a
+    // second name for the slot.
+    assert.equal(outcome(release("holder-release-other", deadProof)), "game_session_world_binding_slot_handle_mismatch");
+    // A caller-asserted boolean, an unminted look-alike, a structured clone of
+    // a real verdict and a missing proof are all no proof at all.
+    assert.equal(outcome(release("holder-release-holder", true)), "game_session_world_binding_slot_proof_invalid");
+    assert.equal(
+      outcome(release("holder-release-holder", { outcome: "proven_dead" })),
+      "game_session_world_binding_slot_proof_invalid",
+    );
+    assert.equal(
+      outcome(release("holder-release-holder", { ...deadProof })),
+      "game_session_world_binding_slot_proof_invalid",
+    );
+    assert.equal(
+      outcome(release("holder-release-holder", undefined)),
+      "game_session_world_binding_slot_proof_invalid",
+    );
+    // A verdict that is not a proof of death refuses, and is never read as
+    // optimistically dead: a live holder is named as alive.
+    assert.equal(
+      outcome(release("holder-release-holder", createTestWindowsOwnerDeathVerification(owner, "alive"))),
+      "game_session_world_binding_slot_holder_alive",
+    );
+    for (const unusable of ["mismatch", "ambiguous", "unavailable"] as const)
+      assert.equal(
+        outcome(release("holder-release-holder", createTestWindowsOwnerDeathVerification(owner, unusable))),
+        "game_session_world_binding_slot_proof_invalid",
+      );
+    // Every refusal above left the abandoned holder exactly as it was: a bounded
+    // refusal is never a partial write.
+    assert.deepEqual(slotHolder(), {
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_771002311",
+      status: "registered",
+      revision: 1,
+      holderHandle: "holder-release-holder",
+    });
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), holder);
+    assert.deepEqual(store.listResumableGameSessions(), []);
+    // RESIDUAL GAP, pinned rather than hidden: this store CANNOT tell which
+    // holder a verdict is about. `WindowsOwnerDeathVerification` records the
+    // `ProductionGameOwner` tuple the OS query was asked about, and the binding
+    // row deliberately carries no owner tuple to compare it with (design/105:70
+    // keeps pids off a session record), so any Host-minted `proven_dead` verdict
+    // releases any handle-matched slot. That is why this test pins the store-side
+    // contract only, and the assertion below names the hole instead of asserting
+    // the safe behaviour: before this operation is wired to production the
+    // verdict must carry the holder identity it was obtained about, so the store
+    // can require it to equal `holderHandle`.
+    const unrelatedHolder = store.createGameSessionMetadata({
+      creationRequestId: "release-create-unrelated",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    store.registerGameSessionWorldBinding({
+      gameSessionId: unrelatedHolder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_771002312",
+      operationId: "release-bind-unrelated",
+      holderHandle: "holder-release-unrelated",
+    });
+    assert.equal(
+      outcome({
+        integrationId: "stardew",
+        bindingRef: "Farm_771002312",
+        holderHandle: "holder-release-unrelated",
+        proof: createTestWindowsOwnerDeathVerification(
+          { ...owner, ownerPid: 1, ownerProcessStartIdentity: "some-other-process" },
+          "proven_dead",
+        ),
+      }),
+      "terminal",
+    );
+    // The release itself: the holder's own handle plus a native verdict of death,
+    // landing on the canonical settled pair that a command-identified settle
+    // produces.
+    assert.equal(outcome(release("holder-release-holder", deadProof)), "terminal");
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), {
+      ...holder,
+      status: "failed",
+      revision: 3,
+    });
+    assert.equal(
+      store.readGameSessionWorldBinding({ gameSessionId: holder.gameSessionId, integrationId: "stardew" })?.status,
+      "terminal",
+    );
+    // The settled holder is still readable - nothing was deleted - and its
+    // handle is still visible, so an operator can see who held the slot.
+    assert.deepEqual(slotHolder(), {
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_771002311",
+      status: "terminal",
+      revision: 2,
+      holderHandle: "holder-release-holder",
+    });
+    // Terminal is sticky and a repeated call is a bounded refusal, never a no-op
+    // that reports success for a call that released nothing.
+    assert.equal(outcome(release("holder-release-holder", deadProof)), "game_session_world_binding_slot_holder_terminal");
+    // The repaired product outcome: the slot is free for the next create.
+    const successor = store.createGameSessionMetadata({
+      creationRequestId: "release-create-successor",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    assert.equal(
+      store.registerGameSessionWorldBinding({
+        gameSessionId: successor.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "Farm_771002311",
+        operationId: "release-bind-successor",
+        holderHandle: "holder-release-successor",
+      }).status,
+      "registered",
+    );
+    assert.equal(slotHolder()?.holderHandle, "holder-release-successor");
+    control.close();
+    controlClosed = true;
+    // The settled pair and the released slot survive a restart.
+    const reopenedControl = openProductionContinuityStore({ runtimeRoot: root });
+    try {
+      const reopenedStore = reopenedControl.bindBootstrapContext({
+        bootstrap,
+        metadata: reopenedControl.validateBootstrap(bootstrap),
+      });
+      assert.deepEqual(reopenedStore.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), {
+        ...holder,
+        status: "failed",
+        revision: 3,
+      });
+      assert.equal(
+        reopenedStore.readGameSessionWorldBinding({ gameSessionId: holder.gameSessionId, integrationId: "stardew" })
+          ?.status,
+        "terminal",
+      );
+      assert.equal(
+        outcomeOf(reopenedStore)(release("holder-release-holder", deadProof)),
+        "game_session_world_binding_slot_handle_mismatch",
+      );
+      assert.equal(
+        reopenedStore.readGameSessionWorldBindingSlotHolder({
+          integrationId: "stardew",
+          bindingRef: "Farm_771002311",
+        })?.holderHandle,
+        "holder-release-successor",
+      );
+    } finally {
+      reopenedControl.close();
+    }
+  } finally {
+    if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("A store written before the holder handle column existed is refused at open, so a handle-less holder cannot exist", () => {
+  const root = canonicalTestRootSync("production-game-session-slot-handle-legacy-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const holder = store.createGameSessionMetadata({
+      creationRequestId: "legacy-create-holder",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    store.registerGameSessionWorldBinding({
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_551209934",
+      operationId: "legacy-bind-holder",
+      holderHandle: "holder-legacy-holder",
+    });
+  } finally {
+    control.close();
+  }
+  try {
+    const db = new DatabaseSync(join(root, "gamebuddy-continuity-v1.sqlite"));
+    try {
+      // A handle is not optional. The column is NOT NULL, so not even an
+      // out-of-band writer can erase one and leave a holder this release would
+      // have to guess the identity of.
+      assert.throws(
+        () =>
+          db
+            .prepare("UPDATE production_game_session_world_binding SET holder_handle=NULL WHERE binding_ref=?")
+            .run("Farm_551209934"),
+        /NOT NULL constraint failed/,
+      );
+      // The only shape a store written before this column existed can have is
+      // the table without the column, and it is refused at open rather than read
+      // with holders whose identity no longer exists or backfilled: a backfill
+      // would have to invent the handle of a dead attempt, which is exactly the
+      // guess the ruling forbids. Those rows are therefore unreleasable here by
+      // construction, and disposing of such a store is an out-of-band operation.
+      db.exec("ALTER TABLE production_game_session_world_binding DROP COLUMN holder_handle");
+    } finally {
+      db.close();
+    }
+    assert.throws(() => openProductionContinuityStore({ runtimeRoot: root }), /unsupported_production_store_schema/);
+  } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

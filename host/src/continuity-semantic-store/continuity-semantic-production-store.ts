@@ -356,17 +356,78 @@ export type ProductionGameSessionWorldBinding = Readonly<{
   status: "registered" | "terminal";
   revision: number;
 }>;
+/**
+ * Registration additionally writes the slot holder's own opaque handle.
+ *
+ * A slot that outlives its holder cannot be released by a caller that only knows
+ * the slot: the per-command `operationId` a terminal settle demands exists only
+ * in the registering process's memory (`SLOT WEDGE`), so a successor either
+ * guesses (which the owner rejected) or holds a durable identity of the exact
+ * holder it is about to replace. This field is that identity, minted by the one
+ * place that already knows the attempt's own correlation (the registration
+ * pointer and the attempt's owner record both carry it) and passed through here
+ * verbatim: the store neither mints nor derives it, and deliberately rejects
+ * anything that is not an opaque separator-free token, because a pid or a path
+ * on a session record is what design/105:70 forbids.
+ */
 export type ProductionGameSessionWorldBindingInput = Readonly<{
   gameSessionId: string;
   integrationId: string;
   bindingRef: string;
   operationId: string;
+  holderHandle: string;
 }>;
 export type ProductionGameSessionWorldBindingTerminalInput = Readonly<{
   gameSessionId: string;
   integrationId: string;
   expectedRevision: number;
   operationId: string;
+}>;
+/**
+ * Slot-addressed holder readback. It exists because the successor's release
+ * needs the holder's handle and nothing else: the binding readback deliberately
+ * stays redacted (`ProductionGameSessionWorldBinding` carries no handle), and
+ * the `operationId` a settle would otherwise demand is never exposed.
+ */
+export type ProductionGameSessionWorldBindingSlotHolder = Readonly<{
+  gameSessionId: string;
+  integrationId: string;
+  bindingRef: string;
+  status: "registered" | "terminal";
+  revision: number;
+  holderHandle: string;
+}>;
+/**
+ * Closed set of machine-readable refusals of
+ * `releaseGameSessionWorldBindingSlot`. Every one of them is a precondition that
+ * failed, and none of them is a silent success: a repeated call after a
+ * successful release is `holderTerminal` and not a no-op, because a no-op would
+ * return success for a call that released nothing.
+ */
+export const productionGameSessionWorldBindingSlotRelease = Object.freeze({
+  /** Nothing holds this slot: the caller is looking at a different world or integration. */
+  slotMissing: "game_session_world_binding_slot_missing",
+  /** The presented handle is not the handle written for this slot's holder. */
+  handleMismatch: "game_session_world_binding_slot_handle_mismatch",
+  /** The holder already settled; terminal is sticky, so there is nothing left to release. */
+  holderTerminal: "game_session_world_binding_slot_holder_terminal",
+  /** The native verdict says the holder's owner is still alive. */
+  holderAlive: "game_session_world_binding_slot_holder_alive",
+  /** No proof, a forged proof, or a verdict that is not a usable proof of death. */
+  proofInvalid: "game_session_world_binding_slot_proof_invalid",
+} as const);
+export type ProductionGameSessionWorldBindingSlotReleaseRefusal =
+  (typeof productionGameSessionWorldBindingSlotRelease)[keyof typeof productionGameSessionWorldBindingSlotRelease];
+/**
+ * Slot release ingress: the slot (`integrationId` + `bindingRef`), the holder's
+ * own handle, and the native owner-death verdict - never a caller-asserted
+ * boolean, which any caller could forge into a release it is not entitled to.
+ */
+export type ProductionGameSessionWorldBindingSlotReleaseInput = Readonly<{
+  integrationId: string;
+  bindingRef: string;
+  holderHandle: string;
+  proof: ProductionGameRecoveryProof;
 }>;
 
 export type ProductionSagaStore = Readonly<{
@@ -426,11 +487,32 @@ export type ProductionSagaStore = Readonly<{
     input: ProductionGameSessionWorldBindingTerminalInput,
   ): ProductionGameSessionWorldBinding;
 }>;
+/**
+ * The world-slot release surface is declared next to `ProductionSagaStore`
+ * instead of inside it on purpose: the store's existing consumers publish an
+ * explicit projection of that interface (the provisioning wrapper and the Game
+ * authority forward every member by hand), so widening `ProductionSagaStore`
+ * would force those projections to grow in this change. The next wave projects
+ * these two members through the same wrapper; nothing about the release itself
+ * depends on where it is declared.
+ */
+export type ProductionGameSessionWorldBindingSlotAuthority = Readonly<{
+  /** Reads the current holder of one world slot, including the handle its release demands. */
+  readGameSessionWorldBindingSlotHolder(
+    input: Readonly<{ integrationId: string; bindingRef: string }>,
+  ): ProductionGameSessionWorldBindingSlotHolder | null;
+  /** Releases a slot whose holder is proven dead, landing it on the canonical terminal shape. */
+  releaseGameSessionWorldBindingSlot(
+    input: ProductionGameSessionWorldBindingSlotReleaseInput,
+  ): ProductionGameSessionWorldBinding;
+}>;
 export type ProductionContinuityStore = Readonly<{
   bootstrapFresh(input: ProductionBootstrapInput): ProductionStoreMetadata;
   validateBootstrap(input: ProductionBootstrapInput): ProductionStoreMetadata;
   /** Binds exactly once; all returned saga methods revalidate this immutable tuple in their transaction. */
-  bindBootstrapContext(context: ProductionBootstrapContext): ProductionSagaStore;
+  bindBootstrapContext(
+    context: ProductionBootstrapContext,
+  ): ProductionSagaStore & ProductionGameSessionWorldBindingSlotAuthority;
   configuration(): Readonly<{ journalMode: string; synchronous: number; busyTimeoutMs: number }>;
   close(): void;
 }>;
@@ -479,7 +561,7 @@ CREATE TABLE production_continuity_event (event_id TEXT PRIMARY KEY, continuity_
 CREATE TABLE production_active_selection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, selection_revision INTEGER NOT NULL CHECK(selection_revision>=1));
 CREATE TABLE production_game_session (session_id TEXT PRIMARY KEY REFERENCES production_surface_session(session_id), continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), state TEXT NOT NULL CHECK(state IN ('pending','active','ended','recovery_required')));
 CREATE TABLE production_game_session_metadata (game_session_id TEXT PRIMARY KEY, creation_request_id TEXT NOT NULL UNIQUE, integration_id TEXT NOT NULL, continuity_identity_id TEXT REFERENCES production_partition(continuity_id), status TEXT NOT NULL CHECK(status IN ('pending','resumable','failed')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='pending' AND revision=1) OR (status='resumable' AND revision=2) OR (status='failed' AND revision IN (2,3))));
- CREATE TABLE production_game_session_world_binding (game_session_id TEXT PRIMARY KEY REFERENCES production_game_session_metadata(game_session_id), integration_id TEXT NOT NULL, binding_ref TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('registered','terminal')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='registered' AND revision=1) OR (status='terminal' AND revision=2)));
+ CREATE TABLE production_game_session_world_binding (game_session_id TEXT PRIMARY KEY REFERENCES production_game_session_metadata(game_session_id), integration_id TEXT NOT NULL, binding_ref TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, holder_handle TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('registered','terminal')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='registered' AND revision=1) OR (status='terminal' AND revision=2)));
 CREATE TABLE production_game_lease (continuity_id TEXT PRIMARY KEY REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_game_session(session_id), binding_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('owned','close_pending','recovery_required')), lease_revision INTEGER NOT NULL CHECK(lease_revision>=1), world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0));
 CREATE TABLE production_game_intent (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES production_game_session(session_id), payload_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','terminal','aborted','recovery_required')), request_id TEXT NOT NULL DEFAULT '', request_json TEXT NOT NULL DEFAULT '{}', world_json TEXT NOT NULL DEFAULT '{}', owner_json TEXT NOT NULL DEFAULT '{}', fence_token TEXT NOT NULL DEFAULT '', deadline_at_ms INTEGER NOT NULL DEFAULT 0 CHECK(deadline_at_ms>=0), prepared_vector_json TEXT NOT NULL DEFAULT '{}', committed_vector_json TEXT, receipt_json TEXT, receipt_digest TEXT, recovery_reason TEXT CHECK(recovery_reason IN ('effect_failed','receipt_invalid','deadline_expired','revision_conflict')), PRIMARY KEY(continuity_id,operation_id));
 CREATE TABLE production_continuity_command (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, command_kind TEXT NOT NULL CHECK(command_kind IN ('register_chat','verify_chat_content','select_chat','transition_chat_lifecycle')), payload_json TEXT NOT NULL, payload_digest TEXT NOT NULL, response_json TEXT NOT NULL, response_digest TEXT NOT NULL, committed_vector_json TEXT NOT NULL, PRIMARY KEY(continuity_id,operation_id));
@@ -507,6 +589,14 @@ const order = (value: any): any =>
       : value;
 const digest = (value: unknown): string => createHash("sha256").update(canonical(value), "utf8").digest("hex");
 const safeId = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v);
+/**
+ * The two opaque refs a world binding row may carry: the slot reference and the
+ * holder handle. The charset admits no separator and no whitespace, so neither
+ * can ever be a path, a mutex namespace or a process identity - the property
+ * design/105:70 asks for is enforced by shape, not by convention.
+ */
+const validOpaqueWorldBindingRef = (v: unknown): v is string =>
+  typeof v === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(v);
 const sha = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const validFenceToken = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{32,128}$/.test(v);
 function exactDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -818,6 +908,14 @@ export function openProductionContinuityStore(
            requireOpen();
            return markGameSessionWorldBindingTerminal(db, immutable, input);
          },
+         readGameSessionWorldBindingSlotHolder(input) {
+           requireOpen();
+           return readGameSessionWorldBindingSlotHolder(db, immutable, input);
+         },
+         releaseGameSessionWorldBindingSlot(input) {
+           requireOpen();
+           return releaseGameSessionWorldBindingSlot(db, immutable, input);
+         },
       });
     },
     configuration() {
@@ -1119,6 +1217,11 @@ function validateGameMaterialization(db: DatabaseSync): void {
         typeof b.binding_ref !== "string" ||
         !/^[A-Za-z0-9_-]{1,256}$/.test(b.binding_ref) ||
         !safeId(b.operation_id) ||
+        // A holder without a handle could never be released, so a row that lost
+        // it is a corrupt store: the handle column is NOT NULL, which makes this
+        // predicate unreachable through this store and reachable only through an
+        // out-of-band writer that bypassed it.
+        !validOpaqueWorldBindingRef(b.holder_handle) ||
         !["registered", "terminal"].includes(b.status) ||
         !Number.isSafeInteger(b.revision) ||
         (b.status === "registered" && b.revision !== 1) ||
@@ -4026,12 +4129,12 @@ function validGameSessionBindingInput(value: unknown): value is ProductionGameSe
 }
 function validGameSessionWorldBindingInput(value: unknown): value is ProductionGameSessionWorldBindingInput {
   return (
-    exactPlainDataObject(value, ["gameSessionId", "integrationId", "bindingRef", "operationId"]) &&
+    exactPlainDataObject(value, ["gameSessionId", "integrationId", "bindingRef", "operationId", "holderHandle"]) &&
     safeId(value.gameSessionId) &&
     safeId(value.integrationId) &&
-    typeof value.bindingRef === "string" &&
-    /^[A-Za-z0-9_-]{1,256}$/.test(value.bindingRef) &&
-    safeId(value.operationId)
+    validOpaqueWorldBindingRef(value.bindingRef) &&
+    safeId(value.operationId) &&
+    validOpaqueWorldBindingRef(value.holderHandle)
   );
 }
 function validGameSessionWorldBindingTerminalInput(
@@ -4053,6 +4156,16 @@ function gameSessionWorldBindingReadback(row: any): ProductionGameSessionWorldBi
     bindingRef: row.binding_ref,
     status: row.status,
     revision: row.revision,
+  });
+}
+function gameSessionWorldBindingSlotHolderReadback(row: any): ProductionGameSessionWorldBindingSlotHolder {
+  return Object.freeze({
+    gameSessionId: row.game_session_id,
+    integrationId: row.integration_id,
+    bindingRef: row.binding_ref,
+    status: row.status,
+    revision: row.revision,
+    holderHandle: row.holder_handle,
   });
 }
 function gameSessionMetadataReadback(_db: DatabaseSync, row: any): ProductionGameSessionMetadata {
@@ -4183,7 +4296,12 @@ function registerGameSessionWorldBinding(
       if (
         byOperation.game_session_id !== input.gameSessionId ||
         byOperation.integration_id !== input.integrationId ||
-        byOperation.binding_ref !== input.bindingRef
+        byOperation.binding_ref !== input.bindingRef ||
+        // A replay is the store-owned operation identity replayed with the same
+        // facts. A different handle is not that registration but a second
+        // caller claiming another holder's identity for the same operation, so
+        // it is this session's own conflict instead of a silent overwrite.
+        byOperation.holder_handle !== input.holderHandle
       )
         throw new Error("game_session_world_binding_conflict");
       return gameSessionWorldBindingReadback(byOperation);
@@ -4218,8 +4336,8 @@ function registerGameSessionWorldBinding(
       .get(input.integrationId, input.bindingRef, input.gameSessionId) as any;
     if (duplicate) throw new Error("game_session_world_binding_duplicate");
     db.prepare(
-      "INSERT INTO production_game_session_world_binding(game_session_id,integration_id,binding_ref,operation_id,status,revision) VALUES(?,?,?,?, 'registered',1)",
-    ).run(input.gameSessionId, input.integrationId, input.bindingRef, input.operationId);
+      "INSERT INTO production_game_session_world_binding(game_session_id,integration_id,binding_ref,operation_id,holder_handle,status,revision) VALUES(?,?,?,?,?, 'registered',1)",
+    ).run(input.gameSessionId, input.integrationId, input.bindingRef, input.operationId, input.holderHandle);
     return gameSessionWorldBindingReadback(
       db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
     );
@@ -4248,6 +4366,44 @@ function readGameSessionWorldBinding(
   });
 }
 /**
+ * Locates the one row a slot operation is about. A slot is integration-scoped
+ * and the cross-session duplicate rule keeps at most one `registered` row per
+ * slot, so a registered row is always *the* holder; settled rows can pile up for
+ * the same slot (each settled session keeps its row - nothing is deleted), and
+ * then the choice is ordered so a readback never depends on row luck.
+ */
+function selectGameSessionWorldBindingSlotRow(db: DatabaseSync, integrationId: string, bindingRef: string): any {
+  const holder = db
+    .prepare(
+      "SELECT * FROM production_game_session_world_binding WHERE integration_id=? AND binding_ref=? AND status='registered'",
+    )
+    .get(integrationId, bindingRef) as any;
+  if (holder) return holder;
+  return db
+    .prepare(
+      "SELECT * FROM production_game_session_world_binding WHERE integration_id=? AND binding_ref=? ORDER BY game_session_id LIMIT 1",
+    )
+    .get(integrationId, bindingRef) as any;
+}
+function readGameSessionWorldBindingSlotHolder(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: Readonly<{ integrationId: string; bindingRef: string }>,
+): ProductionGameSessionWorldBindingSlotHolder | null {
+  if (
+    !exactPlainDataObject(input, ["integrationId", "bindingRef"]) ||
+    !safeId(input.integrationId) ||
+    !validOpaqueWorldBindingRef(input.bindingRef)
+  )
+    throw new Error("invalid_game_session_world_binding");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = selectGameSessionWorldBindingSlotRow(db, input.integrationId, input.bindingRef);
+    return row ? gameSessionWorldBindingSlotHolderReadback(row) : null;
+  });
+}
+/**
  * Terminal settle of a session that owns a world binding: the binding becomes
  * terminal and the session metadata becomes failed inside this one transaction.
  *
@@ -4256,14 +4412,17 @@ function readGameSessionWorldBinding(
  * the session): a completed session (`resumable` rev2) that failed after
  * registration, and a session whose completion never landed (`pending` rev1) -
  * `game.create` registers the world binding and only then completes the
- * session, so a completion that fails leaves exactly that shape. No other
- * operation can settle it: `failGameSessionCreation` refuses a session that
- * already has a binding row, and `completeGameSessionBinding` only ever makes a
- * session resumable. Both shapes settle on the one canonical terminal metadata
- * revision 3 that the materialization rules pair with a terminal binding, so a
- * reopen accepts the settled session instead of rejecting it as a corrupt row
- * pair; a row pair that matches neither shape fails closed rather than being
- * guessed at.
+ * session, so a completion that fails leaves exactly that shape. Exactly two
+ * operations can settle it: this one, for a caller that still holds the live
+ * command identity, and `releaseGameSessionWorldBindingSlot`, for a successor
+ * that holds the holder's own handle and a native proof of death instead. No
+ * other operation can settle it: `failGameSessionCreation` refuses a session
+ * that already has a binding row, and `completeGameSessionBinding` only ever
+ * makes a session resumable. Both shapes settle on the one canonical terminal
+ * metadata revision 3 that the materialization rules pair with a terminal
+ * binding, so a reopen accepts the settled session instead of rejecting it as a
+ * corrupt row pair; a row pair that matches neither shape fails closed rather
+ * than being guessed at.
  */
 function markGameSessionWorldBindingTerminal(
   db: DatabaseSync,
@@ -4288,25 +4447,137 @@ function markGameSessionWorldBindingTerminal(
     }
     if (row.revision !== input.expectedRevision || row.status !== "registered")
       throw new Error("game_session_world_binding_conflict");
-    const updated = db
-      .prepare(
-        "UPDATE production_game_session_world_binding SET status='terminal',revision=revision+1 WHERE game_session_id=? AND integration_id=? AND operation_id=? AND status='registered' AND revision=?",
-      )
-      .run(input.gameSessionId, input.integrationId, input.operationId, input.expectedRevision);
-    if (updated.changes !== 1) throw new Error("game_session_world_binding_conflict");
-    // The metadata the terminal binding belongs to is failed here, in this same
-    // transaction, so a settled binding never outlives a live session: only the
-    // two legal pre-settle revisions are accepted and both land on revision 3.
-    const metadataUpdated = db
-      .prepare(
-        "UPDATE production_game_session_metadata SET status='failed',revision=3 WHERE game_session_id=? AND integration_id=? AND ((status='pending' AND revision=1) OR (status='resumable' AND revision=2))",
-      )
-      .run(input.gameSessionId, input.integrationId);
-    if (metadataUpdated.changes !== 1) throw new Error("game_session_world_binding_conflict");
-    return gameSessionWorldBindingReadback(
-      db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
-    );
+    return settleRegisteredGameSessionWorldBinding(db, {
+      gameSessionId: input.gameSessionId,
+      integrationId: input.integrationId,
+      operationId: input.operationId,
+      expectedRevision: input.expectedRevision,
+    });
   });
+}
+/**
+ * The store's one terminal settle body: a registered binding becomes terminal
+ * (revision 2) and its session metadata becomes failed (revision 3) in the same
+ * transaction, because a settled binding must never outlive a live session.
+ * It runs no transaction of its own - both callers (the command-identified
+ * terminal operation and the slot release) run it inside their own single
+ * transaction, so the released holder lands on exactly the state a completed
+ * command settle produces and the CAS below is the only writer.
+ */
+function settleRegisteredGameSessionWorldBinding(
+  db: DatabaseSync,
+  input: Readonly<{ gameSessionId: string; integrationId: string; operationId: string; expectedRevision: number }>,
+): ProductionGameSessionWorldBinding {
+  const updated = db
+    .prepare(
+      "UPDATE production_game_session_world_binding SET status='terminal',revision=revision+1 WHERE game_session_id=? AND integration_id=? AND operation_id=? AND status='registered' AND revision=?",
+    )
+    .run(input.gameSessionId, input.integrationId, input.operationId, input.expectedRevision);
+  if (updated.changes !== 1) throw new Error("game_session_world_binding_conflict");
+  // The metadata the terminal binding belongs to is failed here, in this same
+  // transaction, so a settled binding never outlives a live session: only the
+  // two legal pre-settle revisions are accepted and both land on revision 3.
+  const metadataUpdated = db
+    .prepare(
+      "UPDATE production_game_session_metadata SET status='failed',revision=3 WHERE game_session_id=? AND integration_id=? AND ((status='pending' AND revision=1) OR (status='resumable' AND revision=2))",
+    )
+    .run(input.gameSessionId, input.integrationId);
+  if (metadataUpdated.changes !== 1) throw new Error("game_session_world_binding_conflict");
+  return gameSessionWorldBindingReadback(
+    db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
+  );
+}
+/**
+ * design/105 Slice 0 world-slot release (owner ruling D2-A', 2026-10-05 evening).
+ *
+ * A create registers the world binding and only then completes the session, so a
+ * create that dies between the two - or whose settle closure could not be
+ * applied - leaves a slot held by a session that can never settle itself: the
+ * per-command `operationId` the terminal settle demands lives only in the dead
+ * process's memory (`SLOT WEDGE`). The owner ruled that such a slot is released
+ * by a successor that presents BOTH the holder's own handle and a native verdict
+ * proving the holder's owner dead, and nothing weaker:
+ *
+ * - The handle is what makes "the holder I release is the holder I observed"
+ *   checkable. A caller that knows only the slot cannot manufacture the holder's
+ *   identity, and a second caller racing the same slot fails on the handle
+ *   instead of guessing twice.
+ * - The proof is the same opaque native OS verdict `recoverGame` consumes: a
+ *   live holder is refused (`alive`), and `mismatch`, `ambiguous` and
+ *   `unavailable` refuse too, because none of them proves death. A caller
+ *   asserted boolean, a plain object or a structured clone of a verdict is not a
+ *   weaker proof - it is no proof at all, and the reader rejects it before this
+ *   operation looks at anything else.
+ * - Success reuses the one settle body above, so the holder lands on the
+ *   canonical terminal row pair inside a single transaction. No row is deleted,
+ *   the duplicate-slot rule is untouched, the CAS revision semantics are the
+ *   settle's own, and `terminal` stays sticky.
+ * - A repeated call is a bounded refusal (`holderTerminal`), never a silent
+ *   no-op: a no-op would report success for a call that released nothing.
+ *
+ * Rows whose holder has no handle are unreleasable by construction, and are not
+ * pretend-fixable here: the handle column is NOT NULL, so no holder without a
+ * handle can be written, and a store written before this column existed is
+ * refused at open by the physical-signature check
+ * (`unsupported_production_store_schema`) rather than being read with unknown
+ * holders or backfilled. Backfilling would have to invent the handle of a dead
+ * attempt, which is exactly the guess this ruling forbids; disposing of such a
+ * store is an out-of-band operation.
+ */
+function releaseGameSessionWorldBindingSlot(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionGameSessionWorldBindingSlotReleaseInput,
+): ProductionGameSessionWorldBinding {
+  if (!validGameSessionWorldBindingSlotReleaseInput(input)) throw new Error("invalid_game_session_world_binding");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const row = selectGameSessionWorldBindingSlotRow(db, input.integrationId, input.bindingRef);
+    if (!row) throw new Error(productionGameSessionWorldBindingSlotRelease.slotMissing);
+    // The handle is checked before anything else is revealed: a caller that
+    // cannot present this holder's identity gets the same bounded refusal
+    // whether the holder is live, dead or already settled, so the operation
+    // never becomes an oracle for slots a caller does not hold.
+    if (row.holder_handle !== input.holderHandle)
+      throw new Error(productionGameSessionWorldBindingSlotRelease.handleMismatch);
+    if (row.status !== "registered")
+      throw new Error(productionGameSessionWorldBindingSlotRelease.holderTerminal);
+    const verdict = readGameSessionWorldBindingSlotReleaseProof(input.proof);
+    if (verdict.outcome === "alive")
+      throw new Error(productionGameSessionWorldBindingSlotRelease.holderAlive);
+    if (verdict.outcome !== "proven_dead")
+      throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
+    return settleRegisteredGameSessionWorldBinding(db, {
+      gameSessionId: row.game_session_id,
+      integrationId: input.integrationId,
+      // The holder's own command identity is used here precisely because the
+      // successor does not know it: the release is not a replay of the dead
+      // command, it is the same settle applied to the holder the slot names.
+      operationId: row.operation_id,
+      expectedRevision: row.revision,
+    });
+  });
+}
+function validGameSessionWorldBindingSlotReleaseInput(
+  value: unknown,
+): value is ProductionGameSessionWorldBindingSlotReleaseInput {
+  return (
+    exactPlainDataObject(value, ["integrationId", "bindingRef", "holderHandle", "proof"]) &&
+    safeId(value.integrationId) &&
+    validOpaqueWorldBindingRef(value.bindingRef) &&
+    validOpaqueWorldBindingRef(value.holderHandle)
+  );
+}
+/** Reads the native verdict, or refuses with the release's own bounded code. */
+function readGameSessionWorldBindingSlotReleaseProof(
+  proof: unknown,
+): ReturnType<typeof readWindowsOwnerDeathVerification> {
+  try {
+    return readWindowsOwnerDeathVerification(proof);
+  } catch {
+    throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
+  }
 }
 function strictEmpty(db: DatabaseSync): boolean {
   return [
