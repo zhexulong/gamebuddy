@@ -16,7 +16,10 @@ import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
-import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
+import {
+  readStardewInstallationRegistration,
+  withStardewLifecycleInstallationRegistrationOwner,
+} from "./stardew-installation-registration.internal.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
@@ -1052,6 +1055,33 @@ function createCoordinator(
     return await callback(installation);
   };
 
+  /**
+   * The holder handle a world-binding registration must carry is the attempt's
+   * own opaque correlation: the registration pointer's `activeAttempt` is bound
+   * to the owner record's `bootstrapId`, so the two always name the same attempt.
+   * The store deliberately neither mints nor derives this value, so it is read
+   * here and passed through verbatim.
+   *
+   * An interrupted owner transaction (a marker) means the pointer and the
+   * attempt's owner record are mid-transition. Marker presence is never evidence
+   * of a holder, so this fails closed rather than adopting a correlation it
+   * cannot trust; a missing, non-ready or attempt-less pointer fails closed the
+   * same way. The read itself stays inside the registration's own exclusive lock,
+   * so the correlation cannot be re-bound between the check and the read.
+   */
+  const readWorldBindingHolderHandle = async (): Promise<string> => {
+    const registration = await withStardewLifecycleInstallationRegistrationOwner(
+      runtimeRoot,
+      async (storage) => {
+        if (await storage.readMarker() !== null) return null;
+        return await storage.readRegistration();
+      },
+    );
+    if (registration === null || registration.state !== "ready" || registration.activeAttempt === null)
+      throw new Error("stardew_game_create_holder_unavailable");
+    return registration.activeAttempt.bootstrapCorrelation;
+  };
+
   const registerInstallationLocator = async (locator: string): Promise<StardewInstallationSelectionResult> => {
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     const inspector = await createInstallationInspector();
@@ -1889,12 +1919,19 @@ function createCoordinator(
         });
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         // Phase 2c: register the world binding under the coordinator-minted
-        // operation identity (registered rev1).
+        // operation identity (registered rev1), carrying the attempt's own
+        // opaque correlation as the holder handle. A read that cannot produce a
+        // trustworthy correlation fails this create closed (bounded
+        // `stardew_game_create_holder_unavailable`, settled by the same failure
+        // closure below) instead of registering a guessed or empty handle.
+        const holderHandle = await readWorldBindingHolderHandle();
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
         await creationAuthority.registerGameSessionWorldBinding({
           gameSessionId: metadata.gameSessionId,
           integrationId: command.integrationId,
           bindingRef: world.bindingRef,
           operationId,
+          holderHandle,
         });
         bindingRegistered = true;
         if (isClosing()) throw new Error("stardew_lifecycle_closing");

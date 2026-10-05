@@ -5334,6 +5334,7 @@ test("game.create whose registration hits a slot held by another live session se
   });
   await fake.authority.registerGameSessionWorldBinding({
     gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", operationId: "foreign-operation",
+    holderHandle: "holder-foreign-operation",
   });
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
