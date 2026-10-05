@@ -5418,20 +5418,284 @@ test("game.create reports the terminal create failure when its durable settle ca
   }
 });
 
-test("game.create whose registration hits a slot held by another live session settles through the SAME single closure", async () => {
-  const fake = fakeGameSessionCreationAuthority();
-  // Another live session (pending metadata + registered binding) already holds
-  // the world slot this create's own world-creation seam observes.
-  const foreign = await fake.authority.createGameSessionMetadata({
-    creationRequestId: "foreign-creation-request", integrationId: "stardew", continuityIdentityId: null,
+/**
+ * Scripted contained-runtime teardown for the create path's slot-recovery
+ * trigger.
+ *
+ * The drive's two halves are recorded, and the request's `readRecoveryBinding`
+ * is exercised exactly as the real drive exercises it - after the recover step,
+ * because it is the post-CAS successor frame - so a trigger that built its
+ * request from a stale read, or from anything other than the opened attempt's
+ * own record, projects something else here instead of passing by default. The
+ * outcome is the caller's to script; `never` installs outright refusals, so a
+ * trigger that drove a recovery it should not have driven fails loudly instead
+ * of silently succeeding.
+ */
+function scriptedRecoveryTeardown(outcome: "recovered" | "gate_held" | "unavailable" | "never") {
+  const events: string[] = [];
+  const requests: StardewOwnerRecoveryRequest[] = [];
+  const recoveryBindings: unknown[] = [];
+  const teardown: StardewContainedRuntimeTeardown = Object.freeze({
+    containPlayerHost: async () => { events.push("containPlayerHost"); },
+    containAiClient: async () => { events.push("containAiClient"); },
+    settle: async () => { events.push("settle"); },
+    recover: async (_owner, request) => {
+      events.push("recover");
+      if (outcome === "never") throw new Error("recovery_must_not_run");
+      requests.push(request);
+      recoveryBindings.push(await request.readRecoveryBinding());
+      if (outcome === "recovered") return Object.freeze({ status: "recovered" as const });
+      if (outcome === "gate_held") return Object.freeze({ status: "gate_held" as const });
+      return Object.freeze({ status: "unavailable" as const });
+    },
+    finalizeRecovered: async (_owner, request) => {
+      events.push("finalizeRecovered");
+      if (outcome === "never") throw new Error("finalization_must_not_run");
+      requests.push(request);
+    },
+    close: async () => { events.push("close"); },
+  });
+  return Object.freeze({ teardown, events, requests, recoveryBindings });
+}
+
+/**
+ * Writes a real attempt record under `bootstrapId` by re-identifying the
+ * lifecycle's own persisted record, so the opener's principal check and the
+ * composer's strict v4 validator both run for real against real bytes instead of
+ * against a hand-built shape. `patch` carries only the fields the modelled
+ * durable position actually differs in.
+ */
+async function writeAttemptRecord(
+  runtimeRoot: string,
+  bootstrapId: string,
+  patch: Readonly<Record<string, unknown>> = {},
+): Promise<Record<string, unknown>> {
+  const live = JSON.parse(await readFile(
+    join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "owner.json"),
+    "utf8",
+  )) as Record<string, unknown>;
+  const record: Record<string, unknown> = { ...live, ...patch, bootstrapId };
+  const directory = join(runtimeRoot, "stardew-private-bootstrap", bootstrapId);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "owner.json"), JSON.stringify(record));
+  return record;
+}
+
+/**
+ * Seeds the slot row a crashed create leaves behind: a binding whose session
+ * metadata never left `pending`, held by an opaque handle. `settle` drives it to
+ * the canonical terminal pair instead, which is the shape a slot carries after
+ * every one of its sessions has already settled.
+ */
+async function seedWorldSlotRow(
+  fake: ReturnType<typeof fakeGameSessionCreationAuthority>,
+  input: Readonly<{ bindingRef: string; holderHandle: string; settle: boolean }>,
+) {
+  const metadata = await fake.authority.createGameSessionMetadata({
+    creationRequestId: `leftover-creation-request-${input.holderHandle}`,
+    integrationId: "stardew",
+    continuityIdentityId: null,
   });
   await fake.authority.registerGameSessionWorldBinding({
-    gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", operationId: "foreign-operation",
-    holderHandle: "holder-foreign-operation",
+    gameSessionId: metadata.gameSessionId,
+    integrationId: "stardew",
+    bindingRef: input.bindingRef,
+    operationId: `leftover-operation-${input.holderHandle}`,
+    holderHandle: input.holderHandle,
   });
+  if (input.settle)
+    await fake.authority.markGameSessionWorldBindingTerminal({
+      gameSessionId: metadata.gameSessionId,
+      integrationId: "stardew",
+      operationId: `leftover-operation-${input.holderHandle}`,
+      expectedRevision: 1,
+    });
+  return metadata;
+}
+
+/**
+ * The world slot a crashed create left behind is recovered, finalized and
+ * released before this create registers on it: the SLOT WEDGE closes itself
+ * instead of refusing every later create on that slot forever.
+ *
+ * The leftover attempt's record has no recorded recovery actor, so the trigger
+ * mints one - that is the fallback branch, and the actor is asserted as a fresh
+ * opaque guid rather than as a value this test supplied.
+ */
+test("game.create recovers a slot's leftover holder, releases it, and then registers its own world on that slot", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const crashedBootstrapId = "bootstrap-crashed-attempt-1";
+  const scripted = scriptedRecoveryTeardown("recovered");
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       gameSessionCreationAuthority: fake.authority,
+      containedRuntimeTeardown: scripted.teardown,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    await writeAttemptRecord(fixture.runtimeRoot, crashedBootstrapId);
+    const leftover = await seedWorldSlotRow(fake, {
+      bindingRef: "Farm_389124477", holderHandle: crashedBootstrapId, settle: false,
+    });
+    assert.equal(fake.readBinding(leftover.gameSessionId)?.status, "registered");
+    assert.equal(fake.readMetadata(leftover.gameSessionId)?.status, "pending");
+
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await creating;
+
+    // The create truly continued past the trigger: its own world is bound,
+    // completed and attached.
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    assert.equal(result.status, "attached");
+    const sessionId = result.gameSessionId!;
+    assert.match(sessionId, /^[A-Za-z0-9_-]{32}$/);
+    assert.deepEqual(fake.readBinding(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "registered", revision: 1,
+    });
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "resumable", revision: 2,
+    });
+    assert.deepEqual(fake.listResumable(), [fake.readMetadata(sessionId)]);
+    // The leftover slot landed on the canonical terminal pair the store's own
+    // settle produces, so it no longer occupies the slot.
+    assert.deepEqual(fake.readBinding(leftover.gameSessionId), {
+      gameSessionId: leftover.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477",
+      status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.readMetadata(leftover.gameSessionId), {
+      gameSessionId: leftover.gameSessionId, integrationId: "stardew", continuityIdentityId: null,
+      status: "failed", revision: 3,
+    });
+    // The drive ran once, recovered and then finalized, and never reached a
+    // role-containment or a settlement path.
+    assert.deepEqual(scripted.events, ["recover", "finalizeRecovered"]);
+    // ONE request for both halves, so the actor the durable CASes recorded and
+    // the actor the finalization must match cannot drift apart.
+    assert.equal(scripted.requests.length, 2);
+    assert.equal(scripted.requests[0], scripted.requests[1]);
+    // The request carried the opened attempt's own projection - the seven fields
+    // of the CURRENT durable record, asserted against the bytes on disk so
+    // neither side can drift into agreeing on a wrong record.
+    const persisted = JSON.parse(await readFile(
+      join(fixture.runtimeRoot, "stardew-private-bootstrap", crashedBootstrapId, "owner.json"), "utf8",
+    )) as Record<string, unknown>;
+    const guardian = persisted.guardian as Record<string, unknown>;
+    assert.deepEqual(scripted.recoveryBindings, [{
+      bindingRevision: guardian.bindingRevision,
+      ownerRecordRevision: persisted.ownerRecordRevision,
+      leaseName: guardian.leaseName,
+      playerJobName: guardian.playerJobName,
+      aiJobName: guardian.aiJobName,
+      playerHostState: persisted.playerHostState,
+      aiClientState: persisted.aiClientState,
+    }]);
+    assert.deepEqual(Object.keys(scripted.recoveryBindings[0] as object).sort(), [
+      "aiClientState", "aiJobName", "bindingRevision", "leaseName", "ownerRecordRevision", "playerHostState", "playerJobName",
+    ]);
+    // The slot was read once, for this create's own world ref.
+    assert.deepEqual(fake.slotReads(), [{ integrationId: "stardew", bindingRef: "Farm_389124477" }]);
+    // Durable steps: the seeding pair, then this create's own create, register
+    // and complete. The leftover session's rows were settled by the RELEASE, not
+    // by any step of this create.
+    assert.deepEqual(fake.inputs(), ["create", "register", "create", "register", "complete"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * The one release this trigger may perform receives the handle READ FROM THE
+ * SLOT and a holder-gone verdict minted from the same drive result - never the
+ * lifecycle's own attempt identity, and never a derived or defaulted handle.
+ *
+ * The leftover record here carries a recorded recovery actor, so the trigger
+ * adopts it instead of minting one: an interrupted recovery resumes its exact
+ * actor, and an actor the durable CASes recorded cannot be replaced by the
+ * caller.
+ */
+test("game.create's slot release carries the dead holder's own handle and a holder-gone verdict", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const crashedBootstrapId = "bootstrap-crashed-attempt-2";
+  const recordedActor = "5c8e1f2b-0a4d-4e7c-9b31-6d2f8a3c7e50";
+  const scripted = scriptedRecoveryTeardown("recovered");
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      containedRuntimeTeardown: scripted.teardown,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    // An interrupted recovery: the durable `recovering` CAS already ran and wrote
+    // its actor, and one role is already classified contained.
+    await writeAttemptRecord(fixture.runtimeRoot, crashedBootstrapId, {
+      state: "recovering", guardianState: "recovering", recoveryInstanceId: recordedActor,
+      playerHostState: "contained", aiClientState: "active",
+    });
+    const leftover = await seedWorldSlotRow(fake, {
+      bindingRef: "Farm_389124477", holderHandle: crashedBootstrapId, settle: false,
+    });
+
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await creating;
+    assert.equal(result.status, "attached");
+
+    // The record's own actor was adopted, not replaced.
+    assert.equal(scripted.requests[0]!.recoveryInstanceId, recordedActor);
+    // One attempt, one verdict, one release.
+    const releases = fake.slotReleases() as readonly Readonly<{
+      integrationId: string; bindingRef: string; holderHandle: string;
+      proof: Readonly<{ holderHandle: string; verdict: object }>;
+    }>[];
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]!.integrationId, "stardew");
+    assert.equal(releases[0]!.bindingRef, "Farm_389124477");
+    // The handle is the slot's own holder handle - the crashed attempt's
+    // bootstrap id - and NOT this lifecycle's own attempt identity.
+    assert.equal(releases[0]!.holderHandle, crashedBootstrapId);
+    assert.notEqual(releases[0]!.holderHandle, "bootstrap-coordinator-1");
+    // The proof is correlated to that same holder, and carries an opaque minted
+    // verdict: the stand-in cannot read the token's value (its reader is the
+    // store's own), so what is pinned here is that the trigger presented the
+    // store's mint for a holder-gone result rather than a look-alike.
+    assert.equal(releases[0]!.proof.holderHandle, crashedBootstrapId);
+    assert.equal(typeof releases[0]!.proof.verdict, "object");
+    assert.equal(Object.isFrozen(releases[0]!.proof.verdict), true);
+    assert.equal(Object.keys(releases[0]!.proof.verdict).length, 0);
+    // That release is what settled the leftover session, and only one release
+    // ever ran for it.
+    assert.equal(fake.readBinding(leftover.gameSessionId)?.status, "terminal");
+    assert.equal(fake.readMetadata(leftover.gameSessionId)?.status, "failed");
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * No leftover holder is the untouched path: the create consults the slot, finds
+ * nothing to recover, drives no recovery at all, and takes exactly the durable
+ * steps it took before the trigger existed.
+ */
+test("game.create over a slot with no leftover holder drives no recovery and keeps its previous durable steps", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const scripted = scriptedRecoveryTeardown("never");
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      containedRuntimeTeardown: scripted.teardown,
       createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
     },
   });
@@ -5442,17 +5706,157 @@ test("game.create whose registration hits a slot held by another live session se
     );
     const request = await waitForAttachmentRequest(fixture.runtimeRoot);
     await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
-    // The store rejects the registration with `game_session_world_binding_duplicate`
-    // and writes no binding row for this session, so the create lands on the
-    // PRE-registration shape of the one durable closure (pending rev1 -> failed
-    // rev2, no binding row). The coordinator has no branch that distinguishes
-    // that code from any other registration failure - it is not needed, because
-    // the schema the store guarantees for a rejected registration already selects
-    // the correct settle shape - and only a closure that cannot be applied at all
-    // becomes `stardew_game_create_failed`.
     const result = await creating;
-    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
     assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    assert.equal(result.status, "attached");
+    // The slot was consulted - the read is never skipped - and nothing was
+    // driven or released off it.
+    assert.deepEqual(fake.slotReads(), [{ integrationId: "stardew", bindingRef: "Farm_389124477" }]);
+    assert.deepEqual(fake.slotReleases(), []);
+    assert.deepEqual(scripted.events, []);
+    // Exactly the pre-trigger durable steps, in the same order.
+    assert.deepEqual(fake.inputs(), ["create", "register", "complete"]);
+    assert.equal(fake.readBinding(result.gameSessionId!)?.status, "registered");
+    assert.equal(fake.readMetadata(result.gameSessionId!)?.status, "resumable");
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * A SETTLED row on the slot is not an occupant. The readback deliberately
+ * returns such a row when nothing is registered - so a release against it is
+ * refused as `holderTerminal` instead of being mistaken for an unknown slot -
+ * and reading it as an occupant here would refuse every later create on a slot
+ * that has ever been settled.
+ *
+ * That is not a theoretical shape: the binding ref is the physical save slot the
+ * Player Host observed, whose basename is derived from the farm name, so a create
+ * that failed once leaves a terminal row under exactly the ref the next create
+ * observes. The record below is a real terminal one, so a judge that decided on
+ * the record instead of on the row would hit the opener's terminal refusal here
+ * and the create would fail closed.
+ */
+test("game.create is not blocked by a settled row on the slot, only by a registered holder", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const settledBootstrapId = "bootstrap-settled-attempt-1";
+  const scripted = scriptedRecoveryTeardown("never");
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      containedRuntimeTeardown: scripted.teardown,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    // The attempt behind the settled row terminated: both roles drained, no
+    // recorded actor, nothing left to recover.
+    await writeAttemptRecord(fixture.runtimeRoot, settledBootstrapId, {
+      state: "contained", guardianState: "contained", recoveryInstanceId: null,
+      playerHostState: "contained", aiClientState: "contained",
+    });
+    const settled = await seedWorldSlotRow(fake, {
+      bindingRef: "Farm_389124477", holderHandle: settledBootstrapId, settle: true,
+    });
+    assert.equal(fake.readBinding(settled.gameSessionId)?.status, "terminal");
+
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    const result = await creating;
+    assert.equal(result.status, "attached");
+    assert.deepEqual(fake.slotReads(), [{ integrationId: "stardew", bindingRef: "Farm_389124477" }]);
+    assert.deepEqual(scripted.events, []);
+    assert.deepEqual(fake.slotReleases(), []);
+    // The settled row is untouched, and this create's own world is registered on
+    // the same slot.
+    assert.deepEqual(fake.readBinding(settled.gameSessionId), {
+      gameSessionId: settled.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477",
+      status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.inputs(), ["create", "register", "terminal", "create", "register", "complete"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * A slot whose holder is a LIVE attempt is refused at the slot judge, not at the
+ * store's duplicate rule.
+ *
+ * This test used to pin the store's own `game_session_world_binding_duplicate`
+ * refusal as reached from the create path: the create registered, the store
+ * rejected the second live session on the world slot, and the create settled
+ * through the one durable closure. The judge now decides that case first - a
+ * `registered` holder is driven through the existing recovery seam, and a held
+ * native gate means the holder was NOT proven gone - so the store's duplicate
+ * rule is never reached from here at all. What the scenario must still prove is
+ * unchanged: a live holder is refused, nothing is stolen from it, nothing is
+ * released or finalized, and the create settles through the SAME single durable
+ * closure. The store's duplicate rule keeps its own test in the store suite.
+ */
+test("game.create is refused at the slot judge when another live holder still owns the world slot", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const foreignBootstrapId = "bootstrap-live-holder-1";
+  const scripted = scriptedRecoveryTeardown("gate_held");
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      containedRuntimeTeardown: scripted.teardown,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    // Another session (pending metadata + registered binding) already holds the
+    // world slot this create's own world-creation seam observes, and the attempt
+    // behind its handle is still non-terminal - so its native gate is held.
+    await writeAttemptRecord(fixture.runtimeRoot, foreignBootstrapId);
+    const foreign = await seedWorldSlotRow(fake, {
+      bindingRef: "Farm_389124477", holderHandle: foreignBootstrapId, settle: false,
+    });
+    const foreignRecordBefore = await readFile(
+      join(fixture.runtimeRoot, "stardew-private-bootstrap", foreignBootstrapId, "owner.json"), "utf8",
+    );
+
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // The refusal carries the judge's OWN bounded code: a held gate is the lease
+    // verdict - the holder was not proven gone, since the handle at that lease
+    // name may be a gate this Host itself opened - and it is reported as itself
+    // rather than folded into the generic unavailable outcome.
+    await assert.rejects(
+      creating,
+      (error: unknown) => error instanceof Error && error.message === "stardew_game_create_slot_holder_not_proven_gone",
+    );
+    // The refusal happened at the judge: this create never asked the store to
+    // register, so the store's own duplicate rule is not the thing refusing here.
+    assert.deepEqual(fake.inputs(), ["create", "register", "create", "fail"]);
+    // Nothing was released and nothing was finalized; the drive ran its recover
+    // step exactly once and stopped there.
+    assert.deepEqual(scripted.events, ["recover"]);
+    assert.deepEqual(fake.slotReleases(), []);
+    // The live holder's slot and its durable record are exactly what they were:
+    // it keeps the one registered row on that world, and its attempt was neither
+    // recovered nor rewritten.
+    assert.deepEqual(fake.readBinding(foreign.gameSessionId), {
+      gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "registered", revision: 1,
+    });
+    assert.deepEqual(fake.readMetadata(foreign.gameSessionId), foreign);
+    assert.equal(await readFile(
+      join(fixture.runtimeRoot, "stardew-private-bootstrap", foreignBootstrapId, "owner.json"), "utf8",
+    ), foreignRecordBefore);
+    // This create's own attempt still settles through the SAME single closure:
+    // the pre-registration shape (pending rev1 -> failed rev2, no binding row),
+    // never a resumable half-record.
     const sessions = fake.sessions();
     assert.equal(sessions.length, 2);
     const own = sessions.find((row) => row.gameSessionId !== foreign.gameSessionId)!;
@@ -5460,17 +5864,7 @@ test("game.create whose registration hits a slot held by another live session se
       gameSessionId: own.gameSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
     });
     assert.equal(fake.readBinding(own.gameSessionId), null);
-    // The holder's slot is untouched: the rejected registration neither stole nor
-    // overwrote it, and the holder stays the one session registered on that world.
-    assert.deepEqual(fake.readBinding(foreign.gameSessionId), {
-      gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "registered", revision: 1,
-    });
-    assert.deepEqual(fake.readMetadata(foreign.gameSessionId), foreign);
     assert.deepEqual(fake.listResumable(), []);
-    // Exact durable steps: the seeding pair, then this create's own create, its
-    // rejected registration, and the pre-registration `fail` settle. Never
-    // `terminal` - no binding row of this session's own ever existed.
-    assert.deepEqual(fake.inputs(), ["create", "register", "create", "register", "fail"]);
     // Never attached and never ready: no world of this session's own exists, no
     // AI client was launched and the wire reports no session handle.
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
