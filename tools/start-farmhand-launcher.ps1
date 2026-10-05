@@ -69,12 +69,30 @@ function Invoke-NodeQuiet([string[]]$Arguments, [string]$FailureCode) {
         $process = Start-Process -FilePath "node.exe" -ArgumentList $commandLine -NoNewWindow -Wait -PassThru -RedirectStandardOutput $privateOutputPath -RedirectStandardError $privateErrorPath
         if ($process.ExitCode -eq 0) { return }
         $raw = if (Test-Path -LiteralPath $privateErrorPath -PathType Leaf) { [IO.File]::ReadAllText($privateErrorPath) } else { "" }
-        $match = [regex]::Match($raw, '\b(stardew_[a-z0-9_]+|fixture_[a-z0-9_]+|invalid_[a-z0-9_]+|attachment_[a-z0-9_]+|ENOENT)\b')
-        $detail = if ($match.Success) { $match.Groups[1].Value } else { "unavailable" }
+        $match = [regex]::Match($raw, '\b(stardew_[a-z0-9_]+|fixture_[a-z0-9_]+|invalid_[a-z0-9_]+|attachment_[a-z0-9_]+|ENOENT)(:[A-Za-z0-9_.-]{1,96})?')
+        $detail = if ($match.Success) { $match.Groups[0].Value } else { Get-BoundedFailureDetail $raw }
         throw ("{0}:{1}" -f $FailureCode, $detail)
     } finally {
         Remove-Item -LiteralPath $privateOutputPath, $privateErrorPath -Force -ErrorAction SilentlyContinue
     }
+}
+function Get-BoundedFailureDetail([string]$Raw) {
+    # A helper that fails without a recognisable allowlisted code used to report
+    # the bare word `unavailable`, which names nothing (measured 2026-10-05:
+    # `fresh_attachment_manifest_failed:unavailable` cost a diagnosis cycle with
+    # no way to see why). Surface the first USABLE stderr line instead, still
+    # under the private-output rule: no path-shaped or URL-shaped text, no stack
+    # frame, whitespace collapsed, bounded to 200 characters.
+    foreach ($line in ($Raw -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0) { continue }
+        if ($trimmed -match '[\\/]') { continue }
+        if ($trimmed -match '^at\s' -or $trimmed -match 'node:internal') { continue }
+        $collapsed = ($trimmed -replace '\s+', ' ')
+        if ($collapsed.Length -gt 200) { $collapsed = $collapsed.Substring(0, 200) }
+        return $collapsed
+    }
+    return "unavailable"
 }
 function Stop-OwnedProcess($Process) {
     if ($null -eq $Process) { return }
@@ -541,6 +559,11 @@ try {
         }
         Start-Sleep -Milliseconds 250
     }
+} catch {
+    # Keep the run's own failure so the cleanup path cannot replace it: an error
+    # thrown from `finally` masks the exception that actually stopped the run.
+    $primaryFailure = $_
+    throw
 } finally {
     # Strict reverse ownership order. Restore only after every launched process
     # ended; a failed restore deliberately preserves its backup and lock.
@@ -571,7 +594,14 @@ try {
     if ($null -ne $previewStdoutPath) { $ingressStages = Get-PreviewIngressStages $previewStdoutPath }
     Remove-Item -LiteralPath $overridePath, $previewConfigPath -Force -ErrorAction SilentlyContinue
     if ($null -ne $sessionDirectory) { Clear-RunSessionExchange $sessionDirectory }
-    if ($prepared) { Invoke-NodeQuiet @("tools/restore-stardew-fixture-profile.mjs", "--backup-name", $backupName) "fixture_restore_failed" }
+    if ($prepared) {
+        try {
+            Invoke-NodeQuiet @("tools/restore-stardew-fixture-profile.mjs", "--backup-name", $backupName) "fixture_restore_failed"
+        } catch {
+            if ($null -eq $primaryFailure) { throw }
+            Write-Output ("[launcher-failure] run failed: " + $primaryFailure.Exception.Message + " | fixture restore also failed: " + $_.Exception.Message)
+        }
+    }
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

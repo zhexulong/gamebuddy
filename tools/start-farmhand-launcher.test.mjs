@@ -288,3 +288,33 @@ test("the launcher times each startup phase and never prints a path or token", (
   );
   assert.doesNotMatch(phaseWriter, /bridgeToken|pipeName|\$smapi|RunRoot/);
 });
+
+test("a helper failure without a known code names its real reason, and cleanup cannot hide the run's failure", () => {
+  // Two diagnosability defects measured on 2026-10-05, both costing a full
+  // diagnosis cycle:
+  // 1. an unrecognised helper failure reported the bare word `unavailable`
+  //    (`fresh_attachment_manifest_failed:unavailable` names nothing);
+  // 2. a `finally`-block restore failure REPLACED the run's own exception, so
+  //    three runs looked like restore bugs while the real stop was earlier.
+  // The code allowlist also truncated `code:<owner>` at the colon, hiding which
+  // transaction was blocking.
+  assert.match(launcher, /function Get-BoundedFailureDetail\(\[string\]\$Raw\)/);
+  assert.match(launcher, /\$detail = if \(\$match\.Success\) \{ \$match\.Groups\[0\]\.Value \} else \{ Get-BoundedFailureDetail \$raw \}/);
+  assert.doesNotMatch(launcher, /else \{ "unavailable" \}/);
+  // The bounded detail keeps the private-output rule: no path, no stack frame,
+  // collapsed whitespace, at most 200 characters.
+  const bounded = launcher.slice(
+    launcher.indexOf("function Get-BoundedFailureDetail"),
+    launcher.indexOf("function Stop-OwnedProcess"),
+  );
+  assert.match(bounded, /-match '\[\\\\\/\]'/);
+  assert.match(bounded, /-match '\^at\\s'/);
+  assert.match(bounded, /-gt 200/);
+  // An optional `:<owner>` suffix survives the allowlist so a lock refusal can
+  // name the transaction holding it.
+  assert.match(launcher, /\(:\[A-Za-z0-9_\.-\]\{1,96\}\)\?/);
+  // Cleanup keeps the primary failure.
+  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,200}\$primaryFailure = \$_\n\s+throw\n\} finally \{/);
+  assert.match(launcher, /if \(\$null -eq \$primaryFailure\) \{ throw \}/);
+  assert.match(launcher, /\[launcher-failure\] run failed: /);
+});
