@@ -2330,6 +2330,21 @@ function fakeGameSessionCreationAuthority() {
       if (row === undefined) throw new Error("game_session_world_binding_session_missing");
       if (row.status !== "pending" || row.integrationId !== input.integrationId || bindings.has(input.gameSessionId))
         throw new Error("game_session_world_binding_conflict");
+      // Mirrors the store's cross-session slot rule (registerGameSessionWorldBinding):
+      // one world slot is held by at most one live session, and the rejection
+      // writes NO binding row, so the rejected session can only settle through
+      // the pre-registration shape. A `terminal` binding belongs to an already
+      // settled session whose residual save the native game owns and never
+      // blocks a later create, and the same ref under another integration is
+      // another world.
+      const duplicate = [...bindings.values()].find(
+        (binding) =>
+          binding.gameSessionId !== input.gameSessionId &&
+          binding.integrationId === input.integrationId &&
+          binding.bindingRef === input.bindingRef &&
+          binding.status === "registered",
+      );
+      if (duplicate !== undefined) throw new Error("game_session_world_binding_duplicate");
       const binding: ProductionGameSessionWorldBinding = Object.freeze({
         gameSessionId: input.gameSessionId,
         integrationId: input.integrationId,
@@ -2367,13 +2382,32 @@ function fakeGameSessionCreationAuthority() {
       inputs.push("terminal");
       const binding = bindings.get(input.gameSessionId);
       const row = bySession.get(input.gameSessionId);
-      if (binding === undefined || binding.integrationId !== input.integrationId || operationBySession.get(input.gameSessionId) !== input.operationId || binding.status !== "registered" || binding.revision !== input.expectedRevision)
+      if (binding === undefined) throw new Error("game_session_world_binding_missing");
+      if (binding.integrationId !== input.integrationId || operationBySession.get(input.gameSessionId) !== input.operationId)
         throw new Error("game_session_world_binding_conflict");
-      if (row === undefined || row.status !== "resumable" || row.revision !== 2)
+      // Terminal is sticky in the store: the same settle reads the terminal row
+      // back instead of writing again.
+      if (binding.status === "terminal") {
+        if (input.expectedRevision !== 1) throw new Error("game_session_world_binding_conflict");
+        return binding;
+      }
+      if (binding.revision !== input.expectedRevision)
+        throw new Error("game_session_world_binding_conflict");
+      // The store settles BOTH live pre-settle shapes onto the one canonical
+      // terminal pair (terminal binding rev2 + failed metadata rev3), inside its
+      // own single transaction: a completed session that failed after
+      // registration (`resumable` rev2) and the shape a create leaves when its
+      // completion never landed (`pending` rev1 with the binding already
+      // registered). Any other row pair fails closed, and nothing is written
+      // before both preconditions hold - the store applies them atomically.
+      if (
+        row === undefined ||
+        !((row.status === "pending" && row.revision === 1) || (row.status === "resumable" && row.revision === 2))
+      )
         throw new Error("game_session_world_binding_conflict");
       const terminal: ProductionGameSessionWorldBinding = Object.freeze({ ...binding, status: "terminal", revision: binding.revision + 1 });
       bindings.set(input.gameSessionId, terminal);
-      bySession.set(input.gameSessionId, Object.freeze({ ...row, status: "failed", revision: row.revision + 1 }));
+      bySession.set(input.gameSessionId, Object.freeze({ ...row, status: "failed", revision: 3 }));
       return terminal;
     },
   };
@@ -4704,7 +4738,7 @@ test("game.create drives the ONE durable failure closure when registration fails
   }
 });
 
-test("game.create never reports a clean unavailable outcome when its durable failure closure cannot be applied", async () => {
+test("game.create whose completion step fails after registration settles terminally through the ONE durable closure", async () => {
   const fake = fakeGameSessionCreationAuthority();
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
@@ -4722,21 +4756,141 @@ test("game.create never reports a clean unavailable outcome when its durable fai
     );
     const request = await waitForAttachmentRequest(fixture.runtimeRoot);
     await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
-    // The binding is registered, so the closure must mark it terminal together
-    // with the metadata in one store transaction. That transition is defined only
-    // from a completed session (the store requires `resumable` revision 2,
-    // continuity-semantic-production-store.ts markGameSessionWorldBindingTerminal),
-    // and the other legal shape (`failGameSessionCreation`) refuses a session that
-    // already has a binding row. The closure therefore cannot be applied to a
-    // registration-without-completion defect, and design card 114 requires a
-    // terminal create failure here instead of a clean `unavailable` - which is
-    // exactly what the wire reports, with the half-settled rows left visible.
+    // The world was created and its binding registered (rev1), but completion
+    // never landed, so the session is still `pending` revision 1. That is one of
+    // the two live shapes `markGameSessionWorldBindingTerminal` settles, and it
+    // settles onto the same canonical terminal pair as a completed session that
+    // failed later: terminal binding rev2 + failed metadata rev3 in the store's
+    // own single transaction. `failGameSessionCreation` cannot settle it - it
+    // refuses a session that already has a binding row - so this create drives
+    // the terminal path, and only that path.
+    const result = await creating;
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 1);
+    const sessionId = sessions[0]!.gameSessionId;
+    assert.deepEqual(fake.readBinding(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "terminal", revision: 2,
+    });
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+    });
+    // Nothing resumable: the settled session can never be resumed, and the
+    // registration-without-completion row pair is gone rather than left visible.
+    assert.deepEqual(fake.listResumable(), []);
+    // Exact durable steps: the closure took the terminal path, never `fail`.
+    assert.deepEqual(fake.inputs(), ["create", "register", "terminal"]);
+    // The failure preceded the first activation, so nothing was ever attached.
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.spawnCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create reports the terminal create failure when its durable settle cannot be applied", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: Object.freeze({
+        ...fake.authority,
+        completeGameSessionBinding: async () => { throw new Error("controlled-completion-failure"); },
+        // The store itself refuses to apply the settle (quarantine, a lost row,
+        // or any other unavailable durable surface).
+        markGameSessionWorldBindingTerminal: async () => { throw new Error("controlled-store-failure"); },
+      }),
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // Design card 114: a create whose durable failure closure cannot be applied
+    // is never reported as a clean `unavailable` - the wire reports the terminal
+    // `stardew_game_create_failed` - and the unsettled rows stay visible (binding
+    // registered rev1 with pending rev1 metadata) instead of being faked.
     await assert.rejects(creating, /stardew_game_create_failed/);
     const sessions = fake.sessions();
     assert.equal(sessions.length, 1);
-    assert.equal(sessions[0]!.status, "pending");
-    assert.equal(fake.readBinding(sessions[0]!.gameSessionId)?.status, "registered");
+    const sessionId = sessions[0]!.gameSessionId;
+    assert.deepEqual(fake.readMetadata(sessionId), {
+      gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "pending", revision: 1,
+    });
+    assert.equal(fake.readBinding(sessionId)?.status, "registered");
     assert.deepEqual(fake.listResumable(), []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("game.create whose registration hits a slot held by another live session settles through the SAME single closure", async () => {
+  const fake = fakeGameSessionCreationAuthority();
+  // Another live session (pending metadata + registered binding) already holds
+  // the world slot this create's own world-creation seam observes.
+  const foreign = await fake.authority.createGameSessionMetadata({
+    creationRequestId: "foreign-creation-request", integrationId: "stardew", continuityIdentityId: null,
+  });
+  await fake.authority.registerGameSessionWorldBinding({
+    gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", operationId: "foreign-operation",
+  });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      gameSessionCreationAuthority: fake.authority,
+      createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
+    },
+  });
+  try {
+    const creating = fixture.coordinator.activationOwner.createGameSession(
+      fixture.broker.issue("game_create"),
+      { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    // The store rejects the registration with `game_session_world_binding_duplicate`
+    // and writes no binding row for this session, so the create lands on the
+    // PRE-registration shape of the one durable closure (pending rev1 -> failed
+    // rev2, no binding row). The coordinator has no branch that distinguishes
+    // that code from any other registration failure - it is not needed, because
+    // the schema the store guarantees for a rejected registration already selects
+    // the correct settle shape - and only a closure that cannot be applied at all
+    // becomes `stardew_game_create_failed`.
+    const result = await creating;
+    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
+    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
+    const sessions = fake.sessions();
+    assert.equal(sessions.length, 2);
+    const own = sessions.find((row) => row.gameSessionId !== foreign.gameSessionId)!;
+    assert.deepEqual(own, {
+      gameSessionId: own.gameSessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
+    });
+    assert.equal(fake.readBinding(own.gameSessionId), null);
+    // The holder's slot is untouched: the rejected registration neither stole nor
+    // overwrote it, and the holder stays the one session registered on that world.
+    assert.deepEqual(fake.readBinding(foreign.gameSessionId), {
+      gameSessionId: foreign.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "registered", revision: 1,
+    });
+    assert.deepEqual(fake.readMetadata(foreign.gameSessionId), foreign);
+    assert.deepEqual(fake.listResumable(), []);
+    // Exact durable steps: the seeding pair, then this create's own create, its
+    // rejected registration, and the pre-registration `fail` settle. Never
+    // `terminal` - no binding row of this session's own ever existed.
+    assert.deepEqual(fake.inputs(), ["create", "register", "create", "register", "fail"]);
+    // Never attached and never ready: no world of this session's own exists, no
+    // AI client was launched and the wire reports no session handle.
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 0);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
