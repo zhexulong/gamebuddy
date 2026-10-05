@@ -44,9 +44,10 @@ import {
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { STARDEW_GAME_WORLD_CREATION_SLOT_MISSING } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import type {
-  ProductionGameSessionMetadata,
-  ProductionGameSessionWorldBinding,
+import {
+  productionGameSessionWorldBindingSlotRelease,
+  type ProductionGameSessionMetadata,
+  type ProductionGameSessionWorldBinding,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
@@ -1652,10 +1653,12 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
  * exactly-once attempt count and every refusal path are observed rather than
  * assumed.
  *
- * A recovery that did not reach containment is never finalized: the platform
- * reports `unavailable` for every position short of terminal containment, and an
- * uncertain native recovery must be neither closed out as if it had succeeded nor
- * re-driven.
+ * A recovery that did not reach containment is never finalized: an uncertain
+ * native recovery must be neither closed out as if it had succeeded nor
+ * re-driven. Its two failing answers are pinned separately, because they do not
+ * mean the same thing: `unavailable` reports a recovery that did not reach
+ * containment, while a held native gate reports the LEASE verdict - the holder
+ * was not proven gone - under its own bounded code.
  */
 test("the owner recovery drive finalizes only a recovery that reached containment, exactly once", async () => {
   const request: StardewOwnerRecoveryRequest = Object.freeze({
@@ -1752,6 +1755,27 @@ test("the owner recovery drive finalizes only a recovery that reached containmen
     () => driveStardewOwnedPlayerHostRecovery(undefined, owner, request),
     /stardew_owner_recovery_seam_unavailable/,
   );
+
+  // (f) A HELD native gate carries its own bounded code instead of the generic
+  // unavailable one. The two are not interchangeable: this answer is about the
+  // holder's lease - a live handle exists at the lease name, so the holder was
+  // NOT proven gone - and a caller that has to decide whether that holder's world
+  // slot may be released reads exactly this code to refuse. It finalizes nothing,
+  // drives the recovery once, and is never retried.
+  const gateHeldEvents: string[] = [];
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(
+      scripted(
+        gateHeldEvents,
+        async () => Object.freeze({ status: "gate_held" as const }),
+        async () => { throw new Error("finalization_must_not_run"); },
+      ),
+      owner,
+      request,
+    ),
+    (error: unknown) => error instanceof Error && error.message === "stardew_owner_recovery_gate_held",
+  );
+  assert.deepEqual(gateHeldEvents, ["recover"]);
 });
 
 /**
@@ -2564,7 +2588,25 @@ function fakeGameSessionCreationAuthority() {
   const byRequest = new Map<string, Readonly<{ metadata: ProductionGameSessionMetadata }>>();
   const bindings = new Map<string, ProductionGameSessionWorldBinding>();
   const operationBySession = new Map<string, string>();
+  const holderBySession = new Map<string, string>();
   const inputs: unknown[] = [];
+  const slotReads: unknown[] = [];
+  const slotReleases: unknown[] = [];
+  /**
+   * The store's own slot locator: a registered row is always the holder, and the
+   * settled rows a slot can carry are only reached when nothing is registered
+   * (nothing is ever deleted, so the choice is ordered rather than row luck).
+   */
+  const locateSlotHolder = (
+    integrationId: string,
+    bindingRef: string,
+  ): ProductionGameSessionWorldBinding | undefined => {
+    const rows = [...bindings.values()].filter(
+      (binding) => binding.integrationId === integrationId && binding.bindingRef === bindingRef,
+    );
+    return rows.find((binding) => binding.status === "registered") ??
+      [...rows].sort((left, right) => (left.gameSessionId < right.gameSessionId ? -1 : 1))[0];
+  };
   const authority: StardewGameSessionCreationAuthority = {
     async createGameSessionMetadata(input) {
       inputs.push("create");
@@ -2616,6 +2658,7 @@ function fakeGameSessionCreationAuthority() {
       });
       bindings.set(input.gameSessionId, binding);
       operationBySession.set(input.gameSessionId, input.operationId);
+      holderBySession.set(input.gameSessionId, input.holderHandle);
       return binding;
     },
     async completeGameSessionBinding(input) {
@@ -2672,6 +2715,53 @@ function fakeGameSessionCreationAuthority() {
       bySession.set(input.gameSessionId, Object.freeze({ ...row, status: "failed", revision: 3 }));
       return terminal;
     },
+    async readGameSessionWorldBindingSlotHolder(input) {
+      slotReads.push(input);
+      const row = locateSlotHolder(input.integrationId, input.bindingRef);
+      if (row === undefined) return null;
+      return Object.freeze({
+        gameSessionId: row.gameSessionId,
+        integrationId: row.integrationId,
+        bindingRef: row.bindingRef,
+        status: row.status,
+        revision: row.revision,
+        holderHandle: holderBySession.get(row.gameSessionId)!,
+      });
+    },
+    async releaseGameSessionWorldBindingSlot(input) {
+      slotReleases.push(input);
+      const row = locateSlotHolder(input.integrationId, input.bindingRef);
+      if (row === undefined) throw new Error(productionGameSessionWorldBindingSlotRelease.slotMissing);
+      if (holderBySession.get(row.gameSessionId) !== input.holderHandle)
+        throw new Error(productionGameSessionWorldBindingSlotRelease.handleMismatch);
+      if (row.status !== "registered") throw new Error(productionGameSessionWorldBindingSlotRelease.holderTerminal);
+      // The holder's own handle is checked before anything else is revealed, and
+      // the readback deliberately carries no handle, so a caller can only ever
+      // present the handle it read back from the slot.
+      if (
+        input.proof === null || typeof input.proof !== "object" ||
+        input.proof.holderHandle !== input.holderHandle ||
+        input.proof.verdict === null || typeof input.proof.verdict !== "object"
+      ) throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
+      // This stand-in cannot read a verdict token's provenance or its value: the
+      // store's reader for both is module-private, and the minted token is an
+      // opaque object. So it checks the proof's shape and correlation only, and
+      // the store refuses the look-alike the way its own tests pin. The release
+      // tests therefore present the verdict the store's own mint function
+      // produced, and the code paths that must never release are asserted by the
+      // absence of a release call rather than by a refusal here.
+      const metadata = bySession.get(row.gameSessionId);
+      if (
+        metadata === undefined ||
+        !((metadata.status === "pending" && metadata.revision === 1) || (metadata.status === "resumable" && metadata.revision === 2))
+      ) throw new Error("game_session_world_binding_conflict");
+      // The one canonical terminal pair the store lands a released slot on, in
+      // its own single transaction: terminal binding rev2 + failed metadata rev3.
+      const terminal: ProductionGameSessionWorldBinding = Object.freeze({ ...row, status: "terminal", revision: row.revision + 1 });
+      bindings.set(row.gameSessionId, terminal);
+      bySession.set(row.gameSessionId, Object.freeze({ ...metadata, status: "failed", revision: 3 }));
+      return terminal;
+    },
   };
   return Object.freeze({
     authority,
@@ -2681,6 +2771,9 @@ function fakeGameSessionCreationAuthority() {
       Object.freeze([...bySession.values()].filter((row) => row.status === "resumable" && bindings.get(row.gameSessionId)?.status === "registered")),
     inputs: (): readonly unknown[] => Object.freeze([...inputs]),
     sessions: (): readonly ProductionGameSessionMetadata[] => Object.freeze([...bySession.values()]),
+    /** Slot reads are observations, not durable steps, so they stay out of `inputs`. */
+    slotReads: (): readonly unknown[] => Object.freeze([...slotReads]),
+    slotReleases: (): readonly unknown[] => Object.freeze([...slotReleases]),
   });
 }
 

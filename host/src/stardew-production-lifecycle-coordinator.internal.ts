@@ -79,6 +79,8 @@ import type {
   ProductionGameSessionMetadata,
   ProductionGameSessionWorldBinding,
   ProductionGameSessionWorldBindingInput,
+  ProductionGameSessionWorldBindingSlotHolder,
+  ProductionGameSessionWorldBindingSlotReleaseInput,
   ProductionGameSessionWorldBindingTerminalInput,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
@@ -143,6 +145,24 @@ export type StardewGameSessionCreationAuthority = Readonly<{
   completeGameSessionBinding(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   markGameSessionWorldBindingTerminal(input: ProductionGameSessionWorldBindingTerminalInput): Promise<ProductionGameSessionWorldBinding>;
+  /**
+   * Slot-addressed holder readback: what - if anything - still holds the world
+   * slot an (integration, binding ref) names, including the opaque handle its
+   * release demands. A create that observes a holder is looking at an attempt
+   * whose own registration never closed out.
+   */
+  readGameSessionWorldBindingSlotHolder(
+    input: Readonly<{ integrationId: string; bindingRef: string }>,
+  ): Promise<ProductionGameSessionWorldBindingSlotHolder | null>;
+  /**
+   * Releases one slot whose holder is proven gone, landing it on the canonical
+   * terminal shape. It takes the holder's own handle plus the native-lease
+   * verdict correlated to that handle; the store refuses every weaker proof, so
+   * this member is not a way to free a slot whose holder was not proven gone.
+   */
+  releaseGameSessionWorldBindingSlot(
+    input: ProductionGameSessionWorldBindingSlotReleaseInput,
+  ): Promise<ProductionGameSessionWorldBinding>;
 }>;
 
 /**
@@ -582,6 +602,21 @@ export function containedRuntimeTeardownFromCollaborator(
 }
 
 /**
+ * The drive's own bounded refusal for a recovery whose native gate was HELD.
+ *
+ * It is a distinct code rather than the drive's generic unavailable because the
+ * two answer different questions: `stardew_owner_recovery_unavailable` says the
+ * recovery did not reach containment, while this one is the lease VERDICT - a
+ * live handle exists at the lease name, so the holder was NOT PROVEN GONE. It is
+ * never proof that the holder is alive (the handle may be a recovery gate this
+ * Host itself opened), and it never means the recovery ran: nothing native ran and
+ * the previous lease stays authority. A caller that has to decide whether a
+ * holder's slot may be released must tell the two apart, and this is the one
+ * identity it reads.
+ */
+export const STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL = "stardew_owner_recovery_gate_held";
+
+/**
  * One bounded recovery of an attempt whose durable record is not terminal,
  * closed out in the same step: drive the existing per-owner recovery seam, and
  * only when that recovery actually reached containment, finalize it so the
@@ -593,12 +628,15 @@ export function containedRuntimeTeardownFromCollaborator(
  * must match cannot drift apart, and a caller cannot close out a recovery under
  * an actor it never drove.
  *
- * An outcome other than `recovered` is never finalized: the platform reports
- * `unavailable` for every position short of terminal containment, and an
- * uncertain native recovery is neither closed out as if it had succeeded nor
- * re-driven here. Everything this can fail with is a bounded error: a missing
- * seam, a recovery that did not reach containment, and whatever the finalization
- * itself refuses with.
+ * Nothing short of `recovered` is ever finalized, and the two failing outcomes are
+ * deliberately NOT folded into one code. A recovery that did not reach
+ * containment reports `stardew_owner_recovery_unavailable`: the native position
+ * stays unproven, an uncertain native recovery is neither closed out as if it had
+ * succeeded nor re-driven here, and nothing is finalized. A recovery whose gate
+ * was held reports `STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL` instead, the lease
+ * verdict rather than a recovery result. Everything else this can fail with is
+ * likewise bounded: a missing seam, and whatever the finalization itself refuses
+ * with.
  */
 export async function driveStardewOwnedPlayerHostRecovery(
   teardown: StardewContainedRuntimeTeardown | undefined,
@@ -607,6 +645,7 @@ export async function driveStardewOwnedPlayerHostRecovery(
 ): Promise<void> {
   if (teardown === undefined) throw new Error("stardew_owner_recovery_seam_unavailable");
   const outcome = await teardown.recover(owner, request);
+  if (outcome.status === "gate_held") throw new Error(STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL);
   if (outcome.status !== "recovered") throw new Error("stardew_owner_recovery_unavailable");
   await teardown.finalizeRecovered(owner, request);
 }
