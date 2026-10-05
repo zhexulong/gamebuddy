@@ -367,25 +367,45 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   /**
    * Dispatch one game action.
    *
-   * `stale_snapshot` is the Mod's revision CAS refusing the request **before any side effect**
-   * (`BridgeSession.IsFreshExecutionRequest`), and it means exactly one thing: the caller's view of
-   * the action-transaction revision is behind. The Mod mints a fresh revision for every durable
-   * receipt — including ones this Host may not have carried — so a well-formed request can still
-   * arrive one revision late. Live evidence: a play session lost three `harvest_crop` dispatches
-   * to this refusal while the surrounding actions succeeded.
+   * Two things happen here that the raw request path cannot decide on its own:
    *
-   * So a stale refusal is answered the way it is meant to be: re-observe ONCE, then re-dispatch the
-   * same envelope with the refreshed revision. The retry is bounded (one), keyed to that single
-   * authoritative reason code, and safe by construction — the first attempt never ran, so the
-   * idempotency identity it carries still has nothing to remember. Every other refusal, and every
-   * timeout, is surfaced unchanged: an unknown outcome must never be re-dispatched.
+   * 1. `stale_snapshot` is the Mod's revision CAS refusing the request **before any side effect**
+   *    (`BridgeSession.IsFreshExecutionRequest`), and it means exactly one thing: the caller's view of
+   *    the action-transaction revision is behind. The Mod mints a fresh revision for every durable
+   *    receipt — including ones this Host may not have carried — so a well-formed request can still
+   *    arrive one revision late (live evidence: a play session lost three `harvest_crop` dispatches
+   *    to this while neighbouring actions succeeded). It is answered the way it is meant to be:
+   *    re-observe ONCE, then re-dispatch the same envelope with the refreshed revision.
+   *
+   * 2. A TRANSPORT TIMEOUT is not a refusal and not a failure: the request may be executing right
+   *    now. Re-dispatching it would be a second native action (the caller's next attempt carries a
+   *    new requestId, so nothing would dedupe it), so the only honest move is to read the action's
+   *    own receipt back by its immutable dispatch tuple and report what actually happened.
+   *
+   * The action's own `deadlineMs` is the transport budget, not the client's 5 s default: a native
+   * action that walks and swings legitimately outlives a short client timer, and timing out such a
+   * request reported `bridge_response_timeout` for actions that completed moments later.
    */
   public async execute(
     request: ExecutionRequest,
-    options: { reobserveOnStaleSnapshot?: boolean } = {},
+    options: { reobserveOnStaleSnapshot?: boolean; recoverOnTimeout?: boolean } = {},
   ): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
     this.requireAuthenticated();
-    const response = await this.request("execution_request", request);
+    let response: BridgeMessage;
+    try {
+      response = await this.request("execution_request", request, request.deadlineMs);
+    } catch (error) {
+      const message = String((error as Error).message);
+      if (message !== "bridge_response_timeout" || options.recoverOnTimeout === false) throw error;
+      const recovered = await this.queryExecutionReceipt({
+        requestId: request.requestId,
+        idempotencyKey: request.idempotencyKey,
+      });
+      // The query is authoritative about this exact dispatch tuple; whatever it reports is the
+      // action's real state. Surfacing the timeout instead would tell the caller an action failed
+      // when it is running or already done.
+      return recovered;
+    }
     if (response.type === "error") {
       if (response.payload.reasonCode === "stale_snapshot" && options.reobserveOnStaleSnapshot !== false) {
         const refreshed = await this.observe();
@@ -393,7 +413,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
           const retried = await this.request("execution_request", {
             ...request,
             expectedRevision: refreshed.revision,
-          });
+          }, request.deadlineMs);
           if (retried.type === "error") throw new Error(`bridge_rejected:${retried.payload.reasonCode}`);
           if (retried.type !== "execution_receipt") throw new Error("unexpected_execution_response");
           return retried.payload;

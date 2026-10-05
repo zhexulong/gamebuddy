@@ -259,6 +259,12 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /const spokeToPlayer = typeof presentedSummary === "string"/);
   assert.match(RUNNER_SOURCE, /\? "silent"/);
   assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
+  // The failure path must never be the thing that crashes: run N played twelve actions and wrote
+  // NO artifact because the catch block read a try-scoped binding, losing both the artifact and
+  // the root error.
+  assert.match(RUNNER_SOURCE, /let personaWorldBook = null;/);
+  assert.match(RUNNER_SOURCE, /personaWorldBook = await readAssembledContextEvidence\(gameSessionPaths\);/);
+  assert.match(RUNNER_SOURCE, /console\.error\(error\);\n  const partialResult = \{/);
   assert.match(RUNNER_SOURCE, /accomplishedActionIds,/);
   for (const actionId of [
     "move_to_tile",
