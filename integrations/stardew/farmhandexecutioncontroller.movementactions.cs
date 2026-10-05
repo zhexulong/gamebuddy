@@ -59,7 +59,55 @@ internal sealed partial class ExecutionManager
         // so a lagging game tick can never extend a Host/player-bound request.
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
         bool nativeWarpTarget = Game1.player.currentLocation.warps.Any(warp => !warp.npcOnly.Value && warp.X == (int)targetTile.X && warp.Y == (int)targetTile.Y);
-        LocalMoveSpec specification = new(executionId, requestId, targetTile, allowAdjacentArrival || nativeWarpTarget, this.revision, this.tick + deadlineTicks, deadlineMs);
+        bool adjacentArrival = allowAdjacentArrival || nativeWarpTarget;
+
+        // 1. The named tile is not standable -- it usually holds the very thing the
+        //    caller wants to touch (crop, weed, chest, machine) -- but a standable
+        //    neighbour is: approach that neighbour instead of refusing. Every other
+        //    interaction in this Mod is a native action from an adjacent tile, so
+        //    "walk to the object" now works the way the agent means it. The
+        //    substitution is named in the accepted evidence, never silent.
+        Vector2 effectiveTarget = targetTile;
+        bool approachSubstituted = false;
+        if (!StardewBodyController.IsStandableTile(Game1.player.currentLocation, Game1.player, targetTile))
+        {
+            Vector2? approach = SelectStandingApproachTile(
+                targetTile,
+                Game1.player.Tile,
+                candidate => StardewBodyController.IsStandableTile(Game1.player.currentLocation, Game1.player, candidate));
+            if (approach is not null)
+            {
+                effectiveTarget = approach.Value;
+                adjacentArrival = true;
+                approachSubstituted = true;
+            }
+        }
+
+        // 2. Already inside the arrival contract for the EFFECTIVE destination: the
+        //    actor stands on it, or (when adjacency is allowed) on one of its
+        //    neighbours. The native planner has nothing to plan, so its
+        //    pathToEndPoint comes back empty and this used to be reported as
+        //    `no_native_path` -- a REACHABILITY verdict the Mod's own probe
+        //    contradicts (target_enclosed=false means it found a traversable
+        //    neighbour: the one the actor is standing on). A live ladder run spent
+        //    10 of its 29 movement dispatches on that false verdict and told the
+        //    player the farm was a maze. A satisfied arrival contract is success, and
+        //    saying so moves no native state because nothing needs moving. The check
+        //    is made AFTER substitution so the same rule covers the approached case.
+        if (StardewBodyController.IsArrivalDelta(
+            Math.Abs((int)Game1.player.Tile.X - (int)effectiveTarget.X),
+            Math.Abs((int)Game1.player.Tile.Y - (int)effectiveTarget.Y),
+            adjacentArrival))
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "target_reached",
+                approachSubstituted
+                    ? $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
+                    : $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(targetTile)}");
+
+        LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
         this.active = specification;
@@ -69,10 +117,50 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence);
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"route_revision={specification.RouteRevision};target={FormatTile(targetTile)}");
+        string acceptedEvidence = approachSubstituted
+            ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
+            : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}";
+        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, acceptedEvidence);
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
+    }
+
+    /// <summary>
+    /// The deterministic standable neighbour of a destination tile, as pure
+    /// arithmetic over a standability predicate so its choice is directly
+    /// testable (the same reason <c>AssessReachability</c> takes a predicate).
+    /// Cardinal neighbours only, in a fixed order, and the nearest to the actor wins;
+    /// equidistant candidates keep that declared order, so the choice cannot drift
+    /// between runs (a run-to-run diff must mean something). The set is the same
+    /// "legal native interaction position" set the discovery code publishes, so a
+    /// substituted approach is also a legal place to act from.
+    /// </summary>
+    internal static Vector2? SelectStandingApproachTile(Vector2 targetTile, Vector2 actorTile, Func<Vector2, bool> isStandable)
+    {
+        Vector2[] candidates =
+        {
+            targetTile + new Vector2(-1f, 0f),
+            targetTile + new Vector2(1f, 0f),
+            targetTile + new Vector2(0f, -1f),
+            targetTile + new Vector2(0f, 1f),
+        };
+        Vector2? best = null;
+        float bestDistance = float.MaxValue;
+        foreach (Vector2 candidate in candidates)
+        {
+            if (!isStandable(candidate))
+                continue;
+            float distance = Math.Abs(candidate.X - actorTile.X) + Math.Abs(candidate.Y - actorTile.Y);
+            // Strict `<` only: equidistant candidates keep the declared candidate
+            // order (left, right, up, down), so the choice is deterministic without a
+            // second ordering rule to reason about.
+            if (best is not null && distance >= bestDistance)
+                continue;
+            best = candidate;
+            bestDistance = distance;
+        }
+        return best;
     }
 
     /// <summary>
