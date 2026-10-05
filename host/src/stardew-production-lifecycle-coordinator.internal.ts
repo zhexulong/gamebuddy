@@ -446,6 +446,18 @@ export type StardewContainedRuntimeTeardown = Readonly<{
    * arrive per invocation from the caller that observed the crashed attempt.
    */
   recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome>;
+  /**
+   * Terminal closure of a recovery THIS seam drove, on the same owner path as
+   * `recover` and through the same consumed one-shot owner binding: the durable
+   * parent record advances to its terminal state and the bound registration
+   * pointer is released, so the attempt stops occupying the registration.
+   *
+   * It is not a second authority: it can only be reached for an owner whose own
+   * binding is already consumed (that is what drove the recovery), and the request
+   * it takes is the one the recovery took, so the actor the durable CASes recorded
+   * and the actor this must match cannot drift apart.
+   */
+  finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void>;
   close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
@@ -553,9 +565,47 @@ export function containedRuntimeTeardownFromCollaborator(
       if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
       return recoveryDriver.recover(owner, request);
     },
+    finalizeRecovered: async (owner, request) => {
+      // The same refusal as `recover`, for the same reason: without the
+      // owner-held recovery half there is nothing that could close the attempt
+      // out, and reporting a finalization that never ran is exactly the
+      // fabricated success this seam must never produce.
+      if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
+      await recoveryDriver.finalizeRecovered(owner, request);
+    },
     close: async (owner) => runtimeLaunch.close(owner),
     settle: async (owner) => runtimeLaunch.settle(owner),
   });
+}
+
+/**
+ * One bounded recovery of an attempt whose durable record is not terminal,
+ * closed out in the same step: drive the existing per-owner recovery seam, and
+ * only when that recovery actually reached containment, finalize it so the
+ * attempt's parent record becomes terminal and its registration pointer is
+ * released.
+ *
+ * The finalization deliberately takes the SAME request object the recovery took,
+ * so the recovery actor the durable CASes recorded and the actor the finalization
+ * must match cannot drift apart, and a caller cannot close out a recovery under
+ * an actor it never drove.
+ *
+ * An outcome other than `recovered` is never finalized: the platform reports
+ * `unavailable` for every position short of terminal containment, and an
+ * uncertain native recovery is neither closed out as if it had succeeded nor
+ * re-driven here. Everything this can fail with is a bounded error: a missing
+ * seam, a recovery that did not reach containment, and whatever the finalization
+ * itself refuses with.
+ */
+export async function driveStardewOwnedPlayerHostRecovery(
+  teardown: StardewContainedRuntimeTeardown | undefined,
+  owner: StardewOwnedPlayerHostBootstrap,
+  request: StardewOwnerRecoveryRequest,
+): Promise<void> {
+  if (teardown === undefined) throw new Error("stardew_owner_recovery_seam_unavailable");
+  const outcome = await teardown.recover(owner, request);
+  if (outcome.status !== "recovered") throw new Error("stardew_owner_recovery_unavailable");
+  await teardown.finalizeRecovered(owner, request);
 }
 
 class StardewProductionLifecycleCloseError extends Error {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory } from "./stardew-guardian-platform.js";
+import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory, readStardewOwnerRecoveryDriver } from "./stardew-guardian-platform.js";
 import type { DesktopGuardianRecovery, DesktopGuardianSession, GuardianAck, GuardianRecoveryAck } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
@@ -593,6 +594,148 @@ test("the owner-held recovery is reachable through the coordinator adapter and d
       revision: 4,
     },
   );
+});
+
+/**
+ * Closing out the recovery.
+ *
+ * A recovery that reached containment but is never finalized is not recovered in
+ * any usable sense: the attempt keeps occupying the registration its own
+ * admission path refuses to reuse, so the system never returns to a usable
+ * state. This drives the finalization through the SAME owner path the recovery
+ * used — the collaborator that holds the exact owner's consumed one-shot
+ * Guardian binding — against the real durable transition engine and a really
+ * bound registration pointer.
+ */
+test("finalizing a driven recovery reaches the terminal record and releases the bound registration pointer", async () => {
+  const guardianRevision = "6f2d9c1a-4b3e-4d21-8f77-1c0a5b9e2d34";
+  const harness = createHarness({ guardianRevisions: [guardianRevision] });
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  // The crash residual this recovery exists for: the attempt's own reservation
+  // had already bound the registration pointer when the process died.
+  const registrationPath = join(root, "stardew-installation-registration", "registration.json");
+  await mkdir(dirname(registrationPath), { recursive: true });
+  await writeFile(registrationPath, JSON.stringify({
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 2,
+    state: "ready",
+    locator: "C:\\Games\\Stardew Valley",
+    activeAttempt: { bootstrapCorrelation: "bootstrap-1" },
+  }), "utf8");
+  const readRecord = async (): Promise<Record<string, unknown>> =>
+    JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  const actor = "b9f1e0c2-7d34-4a58-9b21-3e6c8a0f5d17";
+  const sessionCalls: string[] = [];
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: async (input) => {
+      sessionCalls.push("recover");
+      // The durable steps of the recovery conversation, in the order the
+      // platform drives them: the recovering CAS while the gate is held, then
+      // one classification per role.
+      await input.beginRecovery();
+      await input.roleContained("playerHost");
+      await input.roleContained("aiClient");
+      return Object.freeze({ outcome: "contained" as const });
+    },
+    close: async () => {},
+  });
+  const teardown = containedRuntimeTeardownFromCollaborator(
+    createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+  );
+  const request = Object.freeze({
+    recoveryInstanceId: actor,
+    readRecoveryBinding: async () => recoveryBindingFacts(await readRecord()),
+  });
+
+  assert.deepEqual(await teardown.recover(owner, request), { status: "recovered" });
+  const recoveringBytes = await readFile(ownerPath(root), "utf8");
+  // The actor must be the exact one the recovery recorded, so a malformed
+  // finalization refuses here rather than surfacing as an opaque transition
+  // mismatch, and it writes nothing durable.
+  await assert.rejects(
+    () => teardown.finalizeRecovered(owner, {
+      recoveryInstanceId: "not-an-actor",
+      readRecoveryBinding: async () => Object.freeze({}),
+    }),
+    /stardew_owner_recovery_actor_invalid/,
+  );
+  assert.equal(await readFile(ownerPath(root), "utf8"), recoveringBytes, "a refused finalization writes nothing durable");
+
+  await teardown.finalizeRecovered(owner, request);
+  // The finalization is durable-only: it never re-drives the native recovery,
+  // whose result is already settled and whose uncertainty must not be repeated.
+  assert.deepEqual(sessionCalls, ["recover"]);
+  assert.deepEqual(
+    (() => {
+      const persisted = JSON.parse(recoveringBytes) as Record<string, unknown>;
+      return { beforeState: persisted.state, beforeRevision: persisted.ownerRecordRevision };
+    })(),
+    { beforeState: "recovering", beforeRevision: 4 },
+  );
+  const persisted = await readRecord();
+  assert.deepEqual(
+    {
+      state: persisted.state,
+      guardian: persisted.guardianState,
+      playerHost: persisted.playerHostState,
+      aiClient: persisted.aiClientState,
+      recovery: persisted.recoveryInstanceId,
+      revision: persisted.ownerRecordRevision,
+    },
+    {
+      state: "contained",
+      guardian: "contained",
+      playerHost: "contained",
+      aiClient: "contained",
+      recovery: null,
+      revision: 5,
+    },
+  );
+  const registration = JSON.parse(await readFile(registrationPath, "utf8")) as Record<string, unknown>;
+  assert.equal(registration.activeAttempt, null, "the attempt stops occupying the registration");
+  assert.equal(registration.revision, 3);
+
+  // A repeated finalization refuses instead of fabricating a second terminal
+  // transition, and neither durable record is rewritten.
+  const finalizedBytes = await readFile(ownerPath(root), "utf8");
+  const registrationBytes = await readFile(registrationPath, "utf8");
+  await assert.rejects(
+    () => teardown.finalizeRecovered(owner, request),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
+  assert.equal(await readFile(ownerPath(root), "utf8"), finalizedBytes, "a repeated finalization rewrites nothing");
+  assert.equal(await readFile(registrationPath, "utf8"), registrationBytes, "a repeated finalization never touches the registration");
+  assert.deepEqual(sessionCalls, ["recover"], "a repeated finalization never re-drives the native recovery");
+});
+
+/**
+ * A drive that can recover but cannot finalize is not a usable recovery drive:
+ * reading it as one would take an attempt through its native recovery and then
+ * leave it non-terminal forever, which is exactly the state the finalization
+ * exists to prevent. The reader therefore requires both members, so the partial
+ * shape is refused BEFORE anything native runs.
+ */
+test("the recovery drive is only readable when it can also close itself out", async () => {
+  const driveOnly = Object.freeze({
+    recover: async () => Object.freeze({ status: "unavailable" as const }),
+  }) as unknown as StardewPlayerHostRuntimeLaunchCollaborator;
+  assert.equal(readStardewOwnerRecoveryDriver(driveOnly), undefined);
+  const complete = Object.freeze({
+    recover: async () => Object.freeze({ status: "unavailable" as const }),
+    finalizeRecovered: async () => undefined,
+  }) as unknown as StardewPlayerHostRuntimeLaunchCollaborator;
+  assert.equal(readStardewOwnerRecoveryDriver(complete), complete);
 });
 
 /**
