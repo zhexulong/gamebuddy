@@ -108,6 +108,23 @@ const binding = fs
   });
 if (!binding) throw new Error(`no native-local binding for save ${saveName}`);
 
+/**
+ * Who owns the fixture transaction right now, as recorded by its owner. Reading the
+ * owner (instead of only "is the lock there") is what makes a TAKEOVER visible: two
+ * live-run lanes share this root, and a takeover that happens after this launcher's own
+ * prepare leaves the run playing against a world and a Mod config that belong to
+ * somebody else. That is not hypothetical — run I was contaminated that way, produced an
+ * artifact whose trace showed zero attempts while the companion reported that "every
+ * attempt was refused", and its restore then correctly refused as a non-owner.
+ */
+function currentOwnerId() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(lockDir, "transaction.json"), "utf8")).ownerId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 await waitForFreeFixture();
 const orphan = path.join(fixtureRoot, backupName);
 if (fs.existsSync(orphan)) {
@@ -136,6 +153,24 @@ run([
 console.log(`fixture prepared (action=${action})`);
 
 let exitCode = null;
+const myOwnerId = currentOwnerId();
+if (myOwnerId === null) throw new Error("fixture transaction was not established by prepare");
+console.log("fixture owned by this run:", myOwnerId);
+
+// A takeover invalidates everything this run would report, so the run is stopped as soon
+// as the root stops being ours rather than allowed to finish and produce an artifact
+// that looks like a companion failure but is an environment failure.
+let takenOver = false;
+const takeoverWatch = setInterval(() => {
+  if (takenOver) return;
+  const owner = currentOwnerId();
+  if (owner === myOwnerId) return;
+  takenOver = true;
+  console.error(`[abort] fixture transaction taken over by ${owner ?? "a run that removed the lock"} — this session is no longer valid`);
+  for (const pid of liveGameProcesses()) {
+    try { execFileSync("taskkill", ["/PID", pid, "/T", "/F"], { encoding: "utf8", timeout: 60_000 }); } catch {}
+  }
+}, 5_000);
 await new Promise((resolve) => {
   const child = spawn(node, ["tools/_ladder-live-orchestrator.mjs"], {
     cwd: repo,
@@ -157,11 +192,21 @@ await new Promise((resolve) => {
   child.stderr.on("data", (chunk) => { process.stderr.write(chunk); });
   child.on("close", (code) => {
     exitCode = code;
+    clearInterval(takeoverWatch);
     fs.writeFileSync(path.join(repo, "tools", `_ladder${ladder}${suffix}-stdout.json`), stdout);
+    if (takenOver) {
+      fs.writeFileSync(path.join(repo, "tools", `_ladder${ladder}${suffix}-INVALID.txt`),
+        "Another lane took over the fixture transaction mid-run; this run's result must not be used.\n");
+    }
     resolve();
   });
 });
-console.log("ladder runner exit:", exitCode);
+console.log("ladder runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
+if (takenOver) {
+  console.log("result file (if any) is marked invalid next to it; not restoring someone else's transaction");
+  process.exitCode = 1;
+  throw new Error("fixture_taken_over_mid_run");
+}
 
 run([
   "tools/restore-stardew-native-local-player-fixture.mjs",
