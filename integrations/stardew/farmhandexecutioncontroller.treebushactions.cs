@@ -19,6 +19,18 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (!TryGetHarvestableBush(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_target_changed", $"target={targetX},{targetY}");
+        // The native "you may shake now" gate, re-derived instead of assumed.
+        // Bush.shake returns immediately while the bush is still animating
+        // (Bush.cs:396-399, the private `maxShake` field), and the player's own
+        // ingress Bush.performUseAction does not even reach that call until
+        // `shakeTimer` has elapsed (Bush.cs:341-353). Only the public `shakeTimer`
+        // can be read here, so it is the half of the native gate this admission
+        // re-derives; the shake itself is then dispatched through
+        // performUseAction, which keeps the remaining private gate native rather
+        // than re-implemented. A bush that cannot be shaken right now is refused
+        // for that reason, not reported as a changed target.
+        if (bush!.shakeTimer > 0f)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_still_settling", $"target={targetX},{targetY};shake_timer={bush.shakeTimer.ToString("0.##", CultureInfo.InvariantCulture)}");
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(requestId, executionId, "harvest_bush", location, targetX, targetY, expectedTargetId,
@@ -32,15 +44,32 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (!TryGetHarvestableBush(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_target_changed", $"target={targetX},{targetY}");
+        if (bush!.shakeTimer > 0f)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bush_still_settling", $"target={targetX},{targetY};shake_timer={bush.shakeTimer.ToString("0.##", CultureInfo.InvariantCulture)}");
 
+        bool readyBefore = bush.readyForHarvest();
         int debrisBefore = location.debris.Count;
-        bush!.shakeTimer = 0f;
-        bush.shake(new Vector2(targetX, targetY), doEvenIfStillShaking: false);
+        // The player's own ingress (GameLocation.performUseAction dispatches here):
+        // it owns the shakeTimer gate and reaches Bush.shake itself. Its bool
+        // return is unconditional (Bush.cs:354), so it is not a postcondition.
+        bush.performUseAction(new Vector2(targetX, targetY));
+        bool readyAfter = bush.readyForHarvest();
         int debrisAfter = location.debris.Count;
-        bool droppedItem = debrisAfter > debrisBefore && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
-        string evidence = $"target={expectedTargetId};tile={targetX},{targetY};debris_before={debrisBefore};debris_after={debrisAfter};item_dropped={droppedItem.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, droppedItem ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            droppedItem ? "bush_harvested" : "bush_harvest_postcondition_unavailable", evidence);
+        // The bush's own harvest state (tileSheetOffset, read through
+        // readyForHarvest()) is cleared synchronously by the drop branch for every
+        // bush size (Bush.cs:403-411), so that state flip is the postcondition.
+        // The ITEM is native, but NOT synchronous for a size-4 bush: that branch
+        // queues Game1.createItemDebris inside uniqueSpawnMutex.RequestLock
+        // (Bush.cs:412-420), whose callback only runs on a later Bush.tickUpdate
+        // (Bush.cs:363-366). The same-frame debris delta is therefore OBSERVED and
+        // never asserted: a size-4 harvest is a success on the state flip with its
+        // drop still in flight.
+        bool harvested = readyBefore && !readyAfter;
+        bool droppedInFrame = debrisAfter > debrisBefore
+            && location.debris.Skip(debrisBefore).Any(entry => entry?.item is not null);
+        string evidence = $"target={expectedTargetId};tile={targetX},{targetY};ready_for_harvest_before={readyBefore.ToString().ToLowerInvariant()};ready_for_harvest_after={readyAfter.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};item_dropped_in_frame={droppedInFrame.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, harvested ? ExecutionState.Succeeded : ExecutionState.Uncertain,
+            harvested ? "bush_harvested" : "bush_harvest_postcondition_unavailable", evidence);
     }
 
     private static bool TryGetHarvestableBush(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush)

@@ -2733,21 +2733,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             int x = (int)clump.Tile.X;
             int y = (int)clump.Tile.Y;
             if (!IsDebrisTargetWithinPlayerRadius(clump, player)) continue;
-            string toolKind = clump.parentSheetIndex.Value switch
-            {
-                600 or 602 => "axe",
-                148 or 622 or 672 or 752 or 754 or 756 or 758 => "pickaxe",
-                _ => "unsupported",
-            };
-            int requiredUpgrade = clump.parentSheetIndex.Value switch
-            {
-                600 => 1,
-                602 => 2,
-                148 or 622 => 3,
-                672 => 2,
-                _ => 0,
-            };
-            if (toolKind == "unsupported") continue;
+            // The native requirement table lives in ONE place now
+            // (TryGetDebrisToolRequirement, mirroring ResourceClump.performToolAction), so
+            // discovery and admission cannot drift apart.
+            if (!TryGetDebrisToolRequirement(clump, out string toolKind, out int requiredUpgrade))
+                continue;
             int usableSlot = -1;
             for (int slot = 0; slot < player.Items.Count; slot++)
             {

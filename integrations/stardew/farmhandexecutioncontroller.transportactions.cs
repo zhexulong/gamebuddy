@@ -119,24 +119,38 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         if (location is MineShaft) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "already_in_mine", null);
         string? action = location.doesTileHaveProperty(targetX, targetY, "Action", "Buildings");
-        if (!string.Equals(BuildMineEntranceTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
-            || action is null
-            || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), "Mine", StringComparison.Ordinal))
+        if (action is null
+            || !string.Equals(BuildMineEntranceTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entrance_target_unavailable", $"tile={targetX},{targetY}");
+        // The entrance tile declares its own target level in the Action string.
+        // This reads it exactly the way the native click path does
+        // (GameLocation.performAction `case "Mine"`: ArgUtility.TryGetOptionalInt(
+        // action, 1, out mineLevel, out error, 1, "int mineLevel") ->
+        // Game1.enterMine(mineLevel), GameLocation.cs:9807-9816), so the entered
+        // level is the facility's own declaration rather than a value derived from
+        // the actor's progress. A malformed parameter is the same refusal the
+        // native path produces (it logs an error and enters nothing).
+        // NOTE (unverified): the shipped map data is xnb and cannot be read from
+        // here, so which literal the live entrance declares is deliberately NOT
+        // asserted: whatever the tile declares is what gets entered.
+        string[] actionTokens = ArgUtility.SplitBySpace(action);
+        if (!string.Equals(actionTokens.FirstOrDefault(), "Mine", StringComparison.Ordinal)
+            || !ArgUtility.TryGetOptionalInt(actionTokens, 1, out int declaredLevel, out _, 1, "int mineLevel"))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entrance_target_unavailable", $"tile={targetX},{targetY};action={action}");
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entrance_out_of_range", $"tile={targetX},{targetY}");
-        int nextLevel = Math.Max(1, Game1.player.deepestMineLevel + 1);
-        // Enter through the public native entry (the M8-frozen seam); the tile
-        // check above already proved this really is a mine entrance.
-        Game1.enterMine(nextLevel);
+        // Enter through the public native entry (the M8-frozen seam) with the
+        // level this exact tile declares; the checks above already proved it is a
+        // mine entrance and that its declared level is readable.
+        Game1.enterMine(declaredLevel);
         // The native MineShaft layout repositions the farmer onto the level's
         // stairs, so the requested landing tile is not a legal postcondition;
-        // reaching the target level is (the travel-completion branch agrees).
-        if (Game1.player.currentLocation is MineShaft mine && mine.mineLevel == nextLevel)
+        // reaching the declared level is (the travel-completion branch agrees).
+        if (Game1.player.currentLocation is MineShaft mine && mine.mineLevel == declaredLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={mine.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
-        LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, targetX, targetY, MineShaft.GetLevelName(nextLevel), 6, 6, this.revision, requestedDeadlineMs);
+        LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, targetX, targetY, MineShaft.GetLevelName(declaredLevel), 6, 6, this.revision, requestedDeadlineMs);
         this.activeTravel = specification;
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "mine_entry_pending", this.revision, $"source={location.NameOrUniqueName}:{targetX},{targetY};target={specification.TargetLocation}:6,6;level={nextLevel}");
+        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "mine_entry_pending", this.revision, $"source={location.NameOrUniqueName}:{targetX},{targetY};target={specification.TargetLocation}:6,6;level={declaredLevel}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;

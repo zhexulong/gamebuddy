@@ -51,10 +51,10 @@ test("every locally adapted Mod action has an explicit fail-closed completion ru
 });
 
 test("equip completion rejects malicious substring detail and accepts only the exact Mod fixture", () => {
-  const valid = "slot=1;before=none;expected=Axe;after=Axe";
+  const valid = "tool=Axe;before=none;expected=Axe;after=Axe";
   const receipt = {
     state: "succeeded",
-    reasonCode: "tool_selected",
+    reasonCode: "tool_equipped",
     evidence: { detail: valid },
   } as const;
   assert.equal(
@@ -65,9 +65,9 @@ test("equip completion rejects malicious substring detail and accepts only the e
     true,
   );
   for (const malicious of [
-    "slot=1;before=none;expected=Axe;after=Axe;admin=true",
-    "slot=1;before=none;expected=Axe;after=Axe_not_really",
-    "slot=1;before=none;expected=Axe;after=Axe;before=none",
+    "tool=Axe;before=none;expected=Axe;after=Axe;admin=true",
+    "tool=Axe;before=none;expected=Axe;after=Axe_not_really",
+    "tool=Axe;before=none;expected=Axe;after=Axe;before=none",
   ])
     assert.equal(
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
@@ -148,8 +148,8 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
   const cases = [
     [
       "equip_tool",
-      "tool_selected",
-      "slot=1;before=none;expected=Axe;after=Axe",
+      "tool_equipped",
+      "tool=Axe;before=none;expected=Axe;after=Axe",
       ["before", "expected", "after"],
     ],
     [
@@ -1000,7 +1000,7 @@ test("machine inspection, load, and collect completion evidence are exact Keg co
     reasonCode: "machine_coffee_loaded",
     evidence: {
       detail:
-        "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;native_check_action=true",
+        "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;expected_minutes_until_ready=120;native_check_action=true",
     },
   } as const;
   assert.equal(
@@ -1010,10 +1010,44 @@ test("machine inspection, load, and collect completion evidence are exact Keg co
     ),
     true,
   );
+  // The Mod derives the processing window from the live machine data, so any
+  // positive observed/derived pair is accepted: the content value itself is not
+  // a Host contract (a rebalance must not invalidate a real native load).
+  const loadRenumbered = {
+    ...load,
+    evidence: {
+      detail: load.evidence.detail
+        .replace("minutes_until_ready=120", "minutes_until_ready=90")
+        .replace("expected_minutes_until_ready=120", "expected_minutes_until_ready=90"),
+    },
+  } as const;
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
+      "machine_load",
+      loadRenumbered,
+    ),
+    true,
+  );
   for (const malformed of [
     load.evidence.detail.replace(
       "minutes_until_ready=120",
       "minutes_until_ready=119",
+    ),
+    load.evidence.detail.replace(
+      "expected_minutes_until_ready=120",
+      "expected_minutes_until_ready=119",
+    ),
+    load.evidence.detail.replace(
+      ";expected_minutes_until_ready=120",
+      "",
+    ),
+    load.evidence.detail.replace(
+      "expected_minutes_until_ready=120",
+      "expected_minutes_until_ready=0",
+    ),
+    load.evidence.detail.replace(
+      "expected_minutes_until_ready=120",
+      "expected_minutes_until_ready=unavailable",
     ),
     load.evidence.detail.replace(
       "input_stack_after=removed",

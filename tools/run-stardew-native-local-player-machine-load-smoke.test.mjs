@@ -79,7 +79,7 @@ test("machine-load runner uses shared dispatch, terminal correlation, and fresh 
         reasonCode: "machine_coffee_loaded",
         evidence: {
           detail:
-            "location=Farm;target=keg-target;tile=2,1;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;native_check_action=true",
+            "location=Farm;target=keg-target;tile=2,1;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;expected_minutes_until_ready=120;native_check_action=true",
         },
       });
       return accepted;

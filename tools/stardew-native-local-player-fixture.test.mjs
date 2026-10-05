@@ -714,7 +714,10 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
   assert.match(runner, /native_machine_coffee_load_v1/);
   assert.match(runner, /machine_coffee_loaded/);
   assert.match(runner, /input_stack_after === "removed"/);
-  assert.match(runner, /minutes_until_ready === "120"/);
+  // The runner must relate the observed duration to the derived one, not assert the
+    // content constant 120: the Mod derives the expected duration from live machine
+    // data, so pinning the literal here would defeat that.
+    assert.match(runner, /minutes_until_ready === evidence\.expected_minutes_until_ready/);
   await restoreNativeLocalPlayerFixture(options);
 });
 

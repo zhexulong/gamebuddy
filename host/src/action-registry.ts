@@ -69,7 +69,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   ),
   actionAdapter("use_raft", "Launch a raft", "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
   actionAdapter("mount_transport", "Mount a named horse", "Mount one advertised named native horse.", ["horse"]),
-  actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance without selecting a level.", ["mine_entrance"]),
+  actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance. The destination level comes from the entrance tile's own declaration, exactly as it does for a real click, so no client level is accepted.", ["mine_entrance"]),
   actionAdapter(
     "enter_exit",
     "Enter or exit through a discovered door",

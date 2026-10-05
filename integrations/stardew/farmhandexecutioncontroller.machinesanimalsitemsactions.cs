@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.GameData.Machines;
 using StardewValley.Tools;
 using StardewValley.Characters;
 
@@ -79,6 +80,12 @@ internal sealed partial class ExecutionManager
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
 
+        // The processing window is derived from the LIVE machine data before the
+        // native call: the load consumes the exact input stack, so the machine's own
+        // data is the only remaining source for "how long this input should take".
+        // A content value hardcoded here would turn a legitimate native load into
+        // an Uncertain terminal as soon as the data is rebalanced or modded.
+        int? expectedMinutesUntilReady = TryDeriveMachineProcessingMinutes(machine, input, Game1.player, location);
         int previousSlot = Game1.player.CurrentToolIndex;
         bool nativeHandled;
         try
@@ -94,10 +101,42 @@ internal sealed partial class ExecutionManager
         bool sourceConsumed = Game1.player.Items[slot] is null;
         bool machineAcceptedInput = machine.lastInputItem.Value?.QualifiedItemId == "(O)433";
         bool machineHasCoffee = machine.heldObject.Value?.QualifiedItemId == "(O)395";
-        bool processing = !machine.readyForHarvest.Value && machine.MinutesUntilReady == 120;
+        bool processing = !machine.readyForHarvest.Value
+            && expectedMinutesUntilReady is int expectedMinutes
+            && machine.MinutesUntilReady == expectedMinutes;
         bool succeeded = nativeHandled && sourceConsumed && machineAcceptedInput && machineHasCoffee && processing;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;slot={slot};input=(O)433;input_stack_before=5;input_stack_after={(Game1.player.Items[slot]?.Stack.ToString(CultureInfo.InvariantCulture) ?? "removed")};last_input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;slot={slot};input=(O)433;input_stack_before=5;input_stack_after={(Game1.player.Items[slot]?.Stack.ToString(CultureInfo.InvariantCulture) ?? "removed")};last_input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(expectedMinutesUntilReady is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_loaded" : "machine_coffee_load_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
+    /// The processing window the LIVE machine data declares for this exact input,
+    /// or null when the data cannot state one. Mirrors Object.OutputMachine's own
+    /// derivation (Object.cs:2571-2580): the matched ItemPlacedInMachine rule's
+    /// MinutesUntilReady (or DaysUntilReady), then the machine's
+    /// ReadyTimeModifiers and mode. Two cases deliberately fail closed:
+    /// no matching rule, and a rule whose output comes from a custom OutputMethod
+    /// (whose duration is code-owned, and MachineDataUtility.GetOutputItem is not
+    /// called here because it consumes Game1.random for rules that are not
+    /// UseFirstValidOutput).
+    /// </summary>
+    private static int? TryDeriveMachineProcessingMinutes(StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location)
+    {
+        MachineData? machineData = machine.GetMachineData();
+        if (machineData?.OutputRules is null)
+            return null;
+        if (!MachineDataUtility.TryGetMachineOutputRule(machine, machineData, MachineOutputTrigger.ItemPlacedInMachine, input, who, location,
+                out MachineOutputRule outputRule, out _, out _, out _))
+            return null;
+        if (outputRule.OutputItem is not null
+            && outputRule.OutputItem.Any(output => !string.IsNullOrEmpty(output.OutputMethod)))
+            return null;
+        int minutes = 0;
+        if (outputRule.MinutesUntilReady >= 0 || outputRule.DaysUntilReady >= 0)
+            minutes = outputRule.DaysUntilReady >= 0
+                ? Utility.CalculateMinutesUntilMorning(Game1.timeOfDay, outputRule.DaysUntilReady)
+                : outputRule.MinutesUntilReady;
+        return (int)Utility.ApplyQuantityModifiers(minutes, machineData.ReadyTimeModifiers, machineData.ReadyTimeModifierMode, location, who, machine.heldObject.Value, input);
     }
 
     /// <summary>
