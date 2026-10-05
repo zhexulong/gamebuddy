@@ -619,6 +619,7 @@ test(
            integrationId: "stardew",
            bindingRef: "opaque_world_ref",
            operationId: "binding_01",
+           holderHandle: "holder_binding_01",
          }),
        );
        assert.equal(binding.status, "registered");

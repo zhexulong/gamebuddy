@@ -34,6 +34,7 @@ function registerBinding(
     integrationId: "stardew",
     bindingRef,
     operationId,
+    holderHandle: "holder-resolver-01",
   });
 }
 
@@ -150,6 +151,7 @@ test("foreign integration binding is unavailable without interpreting its ref", 
       integrationId: "other-integration",
       bindingRef: "other-opaque-ref",
       operationId: "bind-resolver-foreign",
+      holderHandle: "holder-resolver-foreign",
     });
     const resolver = createStardewWorldBindingResolver((input) =>
       Promise.resolve(store.readGameSessionWorldBinding(input)),
