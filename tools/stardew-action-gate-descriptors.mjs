@@ -338,6 +338,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
   ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
+  // The fixture already puts the actor beside the shop owner inside trading hours, so
+  // the runner's contract is the purchase itself.
+  shop_purchase: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
 });
