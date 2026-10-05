@@ -1,5 +1,5 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
-import { applyDocumentLocale, type Locale, messages, resolveLocale } from "../i18n";
+import { applyDocumentLocale, type Locale, messages, persistLocale, resolveLocale } from "../i18n";
 import {
   type BrowserDraftV1,
   type ChatTitleV1,
@@ -74,6 +74,25 @@ type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1; devices: TavernVoiceDevicesV1 | null; pending: boolean }>;
 
 /**
+ * Companion language state. The Host preference is the authority: the panel
+ * adopts whatever it holds (so two browsers agree) and writes through it, never
+ * keeping a local selection the durable store did not accept.
+ */
+type LanguageView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "ready"; revision: number; locale: "zh-CN" | "en-US" | null; pending: boolean }>;
+
+/** The UI's locale and the Host's companion locale are the same choice, spelled differently. */
+function companionLocaleToUi(locale: "zh-CN" | "en-US"): Locale {
+  return locale === "en-US" ? "en" : "zh-CN";
+}
+function uiLocaleToCompanion(locale: Locale): "zh-CN" | "en-US" {
+  return locale === "en" ? "en-US" : "zh-CN";
+}
+
+/**
  * Connection panel state. `pending` is the one-management-mutation-at-a-time
  * guard: the durable document revision every mutation carries as its
  * compare-and-swap would otherwise turn a double click into a conflict.
@@ -104,7 +123,9 @@ export function ManagementApp() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryView, setMemoryView] = useState<MemoryView>({ kind: "idle" });
   const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
+  const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
   const voiceLoadedRef = useRef(false);
+  const languageLoadedRef = useRef(false);
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
   const connectionLoadedRef = useRef(false);
   const localeRef = useRef<Locale>(resolveLocale());
@@ -175,6 +196,44 @@ export function ManagementApp() {
             setVoiceView({ kind: "unavailable" });
           }
         }
+        if (!languageLoadedRef.current) {
+          languageLoadedRef.current = true;
+          try {
+            const preference = await api.readLanguagePreference();
+            if (!active) return;
+            // The durable preference is the authority for what the companion
+            // speaks, so the panel adopts it as the UI language too - one choice,
+            // not a browser guess beside a Host setting. When the player has never
+            // chosen, the UI records the language it is already showing, so the
+            // companion speaks what the player sees from the first reply on.
+            if (preference.locale === null) {
+              try {
+                const written = await api.updateLanguagePreference(
+                  { expectedRevision: preference.revision, locale: uiLocaleToCompanion(localeRef.current) },
+                  snapshot.csrfToken,
+                );
+                setLanguageView({ kind: "ready", revision: written.revision, locale: written.locale, pending: false });
+              } catch {
+                // A lost race (another tab chose first) is not a panel failure: the
+                // read-back on the next load carries the winner.
+                setLanguageView({ kind: "ready", revision: preference.revision, locale: preference.locale, pending: false });
+              }
+            } else {
+              setLanguageView({ kind: "ready", revision: preference.revision, locale: preference.locale, pending: false });
+              const adopted = companionLocaleToUi(preference.locale);
+              if (adopted !== localeRef.current) {
+                localeRef.current = adopted;
+                persistLocale(adopted);
+                applyDocumentLocale(adopted);
+                commit({ kind: "ready", session, draft, locale: adopted, notice: null });
+              }
+            }
+          } catch {
+            // A management profile without the language extension group does not
+            // publish these routes at all.
+            setLanguageView({ kind: "unavailable" });
+          }
+        }
         if (!connectionLoadedRef.current) {
           connectionLoadedRef.current = true;
           try {
@@ -203,6 +262,53 @@ export function ManagementApp() {
   const reconcileList = async (current: ReadyView): Promise<ManagementPipelineSession> => {
     const list = await apiRef.current.listChats();
     return current.session.withChatList(list);
+  };
+
+  const handleLanguageMutation = async (locale: Locale): Promise<void> => {
+    const current = viewRef.current;
+    const language = languageView;
+    if (current.kind !== "ready" || language.kind !== "ready" || language.pending) return;
+    const previous = localeRef.current;
+    // The choice is applied locally first so the panel answers the player
+    // immediately, then confirmed against the durable store; a rejected write
+    // reverts both the labels and the recorded preference.
+    localeRef.current = locale;
+    persistLocale(locale);
+    applyDocumentLocale(locale);
+    setLanguageView({ ...language, pending: true });
+    commit({ ...current, locale, notice: null });
+    try {
+      // The validated response IS the durable read-back, so the control always
+      // shows what the store holds.
+      const written = await apiRef.current.updateLanguagePreference(
+        { expectedRevision: language.revision, locale: uiLocaleToCompanion(locale) },
+        current.session.snapshot.csrfToken,
+      );
+      const adopted = companionLocaleToUi(written.locale ?? uiLocaleToCompanion(locale));
+      localeRef.current = adopted;
+      persistLocale(adopted);
+      applyDocumentLocale(adopted);
+      setLanguageView({ kind: "ready", revision: written.revision, locale: written.locale, pending: false });
+      commit({ ...current, locale: adopted, notice: { kind: "success", text: labels().success } });
+    } catch {
+      // A rejection can still hide a committed change (a same-cookie stale tab
+      // hits the revision conflict), so re-read the authority before reverting.
+      let restored: "zh-CN" | "en-US" | null = uiLocaleToCompanion(previous);
+      let revision = language.revision;
+      try {
+        const preference = await apiRef.current.readLanguagePreference();
+        restored = preference.locale;
+        revision = preference.revision;
+        setLanguageView({ kind: "ready", revision, locale: restored, pending: false });
+      } catch {
+        setLanguageView({ kind: "error" });
+      }
+      const reverted = restored === null ? previous : companionLocaleToUi(restored);
+      localeRef.current = reverted;
+      persistLocale(reverted);
+      applyDocumentLocale(reverted);
+      commit({ ...current, locale: reverted, notice: { kind: "failure", text: labels().failure } });
+    }
   };
 
   const handleVoiceMutation = async (action: "accept" | "revoke" | "setOutputDevice", outputDevice: string | null = null): Promise<void> => {
@@ -655,6 +761,11 @@ export function ManagementApp() {
                 {view.notice.text}
               </div>
             )}
+            <LanguageSettingsPanel
+              languageView={languageView}
+              labels={labels()}
+              onSelect={(locale) => void handleLanguageMutation(locale)}
+            />
             <VoiceSettingsPanel
               voiceView={voiceView}
               labels={labels()}
@@ -1099,6 +1210,46 @@ function ConnectionRow({
         </button>
       </div>
     </li>
+  );
+}
+
+function LanguageSettingsPanel({
+  languageView,
+  labels,
+  onSelect,
+}: Readonly<{
+  languageView: LanguageView;
+  labels: ReturnType<typeof messages>;
+  onSelect: (locale: Locale) => void;
+}>): ReactElement {
+  const selected = languageView.kind === "ready" && languageView.locale !== null ? languageView.locale : "zh-CN";
+  return (
+    <section
+      className="management-settings-section"
+      aria-label={labels.languageSettings}
+      data-language-settings
+    >
+      <h2>{labels.languageSettings}</h2>
+      <p>{labels.languageHint}</p>
+      {languageView.kind === "loading" && <p>{labels.openingChat}</p>}
+      {languageView.kind === "unavailable" && <p>{labels.languageUnavailable}</p>}
+      {languageView.kind === "error" && <p>{labels.failure}</p>}
+      {languageView.kind === "ready" && (
+        <div className="voice-device-selector">
+          <label htmlFor="companion-language">{labels.languageSettings}</label>
+          <select
+            id="companion-language"
+            className="form-select"
+            disabled={languageView.pending}
+            value={selected}
+            onChange={(event) => onSelect(event.target.value === "en-US" ? "en" : "zh-CN")}
+          >
+            <option value="zh-CN">{labels.languageChinese}</option>
+            <option value="en-US">{labels.languageEnglish}</option>
+          </select>
+        </div>
+      )}
+    </section>
   );
 }
 

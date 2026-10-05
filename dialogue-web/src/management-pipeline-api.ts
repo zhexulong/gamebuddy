@@ -250,6 +250,19 @@ export type TavernVoicePreferenceConsentCommandV1 =
       outputDevice: string | null;
     }>;
 
+/** Mirrors the Host's TavernLanguagePreferenceV1. */
+export type TavernLanguagePreferenceV1 = Readonly<{
+  revision: number;
+  /** `null` = the player has never chosen; the runtime then uses its default. */
+  locale: "zh-CN" | "en-US" | null;
+}>;
+
+/** Mirrors the Host's TavernLanguagePreferenceCommandV1. */
+export type TavernLanguagePreferenceCommandV1 = Readonly<{
+  expectedRevision: number;
+  locale: "zh-CN" | "en-US";
+}>;
+
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
   build: Readonly<{
@@ -691,6 +704,8 @@ const RENAME_COMMAND_KEYS = [
 ] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
+const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
+const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
 const VOICE_PREFERENCE_KEYS = ["revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice"] as const;
 const VOICE_PREFERENCE_ACCEPT_KEYS = ["expectedRevision", "action", "disclosureVersion"] as const;
 const VOICE_PREFERENCE_REVOKE_KEYS = ["expectedRevision", "action"] as const;
@@ -1372,6 +1387,33 @@ function isVoicePreferenceConsentCommand(value: unknown): value is TavernVoicePr
   return value.action === "revoke" && hasExactKeys(value, VOICE_PREFERENCE_REVOKE_KEYS);
 }
 
+export function validateLanguagePreference(value: unknown): TavernLanguagePreferenceV1 {
+  if (!isLanguagePreference(value)) throw new TavernProtocolError();
+  return value;
+}
+
+function isLanguagePreference(value: unknown): value is TavernLanguagePreferenceV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, LANGUAGE_PREFERENCE_KEYS) &&
+    isNonNegativeSafeInteger(value.revision) &&
+    (value.locale === null || isLanguageLocale(value.locale))
+  );
+}
+
+function isLanguagePreferenceCommand(value: unknown): value is TavernLanguagePreferenceCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, LANGUAGE_PREFERENCE_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isLanguageLocale(value.locale)
+  );
+}
+
+function isLanguageLocale(value: unknown): value is "zh-CN" | "en-US" {
+  return value === "zh-CN" || value === "en-US";
+}
+
 export function validateVoicePreference(value: unknown): TavernVoicePreferenceV1 {
   if (!isVoicePreference(value)) throw new TavernProtocolError();
   return value;
@@ -1662,6 +1704,17 @@ export type ManagementPipelineApi = Readonly<{
   readWorldInfo(): Promise<WorldInfoStateV1>;
   /** PUT exact bind/unbind command with browser-session CSRF protection. */
   setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /** GET /api/tavern/v1/settings/language (browser session; no CSRF header). */
+  readLanguagePreference(): Promise<TavernLanguagePreferenceV1>;
+  /**
+   * PUT /api/tavern/v1/settings/language with browser-session CSRF protection.
+   * The Host owns this preference and every runtime reads it, so the companion
+   * speaks the language the player chose here.
+   */
+  updateLanguagePreference(
+    command: TavernLanguagePreferenceCommandV1,
+    csrfToken: string,
+  ): Promise<TavernLanguagePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
@@ -1881,6 +1934,27 @@ export function createManagementPipelineApi(
     },
     async readVoiceDevices(): Promise<TavernVoiceDevicesV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/settings/voice-devices", 200, validateVoiceDevices);
+    },
+    async readLanguagePreference(): Promise<TavernLanguagePreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/language", 200, validateLanguagePreference);
+    },
+    async updateLanguagePreference(
+      command: TavernLanguagePreferenceCommandV1,
+      csrfToken: string,
+    ): Promise<TavernLanguagePreferenceV1> {
+      if (!isLanguagePreferenceCommand(command) || !isOpaqueHandle(csrfToken))
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/language",
+        200,
+        validateLanguagePreference,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("settings.language.update", "passed", String(result.revision));
+      return result;
     },
     async updateVoicePreference(
       command: TavernVoicePreferenceConsentCommandV1,
