@@ -1819,3 +1819,62 @@ place, its two `no_native_path` receipts read
 walkable and the flood probe reached a neighbour, but the native path finder found no
 route from where the actor stood. That is a **path** fact, not a tile fact, and it is now
 visible in the evidence instead of being collapsed into "unreachable".
+
+### 38.2 The native finder's budget, and one productive step instead of a refusal (run M)
+
+Run L left four `no_native_path` refusals whose evidence read
+`target_standable=true;target_walkable=true;blocked_by=none` — a **free, walkable tile the native
+path finder could not route to** from the pocket the actor stood in. Reading the decompiled finder
+settles what that means:
+
+```csharp
+// PathFindController.cs:74  (the game's own constructor for a player's click)
+: this(c, location, isAtEndPoint, finalFacingDirection, null, 10000, endPoint)
+// PathFindController.cs:232
+num++;
+if (num >= limit) { return null; }
+```
+
+`limit` is a **node-expansion budget**, and `null` is what the Mod saw. The Mod had been passing the
+game's own `10000`, which a dense plot exhausts — while the walkable component (the *same* predicate
+the finder uses, `PathFindController.cs:222`) still contains the target. So `no_native_path` was
+conflating two different facts, and the receipt could not tell them apart:
+
+- **severed**: no route exists (`route_exists=false`), or
+- **budget**: the search gave up (`path_search=native_budget_exhausted`).
+
+Three changes (`StardewBodyController`, `ExecutionModels`):
+
+1. **The budget is raised** for Mod-initiated moves: `NativePathNodeBudget = 40000`, with the source
+   anchors above in the comment. One bounded search on the game thread; the receipt names the budget
+   so a future failure of this kind is attributable.
+2. **The facts are separated** in the refusal: `route_exists`, `component_tiles`, `path_search`,
+   `budget`, alongside the existing `target_standable` / `target_walkable` / `blocked_by`. The
+   probe's staging answer (`ComponentContainsTarget`, `ClosestToTarget`, `ComponentTiles`) is
+   computed only on the already-failing path, and an unbounded component still yields **no claim**
+   (the handler falls back to its bounded fast-path probe).
+3. **A reachable far goal gets a staged approach instead of a refusal**: when the probe says the
+   target is reachable, the Mod plans one step towards it — the actor's own traversable neighbour
+   that most reduces the distance, so the step is always adjacent and always routable — and every
+   receipt that names the goal also names the request
+   (`staged_approach=true;requested=<asked>`). `target_reached` can therefore never be misread as
+   the requested tile having been reached.
+
+Measured on the same fixture world and open goal:
+
+| | run L | run M |
+|---|---|---|
+| `no_native_path` refusals | **4** | **0** |
+| `move_to_tile` terminals | 4 of 13 dispatches | 1 of 2 |
+| capabilities with a terminal | 6/6 | 5/6 (`harvest_crop` blocked) |
+
+Run M's remaining refusals are a different, smaller matter: `harvest_crop` ×3 `stale_snapshot` and
+×1 `target_out_of_range`. `stale_snapshot` is the bridge's revision CAS (`BridgeSession.cs:1318`),
+refused **before** any execution, so nothing was half-done; the Host synchronizes its cached revision
+from each receipt (`local-stardew-bridge.ts:745`), so a bump that no receipt carries can still leave
+it one behind and cost a wasted round trip. That is the next thing to chase.
+
+Run M also exposed a hole in this rung's own verdict, now closed: it reported `passed` after
+**fifteen minutes and 17 native actions with no player-facing line at all** (`presentedSummary: null`).
+A play session that never speaks is not a companion session, so silence is its own verdict
+(`sessionVerdict: "silent"` → `blocked`), and `spokeToPlayer` is published for every ladder.

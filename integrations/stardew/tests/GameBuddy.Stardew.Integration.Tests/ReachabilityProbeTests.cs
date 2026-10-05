@@ -93,4 +93,75 @@ public sealed class ReachabilityProbeTests
         verdict.Should().NotBeNull();
         verdict!.Value.TargetEnclosed.Should().BeFalse();
     }
+
+    [Fact]
+    public void StagingAsk_FindsTheClosestReachableTileTowardsTheTarget()
+    {
+        // The native finder can give up on a far goal whose walkable component still contains
+        // it (its node budget is finite: PathFindController.cs:232). A live run reported a FREE,
+        // walkable tile the finder could not route to. The probe's staging answer is what lets
+        // the move handler make progress instead of refusing: the nearest tile the component
+        // actually offers.
+        Point actor = new(0, 0);
+        Point target = new(10, 0);
+        // A corridor along y == 0 that stops at x == 4, i.e. the target's neighbourhood is NOT
+        // in the component, and the closest reachable tile is the corridor's end.
+        static bool Corridor(Point tile) => tile.Y == 0 && tile.X >= 0 && tile.X <= 4;
+
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            actor,
+            target,
+            Corridor,
+            maxVisited: 2000,
+            findClosestReachable: true);
+
+        verdict.Should().NotBeNull();
+        verdict!.Value.ComponentContainsTarget.Should().BeFalse("the corridor ends short of the target");
+        verdict.Value.TargetEnclosed.Should().BeTrue();
+        verdict.Value.ClosestToTarget.Should().Be(new Point(4, 0));
+        verdict.Value.ComponentTiles.Should().Be(5);
+    }
+
+    [Fact]
+    public void StagingAsk_ReportsTheComponentContainsTheTarget()
+    {
+        // The case the budget-exhaustion distinction exists for: the target IS walkable and the
+        // component reaches it inside the budget, so the native finder's null path is a search
+        // outcome, not a reachability fact. The component is bounded here so the probe can decide.
+        Point actor = new(0, 0);
+        Point target = new(3, 0);
+        static bool Room(Point tile) => tile.X >= 0 && tile.X <= 4 && tile.Y >= 0 && tile.Y <= 4;
+
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            actor,
+            target,
+            Room,
+            maxVisited: 500,
+            findClosestReachable: true);
+
+        verdict.Should().NotBeNull();
+        verdict!.Value.ComponentContainsTarget.Should().BeTrue();
+        verdict.Value.TargetEnclosed.Should().BeFalse();
+        // The best staging tile is adjacent to the target (distance 1), never the target itself.
+        verdict.Value.ClosestToTarget.Should().Be(new Point(2, 0));
+    }
+
+    [Fact]
+    public void StagingAsk_OnAnUnboundedComponent_MakesNoClaim()
+    {
+        // An open map's component is the whole map, so it cannot be enumerated inside any
+        // bounded budget; the probe must say nothing rather than guess (the move handler then
+        // falls back to its bounded fast-path probe before it stages anything).
+        Point actor = new(0, 0);
+        Point target = new(3, 0);
+
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            actor,
+            target,
+            _ => true,
+            maxVisited: 500,
+            findClosestReachable: true);
+
+        verdict.Should().BeNull();
+    }
 }
