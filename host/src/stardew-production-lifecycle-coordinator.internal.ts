@@ -2163,12 +2163,42 @@ function createCoordinator(
 
   const closeAttempt = async (): Promise<void> => {
     if (activationState !== "closed") transition("closing");
+    // Join the in-flight create before ANY return below can skip it, including
+    // the terminal endgame branch. Joining it is what makes close drive the
+    // create path's own durable failure closure: an interrupted create settles
+    // its rows (no registered binding with resumable metadata may survive a
+    // close) before this close starts tearing anything down -- and before this
+    // close can RESOLVE. An endgame does not end the admissibility of a create:
+    // its body changes neither `activationState` nor `exactOwner`, so the
+    // admission guards still pass afterwards and a create really can be
+    // outstanding on the endgame path.
+    const create = createPromise;
+    if (create !== undefined) await create.catch(() => undefined);
     // An explicit endgame is terminal: it already drained both role Jobs,
     // released the platform session and drove the durable owner record to
     // `contained`. The ordinary close that follows is pure bookkeeping and must
     // not re-drive the runtime, re-quarantine the terminal owner, or re-stop an
     // owner the endgame already stopped.
     if (endgameSettled) {
+      // This branch deliberately skips the teardown below, but it still owns
+      // whatever a create built AFTER the endgame tore the attachment down
+      // (:1320) -- for example a fresh facade/lease minted at :1449/:1485.
+      // Disposing of it here is safe precisely because of the create join
+      // above: the attempt has fully settled, so nothing can still be attaching
+      // or re-assigning `farmhandGameRuntimeFacade`, and the shared teardown
+      // reads the coordinator's own facade/lease/generation (:1179-1183) and
+      // closes exactly the leftover. Without both halves, close could resolve
+      // while that facade stayed open forever.
+      try {
+        if (
+          farmhandGameRuntimeFacade !== undefined &&
+          farmhandGameRuntimeLease !== undefined &&
+          attachmentGeneration !== 0
+        ) await teardownAttachment();
+        else await closePartialAttachment();
+      } catch {
+        throw new StardewProductionLifecycleCloseError();
+      }
       attachmentGeneration = 0;
       attachmentConnectionStatus = "none";
       actionAuthorityStatus = "unavailable";
@@ -2193,12 +2223,6 @@ function createCoordinator(
     if (launch !== undefined) await launch.catch(() => undefined);
     const resume = resumePromise;
     if (resume !== undefined) await resume.catch(() => undefined);
-    // Joining the in-flight create is what makes close drive the create path's
-    // own durable failure closure: an interrupted create settles its rows (no
-    // registered binding with resumable metadata may survive a close) before
-    // this close starts tearing anything down.
-    const create = createPromise;
-    if (create !== undefined) await create.catch(() => undefined);
     const confirmationKey = cabinConfirmationKey;
     if (confirmationKey !== undefined) {
       await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
