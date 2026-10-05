@@ -12,6 +12,7 @@ import {
   type StardewLifecycleAiClientLaunch,
   type StardewLifecyclePlayerHostLaunch,
   type StardewProductionLifecycleCoordinator,
+  type StardewContainedRuntimeTeardown,
   type StardewWorldCreationSeamFactory,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { createStardewPrivateBootstrapCompositionForTesting } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
@@ -76,6 +77,13 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   containedAiLaunchNowMs?: () => number;
   /** Test-only discovery overlay; production composition never accepts this dependency. */
   installationDiscoveryOverlay?: StardewInstallationDiscoveryProvider;
+  /**
+   * Scripted contained-runtime teardown. When provided it is used verbatim as
+   * the coordinator's teardown horizon, so a test can script the recovery drive
+   * itself; absent, the horizon is the one derived from
+   * `runtimeLaunchContained`, exactly as before this override existed.
+   */
+  containedRuntimeTeardown?: StardewContainedRuntimeTeardown;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -180,7 +188,8 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
     aiClientLaunch,
     overrides.gameSessionCreationAuthority,
     createWorldBindingSeam,
-    overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained),
+    overrides.containedRuntimeTeardown ??
+      (overrides.runtimeLaunchContained === undefined ? undefined : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained)),
     overrides.installationDiscoveryOverlay,
   );
 }
