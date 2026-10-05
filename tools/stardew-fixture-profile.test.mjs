@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  FIXTURE_MANAGED_TARGETS,
   applyFixtureBridgeOverride,
   inspectFixtureTransaction,
   prepareFixtureProfile,
@@ -408,3 +409,33 @@ async function writeJson(file, value) {
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+
+test("every managed fixture target has a distinct backup identity", async () => {
+  // Regression pin (measured 2026-10-05): bundle names were hand-mapped to
+  // tokens ("dll"/"manifest"/"deps"), which collapsed two different files of one
+  // profile onto ONE backup file. Restore then checked the first entry's digest
+  // against bytes the second write had already replaced, so
+  // `fixture_restore_failed:fixture_backup_hash_mismatch` failed EVERY run — the
+  // two-process companion launcher could reach hostReady and then never finish.
+  // Backups are named `${name}.json`, so an identity collision IS a file
+  // collision: assert both uniquely, and keep the name safe as a file name.
+  const targets = FIXTURE_MANAGED_TARGETS;
+  assert.ok(targets.length > 0, "target list must not be empty");
+  assert.equal(new Set(targets.map((target) => target.name)).size, targets.length, "target names must be unique");
+
+  const plan = targets.map((target) => ({
+    name: target.name,
+    backupFile: `${target.name}.json`,
+    profile: target.profile,
+    relativePath: target.relativePath,
+  }));
+  assert.equal(new Set(plan.map((entry) => entry.backupFile)).size, plan.length, "backup files must be unique");
+  assert.equal(
+    new Set(plan.map((entry) => `${entry.profile}/${entry.relativePath.join("/")}`)).size,
+    plan.length,
+    "each target must describe a distinct profile path",
+  );
+  for (const entry of plan) {
+    assert.match(entry.backupFile, /^[A-Za-z0-9_.-]+\.json$/, `backup file must be a safe .json name: ${entry.backupFile}`);
+  }
+});
