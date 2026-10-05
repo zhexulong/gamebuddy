@@ -1842,6 +1842,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // game-thread read; the client's expectedTargetId is only matched against
             // it later, never trusted as a level.
             advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? DiscoverMineElevatorFloors() : null,
+            // Shops whose owner is eligible AND standing in the actor's current location.
+            // Discovery walks Data/Shops and asks the game which owner entries are currently
+            // eligible (ShopBuilder.GetCurrentOwners evaluates ShopOwnerData.Condition), rather
+            // than scanning map tiles for "shop tiles" — the game hardcodes which tile opens
+            // which shop per location, so a tile scan cannot generalise.
+            advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? DiscoverShopTargets(player) : null,
             advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
             advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
             advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
@@ -1877,7 +1883,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
-        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, MineElevatorFloorTargets: null, RaftTargets: null,
+        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
         // admission rejects with world_not_ready, so no consumer plans from this.

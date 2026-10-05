@@ -528,6 +528,20 @@ activeExecution?: ActiveExecution | null;
     * advertised for the `ride_minecart` action. */
    /** Floors the mine elevator offers right now. The Mod derives them from the live
    * lowest level reached; a floor outside this list is refused on the game thread. */
+  /** Shops whose owner is eligible AND standing in the actor's current location. The
+   * owner tile is published so the Agent can walk into reach itself; this action
+   * deliberately does not path. */
+  shopTargets?: readonly Readonly<{
+    targetId: string;
+    shopId: string;
+    ownerName: string;
+    location: string;
+    ownerTileX: number;
+    ownerTileY: number;
+    ownerInReach: boolean;
+    closedMessage: string | null;
+    stockCount: number;
+  }>[];
   mineElevatorFloorTargets?: readonly Readonly<{
     targetId: string;
     floor: number;
@@ -552,6 +566,7 @@ export type ExecutionRequest = Readonly<{
     | "navigate_to_destination"
     | "equip_tool"
     | "travel"
+    | "shop_purchase"
     | "ride_minecart"
     | "select_mine_elevator_floor"
     | "ride_bus"
@@ -1136,6 +1151,7 @@ const SNAPSHOT_KEYS = [
   "craftingRecipeTargets",
   "cookingRecipeTargets",
   "cookingStationTargets",
+  "shopTargets",
   "mineElevatorFloorTargets",
   "minecartTargets",
   "bushTargets",
@@ -1649,6 +1665,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "travel" &&
      value.action !== "ride_minecart" &&
      value.action !== "ride_bus" &&
+     value.action !== "shop_purchase" &&
      value.action !== "select_mine_elevator_floor" &&
      value.action !== "use_raft" &&
      value.action !== "mount_transport" &&
@@ -1770,6 +1787,14 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // here beyond the shape and the opaque-id form.
     if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_args";
     if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_mine_elevator_floor";
+  } else if (value.action === "shop_purchase") {
+    // An opaque shop target, the good's wire identity, and a positive quantity. The
+    // Mod re-resolves the target and clamps the quantity against live stock and the
+    // purse on the game thread, so nothing here needs to model pricing or stock.
+    if (!hasExactKeys(value.args, ["expectedTargetId", "expectedQualifiedItemId", "quantity"])) return "invalid_args";
+    if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_shop_target";
+    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
+    if (!Number.isSafeInteger(value.args.quantity) || (value.args.quantity as number) < 1) return "invalid_quantity";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2747,6 +2772,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.cookingStationTargets) &&
         value.cookingStationTargets.length <= 16 &&
         value.cookingStationTargets.every(isCookingStationTargetFact))) &&
+    (value.shopTargets === undefined ||
+      (Array.isArray(value.shopTargets) && value.shopTargets.length <= 32 && value.shopTargets.every(isShopTargetFact))) &&
     (value.mineElevatorFloorTargets === undefined ||
       (Array.isArray(value.mineElevatorFloorTargets) &&
         value.mineElevatorFloorTargets.length <= 32 &&
@@ -2779,6 +2806,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "travel" ||
        value.action === "ride_minecart" ||
       value.action === "select_mine_elevator_floor" ||
+      value.action === "shop_purchase" ||
        value.action === "ride_bus" ||
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
@@ -4157,6 +4185,27 @@ function isHorseTargetFact(value: unknown): boolean {
 }
 function isMineEntranceTargetFact(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) && typeof value.targetId === "string" && /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+
+function isShopTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "shopId", "ownerName", "location", "ownerTileX", "ownerTileY", "ownerInReach", "closedMessage", "stockCount"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.shopId === "string" &&
+    typeof value.ownerName === "string" &&
+    typeof value.location === "string" &&
+    typeof value.ownerTileX === "number" &&
+    Number.isSafeInteger(value.ownerTileX) &&
+    typeof value.ownerTileY === "number" &&
+    Number.isSafeInteger(value.ownerTileY) &&
+    typeof value.ownerInReach === "boolean" &&
+    (value.closedMessage === null || typeof value.closedMessage === "string") &&
+    typeof value.stockCount === "number" &&
+    Number.isSafeInteger(value.stockCount) &&
+    value.stockCount >= 0
+  );
 }
 
 function isMineElevatorFloorFact(value: unknown): boolean {

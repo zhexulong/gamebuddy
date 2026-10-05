@@ -145,6 +145,11 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            // Buying has no coordinates on purpose: it buys from a shop the actor already
+            // stands next to and refuses with shop_counter_out_of_reach otherwise, so a walk
+            // failure can never be reported as a trade failure (move_to_tile owns walking).
+            "shop_purchase" => this.executions.RequestLocalShopPurchase(request, ledger),
+
             "ship_item" => this.executions.RequestLocalShipItem(
                 request.RequestId,
                 request.Args.Slot ?? 0,

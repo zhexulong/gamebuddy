@@ -56,6 +56,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["mine_elevator_floor"],
   ),
   actionAdapter(
+    "shop_purchase",
+    "Buy from a shop",
+    "Buy goods from a shop whose owner is standing within reach. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. It does not walk: move into reach first, or the call is refused with shop_counter_out_of_reach.",
+    ["shop"],
+  ),
+  actionAdapter(
     "ride_bus",
     "Ride the bus",
     "Ride the native bus from the Bus Stop ticket machine to the desert; the Mod checks the vault, the driver and the fare itself and drives the game's own ticket interaction.",
@@ -377,6 +383,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   equip_tool: "stardew_equip_tool",
   navigate_to_destination: "stardew_navigate_to_destination",
   travel: "stardew_travel",
+  shop_purchase: "stardew_shop_purchase",
   ride_minecart: "stardew_ride_minecart",
   select_mine_elevator_floor: "stardew_select_mine_elevator_floor",
   ride_bus: "stardew_ride_bus",
@@ -565,6 +572,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "ride_minecart",
   "dismiss_modal",
   "answer_dialogue",
+  "shop_purchase",
   "ride_bus",
   "select_mine_elevator_floor",
 ] as const);

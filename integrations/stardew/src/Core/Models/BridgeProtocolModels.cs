@@ -464,6 +464,10 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeCookingStationTarget>? CookingStationTargets,
     IReadOnlyList<BridgeMinecartTarget>? MinecartTargets,
     IReadOnlyList<BridgeMineElevatorFloorTarget>? MineElevatorFloorTargets,
+    /// <summary>Shops with an eligible owner in the CURRENT location. The owner tile is
+    /// reported so the Agent can walk into native interaction range itself; this action
+    /// deliberately does not path (it refuses with shop_counter_out_of_reach instead).</summary>
+    IReadOnlyList<BridgeShopTarget>? ShopTargets,
     IReadOnlyList<BridgeBushTarget>? BushTargets,
     IReadOnlyList<BridgeFruitTreeTarget>? FruitTreeTargets,
     IReadOnlyList<BridgeShakeTreeTarget>? ShakeTreeTargets,
@@ -561,6 +565,9 @@ public sealed class BridgeExecutionArgs
     public string? Tool { get; init; }
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
+    /// <summary>How many units to buy. Only shop_purchase uses it today; the Mod clamps it
+    /// against the live stock and the player's purse on the game thread.</summary>
+    public int? Quantity { get; init; }
     public ObservationBindingV1? SceneTarget { get; init; }
     public BridgeNavigationDestinationSelector? Destination { get; init; }
     public string? Emote { get; init; }
@@ -570,6 +577,35 @@ public sealed class BridgeExecutionArgs
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
+
+/// <summary>
+/// <para>
+/// One shop the player could actually buy from right now.
+/// </para>
+/// <para>
+/// Discovery does NOT scan map tiles for "shop tiles". The game hardcodes which tile opens
+/// which shop per location (GameLocation.checkAction calls TryOpenShopMenu with a literal
+/// shop id), so a tile scan cannot generalise — only Dwarf and Krobus open a shop from
+/// NPC.checkAction. Instead this walks `Data/Shops`, asks the game which owner entries are
+/// currently eligible via `ShopBuilder.GetCurrentOwners` (that is where ShopOwnerData's
+/// `Condition` game-state-query is evaluated), and then reports the shop only when its
+/// owner NPC is in the CURRENT location within the native interaction radius.
+/// </para>
+/// <para>
+/// <c>ClosedMessage</c> is the game's own text for "this shop is closed", so a refusal can
+/// quote the game rather than invent a reason.
+/// </para>
+/// </summary>
+public sealed record BridgeShopTarget(
+    string TargetId,
+    string ShopId,
+    string OwnerName,
+    string Location,
+    int OwnerTileX,
+    int OwnerTileY,
+    bool OwnerInReach,
+    string? ClosedMessage,
+    int StockCount);
 
 public sealed record BridgeExecutionRequest(
     string RequestId,
