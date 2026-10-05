@@ -1009,13 +1009,15 @@ try {
   const sessionVerdict =
     sessionTurns.length === 0
       ? "no_turns"
-      : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
-        ? "turn_timeout"
-        : unsettledSessionTurns.length > 0
-          ? "turn_unsettled"
-          : accomplishedActionIds.length > 0
-            ? "completed"
-            : "nothing_accomplished";
+      : !sessionSpoken
+        ? "silent"
+        : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
+          ? "turn_timeout"
+          : unsettledSessionTurns.length > 0
+            ? "turn_unsettled"
+            : accomplishedActionIds.length > 0
+              ? "completed"
+              : "nothing_accomplished";
   const ladderSixPassed =
     LADDER === "6"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
@@ -1065,6 +1067,12 @@ try {
     (LADDER === "3" || LADDER === "4" || LADDER === "5" || LADDER === "6") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
+  // A play session that never speaks is not a companion session. Run M did 17 native
+  // actions over fifteen minutes and produced no player-facing line at all: the rung's
+  // own goal asks for a short report, and "did the companion play" includes "did it
+  // tell the player". Silence is its own verdict, never a pass by omission.
+  const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
+  const sessionSpoken = LADDER !== "6" || spokeToPlayer;
   const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
   // System-level diagnostics: aggregate every rejected action into a small set
   // of system findings (component attribution + count + sample), so each live
@@ -1129,6 +1137,8 @@ try {
     sessionTurnErrors: unsettledSessionTurns,
     attemptedActionIds,
     succeededActionIds,
+    // Present for every ladder; ladder 6's verdict treats silence as its own outcome.
+    spokeToPlayer,
     // The actions that actually changed the world (see NON_ACCOMPLISHMENT_ACTIONS):
     // the difference between "the companion acted" and "the companion moved, looked
     // and reported". Published so the verdict is readable, not just its consequence.

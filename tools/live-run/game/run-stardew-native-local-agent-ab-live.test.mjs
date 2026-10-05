@@ -254,6 +254,11 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /const NON_ACCOMPLISHMENT_ACTIONS = Object\.freeze\(/);
   assert.match(RUNNER_SOURCE, /accomplishedActionIds = succeededActionIds\.filter\(/);
   assert.match(RUNNER_SOURCE, /: "nothing_accomplished"/);
+  // Run M did 17 native actions over fifteen minutes and never said a word to the player:
+  // a play session that never speaks must not pass as a companion session.
+  assert.match(RUNNER_SOURCE, /const spokeToPlayer = typeof presentedSummary === "string"/);
+  assert.match(RUNNER_SOURCE, /\? "silent"/);
+  assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
   assert.match(RUNNER_SOURCE, /accomplishedActionIds,/);
   for (const actionId of [
     "move_to_tile",
