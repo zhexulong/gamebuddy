@@ -521,8 +521,14 @@ const noopRecorder = Object.freeze({ record() {} });
  * on the SAME root/continuity renders it into m[0] — the cross-surface
  * embodiment path that a chat-only memory loop cannot close by itself.
  */
-export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs, gameSessionMode = "fresh" }) {
+export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, outputRoot, readyTimeoutMs, gameSessionMode = "fresh", onPhase } = {}) {
   const markers = [];
+  // Phase marks: the seed is the dominant cold-start cost (~49s measured in a real
+  // ladder-5 run), so the caller needs to know WHICH part costs it - booting the
+  // management composition, or the memory CRUD calls it makes afterwards.
+  const phases = {};
+  const seedStartedAtMs = Date.now();
+  const mark = (name) => { phases[name] = Date.now() - seedStartedAtMs; onPhase?.(name, phases[name]); };
   const launch = await launchDesktopCompositionGateChild({
     outputRoot: outputRoot ?? OUTPUT_ROOT,
     root,
@@ -549,18 +555,23 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
       return child;
     },
   });
+  mark("childSpawnedMs");
   try {
     const launchUrl = await launch.waitForReady();
+    mark("readyMs");
     const url = new URL(launchUrl);
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
+    mark("bootstrapAuthMs");
     const result = await seedMemory(origin, client, seeds, supersedes);
-    return Object.freeze({ result, markers: Object.freeze([...markers]) });
+    mark("seedWrittenMs");
+    return Object.freeze({ result, markers: Object.freeze([...markers]), phases: Object.freeze({ ...phases }) });
   } finally {
     launch.dispose?.();
     await stopChildGracefully(launch.child);
+    mark("stoppedMs");
   }
 }
 
@@ -643,19 +654,25 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  		},
  	});
   try {
+    process.stderr.write(`[diag-loop] surface=${surface} waitForReady-start ts=${Date.now()}\n`);
     const launchUrl = await launch.waitForReady();
+    process.stderr.write(`[diag-loop] surface=${surface} ready ts=${Date.now()}\n`);
     const url = new URL(launchUrl);
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
+    process.stderr.write(`[diag-loop] surface=${surface} bootstrapped ts=${Date.now()}\n`);
+    process.stderr.write(`[diag-loop] surface=${surface} run-start ts=${Date.now()}\n`);
     const result = await run(origin, client);
+    process.stderr.write(`[diag-loop] surface=${surface} run-ok ts=${Date.now()}\n`);
     // Drain pending stderr appends BEFORE returning: the report branch closes the
     // capture right after, and a late stderr flush must not land after the
     // summary was written (audit NOTE-5).
     await Promise.allSettled(pendingAppends);
     return Object.freeze({ result, markers: Object.freeze([...markers]) });
   } catch (error) {
+    process.stderr.write(`[diag-loop] surface=${surface} run-failed ts=${Date.now()} message=${String(error?.message ?? error).slice(0, 120)}\n`);
     const diagnostic = stderr.trim();
     throw new Error(
       diagnostic.length > 0
@@ -686,6 +703,7 @@ export const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
 
 async function stopChildGracefully(child, timeoutMs = 30_000) {
   if (child === undefined || child === null || child.exitCode !== null) return;
+  process.stderr.write(`[diag-loop] shutdown-send pid=${child.pid} ts=${Date.now()}\n`);
   const exited = new Promise((resolveExit) => child.once("exit", () => resolveExit(true)));
   // The request only reaches a child that was spawned with an IPC channel and has
   // not disconnected. `connected` is the product's own gate: a child without the
