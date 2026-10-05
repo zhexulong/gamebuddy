@@ -134,3 +134,31 @@ export class ContainmentRoleAlreadyContainedError extends Error {
     this.name = "ContainmentRoleAlreadyContainedError";
   }
 }
+
+/**
+ * The exact owner's Farmhand bridge connection authority is not in the state the
+ * caller requires. One refusal, two callers, and (before this identity existed)
+ * two different meanings read off the same message text:
+ *
+ * - the composition refuses to consume a connection that is not `available`
+ *   (the one-shot connection was already consumed, or is not armed yet), which
+ *   the lifecycle reads as "this attach cannot be built here, defer it";
+ * - the composition refuses to arm a fresh activation because the previous one
+ *   never fully ended, which the lifecycle reads as "the owner's first one-shot
+ *   activation is still intact", the state a create launches through.
+ *
+ * Both refusals are legitimately reported by the same composition probe, so the
+ * lifecycle cannot distinguish them by call site; it distinguishes the two
+ * readings by which probe it just ran. What it must NOT do is distinguish them
+ * by comparing a message literal that only the composition can see: renaming
+ * the text would silently turn "still intact, launch through it" into a hard
+ * failure, or turn a real refusal into something the lifecycle tolerates. The
+ * identity therefore lives in this port and is what both sides classify on,
+ * exactly like the durable containment refusal above.
+ */
+export class FarmhandBridgeConnectionNotAvailableError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "FarmhandBridgeConnectionNotAvailableError";
+  }
+}

@@ -38,9 +38,7 @@ export type StardewLogicalActionRecoveryRecord = StardewLogicalActionRecoveryDis
     state: StardewLogicalActionRecoveryState;
   }>;
 
-type RecoveryRecordWriter = (
-  record: StardewLogicalActionRecoveryRecord,
-) => Promise<{ saved: StardewLogicalActionRecoveryRecord; evicted: readonly string[] }>;
+type RecoveryRecordWriter = (record: StardewLogicalActionRecoveryRecord) => Promise<StardewLogicalActionRecoveryRecord>;
 type AdmissionRecordWriter = (record: HostNodeAdmissionRecord) => Promise<void>;
 
 /** Test-only writer with distinct return types for the two journal owners. */
@@ -93,49 +91,6 @@ const DEFAULT_MAX_BYTES = 1024 * 1024;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_STRING_LENGTH = 16 * 1024;
 
-/**
- * A SETTLED action is finished history. Its record exists so a crash in the middle of a
- * dispatch can be recovered; once the action reached a terminal outcome there is nothing
- * left to recover, and `allowedTransition` has no edge out of `terminal_settled` (so no
- * later write can depend on it). The other states DO owe something: they are in flight or
- * awaiting recovery.
- */
-function owesNothing(record: StardewLogicalActionRecoveryRecord): boolean {
-  return record.state === "terminal_settled";
-}
-
-/**
- * Make a document fit the journal's budget by dropping the OLDEST settled history first.
- *
- * Without this the journal is not "bounded", it is a one-way wedge: `#writeRecovery` throws
- * `recovery_journal_budget_exceeded` once the record cap is reached, every later write
- * re-validates the same full document and throws identically, and the Host can no longer
- * create ANY game action — a real ladder session hit exactly that (256 records, 254 of them
- * `terminal_settled`) and the companion could not act for three consecutive runs while the
- * player was told "Game action was not created": a played-through failure for the player,
- * with no recovery path in or out of the game.
- *
- * Eviction is deliberately conservative: only settled history is dropped, and only as much
- * as the budget requires. If the budget cannot be met while keeping every record that still
- * owes recovery, this returns the unbounded document and the caller's budget refusal stands
- * — a refusal that is then honest, because the in-flight set alone is over budget.
- */
-function makeRoom(
-  document: Document,
-  maxRecords: number,
-  maxBytes: number,
-  encode: (candidate: Document) => string = (candidate) => JSON.stringify(candidate),
-): Document {
-  let current = document;
-  for (;;) {
-    const encoded = encode(current);
-    if (current.records.length <= maxRecords && Buffer.byteLength(encoded, "utf8") <= maxBytes) return current;
-    const victim = current.records.findIndex((record) => owesNothing(record));
-    if (victim < 0) return current;
-    current = makeDocumentFrom(current, current.records.filter((_, index) => index !== victim));
-  }
-}
-
 export class StardewLogicalActionRecoveryJournal {
   readonly #records = new Map<string, StardewLogicalActionRecoveryRecord>();
   readonly #requestIds = new Map<string, string>();
@@ -152,8 +107,7 @@ export class StardewLogicalActionRecoveryJournal {
 
   public constructor(options: StardewLogicalActionRecoveryJournalOptions = {}) {
     const writer = options.write ?? (() => undefined);
-    this.#writeRecovery = (record) =>
-      Promise.resolve(writer(record)).then((durable) => ({ saved: durable ?? record, evicted: [] }));
+    this.#writeRecovery = (record) => Promise.resolve(writer(record)).then((durable) => durable ?? record);
     this.#writeAdmission = (record) => Promise.resolve(writer(record)).then(() => undefined);
     for (const record of options.initialRecords ?? []) this.#seed(record);
   }
@@ -198,20 +152,15 @@ export class StardewLogicalActionRecoveryJournal {
           if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
             throw new Error("duplicate_node_admission_record");
           admissionRecords.push(record);
-          // Admission records are not settled history, so eviction never removes one; the
-          // bounded document still has to fit, and evicting settled actions is what keeps a
-          // long-lived journal writable (see makeRoom).
-          const next = makeRoom(makeDocument(normalized, current.records, admissionRecords), maxRecords, maxBytes);
-          const encoded = JSON.stringify(next);
+          const encoded = JSON.stringify(makeDocument(normalized, current.records, admissionRecords));
           if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
           await atomicWriteFile(path, encoded, normalized.directory);
         },
         { containmentRoot: normalized.directory },
       );
     };
-    journal.#writeRecovery = async (record): Promise<{ saved: StardewLogicalActionRecoveryRecord; evicted: readonly string[] }> => {
+    journal.#writeRecovery = async (record): Promise<StardewLogicalActionRecoveryRecord> => {
       let durableRecord: StardewLogicalActionRecoveryRecord | undefined;
-      let evicted: readonly string[] = [];
       await withPathLock(
         path,
         async () => {
@@ -238,20 +187,16 @@ export class StardewLogicalActionRecoveryJournal {
               durableRecord = record;
             }
           }
-          const next = makeRoom(makeDocument(normalized, records, current.admissionRecords ?? []), maxRecords, maxBytes);
+          const next = makeDocument(normalized, records, current.admissionRecords ?? []);
           const encoded = JSON.stringify(next);
-          if (next.records.length > maxRecords || Buffer.byteLength(encoded, "utf8") > maxBytes) {
+          if (records.length > maxRecords || Buffer.byteLength(encoded, "utf8") > maxBytes) {
             throw new Error("recovery_journal_budget_exceeded");
           }
-          // Tell the in-memory view which settled records the durable document no longer
-          // holds, so memory and disk cannot disagree about what the journal contains.
-          const kept = new Set(next.records.map((item) => item.logicalActionId));
-          evicted = records.filter((item) => !kept.has(item.logicalActionId)).map((item) => item.logicalActionId);
           await atomicWriteFile(path, encoded, normalized.directory);
         },
         { containmentRoot: normalized.directory },
       );
-      return { saved: durableRecord!, evicted };
+      return durableRecord!;
     };
     return journal;
   }
@@ -385,8 +330,7 @@ export class StardewLogicalActionRecoveryJournal {
   #commitNew(record: StardewLogicalActionRecoveryRecord): Promise<StardewLogicalActionRecoveryRecord> {
     return Promise.resolve()
       .then(() => this.#writeRecovery(record))
-      .then(({ saved, evicted }) => {
-        this.#forget(evicted);
+      .then((saved) => {
         this.#records.set(saved.logicalActionId, saved);
         this.#requestIds.set(saved.requestId, saved.logicalActionId);
         this.#idempotencyKeys.set(saved.idempotencyKey, saved.logicalActionId);
@@ -400,24 +344,6 @@ export class StardewLogicalActionRecoveryJournal {
       });
   }
 
-  /**
-   * Drop records the durable document no longer holds (settled history evicted to stay
-   * inside the journal's budget). Every index that pointed at them goes with them, so the
-   * in-memory view and the file cannot disagree about what the journal contains.
-   */
-  #forget(ids: readonly string[]): void {
-    for (const id of ids) {
-      const record = this.#records.get(id);
-      if (record === undefined) continue;
-      this.#records.delete(id);
-      if (this.#requestIds.get(record.requestId) === id) this.#requestIds.delete(record.requestId);
-      if (this.#idempotencyKeys.get(record.idempotencyKey) === id)
-        this.#idempotencyKeys.delete(record.idempotencyKey);
-      if (this.#dispatchOrdinals.get(record.dispatchOrdinal) === id)
-        this.#dispatchOrdinals.delete(record.dispatchOrdinal);
-    }
-  }
-
   #transition(id: string, state: StardewLogicalActionRecoveryState): Promise<StardewLogicalActionRecoveryRecord> {
     return this.#enqueue(async () => {
       this.#assertOpen();
@@ -428,8 +354,7 @@ export class StardewLogicalActionRecoveryJournal {
         throw new Error("invalid_recovery_journal_transition");
       }
       const next = freezeRecord({ ...current, state });
-      return this.#writeRecovery(next).then(({ saved, evicted }) => {
-        this.#forget(evicted);
+      return this.#writeRecovery(next).then((saved) => {
         this.#records.set(id, saved);
         return saved;
       });
@@ -482,23 +407,6 @@ function makeDocument(
   return canonicalize({
     schemaVersion: 1,
     ...(options.scope === undefined ? {} : { scope: options.scope }),
-    records,
-    ...(admissionRecords.length === 0 ? {} : { admissionRecords }),
-  }) as Document;
-}
-
-/**
- * The same document with a different record list, keeping its scope and admission records.
- * Used by eviction, which only ever removes settled history.
- */
-function makeDocumentFrom(
-  document: Document,
-  records: StardewLogicalActionRecoveryRecord[],
-  admissionRecords: HostNodeAdmissionRecord[] = document.admissionRecords ?? [],
-): Document {
-  return canonicalize({
-    schemaVersion: 1,
-    ...(document.scope === undefined ? {} : { scope: document.scope }),
     records,
     ...(admissionRecords.length === 0 ? {} : { admissionRecords }),
   }) as Document;

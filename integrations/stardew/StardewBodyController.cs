@@ -10,11 +10,7 @@ namespace GameBuddy.Stardew;
 /// this process' Game1.player. It deliberately has no remote-player, teleport,
 /// or world-goal API. ExecutionManager is its sole owner.
 /// </summary>
-    internal readonly record struct ReachabilityVerdict(
-        bool TargetEnclosed,
-        bool ComponentContainsTarget = false,
-        Point? ClosestToTarget = null,
-        int ComponentTiles = 0);
+internal readonly record struct ReachabilityVerdict(bool TargetEnclosed);
 
 internal sealed class StardewBodyController
 {
@@ -105,77 +101,18 @@ internal sealed class StardewBodyController
         PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
+            // Dead-end rejection: no tile in this location satisfies the arrival
+            // predicate, so the target is genuinely unreachable (surrounded, or
+            // severed from this component). The evidence names both ends.
             reasonCode = "no_native_path";
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
-            // A refusal is only actionable if it names WHY. The bare verdict plus a probe field
-            // that can contradict it sent a live agent into ten blind re-aims at neighbouring
-            // occupied tiles, which it then described as a maze. So the receipt carries the
-            // occupancy cause, whether the PLANNER would stand on the tile, and the probe's own
-            // reading — plus, below, the two facts the native null path conflates.
-            evidence += $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
-            evidence += $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
-            evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
-            // The native finder returned null. That is TWO different facts, and the receipt
-            // must not collapse them:
-            //   * the walkable component is severed from the target -- no route exists; or
-            //   * the finder ran out of its node budget (`PathFindController.cs:232`:
-            //     `if (num >= limit) return null`), while the walkable component (the same
-            //     predicate the finder uses at `PathFindController.cs:222`) still contains the
-            //     target. A real run reported exactly this: a FREE, walkable tile the finder
-            //     could not route to, from a pocket in a dense field.
-            // So probe for the component's own verdict, and when it says the target IS
-            // reachable, plan towards the closest tile the component offers instead of
-            // refusing: the next observation is one native step closer, which is progress a
-            // companion can actually use.
-            string searchOutcome;
-            ReachabilityVerdict? verdict = AssessNativeReachability(localPlayer, specification, findClosestReachable: true)
-                ?? AssessNativeReachability(localPlayer, specification);
-            if (verdict is ReachabilityVerdict assessed)
+            if (plannedPath.pathToEndPoint is null)
             {
-                // `probe_says_reachable` states the disagreement explicitly
-                // instead of leaving a reader to derive it from target_enclosed.
-                evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
-                evidence += $";route_exists={assessed.ComponentContainsTarget.ToString().ToLowerInvariant()};component_tiles={assessed.ComponentTiles}";
-                searchOutcome = assessed.ComponentContainsTarget ? "native_budget_exhausted" : "no_walkable_route";
-                evidence += $";path_search={searchOutcome};budget={NativePathNodeBudget}";
-                if (!assessed.TargetEnclosed && TryFindStagingStep(localPlayer, specification.TargetTile, out Point staging))
+                ReachabilityVerdict? verdict = AssessNativeReachability(localPlayer, specification);
+                if (verdict is ReachabilityVerdict assessed)
                 {
-                    LocalMoveSpec staged = specification with
-                    {
-                        TargetTile = new Vector2(staging.X, staging.Y),
-                        AllowAdjacentArrival = true,
-                        RequestedTile = specification.TargetTile,
-                        StagedApproach = true,
-                    };
-                    PathFindController stagedPath = this.BuildNativePath(staged, localPlayer);
-                    if (stagedPath.pathToEndPoint is { Count: > 0 })
-                    {
-                        // The native finder does the moving; only the DESTINATION differs, and
-                        // the receipt names both so the caller can see the difference. One
-                        // productive step is what turns "unreachable far goal" into progress
-                        // the companion can build on: its next observation is closer.
-                        evidence += $";staged_approach=true;staged_target={staging.X},{staging.Y};requested={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y}";
-                        this.active = staged;
-                        this.pathController = stagedPath;
-                        localPlayer.controller = stagedPath;
-                        this.lastTile = localPlayer.Tile;
-                        this.lastProgressTick = tick;
-                        this.hasEmittedRunning = false;
-                        this.hasEmittedStalledWaiting = false;
-                        this.isStallWaiting = false;
-                        this.stallWaitStartedTick = 0;
-                        this.transientSinceMs = 0;
-                        reasonCode = "accepted";
-                        return true;
-                    }
-                    evidence += ";staged_approach_failed=true";
+                    evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood";
                 }
-            }
-            else
-            {
-                // The probe abandoned its own claim (component beyond its budget), so no
-                // reachability statement is made and the native verdict stands alone.
-                evidence += ";path_search=undecided";
             }
             return false;
         }
@@ -233,7 +170,7 @@ internal sealed class StardewBodyController
         if (!this.hasEmittedRunning)
         {
             this.hasEmittedRunning = true;
-            this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}{FormatStagedMarker(specification)}");
+            this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}");
         }
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -333,7 +270,7 @@ internal sealed class StardewBodyController
             if (exactArrival || adjacentArrival)
             {
                 localPlayer.Halt();
-                this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native{FormatStagedMarker(specification)}");
+                this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
                 this.active = null;
                 this.pathController = null;
             }
@@ -360,7 +297,7 @@ internal sealed class StardewBodyController
             localPlayer.Halt();
             localPlayer.controller = null;
             this.pathController = null;
-            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native{FormatStagedMarker(specification)}");
+            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
             this.active = null;
             return;
         }
@@ -388,7 +325,7 @@ internal sealed class StardewBodyController
             this.stallWaitStartedTick = tick;
             this.HaltNativeMovement(localPlayer);
             int stalledTicks = Math.Max(0, tick - this.lastProgressTick);
-            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};wait_ticks={StallWaitTicks}{FormatStagedMarker(specification)}");
+            this.transition(ExecutionState.Running, "stalled_waiting", $"reason=entity_block;tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};wait_ticks={StallWaitTicks}");
         }
     }
 
@@ -418,17 +355,6 @@ internal sealed class StardewBodyController
     internal static bool HasStallWaitElapsed(int tick, int waitStartedTick, int waitTicks) =>
         Math.Max(0, tick - waitStartedTick) >= waitTicks;
 
-    /// <summary>
-    /// Node-expansion budget handed to the native finder. The game's own default is 10000
-    /// (`PathFindController.cs:74`, used for a player's click), and the finder returns a null
-    /// path the moment it exhausts it (`PathFindController.cs:232`). A DENSE field needs more
-    /// expansions than a click on open ground: a live play session on a cropped plot had the
-    /// finder give up on a free, walkable tile that the walkable component still contained.
-    /// 40000 bounds one search on the game thread while covering that field, and the receipt
-    /// records the budget so a future failure of this kind is attributable.
-    /// </summary>
-    private const int NativePathNodeBudget = 40000;
-
     private PathFindController BuildNativePath(LocalMoveSpec specification, Farmer localPlayer)
     {
         GameLocation location = localPlayer.currentLocation!;
@@ -441,7 +367,7 @@ internal sealed class StardewBodyController
             this.IsArrivalTile(specification),
             -1,
             null,
-            NativePathNodeBudget,
+            10000,
             new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
     }
 
@@ -461,68 +387,7 @@ internal sealed class StardewBodyController
         return $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};stalled_ticks={stalledTicks};stopped_by={DetectStalledBy(localPlayer)}";
     }
 
-    /// <summary>
-    /// Can the actor stand on this tile? The same predicate the native planner uses
-    /// (<c>isCollidingPosition</c> with <c>pathfinding: true</c> and collision effects
-    /// skipped), so "the planner can walk there" and "we may substitute an approach
-    /// there" cannot disagree. A stricter, object-occupancy test would refuse tiles the
-    /// farmer can legally walk on -- a cropped HoeDirt is exactly that, and the Mod's own
-    /// reachability probe already reports those as reachable (probe_says_reachable=true).
-    /// </summary>
-    internal static bool IsWalkableTile(GameLocation location, Farmer? actor, Vector2 tile)
-    {
-        if (actor is null || !location.isTileOnMap(tile))
-            return false;
-        // The actor's own tile is walkable by definition: they are standing on it, and
-        // asking the collision test about the character's own footprint is the one case
-        // where its answer cannot be trusted to mean "someone else is in the way".
-        if (actor.Tile == tile)
-            return true;
-        return !location.isCollidingPosition(
-            new Microsoft.Xna.Framework.Rectangle((int)tile.X * 64 + 1, (int)tile.Y * 64 + 1, 62, 62),
-            Game1.viewport,
-            actor is Farmer,
-            0,
-            glider: false,
-            actor,
-            pathfinding: true,
-            skipCollisionEffects: true);
-    }
-
-    /// <summary>
-    /// The standable-tile test shared by the move handler and this controller: on
-    /// the map, natively passable, and not occupied by anything else. The actor's
-    /// own tile counts as standable -- it is where they already are. This is the
-    /// stricter, OBJECT-occupancy reading, kept for evidence: it says "the tile is
-    /// free", which is a different (and more demanding) fact than
-    /// <see cref="IsWalkableTile"/>'s "the planner will walk there".
-    /// </summary>
-    internal static bool IsStandableTile(GameLocation location, Farmer? actor, Vector2 tile)
-    {
-        if (!location.isTileOnMap(tile))
-            return false;
-        if (actor is not null && actor.Tile == tile)
-            return true;
-        return location.isTilePassable(tile)
-            && !location.IsTileOccupiedBy(tile, (CollisionMask)255, (CollisionMask)0, false);
-    }
-
-    /// <summary>
-    /// Names what stands on a refused destination tile, so the refusal is
-    /// actionable: <c>&lt;qualifiedItemId&gt;@x,y</c> for an object,
-    /// <c>terrain:&lt;type&gt;</c> for a terrain feature, or <c>none</c>.
-    /// </summary>
-    internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile)
-    {
-        Point point = new((int)tile.X, (int)tile.Y);
-        if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
-            return $"{item.QualifiedItemId}@{point.X},{point.Y}";
-        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
-            return $"terrain:{feature.GetType().Name}@{point.X},{point.Y}";
-        return "none";
-    }
-
-    private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
+    private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification)
     {
         GameLocation? location = localPlayer.currentLocation;
         if (location is null)
@@ -550,8 +415,7 @@ internal sealed class StardewBodyController
                         localPlayer,
                         pathfinding: true,
                         skipCollisionEffects: true),
-                ReachabilityProbeLimit,
-                findClosestReachable);
+                ReachabilityProbeLimit);
         }
         catch
         {
@@ -570,21 +434,14 @@ internal sealed class StardewBodyController
         Point actorTile,
         Point targetTile,
         Func<Point, bool> canTraverse,
-        int maxVisited,
-        bool findClosestReachable = false)
+        int maxVisited)
     {
         if (maxVisited <= 0)
             return null;
         if (actorTile == targetTile)
-            return new ReachabilityVerdict(false, true, null, 1);
-        if (!findClosestReachable)
-        {
-            // Fast path (the original contract): the probe only has to decide whether the
-            // target's neighbourhood is inside the actor's component, so it can stop the moment
-            // it touches it.
-            if (canTraverse(targetTile))
-                return new ReachabilityVerdict(false, true);
-        }
+            return new ReachabilityVerdict(false);
+        if (canTraverse(targetTile))
+            return new ReachabilityVerdict(false);
 
         // PathFindController expands all eight surrounding tiles in the target
         // version (the same Chebyshev neighbourhood used by its measured adjacent
@@ -594,16 +451,11 @@ internal sealed class StardewBodyController
             new(-1, -1), new(0, -1), new(1, -1),
             new(-1, 0),                  new(1, 0),
             new(-1, 1),  new(0, 1),  new(1, 1),
-        };
+        }; 
         bool IsTargetNeighbour(Point tile) =>
             Math.Abs(tile.X - targetTile.X) <= 1
             && Math.Abs(tile.Y - targetTile.Y) <= 1
             && tile != targetTile;
-        static int Chebyshev(Point left, Point right) =>
-            Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
-        bool containsTarget = canTraverse(targetTile);
-        Point? closest = null;
-        int closestDistance = Chebyshev(actorTile, targetTile);
         var visited = new HashSet<Point> { actorTile };
         var pending = new Queue<Point>();
         pending.Enqueue(actorTile);
@@ -611,82 +463,23 @@ internal sealed class StardewBodyController
         while (pending.Count > 0)
         {
             Point current = pending.Dequeue();
-            if (!findClosestReachable && IsTargetNeighbour(current))
-                return new ReachabilityVerdict(false, true, current, visited.Count);
+            if (IsTargetNeighbour(current))
+                return new ReachabilityVerdict(false);
             foreach (Point offset in neighbours)
             {
                 Point next = new(current.X + offset.X, current.Y + offset.Y);
-                if (IsTargetNeighbour(next))
-                {
-                    containsTarget = true;
-                    if (!findClosestReachable && canTraverse(next))
-                        return new ReachabilityVerdict(false, true, next, visited.Count);
-                }
+                if (IsTargetNeighbour(next) && canTraverse(next))
+                    return new ReachabilityVerdict(false);
                 if (!canTraverse(next) || !visited.Add(next))
                     continue;
-                if (next != targetTile)
-                {
-                    // The closest tile the component offers towards the target: what a staged
-                    // approach can aim at when the finder gives up on the far goal.
-                    int distance = Chebyshev(next, targetTile);
-                    if (distance < closestDistance)
-                    {
-                        closest = next;
-                        closestDistance = distance;
-                    }
-                }
                 if (visited.Count > maxVisited)
                     return null;
                 pending.Enqueue(next);
             }
         }
 
-        return new ReachabilityVerdict(!containsTarget, containsTarget, closest, visited.Count);
+        return new ReachabilityVerdict(true);
     }
-
-    /// <summary>
-    /// The one productive step towards a goal the native finder refused: the actor's own
-    /// traversable neighbour that most reduces the distance, so the step is always adjacent (and
-    /// therefore always routable) and needs no component enumeration. The caller stages only when
-    /// the probe says the target is actually reachable, so this is "get closer and re-plan",
-    /// never "wander at a severed target".
-    /// </summary>
-    internal static bool TryFindStagingStep(Farmer localPlayer, Vector2 targetTile, out Point staging)
-    {
-        staging = default;
-        GameLocation? location = localPlayer.currentLocation;
-        if (location is null)
-            return false;
-
-        Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
-        Point target = new((int)targetTile.X, (int)targetTile.Y);
-        int currentDistance = ChebyshevDistance(actor, target);
-        Point[] candidates =
-        {
-            new(-1, -1), new(0, -1), new(1, -1),
-            new(-1, 0),                  new(1, 0),
-            new(-1, 1),  new(0, 1),  new(1, 1),
-        };
-
-        int bestDistance = currentDistance;
-        bool found = false;
-        foreach (Point offset in candidates)
-        {
-            Point candidate = new(actor.X + offset.X, actor.Y + offset.Y);
-            if (candidate == target)
-                continue;
-            int distance = ChebyshevDistance(candidate, target);
-            if (distance >= bestDistance || !IsWalkableTile(location, localPlayer, new Vector2(candidate.X, candidate.Y)))
-                continue;
-            staging = candidate;
-            bestDistance = distance;
-            found = true;
-        }
-        return found;
-    }
-
-    private static int ChebyshevDistance(Point left, Point right) =>
-        Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
 
     private static string DetectStalledBy(Farmer localPlayer)
     {
@@ -921,15 +714,6 @@ internal sealed class StardewBodyController
     /// </summary>
     internal static string FormatPassOutEvidence(float stamina, int timeOfDay, Vector2 tile, long revision)
         => $"stamina={stamina.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)};time_of_day={timeOfDay.ToString(System.Globalization.CultureInfo.InvariantCulture)};tile={FormatTile(tile)};revision={revision.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-
-    /// <summary>
-    /// Names a staged move inside every receipt that mentions the goal, so a \`target_reached\` on a
-    /// staged step can never be read as the requested tile having been reached.
-    /// </summary>
-    private static string FormatStagedMarker(LocalMoveSpec specification) =>
-        specification is { StagedApproach: true, RequestedTile: Vector2 requested }
-            ? $";staged_approach=true;requested={FormatTile(requested)}"
-            : string.Empty;
 
     private static string FormatTile(Vector2 tile) => $"{tile.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{tile.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}";
 }

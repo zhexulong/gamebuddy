@@ -25,13 +25,7 @@ internal sealed record LocalMoveSpec(
     bool AllowAdjacentArrival,
     long RouteRevision,
     int DeadlineTick,
-    long DeadlineMs,
-    // Set when the goal is not the tile the caller asked for: `TargetTile` is then a staged step
-    // towards `RequestedTile` (the native finder refused the far goal but the target IS reachable).
-    // Every receipt that names the target also names the request, so a `target_reached` can never
-    // be read as "the requested tile was reached" when it was not.
-    Vector2? RequestedTile = null,
-    bool StagedApproach = false);
+    long DeadlineMs);
 
 internal sealed record LocalTravelSpec(
     string ExecutionId,

@@ -79,6 +79,7 @@ import type {
   ProductionGameSessionWorldBindingTerminalInput,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
+import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
@@ -474,16 +475,27 @@ export function createStardewPlayerHostRoleLaunchOperation(
  * composition collaborator, and convert an outcome failure into the same
  * terminal classification the direct-spawn Stage C consumer produces.
  */
-export function containedPlayerHostLaunchDecision(
+export async function containedPlayerHostLaunchDecision(
   runtimeLaunchPlayerHost: StardewPlayerHostRuntimeLaunchCollaborator,
   owner: StardewOwnedPlayerHostBootstrap,
   launch: StardewContainedPlayerHostLaunchSeam,
   nowMs: () => number = Date.now,
 ): Promise<void> {
-  return runtimeLaunchPlayerHost.launchPlayerHost(owner, createStardewPlayerHostRoleLaunchOperation(nowMs), launch)
-    .then((outcome) => {
-      if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_launch_failed");
-    });
+  // `async` is part of the contract of this adapter, not a formatting choice.
+  // Every failure it can produce is a failure of the launch decision -- the
+  // role-launch operation's own deadline check, or the collaborator's guards
+  // and transport -- and the caller consumes the decision by awaiting the
+  // returned value without a try/catch of its own. A non-async body that only
+  // chains `.then()` turns any synchronous throw in that path into an
+  // out-of-band exception at the caller's frame instead of a rejection, which
+  // is indistinguishable from a crash. Awaiting here keeps every failure on the
+  // returned promise.
+  const outcome = await runtimeLaunchPlayerHost.launchPlayerHost(
+    owner,
+    createStardewPlayerHostRoleLaunchOperation(nowMs),
+    launch,
+  );
+  if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_launch_failed");
 }
 
 /**
@@ -491,16 +503,21 @@ export function containedPlayerHostLaunchDecision(
  * path: the same preconditions and deadline model as the Player Host decision,
  * with the AI-client role receiver.
  */
-export function containedAiClientLaunchDecision(
+export async function containedAiClientLaunchDecision(
   runtimeLaunchAiClient: StardewPlayerHostRuntimeLaunchCollaborator,
   owner: StardewOwnedPlayerHostBootstrap,
   launch: StardewContainedAiClientLaunchSeam,
   nowMs: () => number = Date.now,
 ): Promise<void> {
-  return runtimeLaunchAiClient.launchAiClient(owner, createStardewPlayerHostRoleLaunchOperation(nowMs), launch)
-    .then((outcome) => {
-      if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_launch_failed");
-    });
+  // Same rejection contract as the Player Host decision above: the AI-client
+  // launch decision fails on its returned promise, never as a synchronous throw
+  // out of this call.
+  const outcome = await runtimeLaunchAiClient.launchAiClient(
+    owner,
+    createStardewPlayerHostRoleLaunchOperation(nowMs),
+    launch,
+  );
+  if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_launch_failed");
 }
 
 /**
@@ -515,19 +532,29 @@ export function containedRuntimeTeardownFromCollaborator(
   // binding) keeps the contain/close/settle behavior it always had and refuses a
   // recovery instead of reporting one that never ran.
   const recoveryDriver = readStardewOwnerRecoveryDriver(runtimeLaunch);
+  // Every member below resolves a `Promise` in the seam's contract, so every
+  // member is `async`. The seam's consumers await it (or attach only a rejection
+  // handler) and hold no try/catch around the call, so a synchronous throw from
+  // this adapter or from the collaborator beneath it would escape their frame as
+  // an unhandled exception instead of arriving as the awaited failure they
+  // handle. `async` is what keeps a refusal, a refusal reported by the
+  // collaborator as a failed outcome, and a synchronous throw from the
+  // collaborator all on the same rejection path.
   return Object.freeze({
-    containPlayerHost: (owner) => runtimeLaunch.containPlayerHost(owner).then((outcome) => {
+    containPlayerHost: async (owner) => {
+      const outcome = await runtimeLaunch.containPlayerHost(owner);
       if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_contain_failed");
-    }),
-    containAiClient: (owner) => runtimeLaunch.containAiClient(owner).then((outcome) => {
+    },
+    containAiClient: async (owner) => {
+      const outcome = await runtimeLaunch.containAiClient(owner);
       if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_contain_failed");
-    }),
-    recover: (owner, request) => {
+    },
+    recover: async (owner, request) => {
       if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
       return recoveryDriver.recover(owner, request);
     },
-    close: (owner) => runtimeLaunch.close(owner),
-    settle: (owner) => runtimeLaunch.settle(owner),
+    close: async (owner) => runtimeLaunch.close(owner),
+    settle: async (owner) => runtimeLaunch.settle(owner),
   });
 }
 
@@ -556,8 +583,14 @@ function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
  * fresh connection/launch authority instead of classifying the attempt as
  * failed; every other error (owner quarantined/expired, launch generation
  * mismatch, bridge protocol failures, deadlines) stays a hard failure.
+ *
+ * Left on message comparison deliberately: it also covers the
+ * profile-not-materialized refusal, which has no typed identity yet, so
+ * converting only one of its two arms would mix the two classification styles
+ * inside one predicate. It keeps working across the connection refusal's own
+ * conversion because that refusal still carries the same message text.
  */
-function isResumeAttachDeferredError(error: unknown): boolean {
+export function isResumeAttachDeferredError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return (
     error.message === "stardew_farmhand_bridge_connection_not_available" ||
@@ -573,9 +606,15 @@ function isResumeAttachDeferredError(error: unknown): boolean {
  * for: read as "the owner's first one-shot activation is still intact", it is
  * exactly the state the untouched-reservation launch needs. Any other error is
  * left alone, so a genuinely unavailable fresh generation still fails closed.
+ *
+ * The test is the platform contract's typed identity rather than the refusal's
+ * message text, because the composition is the only side that can see the text:
+ * renaming it there would silently reclassify this state as a hard failure here,
+ * with no test on either side going red. The identity is exported from the port
+ * both sides project, so the two cannot drift without the shared type changing.
  */
-function isFirstFarmhandAiClientActivationIntact(error: unknown): boolean {
-  return error instanceof Error && error.message === "stardew_farmhand_bridge_connection_not_available";
+export function isFirstFarmhandAiClientActivationIntact(error: unknown): boolean {
+  return error instanceof FarmhandBridgeConnectionNotAvailableError;
 }
 
 /** The resume cancel epoch terminated the in-flight attach; the cancel seam owns its teardown and projection. */
@@ -1412,8 +1451,8 @@ function createCoordinator(
    * The core is the only authority for that fact -- `launchStates.aiClient` and
    * `bridgeConnectionState` are its own fields -- and
    * `prepareFreshFarmhandAiClientActivation` asserts exactly that pair before it
-   * reserves, rotates or stops anything, failing closed with
-   * `stardew_farmhand_bridge_connection_not_available` while the previous
+   * reserves, rotates or stops anything, failing closed with the platform
+   * contract's `FarmhandBridgeConnectionNotAvailableError` while the previous
    * activation was not fully consumed. Asking it here, with no side effect
    * before its own assertion, is what makes the two impossible to disagree: a
    * mirrored coordinator latch could not see the composition's partial

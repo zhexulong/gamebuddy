@@ -32,7 +32,12 @@ import {
   type StardewLifecycleCoordinatorTestingOverrides,
 } from "./stardew-production-lifecycle-coordinator.test-support-internal.js";
 import {
+  containedAiClientLaunchDecision,
+  containedPlayerHostLaunchDecision,
+  containedRuntimeTeardownFromCollaborator,
   createStardewProductionLifecycleCoordinator,
+  isFirstFarmhandAiClientActivationIntact,
+  isResumeAttachDeferredError,
   type StardewGameSessionCreationAuthority,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { STARDEW_GAME_WORLD_CREATION_SLOT_MISSING } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
@@ -42,10 +47,19 @@ import type {
   ProductionGameSessionWorldBinding,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support-internal.js";
+import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
+import type {
+  StardewContainedAiClientLaunchSeam,
+  StardewContainedPlayerHostLaunchSeam,
+  StardewPlayerHostRuntimeLaunchCollaborator,
+} from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import { prepareMaterializedAiClientFixture } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.js";
+import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
 import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
+  type StardewOwnerRecoveryRequest,
 } from "./composition/stardew/stardew-guardian-platform.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./composition/stardew/stardew-native-role-launch-plan.private.js";
 import {
@@ -1534,6 +1548,139 @@ test("production lifecycle coordinator has no direct-spawn fallback and both rol
   assert.ok(admissionIndex < seamCallIndex && seamCallIndex < registerIndex, "the seam runs after the admission and before registration");
   assert.ok(registerIndex < completeIndex, "the durable create protocol order is preserved");
   assert.ok(completeIndex < materializeIndex, "the AI-client profile is materialized only after the session completed");
+});
+
+/**
+ * The contained runtime seam this coordinator consumes is a promise-returning
+ * one: its consumers await the returned value (or attach only a rejection
+ * handler) and hold no try/catch around the call, because a failure it reports
+ * IS the failure they handle. That makes `async` part of the adapters' contract
+ * rather than a formatting choice: an adapter that only chains `.then()` onto an
+ * already-`async` collaborator member cannot reject, so the day a refusal is
+ * added under such a member -- a guard in the composition, a deadline check, a
+ * failed outcome -- it leaves the adapter's frame as a synchronous throw and
+ * reaches the product seam as an unhandled exception instead of the awaited
+ * failure the caller handles.
+ *
+ * Every call below is made OUTSIDE `await` and OUTSIDE `try` on purpose: a
+ * wrapper that throws synchronously fails this test at the call itself, while a
+ * wrapper that rejects is observed by the catch-only handlers.
+ */
+test("contained runtime adapters surface every refusal as a rejection rather than a synchronous throw", async () => {
+  const beneathRefusal = "controlled_refusal_below_the_adapter";
+  const deadlineRefusal = "stardew_player_host_role_launch_operation_deadline_invalid";
+  // A synchronously refusing member is the shape a promise-returning guard takes
+  // when it forgets its `async`; the platform factory declares every
+  // promise-returning member `async` for exactly this reason.
+  const refuseSynchronously = (): never => { throw new Error(beneathRefusal); };
+  const refusingCollaborator = (ownersRecoveryHalf: Readonly<Record<string, unknown>>): StardewPlayerHostRuntimeLaunchCollaborator =>
+    Object.freeze({
+      launchPlayerHost: refuseSynchronously,
+      launchAiClient: refuseSynchronously,
+      containPlayerHost: refuseSynchronously,
+      containAiClient: refuseSynchronously,
+      recovery: refuseSynchronously,
+      settle: refuseSynchronously,
+      close: refuseSynchronously,
+      ...ownersRecoveryHalf,
+    }) as unknown as StardewPlayerHostRuntimeLaunchCollaborator;
+  // The adapter forwards a recovery only to a collaborator that carries the
+  // owner-held recovery half; without that half, the adapter's own refusal is
+  // the one at stake.
+  const withRecoveryHalf = refusingCollaborator({ recover: refuseSynchronously });
+  const withoutRecoveryHalf = refusingCollaborator({});
+  const withRecovery = containedRuntimeTeardownFromCollaborator(withRecoveryHalf);
+  const withoutRecovery = containedRuntimeTeardownFromCollaborator(withoutRecoveryHalf);
+  // Nothing below reads these arguments: every refusal is produced first.
+  const owner = Object.freeze({}) as unknown as StardewOwnedPlayerHostBootstrap;
+  const playerLaunch: StardewContainedPlayerHostLaunchSeam = Object.freeze({
+    role: "player_host",
+    launchGeneration: "generation-1",
+    provideAuthorization: () => undefined,
+  });
+  const aiClientLaunch: StardewContainedAiClientLaunchSeam = Object.freeze({
+    role: "ai_client",
+    launchGeneration: "generation-1",
+    provideAuthorization: () => undefined,
+  });
+  const recoveryRequest: StardewOwnerRecoveryRequest = Object.freeze({
+    recoveryInstanceId: "0a5c1e7b-2f3d-4a90-8c11-6d2b7e4f9a02",
+    readRecoveryBinding: async () => Object.freeze({}),
+  });
+  // The launch decision's own deadline check is the adapter's own synchronous
+  // throw, before any collaborator member runs.
+  const invalidDeadline = (): number => Number.NaN;
+
+  const calls: readonly Readonly<{ member: string; refusal: string; pending: Promise<unknown> }>[] = [
+    { member: "player host launch decision", refusal: beneathRefusal,
+      pending: containedPlayerHostLaunchDecision(withRecoveryHalf, owner, playerLaunch) },
+    { member: "AI client launch decision", refusal: beneathRefusal,
+      pending: containedAiClientLaunchDecision(withRecoveryHalf, owner, aiClientLaunch) },
+    { member: "player host launch decision with an invalid deadline", refusal: deadlineRefusal,
+      pending: containedPlayerHostLaunchDecision(withRecoveryHalf, owner, playerLaunch, invalidDeadline) },
+    { member: "AI client launch decision with an invalid deadline", refusal: deadlineRefusal,
+      pending: containedAiClientLaunchDecision(withRecoveryHalf, owner, aiClientLaunch, invalidDeadline) },
+    { member: "contain player host", refusal: beneathRefusal, pending: withRecovery.containPlayerHost(owner) },
+    { member: "contain AI client", refusal: beneathRefusal, pending: withRecovery.containAiClient(owner) },
+    { member: "recovery drive", refusal: beneathRefusal, pending: withRecovery.recover(owner, recoveryRequest) },
+    { member: "close", refusal: beneathRefusal, pending: withRecovery.close(owner) },
+    { member: "settle", refusal: beneathRefusal, pending: withRecovery.settle(owner) },
+    { member: "recovery drive without the owner-held recovery half", refusal: "stardew_contained_recovery_drive_unavailable",
+      pending: withoutRecovery.recover(owner, recoveryRequest) },
+  ];
+  assert.equal(calls.length, 10);
+
+  for (const call of calls) {
+    // A catch-only consumer: no fulfillment branch and no surrounding try/catch,
+    // exactly the shape the product seam uses.
+    const refusal = await call.pending.catch((error: unknown) => error);
+    assert.ok(refusal instanceof Error, `${call.member} must reject, got ${String(refusal)}`);
+    assert.equal(refusal.message, call.refusal, `${call.member} must reject with its own refusal`);
+  }
+});
+
+/**
+ * The coordinator reads two different states off the SAME composition probe:
+ * "the owner's first one-shot activation is still intact" (a create launches
+ * through the untouched reservations) and "this attach cannot be built here"
+ * (the attach defers to the next layer's fresh authority). The composition is
+ * the only side that can see its refusal's text, so a message comparison on this
+ * side is a silent coupling: renaming that text would reclassify an intact
+ * activation as a hard failure with no test on either side going red.
+ *
+ * This test drives the real composition to its real refusal and asks the real
+ * classifiers about that exact value, then asks the same classifier about the
+ * refusal's text rebuilt as a plain Error -- the value a message comparison
+ * accepted. It fails in both directions: if the composition stops refusing with
+ * the port's exported identity, and if this side starts classifying by text
+ * again.
+ */
+test("the intact first Farmhand activation classification is bound to the composition's typed refusal", async () => {
+  // A materialized AI-client profile whose first activation was never consumed:
+  // exactly the owner shape a create launches through.
+  const fixture = await prepareMaterializedAiClientFixture();
+  try {
+    let refusal: unknown;
+    try {
+      await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
+    } catch (error) {
+      refusal = error;
+    }
+    assert.ok(
+      refusal instanceof FarmhandBridgeConnectionNotAvailableError,
+      `the composition must refuse with the platform contract's identity, got ${String(refusal)}`,
+    );
+    // The composition's real refusal IS the intact-first-activation state...
+    assert.equal(isFirstFarmhandAiClientActivationIntact(refusal), true);
+    // ...and only that identity: the same text as a plain Error is not.
+    assert.equal(isFirstFarmhandAiClientActivationIntact(new Error(refusal.message)), false);
+    // The other consumer of the same probe still reads the refusal by its text,
+    // and this lane deliberately left it that way: converting this one side must
+    // not change what a resume attach defers on.
+    assert.equal(isResumeAttachDeferredError(refusal), true);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
 });
 
 test("Game launch rejects a different key while the first launch is pending", async () => {
