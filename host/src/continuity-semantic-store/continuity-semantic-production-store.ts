@@ -411,52 +411,130 @@ export const productionGameSessionWorldBindingSlotRelease = Object.freeze({
   handleMismatch: "game_session_world_binding_slot_handle_mismatch",
   /** The holder already settled; terminal is sticky, so there is nothing left to release. */
   holderTerminal: "game_session_world_binding_slot_holder_terminal",
-  /** The native verdict says the holder's owner is still alive. */
-  holderAlive: "game_session_world_binding_slot_holder_alive",
   /**
-   * No proof, a forged proof, a proof correlated to another holder, or a verdict
-   * that is not a usable proof of death.
+   * The native lease check did not show the holder's lease free, so nothing here
+   * establishes that the holder is gone.
+   *
+   * It deliberately does not say the holder is ALIVE, because that is not what
+   * the check established: opening the holder's same-name mutex and finding it
+   * already existing proves only that SOME process holds a handle under that
+   * name. That handle may be another instance, or a recovery gate the Host
+   * itself opened for the same name, and Windows exposes no mutex-owner query to
+   * attribute it - so `alive` would be an overclaim the evidence does not
+   * support, while "not proven gone" is exactly what the refusal establishes.
+   */
+  holderNotProvenGone: "game_session_world_binding_slot_holder_not_proven_gone",
+  /**
+   * No verdict, a forged verdict, a verdict correlated to another holder, or a
+   * value that is not a usable native-lease verdict.
    */
   proofInvalid: "game_session_world_binding_slot_proof_invalid",
 } as const);
 export type ProductionGameSessionWorldBindingSlotReleaseRefusal =
   (typeof productionGameSessionWorldBindingSlotRelease)[keyof typeof productionGameSessionWorldBindingSlotRelease];
 /**
- * A slot-release proof: the native owner-death verdict AND the holder the
- * verdict was obtained for.
+ * The native lease check's answer, in exactly the two forms it can honestly
+ * take.
  *
- * The correlation is not decoration. `WindowsOwnerDeathVerification` records the
- * `ProductionGameOwner` tuple the OS query was asked about, but the binding row
- * deliberately carries no owner tuple to compare it against (design/105:70 keeps
- * pids off a session record), so a bare verdict only says "some owner is dead"
- * and any Host-minted `proven_dead` verdict would release any handle-matched
- * slot. Carrying the holder here makes a verdict usable only for the holder it
- * was obtained about: the release requires this to equal the row's own
+ * The two directions of one same-name Windows named-mutex probe are NOT
+ * symmetric, and that asymmetry is why this closed set has two members and not
+ * three. Creating the holder's mutex name and getting a NEW object is a genuine
+ * cross-process proof that the holder is gone: a named mutex object dies with
+ * its last handle, including when its owner crashes, so nothing holds that lease
+ * any more. Getting `ERROR_ALREADY_EXISTS` instead proves only that some handle
+ * exists under the name - possibly the Host's own recovery gate for that same
+ * name, which no one can distinguish from the holder because Windows exposes no
+ * mutex-owner query. There is therefore no honest "the holder is alive" member:
+ * the held direction supports no more than "the lease was not shown to be
+ * free", and the store refuses on it rather than inventing the stronger fact.
+ */
+export const productionGameSessionWorldBindingSlotLeaseVerdict = Object.freeze({
+  /** The same-name object did not exist, so nothing holds the holder's lease. */
+  holderGone: "holder_gone",
+  /** The same-name object already existed, so the lease was not shown to be free. */
+  leaseNotProvenFree: "lease_not_proven_free",
+} as const);
+export type ProductionGameSessionWorldBindingSlotLeaseVerdict =
+  (typeof productionGameSessionWorldBindingSlotLeaseVerdict)[keyof typeof productionGameSessionWorldBindingSlotLeaseVerdict];
+/**
+ * Opaque native lease verdict. Like the Game recovery verdict, it is usable only
+ * through its own reader: a look-alike object, a structured clone, a missing
+ * verdict and a caller-asserted string are no verdict at all, and are refused
+ * rather than being read as optimistically death-proving.
+ */
+export type ProductionGameSessionWorldBindingSlotLeaseVerdictToken = Readonly<{
+  readonly __gameSessionWorldBindingSlotLeaseVerdict: unique symbol;
+}>;
+const productionGameSessionWorldBindingSlotLeaseVerdicts = new WeakMap<
+  object,
+  ProductionGameSessionWorldBindingSlotLeaseVerdict
+>();
+/**
+ * Mints the opaque verdict for one same-name lease probe's own result. The
+ * composition that runs the native probe calls this with what the probe
+ * actually returned: the closed union admits the two real outcomes and nothing
+ * weaker, so no caller can mint an optimistic verdict out of an answer the probe
+ * never gave.
+ *
+ * The store only consumes the token; it neither runs the probe nor can verify
+ * who did. That is the trust boundary the release documents and deliberately
+ * does not close.
+ */
+export function mintGameSessionWorldBindingSlotLeaseVerdict(
+  verdict: ProductionGameSessionWorldBindingSlotLeaseVerdict,
+): ProductionGameSessionWorldBindingSlotLeaseVerdictToken {
+  if (
+    verdict !== productionGameSessionWorldBindingSlotLeaseVerdict.holderGone &&
+    verdict !== productionGameSessionWorldBindingSlotLeaseVerdict.leaseNotProvenFree
+  )
+    throw new Error("invalid_game_session_world_binding_slot_lease_verdict");
+  const token = Object.freeze(Object.create(null)) as ProductionGameSessionWorldBindingSlotLeaseVerdictToken;
+  productionGameSessionWorldBindingSlotLeaseVerdicts.set(token, verdict);
+  return token;
+}
+/** Private to this module: the only thing entitled to act on a verdict is the release path below. */
+function readGameSessionWorldBindingSlotLeaseVerdict(
+  value: unknown,
+): ProductionGameSessionWorldBindingSlotLeaseVerdict {
+  if (typeof value !== "object" || value === null || !Object.isFrozen(value))
+    throw new Error("invalid_game_session_world_binding_slot_lease_verdict");
+  const verdict = productionGameSessionWorldBindingSlotLeaseVerdicts.get(value);
+  if (!verdict) throw new Error("invalid_game_session_world_binding_slot_lease_verdict");
+  return verdict;
+}
+/**
+ * A slot-release proof: the native lease verdict AND the holder the verdict was
+ * obtained for.
+ *
+ * The correlation is not decoration. The verdict carries neither a holder nor a
+ * lease name - it is the bare state of one same-name probe - so a bare verdict
+ * only says "some lease is gone" and would release any handle-matched slot.
+ * Carrying the holder here makes a verdict usable only for the holder it was
+ * obtained about: the release requires this to equal the row's own
  * `holderHandle`, so a verdict obtained for one attempt is refused against
  * another attempt's slot - the cross-attempt substitution that was the
  * concretely exploitable shape.
  *
  * The trust boundary is exactly the one the existing settle-proof path already
  * has, and is deliberately not claimed to be stronger: the store checks the
- * proof's shape, its correlation and its outcome, but it CANNOT independently
- * verify that the verdict was produced by the native lease gate for that
- * attempt, nor that this correlation was attached by the composition that
- * obtained the verdict. It is not a cryptographic or independently
- * authenticated proof; it is a chain-of-custody obligation on the in-process
- * composition, enforced the same way `recoverGame` trusts its caller to present
- * the verdict it obtained for the exact owner tuple of the attempt.
+ * proof's shape, its correlation and its verdict, but it CANNOT independently
+ * verify that the probe ran against this attempt's lease, nor that this
+ * correlation was attached by the composition that ran it. It is not a
+ * cryptographic or independently authenticated proof; it is a chain-of-custody
+ * obligation on the in-process composition, enforced the same way `recoverGame`
+ * trusts its caller to present the verdict it obtained for the exact owner tuple
+ * of the attempt.
  */
 export type ProductionGameSessionWorldBindingSlotReleaseProof = Readonly<{
-  /** The opaque native OS verdict, exactly the value `recoverGame` consumes. */
-  verification: ProductionGameRecoveryProof;
-  /** The holder `verification` was obtained about; must equal the row's own handle. */
+  /** The opaque native-lease verdict; one of the two outcomes above and nothing else. */
+  verdict: ProductionGameSessionWorldBindingSlotLeaseVerdictToken;
+  /** The holder `verdict` was obtained about; must equal the row's own handle. */
   holderHandle: string;
 }>;
 /**
  * Slot release ingress: the slot (`integrationId` + `bindingRef`), the holder's
- * own handle, and the correlated native owner-death proof - never a
- * caller-asserted boolean, which any caller could forge into a release it is not
- * entitled to.
+ * own handle, and the correlated native lease verdict - never a caller-asserted
+ * verdict, which any caller could forge into a release it is not entitled to.
  */
 export type ProductionGameSessionWorldBindingSlotReleaseInput = Readonly<{
   integrationId: string;
@@ -536,7 +614,7 @@ export type ProductionGameSessionWorldBindingSlotAuthority = Readonly<{
   readGameSessionWorldBindingSlotHolder(
     input: Readonly<{ integrationId: string; bindingRef: string }>,
   ): ProductionGameSessionWorldBindingSlotHolder | null;
-  /** Releases a slot whose holder is proven dead, landing it on the canonical terminal shape. */
+  /** Releases a slot whose holder's native lease is proven gone, landing it on the canonical terminal shape. */
   releaseGameSessionWorldBindingSlot(
     input: ProductionGameSessionWorldBindingSlotReleaseInput,
   ): ProductionGameSessionWorldBinding;
@@ -4450,7 +4528,8 @@ function readGameSessionWorldBindingSlotHolder(
  * session, so a completion that fails leaves exactly that shape. Exactly two
  * operations can settle it: this one, for a caller that still holds the live
  * command identity, and `releaseGameSessionWorldBindingSlot`, for a successor
- * that holds the holder's own handle and a native proof of death instead. No
+ * that holds the holder's own handle and a native verdict that the holder's
+ * lease is gone instead. No
  * other operation can settle it: `failGameSessionCreation` refuses a session
  * that already has a binding row, and `completeGameSessionBinding` only ever
  * makes a session resumable. Both shapes settle on the one canonical terminal
@@ -4530,21 +4609,24 @@ function settleRegisteredGameSessionWorldBinding(
  * applied - leaves a slot held by a session that can never settle itself: the
  * per-command `operationId` the terminal settle demands lives only in the dead
  * process's memory (`SLOT WEDGE`). The owner ruled that such a slot is released
- * by a successor that presents BOTH the holder's own handle and a native verdict
- * proving the holder's owner dead, and nothing weaker:
+ * by a successor that presents BOTH the holder's own handle and a native lease
+ * verdict proving the holder's lease gone, and nothing weaker:
  *
  * - The handle is what makes "the holder I release is the holder I observed"
  *   checkable. A caller that knows only the slot cannot manufacture the holder's
  *   identity, and a second caller racing the same slot fails on the handle
  *   instead of guessing twice.
- * - The proof is the same opaque native OS verdict `recoverGame` consumes,
- *   carried together with the holder it was obtained for: a live holder is
- *   refused (`alive`), and `mismatch`, `ambiguous` and `unavailable` refuse too,
- *   because none of them proves death. A caller-asserted boolean, a plain object
- *   or a structured clone of a verdict is not a weaker proof - it is no proof at
- *   all - and a proof whose correlation is not this row's holder is no proof for
- *   this slot either; the reader rejects both before this operation looks at
- *   anything but the handle. See
+ * - The proof is the native lease verdict - the state of the holder's own
+ *   same-name mutex probe - carried together with the holder it was obtained
+ *   for. Only the `holderGone` direction releases, because only there did the
+ *   probe show nothing holds the lease any more; the other outcome is refused as
+ *   "not proven gone" (`holderNotProvenGone`) and is never reported as "alive",
+ *   since a held name proves only that some handle exists and Windows cannot
+ *   attribute it. A caller-asserted string, a plain object or a structured clone
+ *   of a verdict is not a weaker proof - it is no proof at all - and a proof
+ *   whose correlation is not this row's holder is no proof for this slot either;
+ *   the reader rejects all of them before this operation looks at anything but
+ *   the handle. See
  *   `ProductionGameSessionWorldBindingSlotReleaseProof` for why the correlation
  *   is what makes the verdict non-substitutable, and for the trust boundary this
  *   operation deliberately does not close.
@@ -4583,11 +4665,13 @@ function releaseGameSessionWorldBindingSlot(
       throw new Error(productionGameSessionWorldBindingSlotRelease.handleMismatch);
     if (row.status !== "registered")
       throw new Error(productionGameSessionWorldBindingSlotRelease.holderTerminal);
+    // Only the free-lease direction releases. The other outcome is refused as
+    // "not proven gone": the probe's held direction cannot be promoted into
+    // "the holder is alive" (see `holderNotProvenGone`), and it cannot be read
+    // as gone either.
     const verdict = readGameSessionWorldBindingSlotReleaseProof(input.proof, row.holder_handle);
-    if (verdict.outcome === "alive")
-      throw new Error(productionGameSessionWorldBindingSlotRelease.holderAlive);
-    if (verdict.outcome !== "proven_dead")
-      throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
+    if (verdict !== productionGameSessionWorldBindingSlotLeaseVerdict.holderGone)
+      throw new Error(productionGameSessionWorldBindingSlotRelease.holderNotProvenGone);
     return settleRegisteredGameSessionWorldBinding(db, {
       gameSessionId: row.game_session_id,
       integrationId: input.integrationId,
@@ -4610,25 +4694,26 @@ function validGameSessionWorldBindingSlotReleaseInput(
   );
 }
 /**
- * Reads a release proof - the native verdict plus the holder it was obtained for
- * - or refuses with the release's own bounded code. A caller-asserted boolean, a
- * look-alike, a structured clone, a missing verdict and a verdict correlated to
- * another holder are all the same refusal: none of them is a usable proof of
- * death for THIS slot, and refusing them alike keeps this operation from
- * becoming an oracle for whether the holder is live, dead or already settled.
+ * Reads a release proof - the native lease verdict plus the holder it was
+ * obtained for - or refuses with the release's own bounded code. A
+ * caller-asserted string, a look-alike, a structured clone, a missing verdict
+ * and a proof correlated to another holder are all the same refusal: none of
+ * them is a usable verdict for THIS slot, and refusing them alike keeps this
+ * operation from becoming an oracle for whether the holder's lease is gone,
+ * still held, or already settled.
  */
 function readGameSessionWorldBindingSlotReleaseProof(
   proof: unknown,
   holderHandle: string,
-): ReturnType<typeof readWindowsOwnerDeathVerification> {
+): ProductionGameSessionWorldBindingSlotLeaseVerdict {
   if (
-    !exactPlainDataObject(proof, ["verification", "holderHandle"]) ||
+    !exactPlainDataObject(proof, ["verdict", "holderHandle"]) ||
     !validOpaqueWorldBindingRef(proof.holderHandle) ||
     proof.holderHandle !== holderHandle
   )
     throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
   try {
-    return readWindowsOwnerDeathVerification(proof.verification);
+    return readGameSessionWorldBindingSlotLeaseVerdict(proof.verdict);
   } catch {
     throw new Error(productionGameSessionWorldBindingSlotRelease.proofInvalid);
   }

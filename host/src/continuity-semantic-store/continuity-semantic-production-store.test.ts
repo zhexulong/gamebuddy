@@ -6,11 +6,13 @@ import test from "node:test";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
 import {
+  mintGameSessionWorldBindingSlotLeaseVerdict,
   openProductionContinuityStore,
   type ProductionBootstrapInput,
   type ProductionGameRequest,
   type ProductionGameTerminalReceipt,
   productionChatOwnerProvenDead,
+  productionGameSessionWorldBindingSlotLeaseVerdict,
   productionGameSessionWorldBindingSlotRelease,
 } from "./continuity-semantic-production-store.js";
 
@@ -56,16 +58,15 @@ const receipt = (permit: any, kind: "runtime_bootstrapped" | "runtime_torn_down"
   occurredAtMs: Date.now(),
 });
 /**
- * A slot-release proof: the native owner-death verdict together with the holder
- * handle the verdict was obtained for. The release requires that correlation to
- * equal the row's own `holderHandle`, so a verdict obtained for one holder cannot
- * be substituted into another holder's slot.
+ * A slot-release proof: the native lease verdict together with the holder handle
+ * the verdict was obtained for. The release requires that correlation to equal
+ * the row's own `holderHandle`, so a verdict obtained for one holder cannot be
+ * substituted into another holder's slot.
  */
 const slotReleaseProof = (
   holderHandle: string,
-  outcome: Parameters<typeof createTestWindowsOwnerDeathVerification>[1] = "proven_dead",
-  verifiedOwner: Parameters<typeof createTestWindowsOwnerDeathVerification>[0] = owner,
-) => ({ verification: createTestWindowsOwnerDeathVerification(verifiedOwner, outcome), holderHandle });
+  verdict: Parameters<typeof mintGameSessionWorldBindingSlotLeaseVerdict>[0] = "holder_gone",
+) => ({ verdict: mintGameSessionWorldBindingSlotLeaseVerdict(verdict), holderHandle });
 
 test("Game session world binding is durable, exact, idempotent, and redacted", () => {
   const root = canonicalTestRootSync("production-game-session-binding-");
@@ -601,9 +602,10 @@ test("A world slot held by a live session is rejected for a second session and r
  *
  * The owner's ruling (D2-A', 2026-10-05 evening) is that a successor releases
  * such a slot by presenting the holder's own handle - written at registration,
- * read back for the slot - together with a native verdict proving the holder's
- * owner dead; the verdict is carried with the holder it was obtained for, so a
- * verdict obtained for one attempt can never free another holder's slot. The
+ * read back for the slot - together with a native lease verdict proving the
+ * holder's lease gone; the verdict is carried with the holder it was obtained
+ * for, so a verdict obtained for one attempt can never free another holder's
+ * slot. The
  * released holder lands on the canonical terminal shape
  * (binding terminal revision 2 paired with metadata failed revision 3) inside the
  * store's one settle transaction. The release assertions at the end of this test
@@ -623,7 +625,7 @@ test("A world slot held by a live session is rejected for a second session and r
  * ruling forbids.
  */
 test(
-  "A slot abandoned by a dead holder is released by that holder's own handle plus a native death verdict",
+  "A slot abandoned by a dead holder is released by that holder's own handle plus a native lease verdict that the holder is gone",
   () => {
   const root = canonicalTestRootSync("production-game-session-slot-wedge-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
@@ -909,15 +911,22 @@ test(
   }
 });
 
-test("World-slot release requires the holder's own handle and a native death verdict, and refuses every weaker call", () => {
+test("World-slot release requires the holder's own handle and a native lease verdict, and refuses every weaker call", () => {
   // The refusal codes are the contract, so they are pinned literally and the
   // exported bounded set is pinned to be exactly these five.
   assert.deepEqual(Object.values(productionGameSessionWorldBindingSlotRelease).sort(), [
     "game_session_world_binding_slot_handle_mismatch",
-    "game_session_world_binding_slot_holder_alive",
+    "game_session_world_binding_slot_holder_not_proven_gone",
     "game_session_world_binding_slot_holder_terminal",
     "game_session_world_binding_slot_missing",
     "game_session_world_binding_slot_proof_invalid",
+  ]);
+  // The verdict is a closed two-value set, and that is the safety property: the
+  // held direction of the native probe has no "the holder is alive" member it
+  // could be promoted into, so no optimistic reading of a held lease exists.
+  assert.deepEqual(Object.values(productionGameSessionWorldBindingSlotLeaseVerdict).sort(), [
+    "holder_gone",
+    "lease_not_proven_free",
   ]);
   const root = canonicalTestRootSync("production-game-session-slot-release-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
@@ -981,9 +990,8 @@ test("World-slot release requires the holder's own handle and a native death ver
       holderHandle,
       proof,
     });
-    // The holder's own proof: the native verdict of death for the owner the
-    // holder's attempt belonged to, carried together with the holder it was
-    // obtained for.
+    // The holder's own proof: the native lease verdict for the holder's lease,
+    // carried together with the holder it was obtained for.
     const deadProof = slotReleaseProof("holder-release-holder");
     // A slot nobody holds, and the same slot under another integration, are not
     // this operation's business.
@@ -999,39 +1007,43 @@ test("World-slot release requires the holder's own handle and a native death ver
     // second name for the slot.
     assert.equal(outcome(release("holder-release-other", deadProof)), "game_session_world_binding_slot_handle_mismatch");
     // A caller-asserted boolean, an unminted look-alike, a structured clone of
-    // a real verdict and a missing proof are all no proof at all. The clone
-    // below is carried in an otherwise well-shaped, correctly correlated proof
-    // on purpose: what refuses it is the opaque verdict itself, not the shape
-    // of the proof that carries it.
+    // a real verdict, a caller-asserted verdict STRING and a missing proof are
+    // all no proof at all. The clone and the string below are carried in an
+    // otherwise well-shaped, correctly correlated proof on purpose: what refuses
+    // them is the opaque verdict itself, not the shape of the proof that carries
+    // it, and a verdict is a minted token rather than a value a caller may name.
     assert.equal(outcome(release("holder-release-holder", true)), "game_session_world_binding_slot_proof_invalid");
     assert.equal(
-      outcome(release("holder-release-holder", { outcome: "proven_dead" })),
+      outcome(release("holder-release-holder", { outcome: "holder_gone" })),
       "game_session_world_binding_slot_proof_invalid",
     );
     assert.equal(
       outcome(
         release("holder-release-holder", {
-          verification: { ...deadProof.verification },
+          verdict: { ...deadProof.verdict },
           holderHandle: "holder-release-holder",
         }),
       ),
       "game_session_world_binding_slot_proof_invalid",
     );
     assert.equal(
+      outcome(release("holder-release-holder", { verdict: "holder_gone", holderHandle: "holder-release-holder" })),
+      "game_session_world_binding_slot_proof_invalid",
+    );
+    assert.equal(
       outcome(release("holder-release-holder", undefined)),
       "game_session_world_binding_slot_proof_invalid",
     );
-    // A verdict that is not a proof of death refuses, and is never read as
-    // optimistically dead: a live holder is named as alive.
+    // The held direction of the native probe refuses, and is never read as
+    // optimistically gone. It is named for what the probe established - the
+    // lease was not shown free - and not as "the holder is alive", which a held
+    // same-name mutex cannot establish: the handle under that name may be the
+    // Host's own recovery gate for the same name, and Windows exposes no
+    // mutex-owner query to attribute it.
     assert.equal(
-      outcome(release("holder-release-holder", slotReleaseProof("holder-release-holder", "alive"))),
-      "game_session_world_binding_slot_holder_alive",
+      outcome(release("holder-release-holder", slotReleaseProof("holder-release-holder", "lease_not_proven_free"))),
+      "game_session_world_binding_slot_holder_not_proven_gone",
     );
-    for (const unusable of ["mismatch", "ambiguous", "unavailable"] as const)
-      assert.equal(
-        outcome(release("holder-release-holder", slotReleaseProof("holder-release-holder", unusable))),
-        "game_session_world_binding_slot_proof_invalid",
-      );
     // Every refusal above left the abandoned holder exactly as it was: a bounded
     // refusal is never a partial write.
     assert.deepEqual(slotHolder(), {
@@ -1045,7 +1057,7 @@ test("World-slot release requires the holder's own handle and a native death ver
     assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), holder);
     assert.deepEqual(store.listResumableGameSessions(), []);
     // Cross-attempt substitution, the concretely exploitable shape the bare
-    // verdict left open: a Host-minted `proven_dead` verdict obtained about one
+    // verdict left open: a Host-minted holder-gone verdict obtained about one
     // attempt used to free another holder's slot. The proof now carries the
     // holder it was obtained for, and the release requires that correlation to
     // equal the row's own `holderHandle`, so this substitution is refused with
@@ -1083,35 +1095,38 @@ test("World-slot release requires the holder's own handle and a native death ver
       revision: 1,
       holderHandle: "holder-release-holder",
     });
-    // The correlation binds the proof to the holder, not the verdict to the
-    // holder's owner tuple: `WindowsOwnerDeathVerification` records the
-    // `ProductionGameOwner` tuple the OS query was asked about, and the binding
-    // row deliberately carries no owner tuple to compare it with (design/105:70
-    // keeps pids off a session record). A verdict obtained about some other
-    // process but carried with this holder's own correlation is therefore still
-    // accepted for this holder's slot. That is the trust boundary this store does
-    // not close and cannot close - it trusts the in-process composition that
-    // obtained the verdict for the holder it names, exactly as the existing
-    // settle-proof path does (see
+    // The correlation binds the proof to the holder; the verdict itself carries
+    // no lease name and no owner tuple, and the binding row deliberately carries
+    // no owner tuple to compare it against (design/105:70 keeps pids off a
+    // session record). One verdict token - even one the composition obtained
+    // while probing some other attempt's lease - is therefore still accepted for
+    // this holder's slot once the proof names this holder. That is the trust
+    // boundary this store does not close and cannot close - it trusts the
+    // in-process composition that ran the probe for the holder it names, exactly
+    // as the existing settle-proof path does (see
     // `ProductionGameSessionWorldBindingSlotReleaseProof`) - so this assertion
-    // stays a boundary statement and is not a safety claim about the verdict.
+    // stays a boundary statement and is not a safety claim about the verdict, and
+    // nothing here independently authenticates who ran the probe. The single
+    // token below is deliberately reused for the second holder further down.
+    const sharedLeaseVerdict = mintGameSessionWorldBindingSlotLeaseVerdict("holder_gone");
     assert.equal(
       outcome({
         integrationId: "stardew",
         bindingRef: "Farm_771002312",
         holderHandle: "holder-release-unrelated",
-        proof: slotReleaseProof("holder-release-unrelated", "proven_dead", {
-          ...owner,
-          ownerPid: 1,
-          ownerProcessStartIdentity: "some-other-process",
-        }),
+        proof: { verdict: sharedLeaseVerdict, holderHandle: "holder-release-unrelated" },
       }),
       "terminal",
     );
-    // The release itself: the holder's own handle plus a native verdict of death,
-    // landing on the canonical settled pair that a command-identified settle
-    // produces.
-    assert.equal(outcome(release("holder-release-holder", deadProof)), "terminal");
+    // The release itself: the holder's own handle plus the holder-gone lease
+    // verdict, landing on the canonical settled pair that a command-identified
+    // settle produces. The verdict token is the same one that freed the unrelated
+    // holder above, because nothing in it is bound to a lease or a holder - the
+    // boundary just documented.
+    assert.equal(
+      outcome(release("holder-release-holder", { verdict: sharedLeaseVerdict, holderHandle: "holder-release-holder" })),
+      "terminal",
+    );
     assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), {
       ...holder,
       status: "failed",
@@ -1186,6 +1201,86 @@ test("World-slot release requires the holder's own handle and a native death ver
     }
   } finally {
     if (!controlClosed) control.close();
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * The refusal that protects a live holder.
+ *
+ * A held same-name lease is the one answer the native probe cannot attribute, so
+ * it must refuse: releasing on it would settle a slot whose holder may still be
+ * running. The refusal is therefore pinned to leave both durable facts exactly as
+ * the live holder left them - the binding still `registered` at revision 1, the
+ * metadata still `pending` at revision 1 - and the holder must still be able to
+ * settle itself through its own live command identity afterwards.
+ */
+test("A slot whose holder's lease is not proven free is refused, and the live holder's slot and pending metadata are untouched", () => {
+  const root = canonicalTestRootSync("production-game-session-slot-not-proven-gone-");
+  const control = openProductionContinuityStore({ runtimeRoot: root });
+  try {
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store = control.bindBootstrapContext({ bootstrap, metadata });
+    const holder = store.createGameSessionMetadata({
+      creationRequestId: "not-proven-gone-create-holder",
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    // The shape a live holder is in while it holds the slot: registration landed,
+    // the session is still the pending revision the create left.
+    assert.equal(holder.status, "pending");
+    assert.equal(holder.revision, 1);
+    store.registerGameSessionWorldBinding({
+      gameSessionId: holder.gameSessionId,
+      integrationId: "stardew",
+      bindingRef: "Farm_204553118",
+      operationId: "not-proven-gone-bind-holder",
+      holderHandle: "holder-not-proven-gone",
+    });
+    assert.throws(
+      () =>
+        store.releaseGameSessionWorldBindingSlot({
+          integrationId: "stardew",
+          bindingRef: "Farm_204553118",
+          holderHandle: "holder-not-proven-gone",
+          proof: slotReleaseProof("holder-not-proven-gone", "lease_not_proven_free"),
+        }),
+      /game_session_world_binding_slot_holder_not_proven_gone/,
+    );
+    // The refusal is not a partial write: the slot the live holder registered is
+    // still registered, and its session metadata is still the pending revision
+    // the create left, so the live holder still owns the world it bound.
+    assert.deepEqual(
+      store.readGameSessionWorldBindingSlotHolder({ integrationId: "stardew", bindingRef: "Farm_204553118" }),
+      {
+        gameSessionId: holder.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "Farm_204553118",
+        status: "registered",
+        revision: 1,
+        holderHandle: "holder-not-proven-gone",
+      },
+    );
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), holder);
+    assert.deepEqual(store.listResumableGameSessions(), []);
+    // The live holder is not wedged by the refusal: its own command identity
+    // still settles the slot the ordinary way.
+    assert.equal(
+      store.markGameSessionWorldBindingTerminal({
+        gameSessionId: holder.gameSessionId,
+        integrationId: "stardew",
+        expectedRevision: 1,
+        operationId: "not-proven-gone-bind-holder",
+      }).status,
+      "terminal",
+    );
+    assert.deepEqual(store.readGameSessionMetadata({ gameSessionId: holder.gameSessionId }), {
+      ...holder,
+      status: "failed",
+      revision: 3,
+    });
+  } finally {
+    control.close();
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
