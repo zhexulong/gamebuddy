@@ -5,6 +5,7 @@ import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { resolveCompanionLocale } from "../settings/language-preference-store.js";
 import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
@@ -47,8 +48,6 @@ export type ExactChatRuntimeConstruction = Readonly<{
 export type ChatRuntimeConstructionOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
 }>;
-
-const CHAT_PRESENTATION_PROFILE = Object.freeze({ locale: "zh-CN", text: true, speech: null });
 
 /**
  * Reads an already-selected Tavern thread from the binding-owned root and
@@ -185,6 +184,10 @@ async function buildExactChatRuntimeConstruction(
     materializeContextForPiSession(piSessionId, "desired");
 
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
+  // The companion's language is the player's choice, held in the one preference
+  // the management surface writes; the runtime reads it at mount instead of
+  // carrying a locale of its own.
+  const presentationLocale = await resolveCompanionLocale(paths.root);
   // The player's connection selection is the authority for the chat surface's
   // provider/model/thinking level. With no active connection the frozen chat
   // model profile is used unchanged, so a root without player connections keeps
@@ -199,7 +202,7 @@ async function buildExactChatRuntimeConstruction(
     modelConfig,
     modelProfileRevision: modelProfile.revision,
     presentation: Object.freeze({
-      profile: CHAT_PRESENTATION_PROFILE,
+      profile: Object.freeze({ locale: presentationLocale, text: true, speech: null }),
       surface: "chat",
       sessionId: permit.chatSurfaceSessionId,
     }),

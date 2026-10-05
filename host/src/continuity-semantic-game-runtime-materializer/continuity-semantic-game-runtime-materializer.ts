@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { resolveCompanionLocale } from "../settings/language-preference-store.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -71,7 +72,7 @@ const bodyProgramConsumers = new WeakMap<BodyProgramConsumer, BodyProgramConsume
  * has been injected yet. Existing callers predate the Tavern language
  * preference store; production wiring injects the stored preference.
  */
-export const DEFAULT_COMPANION_LOCALE = "zh-CN" as const;
+
 
 /**
  * Creates the fixed production S4c materializer. This is construction-zone-only:
@@ -421,7 +422,7 @@ export function createHostGameRuntimeMaterializer(
             permit.gameSessionId,
             options.gameOperationalGateNonceSha256,
             options.gameVoicePresentation,
-            options.companionLocale ?? DEFAULT_COMPANION_LOCALE,
+            options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot)),
             options.onCompanionTextPresented,
             fixedTools,
             Object.freeze({
