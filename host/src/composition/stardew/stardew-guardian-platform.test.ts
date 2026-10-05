@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory } from "./stardew-guardian-platform.js";
-import type { DesktopGuardianSession, GuardianAck } from "../../containment/auth/desktop-guardian-session.internal.js";
+import type { DesktopGuardianRecovery, DesktopGuardianSession, GuardianAck, GuardianRecoveryAck } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
+import { containedRuntimeTeardownFromCollaborator } from "../../stardew-production-lifecycle-coordinator.internal.js";
+import {
+  consumeStardewBootstrapGuardianOwnerBinding,
+  createStardewBootstrapGuardianOwnerBinding,
+  type StardewPlayerHostRuntimeLaunchCollaborator,
+} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import {
@@ -426,4 +432,332 @@ test("the platform recovery relay sends the exact tokenless pre-CAS and post-CAS
     playerHostState: "active",
     aiClientState: "armed",
   });
+});
+
+/** The typed post-CAS binding facts, projected out of the strict durable record. */
+function recoveryBindingFacts(record: Readonly<Record<string, unknown>>): TypedPrivateGameFacts {
+  const guardian = record.guardian as Readonly<Record<string, unknown>>;
+  return Object.freeze({
+    bindingRevision: guardian.bindingRevision as string,
+    ownerRecordRevision: record.ownerRecordRevision as number,
+    leaseName: guardian.leaseName as string,
+    playerJobName: guardian.playerJobName as string,
+    aiJobName: guardian.aiJobName as string,
+    playerHostState: record.playerHostState as string,
+    aiClientState: record.aiClientState as string,
+  });
+}
+
+/** One recovery conversation, recorded exactly as the Desktop half drives it. */
+type RecordedRecovery = Readonly<{
+  actor: string;
+  preCas: Readonly<Record<string, unknown>>;
+  postCas: Readonly<Record<string, unknown>>;
+  stateBeforeCas: unknown;
+  revisionBeforeCas: unknown;
+  stateAfterCas: unknown;
+  revisionAfterCas: unknown;
+  roleCasOrder: readonly string[];
+}>;
+
+/**
+ * The lifecycle never sees the composition collaborator directly: it sees the
+ * coordinator adapter's teardown seam. So the only test that proves the recovery
+ * drive is reachable from the product path must enter through that adapter, and
+ * that is what this does — the drive is otherwise reachable only from the
+ * collaborator's own unit test, which is exactly the gap it is here to close.
+ *
+ * The session stand-in is the Desktop half's real shape (tokenless gate frame,
+ * then the durable CAS and its post-CAS body, then one classification per role)
+ * and reads the durable record around the CAS, so the ordering asserted below is
+ * observed rather than assumed.
+ */
+test("the owner-held recovery is reachable through the coordinator adapter and drives the durable recovery CASes", async () => {
+  // The durable record carries the immutable binding revision the native arm
+  // binding was created with, which is a GUID in production and in the records
+  // the platform encoder validates; the fixture default is a readable token.
+  const guardianRevision = "0d3b8f4d-6b7c-4e21-9d5a-2f1c8a4e6b70";
+  const harness = createHarness({ guardianRevisions: [guardianRevision] });
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const readRecord = async (): Promise<Record<string, unknown>> =>
+    JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  const decode = (frame: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
+  const actor = "7b1f0c0e-1e6a-4d5a-9f2b-2a6d5e0c9a11";
+  const conversations: RecordedRecovery[] = [];
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: async (input) => {
+      const preCas = decode(input.preCasFrame);
+      const beforeCas = await readRecord();
+      // The durable recovering CAS may only run while the gate is held, and the
+      // successor facts the caller reads back are the post-CAS binding.
+      const postCas = decode(await input.beginRecovery());
+      const afterCas = await readRecord();
+      const roleCasOrder: string[] = [];
+      await input.roleContained("playerHost");
+      roleCasOrder.push("playerHost");
+      await input.roleContained("aiClient");
+      roleCasOrder.push("aiClient");
+      conversations.push({
+        actor: input.recoveryInstanceId,
+        preCas,
+        postCas,
+        stateBeforeCas: beforeCas.state,
+        revisionBeforeCas: beforeCas.ownerRecordRevision,
+        stateAfterCas: afterCas.state,
+        revisionAfterCas: afterCas.ownerRecordRevision,
+        roleCasOrder,
+      });
+      return Object.freeze({ outcome: "contained" as const });
+    },
+    close: async () => {},
+  });
+  const teardown = containedRuntimeTeardownFromCollaborator(
+    createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+  );
+
+  const outcome = await teardown.recover(owner, {
+    recoveryInstanceId: actor,
+    readRecoveryBinding: async () => recoveryBindingFacts(await readRecord()),
+  });
+  assert.deepEqual(outcome, { status: "recovered" });
+
+  assert.equal(conversations.length, 1);
+  const conversation = conversations[0]!;
+  assert.equal(conversation.actor, actor);
+  // The gate body is the exact owner's consumed Guardian binding. The request
+  // carries no gate facts at all, so a caller cannot substitute the correlation
+  // the native gate must acquire.
+  assert.deepEqual(conversation.preCas, {
+    guardianInstanceId: expectedGuardianBinding().guardianInstanceId,
+    guardianEpoch: expectedGuardianBinding().guardianEpoch,
+    attemptId: "bootstrap-1",
+    bindingRevision: guardianRevision,
+    leaseName: expectedGuardianBinding().leaseName,
+  });
+  assert.equal("token" in conversation.preCas, false);
+  // The durable `recovering` CAS ran after the gate opened and before the
+  // post-CAS body was produced.
+  assert.deepEqual(
+    { state: conversation.stateBeforeCas, revision: conversation.revisionBeforeCas },
+    { state: "reserved", revision: 1 },
+  );
+  assert.deepEqual(
+    { state: conversation.stateAfterCas, revision: conversation.revisionAfterCas },
+    { state: "recovering", revision: 2 },
+  );
+  // The post-CAS body is the successor record the caller read back after the
+  // CAS, encoded by the composition — never a caller-supplied frame.
+  assert.deepEqual(conversation.postCas, {
+    guardianInstanceId: expectedGuardianBinding().guardianInstanceId,
+    guardianEpoch: expectedGuardianBinding().guardianEpoch,
+    attemptId: "bootstrap-1",
+    recoveryInstanceId: actor,
+    bindingRevision: guardianRevision,
+    ownerRecordRevision: 2,
+    leaseName: expectedGuardianBinding().leaseName,
+    playerJobName: expectedGuardianBinding().playerJobName,
+    aiJobName: expectedGuardianBinding().aiJobName,
+    playerHostState: "reserved",
+    aiClientState: "reserved",
+  });
+  // One durable containment CAS per role the recovery classified, in order.
+  assert.deepEqual(conversation.roleCasOrder, ["playerHost", "aiClient"]);
+  // The drive is durable, not a projection: the attempt records the actor and
+  // both roles (two role CASes after the begin CAS).
+  const persisted = await readRecord();
+  assert.deepEqual(
+    {
+      state: persisted.state,
+      guardianState: persisted.guardianState,
+      recovery: persisted.recoveryInstanceId,
+      playerHost: persisted.playerHostState,
+      aiClient: persisted.aiClientState,
+      revision: persisted.ownerRecordRevision,
+    },
+    {
+      state: "recovering",
+      guardianState: "recovering",
+      recovery: actor,
+      playerHost: "contained",
+      aiClient: "contained",
+      revision: 4,
+    },
+  );
+});
+
+/**
+ * A recovery that cannot be driven must refuse with a bounded machine-readable
+ * error. Two ways it cannot be driven are covered here: a collaborator that does
+ * not carry the owner-held recovery half at all (the direct-spawn test
+ * reference, or any adapter without an exact owner binding), and an owner whose
+ * one-shot Guardian binding another consumer already took. Neither may reach the
+ * native session, and neither may mutate the durable record.
+ *
+ * A malformed recovery actor is the third refusal: it reaches a durable CAS and
+ * one native frame field, so it must be rejected at this boundary instead of
+ * becoming an uncertain native attempt.
+ */
+test("a recovery refuses with a bounded error when the collaborator cannot drive one or the owner binding is already consumed", async () => {
+  const sessionCalls: string[] = [];
+  const session: DesktopGuardianSession = Object.freeze({
+    arm: async () => ack("arm"),
+    launch: async (input) => ack("launch", input.role),
+    contain: async (input) => ack("contain", input.role),
+    recover: async () => {
+      sessionCalls.push("recover");
+      return Object.freeze({ outcome: "contained" as const });
+    },
+    close: async () => {},
+  });
+  const actor = "0a5c1e7b-2f3d-4a90-8c11-6d2b7e4f9a02";
+  const readRecoveryBinding = async () => Object.freeze({});
+  const harness = createHarness();
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  const recordBefore = await readFile(ownerPath(root), "utf8");
+
+  // (a) A collaborator without the owner-held recovery half: the test reference
+  // shape. It keeps the contain/close/settle behavior it always had and only the
+  // recovery member refuses.
+  const plainCollaborator: StardewPlayerHostRuntimeLaunchCollaborator = Object.freeze({
+    launchPlayerHost: async () => { throw new Error("test_reference_launch_unbound"); },
+    launchAiClient: async () => { throw new Error("test_reference_launch_unbound"); },
+    containPlayerHost: async () => { throw new Error("test_reference_contain_unbound"); },
+    containAiClient: async () => { throw new Error("test_reference_contain_unbound"); },
+    recovery: () => { throw new Error("test_reference_recovery_unbound"); },
+    settle: async () => { throw new Error("test_reference_settle_unbound"); },
+    close: async () => { throw new Error("test_reference_close_unbound"); },
+  });
+  const plainTeardown = containedRuntimeTeardownFromCollaborator(plainCollaborator);
+  assert.equal(typeof plainTeardown.containAiClient, "function");
+  assert.equal(typeof plainTeardown.settle, "function");
+  await assert.rejects(
+    async () => plainTeardown.recover(owner, { recoveryInstanceId: actor, readRecoveryBinding }),
+    /stardew_contained_recovery_drive_unavailable/,
+  );
+
+  const realTeardown = containedRuntimeTeardownFromCollaborator(
+    createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+  );
+
+  // (b) A malformed actor is refused before any owner binding is consumed and
+  // before any native frame is produced.
+  await assert.rejects(
+    async () => realTeardown.recover(owner, { recoveryInstanceId: "not-an-actor", readRecoveryBinding }),
+    /stardew_owner_recovery_actor_invalid/,
+  );
+
+  // (c) The exact owner's one-shot Guardian binding was already consumed, so this
+  // collaborator has no binding to project a gate correlation or a durable CAS
+  // from. It refuses rather than driving a recovery against an invented binding.
+  consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+  await assert.rejects(
+    async () => realTeardown.recover(owner, { recoveryInstanceId: actor, readRecoveryBinding }),
+    /stardew_bootstrap_guardian_owner_binding_unavailable/,
+  );
+
+  assert.deepEqual(sessionCalls, []);
+  assert.equal(await readFile(ownerPath(root), "utf8"), recordBefore, "a refused recovery writes nothing durable");
+});
+
+/**
+ * The native recovery conversation can fail after it already ran: the gate can
+ * stay held by the previous lease, a role can be classified not contained, or
+ * the transport can reject the conversation outright. None of those is
+ * containment, so each must report `unavailable` and must not be re-driven —
+ * an uncertain native recovery may already have mutated the attempt.
+ */
+test("a recovery that does not reach terminal containment fails closed and is never retried", async () => {
+  const actor = "c4d9a3f1-58b2-4c67-9e0a-1b7f3d6c8e24";
+  // The gate frame carries the record's immutable binding revision, which the
+  // platform encodes only when it is the opaque GUID shape production uses.
+  const guardianRevision = "b17f4d6a-9c02-4e51-8a3d-5f0c1e2b7a44";
+  const scenarios: readonly Readonly<{
+    name: string;
+    recover: (input: DesktopGuardianRecovery) => Promise<GuardianRecoveryAck>;
+    expectedRecord: Readonly<Record<string, unknown>>;
+  }>[] = [
+    {
+      name: "the session rejects the recovery",
+      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
+    },
+    {
+      name: "the recovery gate is still held by the previous lease",
+      recover: async () => Object.freeze({ outcome: "gate_held" as const }),
+      expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
+    },
+    {
+      name: "a classified role is not contained",
+      recover: async (input) => {
+        // The recovery ran, so the durable `recovering` CAS legitimately ran too;
+        // only the role classification failed.
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+      },
+      expectedRecord: { state: "recovering", revision: 2, recovery: actor, playerHost: "reserved", aiClient: "reserved" },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = createHarness({ guardianRevisions: [guardianRevision] });
+    const root = await createRoot();
+    const triple = mintOwnedTriple(harness.composition);
+    const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
+    );
+    const calls: string[] = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      arm: async () => ack("arm"),
+      launch: async (input) => ack("launch", input.role),
+      contain: async (input) => ack("contain", input.role),
+      recover: (input) => {
+        calls.push("recover");
+        return scenario.recover(input);
+      },
+      close: async () => {},
+    });
+    const teardown = containedRuntimeTeardownFromCollaborator(
+      createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+    );
+
+    const outcome = await teardown.recover(owner, {
+      recoveryInstanceId: actor,
+      readRecoveryBinding: async () =>
+        recoveryBindingFacts(JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>),
+    });
+    assert.deepEqual(outcome, { status: "unavailable" }, scenario.name);
+    assert.equal(calls.length, 1, `${scenario.name}: the failure is not retried`);
+    const record = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+    assert.deepEqual(
+      {
+        state: record.state,
+        revision: record.ownerRecordRevision,
+        recovery: record.recoveryInstanceId,
+        playerHost: record.playerHostState,
+        aiClient: record.aiClientState,
+      },
+      scenario.expectedRecord,
+      scenario.name,
+    );
+  }
 });

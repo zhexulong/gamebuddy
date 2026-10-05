@@ -78,7 +78,7 @@ import type {
   ProductionGameSessionWorldBindingInput,
   ProductionGameSessionWorldBindingTerminalInput,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
-import type { RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
+import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
@@ -91,6 +91,10 @@ import type {
   StardewContainedAiClientLaunchSeam,
   StardewPlayerHostRuntimeLaunchCollaborator,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
+import {
+  readStardewOwnerRecoveryDriver,
+  type StardewOwnerRecoveryRequest,
+} from "./composition/stardew/stardew-guardian-platform.js";
 
 export type StardewPrivateActivationSnapshot = Readonly<{
   schemaVersion: 1;
@@ -423,6 +427,14 @@ export type StardewContainedRuntimeTeardown = Readonly<{
    * the matching Guardian settlement proof.
    */
   settle(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  /**
+   * Recovery drive for the exact owner's non-terminal attempt. The owner-held
+   * half of the collaborator is what makes this reachable from the lifecycle at
+   * all, so it is forwarded here rather than reachable only from the composition
+   * that owns the binding; the recovery actor and the post-CAS binding facts
+   * arrive per invocation from the caller that observed the crashed attempt.
+   */
+  recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome>;
   close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
@@ -488,6 +500,11 @@ export function containedAiClientLaunchDecision(
 export function containedRuntimeTeardownFromCollaborator(
   runtimeLaunch: StardewPlayerHostRuntimeLaunchCollaborator,
 ): StardewContainedRuntimeTeardown {
+  // The recovery half is read once, here. A collaborator that cannot drive a
+  // recovery (a test reference, or any adapter without an owner-held Guardian
+  // binding) keeps the contain/close/settle behavior it always had and refuses a
+  // recovery instead of reporting one that never ran.
+  const recoveryDriver = readStardewOwnerRecoveryDriver(runtimeLaunch);
   return Object.freeze({
     containPlayerHost: (owner) => runtimeLaunch.containPlayerHost(owner).then((outcome) => {
       if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_contain_failed");
@@ -495,6 +512,10 @@ export function containedRuntimeTeardownFromCollaborator(
     containAiClient: (owner) => runtimeLaunch.containAiClient(owner).then((outcome) => {
       if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_contain_failed");
     }),
+    recover: (owner, request) => {
+      if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
+      return recoveryDriver.recover(owner, request);
+    },
     close: (owner) => runtimeLaunch.close(owner),
     settle: (owner) => runtimeLaunch.settle(owner),
   });

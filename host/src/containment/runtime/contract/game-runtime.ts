@@ -44,6 +44,39 @@ export type RedactedSettlementOutcome = Readonly<{
   readonly status: "settled" | "unavailable";
 }>;
 
+/**
+ * One bounded recovery of an attempt whose durable record is not terminal (a
+ * crashed attempt) rather than a live role launch.
+ *
+ * A recovery is a multi-frame durable protocol, so its parts are the two facts
+ * the platform conversation is built from: the typed `gateFacts` of the exact
+ * recovery-lease binding the native gate must acquire, and the two durable steps
+ * the recovery may only run while that gate is held. Every value here is a typed
+ * game fact or a durable step, so the platform frame representation stays with
+ * the composition that owns the transport and never enters this contract.
+ */
+export type RecoveryOperation = Readonly<{
+  /** Opaque recovery actor; a resumed recovery adopts the recorded one. */
+  readonly recoveryInstanceId: string;
+  /** Typed facts of the exact recovery-lease binding the native gate must acquire. */
+  readonly gateFacts: TypedPrivateGameFacts;
+  /** Durable recovering CAS; the facts it returns are the post-CAS binding. */
+  readonly beginRecovery: () => Promise<TypedPrivateGameFacts>;
+  /** Durable per-role containment CAS, recorded before that role's acknowledgement. */
+  readonly roleContained: (role: ContainmentRole) => Promise<void>;
+}>;
+
+/**
+ * Redacted recovery outcome. `recovered` is the only success and means the
+ * platform's recovery conversation reached its terminal containment for every
+ * role it classified. `unavailable` means the recovery could not be driven to
+ * that state: the attempt is still unproven, so an uncertain native recovery is
+ * never reported as containment and is never silently retried.
+ */
+export type RedactedRecoveryOutcome = Readonly<{
+  readonly status: "recovered" | "unavailable";
+}>;
+
 export type ContainedGameRuntime = Readonly<{
   launchRole(
     role: ContainmentRole,
@@ -58,7 +91,28 @@ export type ContainedGameRuntime = Readonly<{
    * settlement durably means; the generic runtime only owns the guard.
    */
   settle(): Promise<RedactedSettlementOutcome>;
+  /**
+   * Recovery drive for an attempt whose durable record is not terminal.
+   *
+   * Optional, because a recovery is driven for an exact owner: it needs that
+   * owner's one-shot Guardian binding (its recovery-gate correlation and its
+   * durable transition port) plus the composition's authenticated session, and
+   * the generic core holds neither. A core runtime therefore has no recovery to
+   * offer rather than a recovery it cannot drive, and only a composition that
+   * holds the owner supplies it.
+   */
+  recover?(operation: RecoveryOperation): Promise<RedactedRecoveryOutcome>;
   close(): Promise<void>;
+}>;
+
+/**
+ * A contained runtime whose composition holds the exact owner's durable
+ * recovery drive, so `recover` is present rather than optional. The owner-held
+ * drive is what makes the member implementable at all, so this refinement is
+ * exactly the difference between a core runtime and a bound one.
+ */
+export type RecoverableContainedGameRuntime = ContainedGameRuntime & Readonly<{
+  recover(operation: RecoveryOperation): Promise<RedactedRecoveryOutcome>;
 }>;
 
 /**
