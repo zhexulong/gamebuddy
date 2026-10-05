@@ -151,9 +151,9 @@ async function buildExactChatRuntimeConstruction(
         sameWorldInfoBinding(effectiveBinding, freshState.thread.appliedWorldBookBinding)
           ? freshState.thread
           : Object.freeze({
-              ...freshState.thread,
-              ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
-            });
+            ...freshState.thread,
+            ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
+          });
       return await materializeTavernAuthoredStableCatalog(
         tavernPaths,
         artifactStore,
@@ -264,6 +264,21 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
     throw new Error("chat_runtime_construction_permit_rejected");
 }
 /**
+ * The companion's own reviewed world book, for a thread that names no other one.
+ *
+ * The Game surface compiles `<runtimeCwd>/worldbook.json` into its Tier 2 m[0]
+ * automatically. The Chat surface materializes only what the thread binds, so a
+ * companion provisioned from a card carried its world book on the Game surface
+ * and silently lost it in Chat. With no explicit binding, the book the reviewed
+ * import wrote IS the companion's own background: bind it here (id, revision and
+ * hash read from the file; the existing hash gate re-verifies them against the
+ * bytes), so both surfaces materialize the same companion common sense.
+ *
+ * A missing book is ordinary - a companion need not have one - and yields
+ * nothing to bind. A present but unreadable book fails closed, exactly like a
+ * drifted managed binding: the backdrop must never be silently emptied.
+ */
+/**
  * Resolves a native (non-managed) WorldBookBinding — the bound worldbook.json
  * the reviewed import wrote into the runtime root — into the always-on
  * `lorebook_constant` materialization input. The on-disk book must EXACTLY
@@ -272,11 +287,12 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
  * mirroring the managed World Info hash gate.
  *
  * `constant: true` entries are reviewed always-on background and ride in the
- * stable lorebook_constant source (Tier 2 m[0]). The keyword-gated entries are
- * deliberately NOT forwarded: see the note in the assembly ledger
- * (design/tasks/active/p9-assembly-slice.md, row A13) — Magic Context binds the
- * volatile channel per turn, so publishing entry-keyed candidates from a
- * per-session catalog makes every turn refuse.
+ * stable lorebook_constant source (Tier 2 m[0]); the thread that carries this
+ * binding is the one the reviewed import wrote for (see
+ * `initial-chat-exact-content-port.ts`, which defaults a new thread's binding to
+ * the companion's own book). The keyword-gated entries are deliberately NOT
+ * forwarded: Magic Context binds the volatile channel per turn, so publishing
+ * entry-keyed candidates from a per-session catalog makes every turn refuse.
  */
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,

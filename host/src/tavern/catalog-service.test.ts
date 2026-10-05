@@ -206,7 +206,6 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   threads.close?.();
 });
 test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBook as a lorebook_constant m[0] source", async () => {
-  const root = await canonicalTestRoot("gamebuddy-game-catalog-");
   const worldBook = validateWorldBook({
     schemaVersion: 1,
     worldBookId: "deepseek-chan",
@@ -269,7 +268,6 @@ test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBo
 });
 
 test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
-  const root = await canonicalTestRoot("gamebuddy-game-catalog-surface-");
   const worldBook = validateWorldBook({
     schemaVersion: 1,
     worldBookId: "wb",
