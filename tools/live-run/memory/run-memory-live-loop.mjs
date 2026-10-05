@@ -654,25 +654,19 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  		},
  	});
   try {
-    process.stderr.write(`[diag-loop] surface=${surface} waitForReady-start ts=${Date.now()}\n`);
     const launchUrl = await launch.waitForReady();
-    process.stderr.write(`[diag-loop] surface=${surface} ready ts=${Date.now()}\n`);
     const url = new URL(launchUrl);
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
     const client = await bootstrap(origin, bootstrapToken);
-    process.stderr.write(`[diag-loop] surface=${surface} bootstrapped ts=${Date.now()}\n`);
-    process.stderr.write(`[diag-loop] surface=${surface} run-start ts=${Date.now()}\n`);
     const result = await run(origin, client);
-    process.stderr.write(`[diag-loop] surface=${surface} run-ok ts=${Date.now()}\n`);
     // Drain pending stderr appends BEFORE returning: the report branch closes the
     // capture right after, and a late stderr flush must not land after the
     // summary was written (audit NOTE-5).
     await Promise.allSettled(pendingAppends);
     return Object.freeze({ result, markers: Object.freeze([...markers]) });
   } catch (error) {
-    process.stderr.write(`[diag-loop] surface=${surface} run-failed ts=${Date.now()} message=${String(error?.message ?? error).slice(0, 120)}\n`);
     const diagnostic = stderr.trim();
     throw new Error(
       diagnostic.length > 0
@@ -703,7 +697,6 @@ export const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
 
 async function stopChildGracefully(child, timeoutMs = 30_000) {
   if (child === undefined || child === null || child.exitCode !== null) return;
-  process.stderr.write(`[diag-loop] shutdown-send pid=${child.pid} ts=${Date.now()}\n`);
   const exited = new Promise((resolveExit) => child.once("exit", () => resolveExit(true)));
   // The request only reaches a child that was spawned with an IPC channel and has
   // not disconnected. `connected` is the product's own gate: a child without the
