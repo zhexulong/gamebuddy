@@ -136,8 +136,7 @@ function Initialize-PrivateRunRoot([string]$Path) {
     $rules = @(([IO.Directory]::GetAccessControl($Path)).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 1 -or $rules[0].IsInherited -or $rules[0].IdentityReference.Value -ne $sid.Value -or $rules[0].AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or (($rules[0].FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne [Security.AccessControl.FileSystemRights]::FullControl)) { throw "preview_run_root_private_acl_failed" }
 }
-function Write-PrivateJson([string]$Path, [object]$Value) {
-    [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
+function Write-PrivateJson([string]$Path, [object]$Value) {    [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
 }
 function Clear-RunSessionExchange([string]$Directory) {
     foreach ($name in @("stardew-session.json", "stardew-attachment-request.json", "stardew-attachment-response.json", "stardew-farmhand-manifest.json", "stardew-fixture-readiness.json")) {
@@ -153,6 +152,33 @@ function Test-ActiveStopProofSignal([string]$Path) {
         return $false
     }
 }
+# ---------------------------------------------------------------------------
+# Launcher phase timing.
+#
+# The operator question "how long until the companion can exchange text" is not
+# answerable with one stopwatch over the whole run: the host's fixture
+# readiness, the signed attachment manifest, the AI client's boot and the
+# Preview's readiness are four different costs with four different owners. These
+# bounded one-line records name each one, and the final summary is one line of
+# JSON. Only phase names and elapsed milliseconds are printed - never a path,
+# token, or child output (see the private-output rules above).
+# ---------------------------------------------------------------------------
+$launcherStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$launcherPhases = [System.Collections.Generic.List[object]]::new()
+function Write-LauncherPhase([string]$Phase) {
+    $elapsedMs = $launcherStopwatch.ElapsedMilliseconds
+    $launcherPhases.Add([pscustomobject]@{ phase = $Phase; elapsedMs = $elapsedMs })
+    Write-Output ("[launcher-phase] {0} @ {1}ms" -f $Phase, $elapsedMs)
+}
+function Write-LauncherTiming() {
+    $payload = @{
+        schemaVersion = 1
+        totalMs = $launcherStopwatch.ElapsedMilliseconds
+        phases = @($launcherPhases)
+    }
+    Write-Output ("[launcher-timing] " + ($payload | ConvertTo-Json -Compress -Depth 4))
+}
+
 function Test-PreviewReadySignal([string]$Path) {
     # The immutable Preview writes this fixed redacted line only after its
     # receipt-backed snapshot admission and runtime installation. stdout is a
@@ -261,8 +287,9 @@ Assert-NoGameProcesses
 # the DLL projected into this Farmhand transaction.
 $repositoryRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $stardewProject = Join-Path $repositoryRoot "integrations\stardew\GameBuddy.Stardew.csproj"
-& dotnet build $stardewProject --configuration Release --no-restore "-p:GamePath=$GamePath" -t:Rebuild
-if ($LASTEXITCODE -ne 0) { throw "stardew_release_rebuild_failed" }
+    & dotnet build $stardewProject --configuration Release --no-restore "-p:GamePath=$GamePath" -t:Rebuild
+    if ($LASTEXITCODE -ne 0) { throw "stardew_release_rebuild_failed" }
+    Write-LauncherPhase "modRebuilt"
 
 $fixtureRoot = Join-Path $env:LOCALAPPDATA "GameBuddy"
 # Preview uses an allowlisted native locale selected by the launcher. The
@@ -336,8 +363,10 @@ try {
     # before the AI launch so neither role inherits the other's shape.
     $env:GAMEBUDDY_WINDOW_MODE = $HostWindowMode
     $hostProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $hostModsPath)) -WorkingDirectory $GamePath -PassThru
+    Write-LauncherPhase "hostLaunched"
     $notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Invoke-NodeQuiet @("tools/await-stardew-fixture-readiness.mjs", "--session-directory", $sessionDirectory, "--host-config", $hostConfig, "--timeout-ms", ($StartupTimeoutSeconds * 1000), "--not-before-unix-ms", $notBefore) "host_fixture_readiness_failed"
+    Write-LauncherPhase "hostReady"
     # Fixture readiness is published during the same game-thread update that
     # starts the LAN server. Give the next update a bounded five-second window
     # to publish the separately signed attachment advertisement before the
@@ -347,6 +376,7 @@ try {
     # Current production attachment flow authenticates the live advertisement,
     # request, response, and manifest before the transaction gets any bridge data.
     Invoke-NodeQuiet @("tools/stardew-attachment-request.mjs", "--session-directory", $sessionDirectory, "--host-config", $hostConfig, "--expected-farmhand-id", $ExpectedFarmhandId, "--timeout-ms", ($StartupTimeoutSeconds * 1000)) "fresh_attachment_manifest_failed"
+    Write-LauncherPhase "attachmentManifestMinted"
     $manifestPath = Join-Path $hostProfile.HostFarmhandProvisioning.SessionDirectory "stardew-farmhand-manifest.json"
     if (-not (Test-WindowsAbsolutePath $manifestPath) -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "fresh_attachment_manifest_missing" }
     $manifestBytes = [System.IO.File]::ReadAllBytes($manifestPath)
@@ -372,6 +402,7 @@ try {
     # with its own validated mode so the host child's value cannot cross roles.
     $env:GAMEBUDDY_WINDOW_MODE = $FarmhandWindowMode
     $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -PassThru
+    Write-LauncherPhase "aiClientLaunched"
     # The Mod creates its named-pipe listener during its normal SMAPI startup.
     # The first Preview process is the sole safe readiness probe: only a typed
     # Windows named-pipe `connect` ENOENT may be retried. Any other Preview
@@ -431,6 +462,11 @@ try {
                 # Ready ends startup for both ordinary and proof modes. Proof
                 # is a separate, operator-driven interaction phase below.
                 $previewReady = $true
+                # The number an operator actually asks for: everything above is
+                # "the companion cannot take a player message yet", everything
+                # after this line is the manual interaction window.
+                Write-LauncherPhase "previewReady"
+                Write-LauncherTiming
                 break
             }
             if ($previewProcess.HasExited) {

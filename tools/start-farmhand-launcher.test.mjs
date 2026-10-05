@@ -260,3 +260,31 @@ test("launcher retries only the bounded AI pipe-listener connect race before the
   assert.match(launcher, /preview-\{0\}\.stderr\.log/);
   assert.doesNotMatch(launcher, /catch\s*\{\s*Start-Sleep/);
 });
+
+test("the launcher times each startup phase and never prints a path or token", () => {
+  // "How long until the companion can exchange text" is four costs with four
+  // owners, so the launcher records a bounded phase line per owner plus one JSON
+  // summary. The private-output rule still holds: a phase line carries a name and
+  // a millisecond count, never a path, token, or child output.
+  assert.match(launcher, /\$launcherStopwatch = \[System\.Diagnostics\.Stopwatch\]::StartNew\(\)/);
+  assert.match(launcher, /function Write-LauncherPhase\(\[string\]\$Phase\)/);
+  assert.match(launcher, /function Write-LauncherTiming\(\)/);
+  for (const phase of [
+    "modRebuilt",
+    "hostLaunched",
+    "hostReady",
+    "attachmentManifestMinted",
+    "aiClientLaunched",
+    "previewReady",
+  ]) {
+    assert.match(launcher, new RegExp(`Write-LauncherPhase "${phase}"`), `missing phase mark ${phase}`);
+  }
+  // The summary is emitted exactly at readiness: the point after which the wait
+  // is over and the manual interaction window begins.
+  assert.match(launcher, /Write-LauncherPhase "previewReady"[\s\S]{0,200}Write-LauncherTiming/);
+  const phaseWriter = launcher.slice(
+    launcher.indexOf("function Write-LauncherPhase"),
+    launcher.indexOf("function Write-LauncherTiming"),
+  );
+  assert.doesNotMatch(phaseWriter, /bridgeToken|pipeName|\$smapi|RunRoot/);
+});
