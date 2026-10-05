@@ -10,6 +10,10 @@ import { settleMountedAuthoredContext } from "../continuity-semantic-production-
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { VoicePreferenceStore } from "../settings/voice-preference-store.js";
+import {
+  companionLocalePath,
+  LanguagePreferenceStore,
+} from "../settings/language-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
@@ -252,6 +256,14 @@ export async function startTavernManagementPresentationAdmission(
     const voicePreferenceStore = new VoicePreferenceStore(
       join(input.manifest.runtimeRoot, "settings", "voice-preference.json"),
     );
+    // The companion language preference the player writes through this same
+    // surface, at the one root-level path every runtime reads. Without this the
+    // routes would fail closed ("A profile that advertises a route without the
+    // exact service cannot serve it") and the player's choice would have nowhere
+    // to live.
+    const languagePreferenceStore = new LanguagePreferenceStore(
+      companionLocalePath(input.manifest.runtimeRoot),
+    );
     // The Character / Persona / Scenario / Greeting library is the real
     // durable tavern artifact store (design/28 §2). Companion handles are
     // minted through the exact mounted lease projection, so the browser can
@@ -371,6 +383,7 @@ export async function startTavernManagementPresentationAdmission(
       memoryService,
       worldInfoService,
       voicePreferenceStore,
+      languagePreferenceStore,
       connectionService,
       libraryService,
       companionDetailService,
@@ -532,6 +545,8 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.language.read",
+      "settings.language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",
@@ -564,6 +579,8 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
+      "settings.language.read",
+      "settings.language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",

@@ -1,5 +1,6 @@
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
+import { join } from "node:path";
 
 /**
  * Host-owned companion language preference. The frontend (Tavern) is the
@@ -10,6 +11,18 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
  */
 export const COMPANION_LOCALE_SCHEMA_VERSION = 1 as const;
 export type CompanionLocale = "zh-CN" | "en-US";
+
+/** The companion language when the player has not chosen one. */
+export const DEFAULT_COMPANION_LOCALE: CompanionLocale = "zh-CN";
+
+/**
+ * The single root-level path of the preference. One path, one authority: the
+ * management surface writes it and every runtime reads it, so neither side
+ * carries a locale of its own.
+ */
+export function companionLocalePath(runtimeRoot: string): string {
+  return join(runtimeRoot, "settings", "language-preference.json");
+}
 
 export type LanguagePreference = Readonly<{
   revision: number;
@@ -70,6 +83,26 @@ export class LanguagePreferenceStore {
       throw new Error("invalid_language_preference_store");
     }
   }
+}
+
+/**
+ * The player's chosen companion language, or undefined when never configured.
+ *
+ * The runtime resolves this at mount, so the prompt's single language authority
+ * and the presentation locale are the player's choice instead of a hardcoded
+ * default. An unreadable or corrupt preference throws rather than silently
+ * speaking a language the player did not choose.
+ */
+export async function readStoredCompanionLocale(
+  runtimeRoot: string,
+): Promise<CompanionLocale | undefined> {
+  const preference = await new LanguagePreferenceStore(companionLocalePath(runtimeRoot)).read();
+  return preference.locale ?? undefined;
+}
+
+/** The effective companion language: the player's choice, else the default. */
+export async function resolveCompanionLocale(runtimeRoot: string): Promise<CompanionLocale> {
+  return (await readStoredCompanionLocale(runtimeRoot)) ?? DEFAULT_COMPANION_LOCALE;
 }
 
 const DEFAULT_LANGUAGE_PREFERENCE: StoredLanguagePreference = Object.freeze({

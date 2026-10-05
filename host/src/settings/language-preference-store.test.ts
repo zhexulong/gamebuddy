@@ -6,10 +6,14 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
+  companionLocalePath,
   type LanguagePreference,
   LanguagePreferenceRevisionConflict,
   LanguagePreferenceStore,
+  readStoredCompanionLocale,
+  resolveCompanionLocale,
 } from "./language-preference-store.js";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 // The store's durable path lock releases through the Windows stale-lock
 // reclaimer; bind the same capability the production runtime binds.
@@ -79,4 +83,26 @@ test("language preference store rejects a corrupted persisted file without overw
     assert.match(raw, /garbage/);
     await assert.rejects(store.update(0, { locale: "en-US" }), /invalid_language_preference_store/);
   });
+});
+test("the runtime-facing reader resolves the player's choice from the one root path", async () => {
+  // The runtime never carries a locale of its own: it asks this reader, and only a
+  // configured preference overrides the default.
+  const root = await canonicalTestRoot("companion-locale-root-");
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+  assert.equal(companionLocalePath(root).endsWith(join("settings", "language-preference.json")), true);
+  // Never configured: no stored value, and the effective locale is the default.
+  assert.equal(await readStoredCompanionLocale(root), undefined);
+  assert.equal(await resolveCompanionLocale(root), "zh-CN");
+
+  const store = new LanguagePreferenceStore(companionLocalePath(root));
+  await store.update(0, { locale: "en-US" });
+  assert.equal(await readStoredCompanionLocale(root), "en-US");
+  assert.equal(await resolveCompanionLocale(root), "en-US");
+
+  // A corrupt file is not a "no preference": the runtime must refuse rather than
+  // speak a language the player did not choose.
+  await writeFile(companionLocalePath(root), "{\"schemaVersion\":1,\"revision\":0,\"locale\":\"fr-FR\"}");
+  await assert.rejects(readStoredCompanionLocale(root), /invalid_language_preference_store/);
+  await rm(root, { recursive: true, force: true });
 });
