@@ -1895,3 +1895,44 @@ test("rejects test, fixture, and legacy resource declarations before source I/O"
     await assert.rejects(readArtifactConfig(root), /production_resource_source_forbidden/);
   }
 }));
+
+test("the local-iteration seam is inert unless GAMEBUDDY_HOST_PRODUCTION_ROOT is set", async (t) => {
+  // Production verification can only be satisfied by a generation the protected
+  // release CI published, so a local two-process run cannot complete on a dev
+  // machine at all (measured 2026-10-05). The seam lets a LOCAL run use a locally
+  // built generation - and it must be inert by default, or the production
+  // guarantee would silently disappear.
+  const previous = process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT;
+  const root = await mkdtemp(join(tmpdir(), "production-artifact-local-seam-"));
+  t.after(async () => {
+    if (previous === undefined) delete process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT;
+    else process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  const generation = "g-local-seam-1";
+  const artifactRoot = join(root, "generations", generation);
+  await mkdir(artifactRoot, { recursive: true });
+  await writeFile(join(artifactRoot, "main.js"), "export {};\n");
+  await writeFile(
+    join(root, "current.json"),
+    JSON.stringify({ schema: "gamebuddy-host-production-current/v2", generation }),
+  );
+  const args = { hostRoot, outputRoot: root, entry: "main.js" };
+
+  // Default: OFF. The unpublished root is rejected by the production path, so
+  // nothing about local iteration can leak into a normal resolution.
+  delete process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT;
+  await assert.rejects(() => resolveProductionEntry(args), /production_/);
+
+  // Opt-in: the local generation is selected directly, and the re-attestation is
+  // a no-op (nothing local can satisfy it).
+  process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT = root;
+  const selected = await resolveProductionEntry(args);
+  assert.equal(selected.generation, generation);
+  assert.equal(selected.artifactRoot, artifactRoot);
+  await recheckProductionEntry({ hostRoot, selected });
+
+  // A pointer that tries to escape the opt-in root still fails closed.
+  await writeFile(join(root, "current.json"), JSON.stringify({ generation: "../escape" }));
+  await assert.rejects(() => resolveProductionEntry(args), /local_generation_pointer_invalid/);
+});

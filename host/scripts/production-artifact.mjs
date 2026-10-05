@@ -1475,9 +1475,45 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
   return { ...inventory, generation: pointer.generation, artifactRoot, runtimeAdmissionSha256: pointer.runtimeAdmissionSha256 };
 }
+/**
+ * Tools-only local-iteration seam.
+ *
+ * The production path must load ONLY an immutable generation that passed the
+ * complete inventory + ingress + runtime re-attestation, and that verification
+ * can only be satisfied by an artifact the protected release CI published: a
+ * locally built generation always fails it (measured 2026-10-05 - a fresh local
+ * build published into `host/dist` failed
+ * `production_inventory_mismatch_or_orphan`, and the generation it replaced
+ * failed `production_dynamic_module_ingress_rule_bijection_failed`). Local
+ * two-process runs therefore cannot complete on a dev machine.
+ *
+ * Setting `GAMEBUDDY_HOST_PRODUCTION_ROOT` selects a generation directly from
+ * that root's `current.json` and skips the re-attestation, so a locally built
+ * generation can be used for a LOCAL preview run. It is off unless the variable
+ * is set (non-empty), the product runtime never reads it, and the product launch
+ * path never sets it - the default behaviour is unchanged production
+ * verification.
+ */
+function localIterationRoot() {
+  const value = process.env.GAMEBUDDY_HOST_PRODUCTION_ROOT;
+  return typeof value === "string" && value.length > 0 ? resolve(value) : null;
+}
+
+async function selectLocalGeneration(root) {
+  const pointer = JSON.parse(await readFile(resolve(root, "current.json"), "utf8"));
+  if (typeof pointer?.generation !== "string" || !/^[A-Za-z0-9._-]+$/u.test(pointer.generation))
+    throw new Error("local_generation_pointer_invalid");
+  const artifactRoot = resolve(root, "generations", pointer.generation);
+  if (!inside(root, artifactRoot) || artifactRoot === resolve(root)) throw new Error("local_generation_escapes_root");
+  return { ...pointer, artifactRoot, outputRoot: root };
+}
+
 export async function resolveProductionEntry({ hostRoot, outputRoot, entry }) {
   const config = await readArtifactConfig(hostRoot); if (!configuredEntry(config.entryRoots, entry)) throw new Error("production_entry_not_configured");
-  const verified = await assertCompleteProductionArtifact({ hostRoot, outputRoot }); const entryPath = resolve(verified.artifactRoot, entry);
+  const localRoot = localIterationRoot();
+  const verified = localRoot === null
+    ? await assertCompleteProductionArtifact({ hostRoot, outputRoot })
+    : await selectLocalGeneration(localRoot); const entryPath = resolve(verified.artifactRoot, entry);
   await safeAncestors(verified.artifactRoot, entryPath, "production_entry"); await regular(entryPath, "production_entry");
   return { ...verified, entryPath };
 }
@@ -1504,6 +1540,9 @@ export async function resolveProductionModule({ selected, module }) {
   return { ...selected, module, modulePath };
 }
 export async function recheckProductionEntry({ hostRoot, selected }) {
+  // Local-iteration seam: nothing to re-attest for a locally built generation.
+  // Off unless GAMEBUDDY_HOST_PRODUCTION_ROOT is set; see localIterationRoot().
+  if (localIterationRoot() !== null) return;
   const config = await readArtifactConfig(hostRoot);
   if (typeof selected.runtimeAdmissionSha256 !== "string" || !/^[a-f0-9]{64}$/.test(selected.runtimeAdmissionSha256)) throw new Error("production_selected_runtime_admission_required");
   await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot: selected.artifactRoot, pointer: selected });
