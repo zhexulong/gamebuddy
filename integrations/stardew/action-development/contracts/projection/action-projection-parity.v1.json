@@ -134,6 +134,30 @@
         }
       },
       {
+        "actionId": "select_mine_elevator_floor",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "mine_elevator_floor_selected"
+        }
+      },
+      {
         "actionId": "use_raft",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -1994,6 +2018,7 @@
       "travel",
       "ride_minecart",
       "ride_bus",
+      "select_mine_elevator_floor",
       "use_raft",
       "mount_transport",
       "enter_mine",
@@ -2085,6 +2110,7 @@
       "travel",
       "ride_minecart",
       "ride_bus",
+      "select_mine_elevator_floor",
       "use_raft",
       "mount_transport",
       "enter_mine",

@@ -513,6 +513,17 @@ const TABLE = {
     "mp-insensitive",
     "warps the local player into the shared MineShaft; warping is per-actor and the body reads no multiplayer token",
   ],
+  // The elevator's terminal is the same public seam as enter_mine: it sets the
+  // per-actor Farmer.ridingMineElevator flag and then calls Game1.enterMine(floor).
+  // Floor 0 diverges to Game1.warpFarmer("Mine", 17, 4) — also per-actor. The floor
+  // SET is derived from the shared mine_lowestLevelReached, which is read-only here:
+  // this action never writes mine progress, it only consumes what it advertises.
+  select_mine_elevator_floor: [
+    "StardewValley/Game1.cs",
+    "public static void enterMine(int whatLevel, int? forceLayout = null)",
+    "mp-insensitive",
+    "sets the per-actor Farmer.ridingMineElevator flag then warps the local player into a generated mine level (or, for floor 0, to the mine entrance); the body reads shared mine progress but writes no multiplayer token",
+  ],
 };
 
 const MP_REJECT_PATTERN =

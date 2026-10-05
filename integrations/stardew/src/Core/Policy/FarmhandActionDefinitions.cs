@@ -109,6 +109,7 @@ public static class FarmhandActionCatalog
             "write",
             "bus_arrived",
             "BusStop.checkAction+answerDialogue"), FarmhandActionLifecycle.LiveVerified),
+        E("select_mine_elevator_floor", "world_navigation", FarmhandActionHandlerGroup.Movement, ElevatorFloor(), FarmhandActionLifecycle.LiveVerified),
         E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.LiveVerified),
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
@@ -236,6 +237,31 @@ public static class FarmhandActionCatalog
         null,
         "minecart_ride_completed",
         ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"));
+
+    /// <summary>
+    /// The mine elevator has no client coordinate: its whole intent is WHICH
+    /// already-reached floor to select, and the native floor set is a pure function
+    /// of the live <c>MineShaft.lowestLevelReached</c> (floor 0, plus every multiple
+    /// of 5 up to min(lowestLevelReached, 120) — the exact enumeration
+    /// <c>MineElevatorMenu</c> builds at MineElevatorMenu.cs:16/37). The Mod
+    /// re-derives that set on the game thread and refuses an unadvertised floor, so a
+    /// client cannot use this action to teleport to a level the player has not
+    /// reached.
+    ///
+    /// Terminal: the selection the menu itself performs —
+    /// <c>Game1.enterMine(floor)</c> after setting the public
+    /// <c>Farmer.ridingMineElevator</c> flag (the mine entrance reads it to place the
+    /// actor on the elevator tile rather than the ladder), or for floor 0 the
+    /// <c>Game1.warpFarmer("Mine", 17, 4)</c> return. Both are public; the floor
+    /// SELECTION only exists inside the menu's receiveLeftClick, which is why this is
+    /// an action rather than a travel target. See
+    /// farmhandexecutioncontroller.mineelevatoractions.cs.
+    /// </summary>
+    private static FarmhandActionDescriptor ElevatorFloor() => A(
+        null,
+        null,
+        "mine_elevator_floor_selected",
+        ("expectedTargetId", "string"));
 
     /// <summary>advance_day carries no arguments: its target is the actor's own bed and its
     /// readiness is native state, so no client coordinate, slot, or target identity is trusted.</summary>

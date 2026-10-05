@@ -59,7 +59,60 @@ internal sealed partial class ExecutionManager
         // so a lagging game tick can never extend a Host/player-bound request.
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
         bool nativeWarpTarget = Game1.player.currentLocation.warps.Any(warp => !warp.npcOnly.Value && warp.X == (int)targetTile.X && warp.Y == (int)targetTile.Y);
-        LocalMoveSpec specification = new(executionId, requestId, targetTile, allowAdjacentArrival || nativeWarpTarget, this.revision, this.tick + deadlineTicks, deadlineMs);
+        bool adjacentArrival = allowAdjacentArrival || nativeWarpTarget;
+
+        // 1. The named tile cannot be walked onto -- it holds the thing the caller
+        //    wants to touch (a tree, a rock, a chest, a building) -- but a walkable
+        //    neighbour is: approach that neighbour instead of refusing. Every other
+        //    interaction in this Mod is a native action from an adjacent tile, so
+        //    "walk to the object" now works the way the agent means it. The test is the
+        //    PLANNER's own walkability, not a stricter object-occupancy reading: a
+        //    cropped HoeDirt is legally walkable, and treating it as blocked both
+        //    hijacked the request into a failed substitution and refused a move the
+        //    planner would have made (the Mod's own probe contradicted the verdict with
+        //    probe_says_reachable=true). The substitution is named in the receipt, never
+        //    silent.
+        Vector2 effectiveTarget = targetTile;
+        bool approachSubstituted = false;
+        if (!StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, targetTile))
+        {
+            Vector2? approach = SelectStandingApproachTile(
+                targetTile,
+                Game1.player.Tile,
+                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate));
+            if (approach is not null)
+            {
+                effectiveTarget = approach.Value;
+                adjacentArrival = true;
+                approachSubstituted = true;
+            }
+        }
+
+        // 2. Already inside the arrival contract for the EFFECTIVE destination: the
+        //    actor stands on it, or (when adjacency is allowed) on one of its
+        //    neighbours. The native planner has nothing to plan, so its
+        //    pathToEndPoint comes back empty and this used to be reported as
+        //    `no_native_path` -- a REACHABILITY verdict the Mod's own probe
+        //    contradicts (target_enclosed=false means it found a traversable
+        //    neighbour: the one the actor is standing on). A live ladder run spent
+        //    10 of its 29 movement dispatches on that false verdict and told the
+        //    player the farm was a maze. A satisfied arrival contract is success, and
+        //    saying so moves no native state because nothing needs moving. The check
+        //    is made AFTER substitution so the same rule covers the approached case.
+        if (StardewBodyController.IsArrivalDelta(
+            Math.Abs((int)Game1.player.Tile.X - (int)effectiveTarget.X),
+            Math.Abs((int)Game1.player.Tile.Y - (int)effectiveTarget.Y),
+            adjacentArrival))
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "target_reached",
+                approachSubstituted
+                    ? $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
+                    : $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(targetTile)}");
+
+        LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
         this.active = specification;
@@ -69,10 +122,62 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence);
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"route_revision={specification.RouteRevision};target={FormatTile(targetTile)}");
+        string acceptedEvidence = approachSubstituted
+            ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
+            : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}";
+        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, acceptedEvidence);
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
+    }
+
+    /// <summary>
+    /// The deterministic standable neighbour of a destination tile, as pure
+    /// arithmetic over a standability predicate so its choice is directly
+    /// testable (the same reason <c>AssessReachability</c> takes a predicate).
+    ///
+    /// The whole Chebyshev-1 ring is considered — cardinals first, then diagonals —
+    /// because that is exactly the neighbourhood the rest of the Mod already treats as
+    /// "adjacent": the arrival predicate (<see cref="IsArrivalDelta"/>) accepts the
+    /// full ring when adjacency is allowed, and every interaction admission gates on
+    /// <c>IsTileWithinChebyshevRadius(..., 1)</c>, whose own comment records that the
+    /// native click path "stops on any Chebyshev-1 tile and the subsequent tool call
+    /// re-enters". A cardinal-only search was stricter than both and cost real
+    /// refusals on a densely cropped field, where only a diagonal tile was free.
+    ///
+    /// The nearest candidate to the actor wins; equidistant candidates keep the
+    /// declared order, so the choice cannot drift between runs (a run-to-run diff must
+    /// mean something).
+    /// </summary>
+    internal static Vector2? SelectStandingApproachTile(Vector2 targetTile, Vector2 actorTile, Func<Vector2, bool> isStandable)
+    {
+        Vector2[] candidates =
+        {
+            targetTile + new Vector2(-1f, 0f),
+            targetTile + new Vector2(1f, 0f),
+            targetTile + new Vector2(0f, -1f),
+            targetTile + new Vector2(0f, 1f),
+            targetTile + new Vector2(-1f, -1f),
+            targetTile + new Vector2(1f, -1f),
+            targetTile + new Vector2(-1f, 1f),
+            targetTile + new Vector2(1f, 1f),
+        };
+        Vector2? best = null;
+        float bestDistance = float.MaxValue;
+        foreach (Vector2 candidate in candidates)
+        {
+            if (!isStandable(candidate))
+                continue;
+            float distance = Math.Abs(candidate.X - actorTile.X) + Math.Abs(candidate.Y - actorTile.Y);
+            // Strict `<` only: equidistant candidates keep the declared candidate
+            // order (left, right, up, down), so the choice is deterministic without a
+            // second ordering rule to reason about.
+            if (best is not null && distance >= bestDistance)
+                continue;
+            best = candidate;
+            bestDistance = distance;
+        }
+        return best;
     }
 
     /// <summary>
@@ -382,9 +487,21 @@ internal sealed partial class ExecutionManager
         // level's stairs (verified live at 10,4 vs the requested 6,6), so tile
         // equality is not a legal postcondition for enter_mine; reaching the
         // target level is.
-        bool tileMatches = specification.Action == "enter_mine"
-            ? Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft && shaft.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length))
-            : Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY;
+        //
+        // select_mine_elevator_floor shares that rule but has two target shapes:
+        // floor 0 targets the mine entrance MAP (a plain location match), while every
+        // other floor targets a generated level and lands somewhere the native layout
+        // chooses, so only "reached that level" is a legal postcondition.
+        bool tileMatches = specification.Action switch
+        {
+            "enter_mine" => Game1.player.currentLocation is StardewValley.Locations.MineShaft mine
+                && mine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
+            "select_mine_elevator_floor" => specification.TargetLocation == "Mine"
+                ? locationMatches
+                : Game1.player.currentLocation is StardewValley.Locations.MineShaft elevatorMine
+                    && elevatorMine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
+            _ => Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY,
+        };
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = locationMatches && tileMatches
             ? specification.Action == "enter_exit"
@@ -393,14 +510,18 @@ internal sealed partial class ExecutionManager
                     ? "minecart_ride_completed"
                     : specification.Action == "enter_mine"
                         ? "mine_entered"
-                        : "travel_completed"
+                        : specification.Action == "select_mine_elevator_floor"
+                            ? "mine_elevator_floor_selected"
+                            : "travel_completed"
             : specification.Action == "enter_exit"
                 ? "enter_exit_postcondition_mismatch"
                 : specification.Action == "ride_minecart"
                     ? "minecart_ride_postcondition_mismatch"
                     : specification.Action == "enter_mine"
                         ? "mine_entry_postcondition_mismatch"
-                        : "travel_postcondition_mismatch";
+                        : specification.Action == "select_mine_elevator_floor"
+                            ? "mine_elevator_floor_postcondition_mismatch"
+                            : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.
@@ -413,7 +534,7 @@ internal sealed partial class ExecutionManager
             state,
             reasonCode,
             this.revision,
-            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action == "enter_mine" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : "")}{(specification.Action == "ride_minecart" ? minecartEvidence : "")}");
+            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}");
         this.activeTravel = null;
         this.Remember(receipt);
         this.AddTrace(receipt);

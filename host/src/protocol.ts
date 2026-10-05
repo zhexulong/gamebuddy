@@ -526,7 +526,15 @@ activeExecution?: ActiveExecution | null;
     stationKind: "kitchen" | "cookout_kit" }>[];
    /** Available native minecart rides from a station on the current map, as
     * advertised for the `ride_minecart` action. */
-   minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
+   /** Floors the mine elevator offers right now. The Mod derives them from the live
+   * lowest level reached; a floor outside this list is refused on the game thread. */
+  mineElevatorFloorTargets?: readonly Readonly<{
+    targetId: string;
+    floor: number;
+    isCurrentFloor: boolean;
+    isMineEntrance: boolean;
+  }>[];
+  minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
      displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
      targetTileX: number; targetTileY: number }>[];
    /** Adjacent native water tiles where the equipped Raft can be launched. */
@@ -545,6 +553,7 @@ export type ExecutionRequest = Readonly<{
     | "equip_tool"
     | "travel"
     | "ride_minecart"
+    | "select_mine_elevator_floor"
     | "ride_bus"
     | "use_raft"
     | "mount_transport"
@@ -1127,6 +1136,7 @@ const SNAPSHOT_KEYS = [
   "craftingRecipeTargets",
   "cookingRecipeTargets",
   "cookingStationTargets",
+  "mineElevatorFloorTargets",
   "minecartTargets",
   "bushTargets",
   "fruitTreeTargets",
@@ -1135,6 +1145,7 @@ const SNAPSHOT_KEYS = [
   "fenceGateTargets",
   "weather",
    "minecartTargets",
+    "mineElevatorFloorTargets",
     "raftTargets",
     "horseTargets",
     "mineEntranceTargets",
@@ -1638,6 +1649,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "travel" &&
      value.action !== "ride_minecart" &&
      value.action !== "ride_bus" &&
+     value.action !== "select_mine_elevator_floor" &&
      value.action !== "use_raft" &&
      value.action !== "mount_transport" &&
      value.action !== "enter_mine" &&
@@ -1752,6 +1764,12 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_minecart_station";
     return validateMinecartRideTarget(value.args, snapshot);
+  } else if (value.action === "select_mine_elevator_floor") {
+    // Only the opaque floor target: the floor SET is derived by the Mod from the
+    // live lowest level reached, so there is no coordinate or raw level to check
+    // here beyond the shape and the opaque-id form.
+    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_args";
+    if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_mine_elevator_floor";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2481,6 +2499,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:cookingStationTargets";
    if (
+     value.mineElevatorFloorTargets !== undefined &&
+     (!Array.isArray(value.mineElevatorFloorTargets) ||
+       value.mineElevatorFloorTargets.length > 32 ||
+       !value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))
+   )
+     return "invalid_snapshot:mineElevatorFloorTargets";
+   if (
      value.minecartTargets !== undefined &&
      (!Array.isArray(value.minecartTargets) ||
        value.minecartTargets.length > 24 ||
@@ -2722,6 +2747,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.cookingStationTargets) &&
         value.cookingStationTargets.length <= 16 &&
         value.cookingStationTargets.every(isCookingStationTargetFact))) &&
+    (value.mineElevatorFloorTargets === undefined ||
+      (Array.isArray(value.mineElevatorFloorTargets) &&
+        value.mineElevatorFloorTargets.length <= 32 &&
+        value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))) &&
     (value.minecartTargets === undefined ||
      (Array.isArray(value.minecartTargets) &&
        value.minecartTargets.length <= 24 &&
@@ -2749,6 +2778,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "equip_tool" ||
       value.action === "travel" ||
        value.action === "ride_minecart" ||
+      value.action === "select_mine_elevator_floor" ||
        value.action === "ride_bus" ||
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
@@ -4127,6 +4157,21 @@ function isHorseTargetFact(value: unknown): boolean {
 }
 function isMineEntranceTargetFact(value: unknown): boolean {
   return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) && typeof value.targetId === "string" && /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+}
+
+function isMineElevatorFloorFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "floor", "isCurrentFloor", "isMineEntrance"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.floor === "number" &&
+    Number.isSafeInteger(value.floor) &&
+    value.floor >= 0 &&
+    value.floor <= 120 &&
+    typeof value.isCurrentFloor === "boolean" &&
+    typeof value.isMineEntrance === "boolean"
+  );
 }
 
 function isMinecartTargetFact(value: unknown): boolean {

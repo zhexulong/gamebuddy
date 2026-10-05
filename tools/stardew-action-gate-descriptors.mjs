@@ -215,6 +215,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // (bus_arrived), the fare actually deducted, and the world moving the actor to
   // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
   gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
+
+  // The elevator's floor selection only exists inside MineElevatorMenu's click
+  // handler, so it is its own action rather than an `enter_mine` argument (Lane L3
+  // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
+  // runner proves the terminal, the world arriving on the requested LEVEL, and the
+  // floor-set projection following. Live evidence: fixtures/stardew/RUNBOOK.md 36.
+  gate("select_mine_elevator_floor", 1, "run-stardew-native-local-player-mine-elevator-smoke.mjs", "mine_elevator_floor_selected", "native_mine_elevator_v1"),
   // Promoted to live_verified (2026-10-04): each of these produced a real
   // target-version native-local run with its own receipt and fresh postcondition
   // in the loop-closure wave. Publication review is a separate, optional marker
@@ -330,6 +337,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
+  ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
 });
