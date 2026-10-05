@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, rmdir, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   LaunchAiClientInput,
   ReadOwnedAiClientGenerationResult,
@@ -39,6 +39,7 @@ import {
   pathLockPath,
   readSafeDirectory,
   removeOwnedSafeFile,
+  removeSafeFile,
   verifySafePathBoundary,
   withPathLock,
 } from "../../../path-lock.js";
@@ -1395,12 +1396,31 @@ async function persistPrivateBootstrapOwner(
     { containmentRoot: root },
   );
 
-  let record = await readAndValidateOwner(ownerPath, root);
+  return openDurableOwnerState(ownerPath, root);
+}
+
+/**
+ * The durable owner surface over an already-persisted `owner.json`: the record
+ * this process currently believes, the transaction directory it lives in, the
+ * in-memory successor hand-off every durable CAS uses, and the quarantine
+ * closure. The reservation path and the recoverable opener share this one
+ * definition, so both hand out the same surface instead of two lookalikes.
+ */
+async function openDurableOwnerState(ownerPath: string, root: string): Promise<DurableOwner> {
+  return durableOwnerStateOver(ownerPath, root, await readAndValidateOwner(ownerPath, root));
+}
+
+function durableOwnerStateOver(
+  ownerPath: string,
+  root: string,
+  initialRecord: StardewPrivateBootstrapOwnerRecord,
+): DurableOwner {
+  let record = initialRecord;
   let quarantinePromise: Promise<void> | null = null;
   let quarantineStarted = record.state === "quarantined";
   return Object.freeze({
     get record() { return record; },
-    transactionDirectory: directory,
+    transactionDirectory: dirname(ownerPath),
     replaceRecord(next: StardewPrivateBootstrapOwnerRecord): void { record = freezeRecord(next); },
     quarantine(): Promise<void> {
       if (quarantinePromise !== null) return quarantinePromise;
@@ -3883,6 +3903,96 @@ export function consumeStardewBootstrapGuardianOwnerBinding(
 }
 
 /**
+ * The identity every recovery handle is registered under. It is deliberately not
+ * a composition identity: a recovery handle stands for a crashed attempt's
+ * durable record, not for the composition that happens to be driving the
+ * recovery, so the composition-bound surfaces (staging, launch, terminal owner
+ * operations) refuse it while the module-level recovery and settlement seams
+ * accept it. It is one shared object rather than a second registry: the handle
+ * is registered in the same owner-facts singleton every other owner uses, and
+ * its Guardian binding is minted and consumed by the same single production
+ * consumption site every other owner's binding goes through.
+ */
+const recoverableOwnerIdentity = Object.freeze({});
+
+/**
+ * A recovery handle owns no launch authority: the attempt's launch reservations
+ * were consumed by the process that crashed, so a launch through this handle
+ * could never be true. The refusal is the whole behavior, and it is the same
+ * bounded error for both roles because the reason is the same for both.
+ */
+function refuseRecoverableOwnerLaunch(): never {
+  throw new Error("stardew_recoverable_owner_launch_unavailable");
+}
+
+function createRecoverablePlayerHostRegistration(launchGeneration: string): StardewPlayerHostLaunchRegistration {
+  return Object.freeze({
+    launchGeneration,
+    launch: refuseRecoverableOwnerLaunch,
+    // There is no in-process reservation left to revoke: the one this record
+    // describes died with the process that held it.
+    revoke: () => undefined,
+  });
+}
+
+function createRecoverableAiClientRegistration(launchGeneration: string): StardewAiClientLaunchRegistration {
+  return Object.freeze({
+    launchGeneration,
+    launch: refuseRecoverableOwnerLaunch,
+    containedLaunch: refuseRecoverableOwnerLaunch,
+    revoke: () => undefined,
+  });
+}
+
+/**
+ * The recovery handle of one opened attempt, as a real composer owner handle: it
+ * is registered in this module's owner-facts singleton exactly like a reserved
+ * owner, so the recovery seam, the settlement and the post-recovery cleanup all
+ * accept it through the same accessor and the same Guardian owner binding every
+ * other owner goes through. It is not a second authority, a second handle type,
+ * or a second durable seam.
+ *
+ * Its one difference from a reserved owner is that it owns no launch authority
+ * (see `refuseRecoverableOwnerLaunch`) and that its bootstrap binding state
+ * starts at `terminal`, so no lifecycle can bind it as a live owner. Every fact
+ * it does expose -- the durable record, its transaction directory, and the
+ * immutable Guardian fence -- is the crashed attempt's own, read from its own
+ * `owner.json`.
+ */
+function composeRecoverablePlayerHostOwner(durableOwner: DurableOwner): StardewOwnedPlayerHostBootstrap {
+  const initial = durableOwner.record;
+  // An owned launch reservation records its Player Host generation; an external
+  // Player Host attempt has none, which is the only thing the empty marker
+  // describes. Nothing can reach a launch through this handle either way.
+  const playerHostGeneration = initial.playerHost.kind === "launch_reserved" ? initial.playerHost.launchGeneration : "";
+  const owner = Object.freeze({}) as StardewOwnedPlayerHostBootstrap;
+  const facts: OwnedPlayerHostBootstrapFacts = {
+    compositionIdentity: recoverableOwnerIdentity,
+    immutableFence: immutableFenceFor(initial),
+    durableOwner,
+    playerHostRegistration: createRecoverablePlayerHostRegistration(playerHostGeneration),
+    aiClientRegistration: createRecoverableAiClientRegistration(initial.aiClient.launchGeneration),
+    expiresAtMs: initial.expiresAtMs,
+    readClock: () => Date.now(),
+    launchStates: { playerHost: "revoked", aiClient: "revoked" },
+    quarantine: { started: false, promise: null },
+    bindingState: { value: "terminal" },
+    playerHostProfileStagingState: { value: "not_staged" },
+    aiClientProfileState: { value: "not_materialized" },
+    bridgeConnectionState: { value: "unavailable" },
+    privateMaterial: { value: null },
+    privateBridgeMaterial: { value: null },
+    consumePlayerHostLaunch: refuseRecoverableOwnerLaunch,
+    consumePlayerHostLaunchContained: refuseRecoverableOwnerLaunch,
+    consumeAiClientLaunch: refuseRecoverableOwnerLaunch,
+    consumeAiClientLaunchContained: refuseRecoverableOwnerLaunch,
+    quarantineOwner: () => durableOwner.quarantine(),
+  };
+  ownedPlayerHostBootstrapFacts.set(owner, facts);
+  return owner;
+}
+
+/**
  * One recoverable instance over an existing crashed `owner.json`.
  */
 export type StardewRecoverableBootstrapOwner = Readonly<{
@@ -3893,6 +4003,16 @@ export type StardewRecoverableBootstrapOwner = Readonly<{
   transitions: StardewBootstrapOwnerTransitions;
   /** The recorded recovery actor, or null when the record has none. */
   recoveryInstanceId: string | null;
+  /**
+   * The composer-minted owner handle for this exact attempt, over the same
+   * durable record this instance was opened from. It is the credential the
+   * recovery seam (`recover`/`finalizeRecovered`) and the registration-pointer
+   * release require: both resolve it through the same owner-facts and Guardian
+   * owner-binding singletons every other owner uses, so the recovery cannot
+   * open a second owner path, a second durable seam, or a second in-process
+   * authority for this attempt.
+   */
+  owner: StardewOwnedPlayerHostBootstrap;
 }>;
 
 /**
@@ -3976,6 +4096,10 @@ export async function openRecoverableStardewBootstrapOwner(
       record.ownerRecordRevision,
     ),
     recoveryInstanceId: record.recoveryInstanceId,
+    // The credential is composed from this same locked read, never from a second
+    // one: the handle's record, fence and CAS revision are the exact predecessor
+    // the returned transition port continues from.
+    owner: composeRecoverablePlayerHostOwner(durableOwnerStateOver(ownerPath, root, record)),
   });
 }
 
@@ -4024,12 +4148,16 @@ export async function settleOwnedPlayerHostContainedRuntimeAttempt(
  * A finalize the durable engine refuses is never turned into a terminal state by
  * invention: the recovery's own failure closure quarantines it, and the bounded
  * refusal travels back to the caller.
+ *
+ * Once both durable steps have succeeded, the attempt's own cleanup declaration
+ * is consumed: see `consumeRecoveredAttemptCleanup` for what that deletes and
+ * what it refuses to delete.
  */
 export async function finalizeRecoveredPlayerHostContainedRuntimeAttempt(
   owner: StardewOwnedPlayerHostBootstrap,
   recoveryInstanceId: string,
 ): Promise<void> {
-  requireOwnedPlayerHostBootstrapFacts(owner);
+  const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const guardianFacts = guardianOwnerBindings.get(owner);
   if (guardianFacts === undefined || !guardianFacts.consumed) {
     throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
@@ -4058,6 +4186,94 @@ export async function finalizeRecoveredPlayerHostContainedRuntimeAttempt(
     guardianFacts.settlementBinding,
   );
   await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
+  // The recovery is only closed out once the attempt stops occupying disk as
+  // well as the registration: both durable steps above succeeded, so the
+  // record's own cleanup declaration is consumed here and nowhere earlier. A
+  // quarantined attempt keeps its disposition `retry_required` and therefore
+  // keeps its residue -- the case this seam deliberately does not cover.
+  if (facts.durableOwner.record.cleanupDisposition === "pending") {
+    const transactionDirectory = facts.durableOwner.transactionDirectory;
+    await consumeRecoveredAttemptCleanup(
+      transactionDirectory,
+      facts.durableOwner.record.managedPaths,
+      dirname(dirname(transactionDirectory)),
+    );
+  }
+}
+
+/**
+ * The declared managed paths of one attempt, deepest first and with the record
+ * last.
+ *
+ * Deepest first is what lets a declared directory tree be removed without ever
+ * deleting something the record did not declare: every declared child is gone
+ * before its parent is offered for removal. The record goes last because it is
+ * the declaration itself, so a partial failure still leaves behind the record
+ * that says what is owed.
+ */
+function declaredManagedPathOrder(managedPaths: readonly string[]): readonly string[] {
+  const ordered = [...managedPaths].sort((left, right) => right.split("/").length - left.split("/").length);
+  const recordIndex = ordered.indexOf(OWNER_FILE);
+  if (recordIndex >= 0) {
+    const [recordPath] = ordered.splice(recordIndex, 1);
+    if (recordPath !== undefined) ordered.push(recordPath);
+  }
+  return ordered;
+}
+
+/**
+ * Consumes one attempt's cleanup declaration in place: the declared managed
+ * paths are deleted under the attempt's transaction directory after its
+ * recovery has been closed out.
+ *
+ * Why it exists: `cleanupDisposition`/`managedPaths` were written and validated
+ * by every transition but never consumed, so a crashed attempt left its whole
+ * transaction directory (the owner record plus any staged role profile) on disk
+ * for good, one per crash.
+ *
+ * The declaration is the entire delete surface. Every path comes out of the
+ * durable record; directories are removed only once they are empty (`rmdir`,
+ * never recursive) and files only through the identity-bound `removeSafeFile`,
+ * so an undeclared child keeps its parent and nothing undeclared is ever
+ * removed -- not the transaction directory itself, not the lock leaf, not an
+ * undeclared subtree. A resolved path that is not inside the attempt's own
+ * directory throws instead of being resolved through it.
+ *
+ * It is idempotent: a path that is already gone is not a failure, and neither is
+ * a declared directory that still holds something this attempt did not declare
+ * -- refusal to widen the surface is the honest outcome rather than recursing
+ * into it. Every other failure travels back as its own bounded refusal instead
+ * of being swallowed: the attempt was not cleaned, and nothing may report that
+ * it was.
+ */
+async function consumeRecoveredAttemptCleanup(
+  transactionDirectory: string,
+  managedPaths: readonly string[],
+  runtimeRoot: string,
+): Promise<void> {
+  const attemptRoot = resolve(transactionDirectory);
+  for (const declared of declaredManagedPathOrder(managedPaths)) {
+    const target = resolve(attemptRoot, declared);
+    const relativePath = relative(attemptRoot, target);
+    if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new Error("stardew_bootstrap_attempt_cleanup_failed");
+    }
+    try {
+      const stat = await lstat(target);
+      // A link is never a managed path: following it would delete whatever it
+      // points at, which the record never declared.
+      if (stat.isSymbolicLink()) throw new Error("unsafe_path_boundary");
+      if (stat.isDirectory()) {
+        await readSafeDirectory(target, runtimeRoot);
+        await rmdir(target);
+      } else {
+        await removeSafeFile(target, runtimeRoot);
+      }
+    } catch (error) {
+      if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) continue;
+      throw new Error("stardew_bootstrap_attempt_cleanup_failed", { cause: error });
+    }
+  }
 }
 
 /**

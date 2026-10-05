@@ -651,6 +651,296 @@ test("recoverable owner opener refuses a foreign principal and a CAS-inconsisten
   }
 });
 
+/**
+ * The second half of a recovery, on the durable engine: a finalize the engine
+ * refuses is never turned into a terminal record by invention. The recovery's
+ * own failure closure quarantines it instead, and the bounded refusal travels
+ * back to the caller.
+ *
+ * The assertion below reads the record back off disk, so it also fixes the other
+ * half of the cleanup contract: an attempt that could not be recovered keeps its
+ * transaction exactly where it was. The quarantined disposition is
+ * `retry_required`, which is precisely the residue the successful path must not
+ * be able to claim it cleaned.
+ */
+test("a refused recovery finalization quarantines the recovery instead of inventing a terminal record", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+  );
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
+  );
+  const actor = "3d0f6b1e-5a72-4c18-9e34-7b2d8f0a1c65";
+  await transitions.beginRecovery(actor);
+  // Only one role reached containment, so the parent record is not finalizable.
+  await transitions.recoveryRoleContained("playerHost", actor);
+
+  await assert.rejects(
+    productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(owner, actor),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
+  const persisted = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(
+    {
+      state: persisted.state,
+      guardian: persisted.guardianState,
+      playerHost: persisted.playerHostState,
+      aiClient: persisted.aiClientState,
+      recovery: persisted.recoveryInstanceId,
+      cleanup: persisted.cleanupDisposition,
+      revision: persisted.ownerRecordRevision,
+    },
+    {
+      state: "quarantined",
+      guardian: "quarantined",
+      playerHost: "contained",
+      aiClient: "quarantined",
+      recovery: null,
+      cleanup: "retry_required",
+      revision: 4,
+    },
+  );
+});
+
+/**
+ * The recovery half of Loop 5 ends by releasing the attempt: the durable parent
+ * record reaches its terminal `contained` state, the registration pointer this
+ * attempt's own reservation bound is released, and the attempt's declared
+ * transaction artifacts are consumed.
+ *
+ * The pointer and the consumed transaction are the pair asserted here, because
+ * only that pair returns the system to a usable state: a terminal record with a
+ * still-bound pointer keeps refusing the next reservation, and a successfully
+ * recovered attempt that keeps its whole transaction directory on disk is the
+ * leak this path exists to stop. The parent record itself is not read back any
+ * more: it is a declared managed path of its own attempt and the finalization
+ * consumes it, so its terminal successor is established by the release (the
+ * settlement re-reads the persisted record and requires the exact terminal
+ * revision before it releases anything) and by the port-level transitions tests.
+ */
+test("finalizing a recovered attempt releases the bound registration pointer and consumes the attempt's declared transaction", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  // The crash residual this recovery exists for: the attempt's own reservation
+  // had already bound the registration pointer when the process died.
+  await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+  );
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
+  );
+  const actor = "3d0f6b1e-5a72-4c18-9e34-7b2d8f0a1c65";
+  await transitions.beginRecovery(actor);
+  await transitions.recoveryRoleContained("playerHost", actor);
+  await transitions.recoveryRoleContained("aiClient", actor);
+
+  await productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(owner, actor);
+
+  const registration = await readStardewInstallationRegistration(root);
+  assert.equal(registration?.state, "ready");
+  assert.equal(registration?.activeAttempt, null);
+  assert.equal(registration?.revision, 3);
+  // This attempt had staged nothing yet, so its whole declaration is the record
+  // itself, and the record is what the cleanup consumes.
+  await assert.rejects(
+    readFile(ownerPath(root), "utf8"),
+    { code: "ENOENT" },
+    "a finalized attempt's declared transaction is consumed",
+  );
+
+  // The finalization is not repeatable: the exact actor is cleared with the
+  // terminal successor, so a second call refuses instead of fabricating a
+  // second terminal transition, and neither the released registration nor the
+  // consumed transaction is touched by it.
+  await assert.rejects(
+    productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(owner, actor),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
+  await assert.rejects(readFile(ownerPath(root), "utf8"), { code: "ENOENT" }, "a repeated finalization rewrites nothing");
+  assert.equal((await readStardewInstallationRegistration(root))?.revision, 3);
+});
+
+/**
+ * The credential the opener hands out is what makes a crashed attempt reachable
+ * at all: it is a composer owner handle registered in the same owner-facts
+ * singleton every other owner uses, so the recovery drive, the settlement and
+ * the post-recovery cleanup resolve it through one owner path. Its Guardian
+ * binding is minted and consumed by the same single production consumption site
+ * every other owner's binding goes through -- one binding per handle, refused as
+ * soon as it exists, so no second in-process authority can appear for the
+ * attempt.
+ */
+test("the opener's credential drives a recovery through the one owner binding and releases the same attempt's registration", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
+  const triple = mintOwnedTriple(harness.composition);
+  await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+  );
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  // The credential alone closes out nothing: the recovery has to have been
+  // driven through the one produced owner binding, so a finalize that no
+  // consumed binding stands behind refuses instead of inventing a terminal
+  // transition for a recovery that never ran.
+  await assert.rejects(
+    productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(
+      opened.owner,
+      "6f1c0a52-8d3b-4c77-9a10-2f5e6b7c8d90",
+    ),
+    /stardew_bootstrap_guardian_owner_binding_not_registered/,
+  );
+  const binding = productionCore.createStardewBootstrapGuardianOwnerBinding(opened.owner);
+  // The handle carries the crashed attempt's own Guardian correlation: that is
+  // what a native recovery conversation has to present, and it is read from the
+  // tokenless arm frame this handle makes available.
+  assert.deepEqual(productionCore.readStardewBootstrapGuardianNativeArmFrame(binding), {
+    bootstrapId: "bootstrap-1",
+    guardianInstanceId: "guardian-instance-1",
+    guardianEpoch: 1,
+    attemptId: "bootstrap-1",
+    revision: "revision-1",
+    leaseName: "Local\\GameBuddy-Test-Lease-1",
+    playerJobName: "Local\\GameBuddy-Test-PlayerJob-1",
+    aiJobName: "Local\\GameBuddy-Test-AiJob-1",
+  });
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(binding);
+  // One handle, one binding: minting a second one for the same handle refuses
+  // instead of handing out a second Guardian owner authority for the attempt.
+  assert.throws(
+    () => productionCore.createStardewBootstrapGuardianOwnerBinding(opened.owner),
+    /stardew_bootstrap_guardian_owner_binding_unavailable/,
+  );
+
+  const actor = "6f1c0a52-8d3b-4c77-9a10-2f5e6b7c8d90";
+  await transitions.beginRecovery(actor);
+  await transitions.recoveryRoleContained("playerHost", actor);
+  await transitions.recoveryRoleContained("aiClient", actor);
+  await productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(opened.owner, actor);
+
+  const registration = await readStardewInstallationRegistration(root);
+  assert.equal(registration?.state, "ready");
+  assert.equal(registration?.activeAttempt, null);
+  assert.equal(registration?.revision, 3);
+  await assert.rejects(readFile(ownerPath(root), "utf8"), { code: "ENOENT" });
+});
+
+/**
+ * The recovery handle is not a launch owner. It exists so a crashed attempt can
+ * be driven to a terminal state; the attempt's launch reservations died with the
+ * process that held them, so nothing may launch through it, and no composition
+ * may claim it as one of its own owners.
+ */
+test("the recovery credential owns no launch authority and no composition accepts it as a live owner", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  // An attempt whose reserving process died before it could even stage a
+  // profile: the credential still has to exist and still has to refuse launches.
+  await reserveFresh(harness, root);
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  // Module-level owner seams resolve the handle (it is a real composer owner),
+  // and the lifecycle binding refuses it because a recovered attempt is never a
+  // fresh bootstrap owner.
+  assert.throws(
+    () => productionCore.consumeOwnedPlayerHostBootstrap(opened.owner, () => undefined),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
+  );
+  await assert.rejects(
+    productionCore.stageOwnedPlayerHostProfile(opened.owner),
+    /stardew_private_mod_profile_staging_dependencies_missing/,
+  );
+  // And no composition owns it, so every composition-bound launch surface (the
+  // test view is the same binder the composition seams use) refuses it.
+  assert.throws(
+    () => ownerTestView(opened.owner),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
+  );
+});
+
+/**
+ * The managed path vocabulary the composer is allowed to declare for a staged
+ * Player Host attempt, deepest entries last. Kept literal here on purpose: it is
+ * a frozen declaration this test reads as data, and a change to it has to be a
+ * deliberate change on both sides.
+ */
+const PHASE_B_MANAGED_PATHS = [
+  OWNER_FILE,
+  "player-host",
+  "player-host/Mods",
+  "player-host/Mods/GameBuddy",
+  "player-host/Mods/GameBuddy/config.json",
+  "player-host/Mods/GameBuddy/GameBuddy.Stardew.Core.dll",
+  "player-host/Mods/GameBuddy/GameBuddy.Stardew.deps.json",
+  "player-host/Mods/GameBuddy/GameBuddy.Stardew.dll",
+  "player-host/Mods/GameBuddy/manifest.json",
+] as const;
+
+/**
+ * D5: the cleanup consumes exactly the record's own declaration. A declared file
+ * is gone, a declared path that was never written is not an error, and nothing
+ * undeclared is touched -- not the file an undeclared writer left inside a
+ * declared directory (which therefore keeps that directory alive, because the
+ * cleanup never recurses into what the record did not declare) and not the
+ * AI-client subtree this attempt never declared.
+ */
+test("finalization deletes exactly the declared managed paths and refuses to widen the delete surface", async () => {
+  const root = await createRoot();
+  await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
+  const transaction = join(root, "stardew-private-bootstrap", "bootstrap-1");
+  const hostModDirectory = join(transaction, "player-host", "Mods", "GameBuddy");
+  await mkdir(hostModDirectory, { recursive: true });
+  await mkdir(join(transaction, "session"), { recursive: true });
+  await mkdir(join(transaction, "ai-client", "Mods", "GameBuddy"), { recursive: true });
+  const undeclared = new Map([
+    [join(hostModDirectory, "undeclared-notes.txt"), "undeclared-file"],
+    [join(transaction, "session", "stardew-farmhand-manifest.json"), "undeclared-subtree"],
+    [join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "undeclared-subtree"],
+  ]);
+  await writeFile(join(hostModDirectory, "config.json"), "declared-file", "utf8");
+  await writeFile(join(hostModDirectory, "manifest.json"), "declared-file", "utf8");
+  for (const [path, content] of undeclared) await writeFile(path, content, "utf8");
+  // The crash left the staged declaration behind; the four package entries were
+  // declared but never written, which the cleanup has to tolerate.
+  await writeFile(ownerPath(root), JSON.stringify({
+    ...expectedOwnedRecord(),
+    managedPaths: [...PHASE_B_MANAGED_PATHS],
+  }), "utf8");
+
+  const opened = await productionCore.openRecoverableStardewBootstrapOwner({
+    transactionRoot: root,
+    bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+  });
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(opened.owner),
+  );
+  const actor = "9c2b7d41-6e58-4a93-8f27-1b0d4c5e6a73";
+  await transitions.beginRecovery(actor);
+  await transitions.recoveryRoleContained("playerHost", actor);
+  await transitions.recoveryRoleContained("aiClient", actor);
+  await productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(opened.owner, actor);
+
+  assert.equal((await readStardewInstallationRegistration(root))?.activeAttempt, null);
+  await assert.rejects(readFile(join(hostModDirectory, "config.json"), "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(join(hostModDirectory, "manifest.json"), "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(ownerPath(root), "utf8"), { code: "ENOENT" });
+  for (const [path, content] of undeclared) {
+    assert.equal(await readFile(path, "utf8"), content, `${path} is undeclared and must survive the cleanup`);
+  }
+});
+
 test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, and strict-rereads", async () => {
   const harness = createHarness();
   const root = await createRoot();
