@@ -4003,6 +4003,64 @@ export async function settleOwnedPlayerHostContainedRuntimeAttempt(
 }
 
 /**
+ * Closes out a recovery that already reached containment: the durable parent
+ * record advances from `recovering` to its terminal `contained` state, and only
+ * then is the bound registration pointer released.
+ *
+ * The two steps are one contract unit because a recovery that reached
+ * containment but is never finalized is not recovered in any usable sense: the
+ * attempt keeps occupying the registration whose own admission path refuses a
+ * non-pristine record, so the next reservation stays refused and the system
+ * never returns to a usable state. That is the whole reason this exists.
+ *
+ * It runs on the same owner path as the recovery drive itself: the durable
+ * record is advanced only through that exact owner's consumed one-shot Guardian
+ * binding (so a caller cannot close out a recovery it never drove), and the
+ * release goes through the same marker/pointer path the explicit endgame uses,
+ * so no second durable read/write seam and no second authority is opened.
+ *
+ * The native recovery is NOT re-driven here. Its result is already settled by
+ * the time this runs, and an uncertain native recovery must never be repeated.
+ * A finalize the durable engine refuses is never turned into a terminal state by
+ * invention: the recovery's own failure closure quarantines it, and the bounded
+ * refusal travels back to the caller.
+ */
+export async function finalizeRecoveredPlayerHostContainedRuntimeAttempt(
+  owner: StardewOwnedPlayerHostBootstrap,
+  recoveryInstanceId: string,
+): Promise<void> {
+  requireOwnedPlayerHostBootstrapFacts(owner);
+  const guardianFacts = guardianOwnerBindings.get(owner);
+  if (guardianFacts === undefined || !guardianFacts.consumed) {
+    throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  }
+  const transitions = guardianFacts.port;
+  try {
+    await transitions.finalizeRecoveredContained(recoveryInstanceId);
+  } catch (error) {
+    // A recovery that cannot be taken to its terminal parent state must not stay
+    // in a state another authority could mistake for a live recovery, so it runs
+    // its own failure closure before the refusal travels back. That closure can
+    // refuse too (the record is no longer `recovering`), and then the finalize
+    // refusal stays the primary failure rather than being replaced.
+    try {
+      await transitions.quarantineRecovery(recoveryInstanceId);
+    } catch {
+      /* the finalize refusal stays primary */
+    }
+    throw new Error("stardew_bootstrap_owner_recovery_finalize_failed", { cause: error });
+  }
+  // Minted after the terminal CAS: the settlement proof is bound to the exact
+  // terminal revision it was produced for, and the release then verifies that
+  // revision against the persisted record.
+  const proof = mintStardewBootstrapGuardianSettlementProof(
+    owner as unknown as StardewBootstrapGuardianOwnerBinding,
+    guardianFacts.settlementBinding,
+  );
+  await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
+}
+
+/**
  * The first half of the production settlement, split so the release rules can be
  * observed directly: drive the durable record to its terminal `contained` state
  * and mint the matching proof, without touching the registration pointer.

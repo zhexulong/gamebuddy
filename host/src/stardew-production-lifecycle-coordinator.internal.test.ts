@@ -36,8 +36,10 @@ import {
   containedPlayerHostLaunchDecision,
   containedRuntimeTeardownFromCollaborator,
   createStardewProductionLifecycleCoordinator,
+  driveStardewOwnedPlayerHostRecovery,
   isFirstFarmhandAiClientActivationIntact,
   isResumeAttachDeferredError,
+  type StardewContainedRuntimeTeardown,
   type StardewGameSessionCreationAuthority,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { STARDEW_GAME_WORLD_CREATION_SLOT_MISSING } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
@@ -55,6 +57,7 @@ import type {
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import { prepareMaterializedAiClientFixture } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.js";
 import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
+import type { RedactedRecoveryOutcome } from "./containment/runtime/contract/game-runtime.js";
 import type { DesktopGuardianSession, GuardianAck } from "./containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopGuardianGameRuntimePlatform,
@@ -1586,8 +1589,9 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
     }) as unknown as StardewPlayerHostRuntimeLaunchCollaborator;
   // The adapter forwards a recovery only to a collaborator that carries the
   // owner-held recovery half; without that half, the adapter's own refusal is
-  // the one at stake.
-  const withRecoveryHalf = refusingCollaborator({ recover: refuseSynchronously });
+  // the one at stake. The half is both members: a drive that can recover but not
+  // finalize cannot close an attempt out, so it is not read as a drive at all.
+  const withRecoveryHalf = refusingCollaborator({ recover: refuseSynchronously, finalizeRecovered: refuseSynchronously });
   const withoutRecoveryHalf = refusingCollaborator({});
   const withRecovery = containedRuntimeTeardownFromCollaborator(withRecoveryHalf);
   const withoutRecovery = containedRuntimeTeardownFromCollaborator(withoutRecoveryHalf);
@@ -1623,12 +1627,15 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
     { member: "contain player host", refusal: beneathRefusal, pending: withRecovery.containPlayerHost(owner) },
     { member: "contain AI client", refusal: beneathRefusal, pending: withRecovery.containAiClient(owner) },
     { member: "recovery drive", refusal: beneathRefusal, pending: withRecovery.recover(owner, recoveryRequest) },
+    { member: "recovery finalization", refusal: beneathRefusal, pending: withRecovery.finalizeRecovered(owner, recoveryRequest) },
     { member: "close", refusal: beneathRefusal, pending: withRecovery.close(owner) },
     { member: "settle", refusal: beneathRefusal, pending: withRecovery.settle(owner) },
     { member: "recovery drive without the owner-held recovery half", refusal: "stardew_contained_recovery_drive_unavailable",
       pending: withoutRecovery.recover(owner, recoveryRequest) },
+    { member: "recovery finalization without the owner-held recovery half", refusal: "stardew_contained_recovery_drive_unavailable",
+      pending: withoutRecovery.finalizeRecovered(owner, recoveryRequest) },
   ];
-  assert.equal(calls.length, 10);
+  assert.equal(calls.length, 12);
 
   for (const call of calls) {
     // A catch-only consumer: no fulfillment branch and no surrounding try/catch,
@@ -1637,6 +1644,114 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
     assert.ok(refusal instanceof Error, `${call.member} must reject, got ${String(refusal)}`);
     assert.equal(refusal.message, call.refusal, `${call.member} must reject with its own refusal`);
   }
+});
+
+/**
+ * The recovery drive the admission judge uses: one bounded recovery, closed out
+ * in the same step. The seams below are scripted, so the ordering, the
+ * exactly-once attempt count and every refusal path are observed rather than
+ * assumed.
+ *
+ * A recovery that did not reach containment is never finalized: the platform
+ * reports `unavailable` for every position short of terminal containment, and an
+ * uncertain native recovery must be neither closed out as if it had succeeded nor
+ * re-driven.
+ */
+test("the owner recovery drive finalizes only a recovery that reached containment, exactly once", async () => {
+  const request: StardewOwnerRecoveryRequest = Object.freeze({
+    recoveryInstanceId: "0a5c1e7b-2f3d-4a90-8c11-6d2b7e4f9a02",
+    readRecoveryBinding: async () => Object.freeze({}),
+  });
+  const owner = Object.freeze({}) as unknown as StardewOwnedPlayerHostBootstrap;
+  const scripted = (
+    events: string[],
+    recover: (received: StardewOwnerRecoveryRequest) => Promise<RedactedRecoveryOutcome>,
+    finalize: (received: StardewOwnerRecoveryRequest) => Promise<void>,
+  ): StardewContainedRuntimeTeardown => Object.freeze({
+    containPlayerHost: async () => { events.push("containPlayerHost"); },
+    containAiClient: async () => { events.push("containAiClient"); },
+    settle: async () => { events.push("settle"); },
+    recover: async (_owner, received) => {
+      events.push("recover");
+      return recover(received);
+    },
+    finalizeRecovered: async (_owner, received) => {
+      events.push("finalizeRecovered");
+      await finalize(received);
+    },
+    close: async () => { events.push("close"); },
+  });
+
+  // (a) A recovery that reached containment is finalized, with the SAME request
+  // object the recovery took: the actor the durable CASes recorded and the actor
+  // the finalization must match cannot drift apart.
+  const successEvents: string[] = [];
+  const receivedRequests: StardewOwnerRecoveryRequest[] = [];
+  await driveStardewOwnedPlayerHostRecovery(
+    scripted(
+      successEvents,
+      async (received) => { receivedRequests.push(received); return Object.freeze({ status: "recovered" as const }); },
+      async (received) => { receivedRequests.push(received); },
+    ),
+    owner,
+    request,
+  );
+  assert.deepEqual(successEvents, ["recover", "finalizeRecovered"]);
+  assert.deepEqual(receivedRequests, [request, request]);
+
+  // (b) An outcome short of containment is never finalized, and the recovery is
+  // attempted exactly once.
+  const unavailableEvents: string[] = [];
+  const unavailableTeardown = scripted(
+    unavailableEvents,
+    async () => Object.freeze({ status: "unavailable" as const }),
+    async () => { throw new Error("finalization_must_not_run"); },
+  );
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(unavailableTeardown, owner, request),
+    /stardew_owner_recovery_unavailable/,
+  );
+  assert.deepEqual(unavailableEvents, ["recover"]);
+
+  // (c) A recovery the seam refuses outright propagates that bounded refusal and
+  // still never finalizes anything.
+  const refusedEvents: string[] = [];
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(
+      scripted(
+        refusedEvents,
+        async () => { throw new Error("stardew_contained_recovery_drive_unavailable"); },
+        async () => { throw new Error("finalization_must_not_run"); },
+      ),
+      owner,
+      request,
+    ),
+    /stardew_contained_recovery_drive_unavailable/,
+  );
+  assert.deepEqual(refusedEvents, ["recover"]);
+
+  // (d) A finalization that refuses reports its own bounded error and does not
+  // re-drive the recovery.
+  const finalizeRefusedEvents: string[] = [];
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(
+      scripted(
+        finalizeRefusedEvents,
+        async () => Object.freeze({ status: "recovered" as const }),
+        async () => { throw new Error("stardew_bootstrap_owner_recovery_finalize_failed"); },
+      ),
+      owner,
+      request,
+    ),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
+  assert.deepEqual(finalizeRefusedEvents, ["recover", "finalizeRecovered"]);
+
+  // (e) Without the seam there is nothing to drive, and the refusal is bounded.
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(undefined, owner, request),
+    /stardew_owner_recovery_seam_unavailable/,
+  );
 });
 
 /**

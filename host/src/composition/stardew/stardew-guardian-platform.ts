@@ -27,6 +27,7 @@ import type {
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
+  finalizeRecoveredPlayerHostContainedRuntimeAttempt,
   settleOwnedPlayerHostContainedRuntimeAttempt,
   type StardewBootstrapOwnerRecoveryDrive,
   type StardewPlayerHostRuntimeLaunchCollaborator,
@@ -283,6 +284,21 @@ export type StardewOwnerRecoveryDriver = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     request: StardewOwnerRecoveryRequest,
   ): Promise<RedactedRecoveryOutcome>;
+  /**
+   * Terminal closure of that same recovery: the durable parent record advances
+   * to its terminal state and the bound registration pointer is released.
+   *
+   * It is a member of this drive rather than a second entry point because it is
+   * the second half of one recovery: it runs on the same exact owner and through
+   * the same consumed one-shot Guardian binding the recovery itself used, so no
+   * second owner path or durable seam is opened, and the actor it must match is
+   * the very actor the recovery recorded. A drive that could not close itself
+   * out would leave the attempt occupying its registration forever.
+   */
+  finalizeRecovered(
+    owner: StardewOwnedPlayerHostBootstrap,
+    request: StardewOwnerRecoveryRequest,
+  ): Promise<void>;
 }>;
 
 /**
@@ -294,12 +310,21 @@ export type StardewOwnerRecoveryDriver = Readonly<{
  * check. A collaborator that does not carry the member reads as `undefined`, and
  * its consumer must turn that into a refusal: a recovery that cannot be driven
  * must never be reported as one that ran.
+ *
+ * Both members are required, not just `recover`: a drive that cannot finalize is
+ * not a usable recovery drive, because taking an attempt through its recovery
+ * and then leaving it non-terminal is precisely the state that keeps the
+ * registration occupied forever. Refusing such a collaborator here fails closed
+ * BEFORE any native recovery runs, instead of after a native recovery has
+ * already changed the attempt and cannot be repeated.
  */
 export function readStardewOwnerRecoveryDriver(
   collaborator: StardewPlayerHostRuntimeLaunchCollaborator,
 ): StardewOwnerRecoveryDriver | undefined {
   const candidate = collaborator as Partial<StardewOwnerRecoveryDriver>;
-  return typeof candidate.recover === "function" ? candidate as StardewOwnerRecoveryDriver : undefined;
+  return typeof candidate.recover === "function" && typeof candidate.finalizeRecovered === "function"
+    ? candidate as StardewOwnerRecoveryDriver
+    : undefined;
 }
 
 /**
@@ -316,11 +341,12 @@ export function readStardewOwnerRecoveryDriver(
  * Every member of the returned collaborator that the contract declares to
  * resolve a `Promise` is `async`, so its guards (an unknown owner, a consumed
  * owner binding, a malformed recovery actor) refuse as a rejection. The
- * collaborator is forwarded by non-async adapters that only attach `.then()`,
- * so a synchronous throw here would escape as an unhandled exception in the
- * consumer's frame instead of an awaited failure. The one member that is not a
- * promise is the synchronous `recovery(owner)` accessor, whose own refusal
- * shape is unchanged.
+ * adapters that forward these members are themselves `async` and await them,
+ * and their consumers await the result (or attach only a rejection handler), so
+ * keeping the members `async` here is what puts every refusal on the returned
+ * promise instead of letting it escape the consumer's frame as an unhandled
+ * exception. The one member that is not a promise is the synchronous
+ * `recovery(owner)` accessor, whose own refusal shape is unchanged.
  */
 export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   platform: ContainedGameRuntimePlatform,
@@ -480,7 +506,8 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       // member is async for the same reason every member declared to resolve a
       // `Promise` is: a `.catch()`-only consumer must observe a rejection, and a
       // synchronous throw out of this seam would escape as an unhandled
-      // exception instead (the adapter that forwards this member is not async).
+      // exception instead. The adapter that forwards this member is itself
+      // `async` and awaits it, so both halves of that guarantee hold.
       if (typeof request.recoveryInstanceId !== "string" || !RECOVERY_OPAQUE_GUID.test(request.recoveryInstanceId)) {
         throw new Error("stardew_owner_recovery_actor_invalid");
       }
@@ -503,6 +530,29 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
           await transitions.recoveryRoleContained(role, request.recoveryInstanceId);
         },
       });
+    },
+    /**
+     * Closes out that same recovery on the same owner path: the durable parent
+     * record advances to its terminal `contained` state and the bound
+     * registration pointer is released, so the attempt stops occupying the
+     * registration its own admission path refuses to reuse.
+     *
+     * Only the exact owner's consumed one-shot Guardian binding can finalize the
+     * recovery it drove, so this member neither invents a recovery nor re-drives
+     * the native one: the platform conversation is already settled by the time
+     * this runs. A refusal here reports as the bounded error it is (or, when the
+     * durable engine refuses the transition, through the recovery's own
+     * quarantine closure), never as a fabricated success.
+     */
+    async finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void> {
+      // The actor reaches a durable CAS that must match the one the recovery
+      // recorded, so it is validated at this boundary exactly like the recovery
+      // actor above: a malformed actor refuses here instead of surfacing as an
+      // opaque transition mismatch.
+      if (typeof request.recoveryInstanceId !== "string" || !RECOVERY_OPAQUE_GUID.test(request.recoveryInstanceId)) {
+        throw new Error("stardew_owner_recovery_actor_invalid");
+      }
+      await finalizeRecoveredPlayerHostContainedRuntimeAttempt(owner, request.recoveryInstanceId);
     },
     /**
      * Protected terminal settlement for the exact owner. The platform session is
