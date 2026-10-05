@@ -560,7 +560,11 @@ function parseSemicolonEvidence(
     const value = field.slice(separator + 1);
     if (
       !(key in result) &&
-      /^[a-z][a-z0-9_]{0,63}$/.test(key) &&
+      // Camel-case keys are legal: the frozen pickup_forage contract names its key
+      // `targetIdentity`, and a lower-case-only grammar made that evidence
+      // unparseable, so the action could never complete. The point of this check is
+      // to reject protocol scalar sentinels and junk, not to forbid capitals.
+      /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) &&
       value.length <= 512
     ) {
       result[key] = value;
@@ -1248,6 +1252,7 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     "held",
     "ready_for_harvest",
     "minutes_until_ready",
+    "expected_minutes_until_ready",
     "native_check_action",
   ];
   if (
@@ -1256,6 +1261,15 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
   )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
+  // The processing window is NOT a content constant: the Mod derives it from the
+  // live machine data (the matched ItemPlacedInMachine rule plus the machine's
+  // ReadyTimeModifiers) and reports the derived expectation next to the observed
+  // value, so a content rebalance cannot turn a legitimate native load into
+  // either a false success or a false failure. Host only proves the two agree.
+  const observedMinutes = positiveIntegerEvidence(evidence.minutes_until_ready);
+  const expectedMinutes = positiveIntegerEvidence(
+    evidence.expected_minutes_until_ready,
+  );
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
@@ -1269,7 +1283,9 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     evidence.last_input === "(O)433" &&
     evidence.held === "(O)395" &&
     evidence.ready_for_harvest === "false" &&
-    evidence.minutes_until_ready === "120" &&
+    observedMinutes !== null &&
+    expectedMinutes !== null &&
+    observedMinutes === expectedMinutes &&
     evidence.native_check_action === "true"
   );
 }
@@ -1478,6 +1494,12 @@ function signedIntegerEvidenceValue(value: string | undefined): number | null {
   if (value === undefined || !/^-?(?:0|[1-9][0-9]*)$/.test(value)) return null;
   const number = Number(value);
   return Number.isSafeInteger(number) ? number : null;
+}
+
+/** A canonical positive integer: the machine is in a running processing window. */
+function positiveIntegerEvidence(value: string | undefined): number | null {
+  const number = integerEvidenceValue(value);
+  return number !== null && number > 0 ? number : null;
 }
 
 function hasBoundedNonemptyEvidenceValue(

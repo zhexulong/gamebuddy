@@ -925,7 +925,16 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "scythe_crops_harvested" : "scythe_crop_harvest_postcondition_unavailable", evidence);
     }
 
-    private static bool IsValidDebrisTool(StardewValley.TerrainFeatures.ResourceClump clump, Tool tool, out string toolKind, out int requiredUpgrade)
+    /// <summary>
+    /// The native per-clump tool requirement, from ResourceClump.performToolAction's
+    /// own switch on parentSheetIndex (ResourceClump.cs:150-234): clump 600 needs an
+    /// Axe at upgrade 1, 602 an Axe at 2, 148/622 a Pickaxe at 3, 672 a Pickaxe at 2,
+    /// and 752/754/756/758 any Pickaxe. ONE table, so the discovery projection and
+    /// the execution admission cannot drift apart, and a future target-version
+    /// change to the native switch has exactly one place to land. Returns false for a
+    /// clump the native switch does not own.
+    /// </summary>
+    internal static bool TryGetDebrisToolRequirement(StardewValley.TerrainFeatures.ResourceClump clump, out string toolKind, out int requiredUpgrade)
     {
         toolKind = clump.parentSheetIndex.Value switch
         {
@@ -941,6 +950,13 @@ internal sealed partial class ExecutionManager
             672 => 2,
             _ => 0,
         };
+        return toolKind != "unsupported";
+    }
+
+    private static bool IsValidDebrisTool(StardewValley.TerrainFeatures.ResourceClump clump, Tool tool, out string toolKind, out int requiredUpgrade)
+    {
+        if (!TryGetDebrisToolRequirement(clump, out toolKind, out requiredUpgrade))
+            return false;
         return (toolKind == "axe" && tool is Axe && tool.UpgradeLevel >= requiredUpgrade)
             || (toolKind == "pickaxe" && tool is Pickaxe && tool.UpgradeLevel >= requiredUpgrade);
     }

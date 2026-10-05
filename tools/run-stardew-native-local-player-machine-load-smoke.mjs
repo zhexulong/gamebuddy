@@ -79,7 +79,11 @@ export async function runMachineLoadSmoke(
       evidence.last_input === "(O)433" &&
       evidence.held === "(O)395" &&
       evidence.ready_for_harvest === "false" &&
-      evidence.minutes_until_ready === "120" &&
+      // The duration is derived from live machine data, not a content constant: the
+    // receipt reports the observed value and the value the Mod derived, and those
+    // must agree. Asserting 120 here would re-introduce exactly the hardcoding the
+    // Mod-side change removed.
+    evidence.minutes_until_ready === evidence.expected_minutes_until_ready &&
       evidence.native_check_action === "true";
     return {
       state: passed ? "passed" : "blocked",
@@ -182,6 +186,7 @@ function parseEvidence(receiptEvidence) {
     "held",
     "ready_for_harvest",
     "minutes_until_ready",
+    "expected_minutes_until_ready",
     "native_check_action",
   ];
   if (
