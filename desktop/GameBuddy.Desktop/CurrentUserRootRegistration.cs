@@ -2,22 +2,21 @@ using Microsoft.Win32;
 
 namespace GameBuddy.Desktop;
 
+// The installed-layout marker is deliberately this small: the registration
+// schema version and the installed program root. The mutable roots (data,
+// operational, presentation) are derived from the current user's
+// LocalApplicationData on every read, so the marker can never redirect them.
 internal sealed record CurrentUserRootRegistrationRecord(
     string Schema,
-    string ProgramRoot,
-    string DataRoot,
-    string OperationalRoot,
-    string PresentationRoot);
+    string ProgramRoot);
 
 internal sealed record CurrentUserRegistrationValue(object Value, RegistryValueKind Kind);
 
+// Read-only by construction: the launcher has no way to create, change or
+// remove the registration. Setup and the uninstaller are its only writers.
 internal interface ICurrentUserRegistrationStore
 {
     IReadOnlyDictionary<string, CurrentUserRegistrationValue>? ReadValues();
-
-    void SetString(string name, string value);
-
-    void Delete();
 }
 
 internal interface ILocalApplicationDataProvider
@@ -42,118 +41,45 @@ internal static class CurrentUserRootRegistration
 {
     internal const string SchemaVersion = "gamebuddy-windows-root-registration/v1";
     internal const string RegistrySubKey = @"Software\GameBuddy\Registration\v1";
-
-    private static readonly string[] RequiredValueNames =
-    [
-        "schema",
-        "programRoot",
-        "dataRoot",
-        "operationalRoot",
-        "presentationRoot",
-    ];
-
-    internal static void CreateForCurrentUser() =>
-        Create(new WindowsCurrentUserRegistrationStore(), new WindowsLocalApplicationDataProvider());
+    internal const string SchemaValueName = "schema";
+    internal const string ProgramRootValueName = "programRoot";
 
     internal static CurrentUserRootRegistrationRecord ReadForCurrentUser() =>
-        Read(new WindowsCurrentUserRegistrationStore(), new WindowsLocalApplicationDataProvider());
+        Read(new WindowsCurrentUserRegistrationStore());
 
-    internal static void RemoveForCurrentUserAfterCallerPolicy() =>
-        new WindowsCurrentUserRegistrationStore().Delete();
+    internal static CurrentUserRootRegistrationRecord ReadForTesting(ICurrentUserRegistrationStore store) =>
+        Read(store);
 
-    internal static void CreateForTesting(ICurrentUserRegistrationStore store, ILocalApplicationDataProvider localApplicationDataProvider) =>
-        Create(store, localApplicationDataProvider);
-
-    internal static CurrentUserRootRegistrationRecord ReadForTesting(ICurrentUserRegistrationStore store, ILocalApplicationDataProvider localApplicationDataProvider) =>
-        Read(store, localApplicationDataProvider);
-
-    private static void Create(ICurrentUserRegistrationStore store, ILocalApplicationDataProvider localApplicationDataProvider)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        var expected = ExpectedRecord(localApplicationDataProvider);
-        var values = store.ReadValues();
-        if (values is not null && values.Count != 0 && !HasOnlyRequiredNames(values.Keys))
-        {
-            throw new RootRegistrationUnavailableException();
-        }
-
-        if (values is not null)
-        {
-            foreach (var (name, value) in Values(expected))
-            {
-                if (values.TryGetValue(name, out var existing) &&
-                    (existing.Kind != RegistryValueKind.String || existing.Value is not string existingString || !StringComparer.Ordinal.Equals(existingString, value)))
-                {
-                    throw new RootRegistrationUnavailableException();
-                }
-            }
-        }
-
-        foreach (var (name, value) in Values(expected))
-        {
-            store.SetString(name, value);
-        }
-    }
-
-    private static CurrentUserRootRegistrationRecord Read(ICurrentUserRegistrationStore store, ILocalApplicationDataProvider localApplicationDataProvider)
+    private static CurrentUserRootRegistrationRecord Read(ICurrentUserRegistrationStore store)
     {
         ArgumentNullException.ThrowIfNull(store);
         var values = store.ReadValues();
-        if (values is null || !HasOnlyRequiredNames(values.Keys))
+        if (values is null)
         {
             throw new RootRegistrationUnavailableException();
         }
 
-        var expected = ExpectedRecord(localApplicationDataProvider);
-        foreach (var (name, value) in Values(expected))
-        {
-            if (!values.TryGetValue(name, out var stored) ||
-                stored.Kind != RegistryValueKind.String ||
-                stored.Value is not string storedString ||
-                !StringComparer.Ordinal.Equals(storedString, value))
-            {
-                throw new RootRegistrationUnavailableException();
-            }
-        }
-
-        return expected;
-    }
-
-    private static CurrentUserRootRegistrationRecord ExpectedRecord(ILocalApplicationDataProvider localApplicationDataProvider)
-    {
-        ArgumentNullException.ThrowIfNull(localApplicationDataProvider);
-        var localApplicationData = localApplicationDataProvider.GetLocalApplicationDataPath();
-        if (string.IsNullOrWhiteSpace(localApplicationData) || !Path.IsPathFullyQualified(localApplicationData))
+        var schema = ReadRequiredString(values, SchemaValueName);
+        var programRoot = ReadRequiredString(values, ProgramRootValueName);
+        if (!StringComparer.Ordinal.Equals(schema, SchemaVersion) || !Path.IsPathFullyQualified(programRoot))
         {
             throw new RootRegistrationUnavailableException();
         }
 
-        var local = Canonicalize(localApplicationData);
-        return new CurrentUserRootRegistrationRecord(
-            SchemaVersion,
-            Path.Combine(local, "Programs", "GameBuddy"),
-            Path.Combine(local, "GameBuddy", "data"),
-            Path.Combine(local, "GameBuddy", "operational"),
-            Path.Combine(local, "GameBuddy", "presentation"));
+        return new CurrentUserRootRegistrationRecord(SchemaVersion, programRoot);
     }
 
-    private static bool HasOnlyRequiredNames(IEnumerable<string> valueNames) =>
-        valueNames.OrderBy(name => name, StringComparer.Ordinal).SequenceEqual(RequiredValueNames.OrderBy(name => name, StringComparer.Ordinal), StringComparer.Ordinal);
-
-    private static IEnumerable<(string Name, string Value)> Values(CurrentUserRootRegistrationRecord record)
+    private static string ReadRequiredString(IReadOnlyDictionary<string, CurrentUserRegistrationValue> values, string name)
     {
-        yield return ("schema", record.Schema);
-        yield return ("programRoot", record.ProgramRoot);
-        yield return ("dataRoot", record.DataRoot);
-        yield return ("operationalRoot", record.OperationalRoot);
-        yield return ("presentationRoot", record.PresentationRoot);
-    }
+        if (!values.TryGetValue(name, out var stored) ||
+            stored.Kind != RegistryValueKind.String ||
+            stored.Value is not string text ||
+            string.IsNullOrWhiteSpace(text))
+        {
+            throw new RootRegistrationUnavailableException();
+        }
 
-    private static string Canonicalize(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-
-    private sealed class WindowsLocalApplicationDataProvider : ILocalApplicationDataProvider
-    {
-        public string GetLocalApplicationDataPath() => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return text;
     }
 
     private sealed class WindowsCurrentUserRegistrationStore : ICurrentUserRegistrationStore
@@ -173,14 +99,5 @@ internal static class CurrentUserRootRegistration
                     key.GetValueKind(name)),
                 StringComparer.Ordinal);
         }
-
-        public void SetString(string name, string value)
-        {
-            using var key = Registry.CurrentUser.CreateSubKey(RegistrySubKey, writable: true)
-                ?? throw new RootRegistrationUnavailableException();
-            key.SetValue(name, value, RegistryValueKind.String);
-        }
-
-        public void Delete() => Registry.CurrentUser.DeleteSubKeyTree(RegistrySubKey, throwOnMissingSubKey: false);
     }
 }

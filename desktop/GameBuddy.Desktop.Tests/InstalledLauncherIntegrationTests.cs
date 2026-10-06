@@ -44,10 +44,7 @@ public sealed class InstalledLauncherIntegrationTests
             ReadCount++;
             return new CurrentUserRootRegistrationRecord(
                 CurrentUserRootRegistration.SchemaVersion,
-                Path.Combine(localApplicationData, "Programs", "GameBuddy"),
-                Path.Combine(localApplicationData, "GameBuddy", "data"),
-                Path.Combine(localApplicationData, "GameBuddy", "operational"),
-                Path.Combine(localApplicationData, "GameBuddy", "presentation"));
+                Path.Combine(localApplicationData, "Programs", "GameBuddy"));
         }
     }
 

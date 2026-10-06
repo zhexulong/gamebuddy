@@ -1,47 +1,74 @@
 using GameBuddy.Desktop.Tests.Fixtures;
+using Microsoft.Win32;
 
 namespace GameBuddy.Desktop.Tests;
 
 public sealed class CurrentUserRootRegistrationTests
 {
     [Fact]
-    public async Task ReadRegisteredLayout_rejects_missing_or_unknown_schema()
+    public void ReadRegisteredLayout_rejects_missing_marker()
     {
-        await using var roots = await DisposableRootFixture.CreateAsync();
-        using var missing = DisposableCurrentUserRegistration.CreateMissing();
-        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(missing, roots));
+        var missing = DisposableCurrentUserRegistration.CreateMissing();
 
-        using var unknown = DisposableCurrentUserRegistration.Create();
-        unknown.WriteRaw("gamebuddy-windows-root-registration/v0");
-        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(unknown, roots));
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(missing));
     }
 
     [Fact]
-    public async Task CreateThenRead_is_idempotent_and_contains_only_fixed_v1_fields()
+    public void ReadRegisteredLayout_rejects_unsupported_schema_version()
     {
-        await using var roots = await DisposableRootFixture.CreateAsync();
-        using var fixture = DisposableCurrentUserRegistration.Create();
+        var fixture = DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
+        fixture.WriteValue(CurrentUserRootRegistration.SchemaValueName, "gamebuddy-windows-root-registration/v0");
 
-        CurrentUserRootRegistration.CreateForTesting(fixture, roots);
-        CurrentUserRootRegistration.CreateForTesting(fixture, roots);
-        var registration = CurrentUserRootRegistration.ReadForTesting(fixture, roots);
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(fixture));
+    }
+
+    [Fact]
+    public void ReadRegisteredLayout_rejects_malformed_values()
+    {
+        // A marker value that is not a REG_SZ string is malformed.
+        var wrongKind = DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
+        wrongKind.WriteRawValue(CurrentUserRootRegistration.ProgramRootValueName, 1, RegistryValueKind.DWord);
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(wrongKind));
+
+        // An empty or relative program root is malformed, not a fallback to a dev root.
+        var emptyRoot = DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
+        emptyRoot.WriteValue(CurrentUserRootRegistration.ProgramRootValueName, "   ");
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(emptyRoot));
+
+        var relativeRoot = DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
+        relativeRoot.WriteValue(CurrentUserRootRegistration.ProgramRootValueName, @"Programs\GameBuddy");
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(relativeRoot));
+
+        // A missing required value name is malformed.
+        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(new ProgramRootLessMarker()));
+    }
+
+    [Fact]
+    public void ReadRegisteredLayout_reads_only_the_schema_and_program_root()
+    {
+        var fixture = DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
+
+        var registration = CurrentUserRootRegistration.ReadForTesting(fixture);
 
         Assert.Equal(CurrentUserRootRegistration.SchemaVersion, registration.Schema);
+        Assert.Equal(@"C:\Programs\GameBuddy", registration.ProgramRoot);
+        Assert.Equal(
+            [CurrentUserRootRegistration.ProgramRootValueName, CurrentUserRootRegistration.SchemaValueName],
+            DisposableCurrentUserRegistration.ExpectedValueNames);
         Assert.Equal(DisposableCurrentUserRegistration.ExpectedValueNames, fixture.ValueNames());
     }
 
-    [Fact]
-    public async Task ReadRegisteredLayout_rejects_extra_or_changed_values()
+    private sealed class ProgramRootLessMarker : ICurrentUserRegistrationStore
     {
-        await using var roots = await DisposableRootFixture.CreateAsync();
-        using var fixture = DisposableCurrentUserRegistration.Create();
-        CurrentUserRootRegistration.CreateForTesting(fixture, roots);
-        fixture.WriteExtraValue();
-        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(fixture, roots));
+        private readonly DisposableCurrentUserRegistration inner =
+            DisposableCurrentUserRegistration.CreateForProgramRoot(@"C:\Programs\GameBuddy");
 
-        using var changed = DisposableCurrentUserRegistration.Create();
-        CurrentUserRootRegistration.CreateForTesting(changed, roots);
-        changed.WriteValue("dataRoot", @"C:\foreign");
-        Assert.Throws<RootRegistrationUnavailableException>(() => CurrentUserRootRegistration.ReadForTesting(changed, roots));
+        public IReadOnlyDictionary<string, CurrentUserRegistrationValue>? ReadValues()
+        {
+            var values = ((ICurrentUserRegistrationStore)inner).ReadValues()!;
+            return values
+                .Where(pair => !StringComparer.Ordinal.Equals(pair.Key, CurrentUserRootRegistration.ProgramRootValueName))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        }
     }
 }

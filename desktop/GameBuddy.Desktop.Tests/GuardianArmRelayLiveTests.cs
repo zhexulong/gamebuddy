@@ -30,13 +30,11 @@ public sealed class GuardianArmRelayLiveTests(Xunit.Abstractions.ITestOutputHelp
         generation.ReplaceHostRuntimeWithFixture();
         var registration = new CurrentUserRootRegistrationRecord(
             CurrentUserRootRegistration.SchemaVersion,
-            generation.ProgramRoot,
-            Path.Combine(generation.LocalApplicationData, "GameBuddy", "data"),
-            Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational"),
-            Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation"));
-        foreach (var path in new[] { registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot })
+            generation.ProgramRoot);
+        var operationalRoot = Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational");
+        foreach (var path in new[] { Path.Combine(generation.LocalApplicationData, "GameBuddy", "data"), operationalRoot, Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation") })
             Directory.CreateDirectory(path);
-        TestDeploymentManifest.WriteDeploymentManifest(registration.OperationalRoot);
+        TestDeploymentManifest.WriteDeploymentManifest(operationalRoot);
         var layout = CurrentUserRootLayout.DeriveForTesting(registration, new LocalApplicationDataProvider(generation.LocalApplicationData));
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
         await using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);

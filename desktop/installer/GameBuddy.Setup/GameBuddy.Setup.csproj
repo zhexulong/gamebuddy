@@ -1,0 +1,118 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>GameBuddy.Setup</AssemblyName>
+    <RootNamespace>GameBuddy.Setup</RootNamespace>
+    <UseAppHost>true</UseAppHost>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>0.0.0</Version>
+  </PropertyGroup>
+
+  <!-- The installer is deliberately standalone: it never references the launcher
+       assembly, so the copy of itself it installs into the program root can run
+       with its own files only. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
+  </ItemGroup>
+
+  <!--
+    Payload: the exact generation tree the installer lays into the program root.
+    Release defaults to the repository's production generation root; the scratch
+    exercise points it at a disposable directory. The payload is embedded as one
+    resource named `payload.zip`, so Setup.exe is a single self-contained
+    distributable that carries what it installs.
+  -->
+  <PropertyGroup>
+    <GameBuddyGenerationPayload Condition="'$(GameBuddyGenerationPayload)' == ''">$(MSBuildThisFileDirectory)..\..\..\host\dist</GameBuddyGenerationPayload>
+  </PropertyGroup>
+
+  <Target Name="EmbedGenerationPayload" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <GameBuddyPayloadArchive>$(IntermediateOutputPath)payload.zip</GameBuddyPayloadArchive>
+    </PropertyGroup>
+    <Error Condition="'$(Configuration)' == 'Release' and !Exists('$(GameBuddyGenerationPayload)\current.json')"
+           Code="GBPAY001"
+           Text="installer_payload_unavailable: no generation payload with a current.json pointer was found at '$(GameBuddyGenerationPayload)'. Pass -p:GameBuddyGenerationPayload=&lt;generation root&gt;. A Release Setup.exe is never built without the generation it installs." />
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Condition="Exists('$(GameBuddyGenerationPayload)\current.json')"
+          Command="tar -a -c -f &quot;$(GameBuddyPayloadArchive)&quot; -C &quot;$(GameBuddyGenerationPayload)&quot; ." />
+    <ItemGroup Condition="Exists('$(GameBuddyPayloadArchive)')">
+      <EmbeddedResource Include="$(GameBuddyPayloadArchive)" LogicalName="payload.zip" />
+    </ItemGroup>
+    <Warning Condition="'$(Configuration)' != 'Release' and !Exists('$(GameBuddyGenerationPayload)\current.json')"
+             Code="GBPAY002"
+             Text="installer_payload_absent: the Debug build has no generation payload, so the produced Setup.exe can only be used for the uninstall path." />
+  </Target>
+
+  <!--
+    Signing is part of the Release build, not a manual afterthought. Release is the
+    publishable configuration; Debug stays an unsigned, clearly non-published dev
+    artifact. The policy is the repository's signer policy (Authenticode over a
+    trusted chain, plus an RFC 3161 timestamp) as stated for
+    `gamebuddy-windows-signer-policy/v1`. This target invokes the platform signing
+    tool (signtool) directly instead of reimplementing signing, and fails closed
+    with one bounded error code when it cannot sign, so an unsigned artifact can
+    never be produced silently.
+  -->
+  <PropertyGroup>
+    <GameBuddyTimestampUrl Condition="'$(GameBuddyTimestampUrl)' == ''">http://timestamp.digicert.com</GameBuddyTimestampUrl>
+    <GameBuddySigningCertificateThumbprint Condition="'$(GameBuddySigningCertificateThumbprint)' == ''"></GameBuddySigningCertificateThumbprint>
+  </PropertyGroup>
+
+  <Target Name="ResolveSignTool" Condition="'$(Configuration)' == 'Release' and '$(GameBuddySignToolPath)' == ''">
+    <!-- MSBuild has no built-in property for the 32-bit Program Files root, so it
+         is read from the environment; both roots are searched because the Windows
+         SDK installs signtool under either one. -->
+    <PropertyGroup>
+      <GameBuddyProgramFilesX86>$([System.Environment]::GetEnvironmentVariable('ProgramFiles(x86)'))</GameBuddyProgramFilesX86>
+    </PropertyGroup>
+    <ItemGroup>
+      <SignToolCandidate Include="$(ProgramFiles)\Windows Kits\10\bin\**\x64\signtool.exe" />
+      <SignToolCandidate Include="$(GameBuddyProgramFilesX86)\Windows Kits\10\bin\**\x64\signtool.exe" />
+    </ItemGroup>
+    <PropertyGroup>
+      <!-- The wildcard resolves in version order; the last candidate is the newest SDK. -->
+      <GameBuddySignToolPath>@(SignToolCandidate->Reverse())</GameBuddySignToolPath>
+    </PropertyGroup>
+    <PropertyGroup>
+      <GameBuddySignToolPath>$([System.String]::Copy('$(GameBuddySignToolPath)').Split(';')[0])</GameBuddySignToolPath>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="SignSetupExecutable" AfterTargets="Build" DependsOnTargets="ResolveSignTool" Condition="'$(Configuration)' == 'Release'">
+    <Error Condition="'$(GameBuddySigningCertificateThumbprint)' == ''"
+           Code="GBSIGN001"
+           Text="installer_signing_certificate_unavailable: no code-signing certificate thumbprint was configured, so Setup.exe cannot be signed. Set -p:GameBuddySigningCertificateThumbprint=&lt;thumbprint&gt; (and optionally -p:GameBuddyTimestampUrl=, -p:GameBuddySignToolPath=). An unsigned Setup.exe is never published." />
+    <Error Condition="'$(GameBuddySignToolPath)' == '' or !Exists('$(GameBuddySignToolPath)')"
+           Code="GBSIGN002"
+           Text="installer_signing_tool_unavailable: signtool.exe was not found. Set -p:GameBuddySignToolPath=&lt;path&gt;. An unsigned Setup.exe is never published." />
+    <ItemGroup>
+      <!-- Both the apphost and the managed assembly are signed: the uninstaller the
+           installer places in the program root is a copy of exactly these two files. -->
+      <SetupSigningTarget Include="$(TargetDir)$(AssemblyName).exe" Condition="Exists('$(TargetDir)$(AssemblyName).exe')" />
+      <SetupSigningTarget Include="$(TargetDir)$(AssemblyName).dll" Condition="Exists('$(TargetDir)$(AssemblyName).dll')" />
+    </ItemGroup>
+    <Error Condition="'@(SetupSigningTarget)' == ''"
+           Code="GBSIGN003"
+           Text="installer_signing_target_unavailable: neither Setup.exe nor its managed assembly was produced by the build, so there is nothing to sign. An unsigned Setup.exe is never published." />
+    <!-- /tr + /td SHA256 is the RFC 3161 timestamp; the legacy /t switch is
+         deliberately not used. The signer identity is the certificate the build
+         was given, and it is never inferred from the artifact. -->
+    <Exec Command="&quot;$(GameBuddySignToolPath)&quot; sign /fd SHA256 /tr &quot;$(GameBuddyTimestampUrl)&quot; /td SHA256 /sha1 $(GameBuddySigningCertificateThumbprint) @(SetupSigningTarget->'&quot;%(FullPath)&quot;', ' ')" />
+    <!-- Authenticode chain validation to a trusted root, over every signature. A
+         signature whose chain or timestamp does not hold fails the build with one
+         bounded code instead of a raw tool exit, and never publishes. -->
+    <Exec Command="&quot;$(GameBuddySignToolPath)&quot; verify /pa /all @(SetupSigningTarget->'&quot;%(FullPath)&quot;', ' ')" IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="GameBuddySignatureVerifyExitCode" />
+    </Exec>
+    <Error Condition="'$(GameBuddySignatureVerifyExitCode)' != '0'"
+           Code="GBSIGN004"
+           Text="installer_signature_verification_failed: the signed Setup artifacts did not pass Authenticode verification to a trusted root with a valid RFC 3161 timestamp. The build stops here rather than publishing a signature that does not verify." />
+  </Target>
+
+</Project>

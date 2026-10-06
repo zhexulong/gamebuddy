@@ -14,12 +14,12 @@ internal sealed class CurrentUserRootLayout
     internal string OperationalRoot { get; }
     internal string PresentationRoot { get; }
 
-    private CurrentUserRootLayout(CurrentUserRootRegistrationRecord registration)
+    private CurrentUserRootLayout(string programRoot, string dataRoot, string operationalRoot, string presentationRoot)
     {
-        ProgramRoot = registration.ProgramRoot;
-        DataRoot = registration.DataRoot;
-        OperationalRoot = registration.OperationalRoot;
-        PresentationRoot = registration.PresentationRoot;
+        ProgramRoot = programRoot;
+        DataRoot = dataRoot;
+        OperationalRoot = operationalRoot;
+        PresentationRoot = presentationRoot;
     }
 
     internal static CurrentUserRootLayout DeriveForCurrentUser() =>
@@ -39,6 +39,11 @@ internal sealed class CurrentUserRootLayout
         ArgumentNullException.ThrowIfNull(registration);
         ArgumentNullException.ThrowIfNull(localApplicationDataProvider);
 
+        if (!StringComparer.Ordinal.Equals(registration.Schema, CurrentUserRootRegistration.SchemaVersion))
+        {
+            throw new RootLayoutUnavailableException();
+        }
+
         var localApplicationData = localApplicationDataProvider.GetLocalApplicationDataPath();
         if (string.IsNullOrWhiteSpace(localApplicationData) || !Path.IsPathFullyQualified(localApplicationData))
         {
@@ -46,45 +51,28 @@ internal sealed class CurrentUserRootLayout
         }
 
         var local = Canonicalize(localApplicationData);
-        var expected = new[]
-        {
-            Path.Combine(local, "Programs", "GameBuddy"),
-            Path.Combine(local, "GameBuddy", "data"),
-            Path.Combine(local, "GameBuddy", "operational"),
-            Path.Combine(local, "GameBuddy", "presentation"),
-        };
-        var actual = new[]
-        {
-            Canonicalize(registration.ProgramRoot),
-            Canonicalize(registration.DataRoot),
-            Canonicalize(registration.OperationalRoot),
-            Canonicalize(registration.PresentationRoot),
-        };
+        // The program root is the one root the installed-layout marker carries,
+        // and it must stay inside this user's LocalApplicationData: the marker
+        // may never redirect a root outside the fixed per-user layout.
+        var programRoot = Canonicalize(registration.ProgramRoot);
+        var dataRoot = Canonicalize(Path.Combine(local, "GameBuddy", "data"));
+        var operationalRoot = Canonicalize(Path.Combine(local, "GameBuddy", "operational"));
+        var presentationRoot = Canonicalize(Path.Combine(local, "GameBuddy", "presentation"));
 
-        if (!StringComparer.Ordinal.Equals(registration.Schema, CurrentUserRootRegistration.SchemaVersion) ||
-            !actual.SequenceEqual(expected, StringComparer.Ordinal))
+        foreach (var boundary in new[] { programRoot, dataRoot, operationalRoot, presentationRoot })
+        {
+            EnsureNoReparseBoundary(local, boundary);
+        }
+
+        // The program root may be a generation parent (Programs\GameBuddy) or a
+        // generation child; either way it must not overlap a mutable root.
+        if (Overlaps(programRoot, dataRoot) || Overlaps(programRoot, operationalRoot) || Overlaps(programRoot, presentationRoot) ||
+            Overlaps(dataRoot, operationalRoot) || Overlaps(dataRoot, presentationRoot) || Overlaps(operationalRoot, presentationRoot))
         {
             throw new RootLayoutUnavailableException();
         }
 
-        for (var index = 0; index < actual.Length; index++)
-        {
-            EnsureNoReparseBoundary(local, actual[index]);
-            for (var other = index + 1; other < actual.Length; other++)
-            {
-                if (Overlaps(actual[index], actual[other]))
-                {
-                    throw new RootLayoutUnavailableException();
-                }
-            }
-        }
-
-        return new CurrentUserRootLayout(new CurrentUserRootRegistrationRecord(
-            registration.Schema,
-            actual[0],
-            actual[1],
-            actual[2],
-            actual[3]));
+        return new CurrentUserRootLayout(programRoot, dataRoot, operationalRoot, presentationRoot);
     }
 
     private static void EnsureNoReparseBoundary(string localApplicationData, string boundary)

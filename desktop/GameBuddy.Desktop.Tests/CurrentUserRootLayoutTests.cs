@@ -13,7 +13,7 @@ public sealed class CurrentUserRootLayoutTests
         Assert.Throws<RootLayoutUnavailableException>(() => CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture));
 
         fixture.RestoreCanonicalBoundaries();
-        fixture.MakeDataEqualProgramRoot();
+        fixture.AdoptDataRootAsProgramRoot();
 
         Assert.Throws<RootLayoutUnavailableException>(() => CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture));
     }
@@ -35,8 +35,19 @@ public sealed class CurrentUserRootLayoutTests
 
         var layout = CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture);
 
-        Assert.Equal(fixture.Registration.ProgramRoot, layout.ProgramRoot);
-        Assert.Equal(fixture.Registration.DataRoot, layout.DataRoot);
+        Assert.Equal(fixture.ProgramRoot, layout.ProgramRoot);
+        Assert.Equal(fixture.DataRoot, layout.DataRoot);
+        Assert.Equal(fixture.OperationalRoot, layout.OperationalRoot);
+        Assert.Equal(fixture.PresentationRoot, layout.PresentationRoot);
+    }
+
+    [Fact]
+    public async Task DeriveLayout_rejects_an_unsupported_schema_version()
+    {
+        await using var fixture = await DisposableRootFixture.CreateAsync();
+        fixture.ReplaceSchema("gamebuddy-windows-root-registration/v0");
+
+        Assert.Throws<RootLayoutUnavailableException>(() => CurrentUserRootLayout.DeriveForTesting(fixture.Registration, fixture));
     }
 
     [Fact]
