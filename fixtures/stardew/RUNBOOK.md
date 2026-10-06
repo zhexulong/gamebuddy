@@ -1150,6 +1150,63 @@ pnpm test:stardew-action-gate-descriptors
 6. Report separately: production receipt evidence, static checks, cleanup
    evidence, untested persistence/cancellation cases, and residual risks.
 
+## Live-record coverage: this runbook is not the whole live surface
+
+**`live_verified` is a claimed lifecycle for 66 actions; this runbook holds a receipt-level record for
+only part of that set.** The rest are recorded in per-lane cards and design docs, so "the action is
+not in the RUNBOOK" does not mean "the action has no live proof" — and, read the other way, a
+RUNBOOK search is not a coverage check. This section states where to look, measured on `2026-10-06`
+against the 64 published gates.
+
+**Method, so the next reader can redo it rather than trust it.** For every entry in
+`STARDEW_PUBLISHED_ACTION_GATES`, search this file for the action id OR its registered
+`terminalReasonCode`, then classify: a per-action record under
+`### B. Run one action from a disposable copy`, or a record-looking `##` heading, counts as
+receipt-level; a claim in another document counts as recorded elsewhere; neither counts as
+asserted-only.
+
+| category | count |
+|---|---|
+| receipt-level record in this file | **40** |
+| record in another document (listed below) | **24** |
+| asserted only, with no record anywhere | **0** |
+
+**Receipts read from another document — the proof exists, just not here.** These are not gaps; they
+are records whose home is a lane card or a domain doc, and this list exists so the next reader does
+not have to grep 60 files to find out:
+
+```text
+place_wood_fence  bait_crab_pot          design/22_STARDEW_NATIVE_LOCAL_CLOSURE_BOARD.md
+interact_npc_with_item                    design/analysis/ladder4-live-run-audit.md
+advance_day                               design/domains/stardew/world-interruption-arbitration.md
+cook_recipe                               design/domains/stardew/gameplay-capability-expansion.md
+chop_stump  plant_sapling  scythe_crop    design/archive/tasks/stardew-gameplay-loop-closure-implementation.md
+harvest_bush  harvest_fruit_tree  shake_tree  take_pedestal_item  toggle_fence_gate
+                                          design/tasks/active/cards/lane-loop-closure-waves.md
+clear_cask  dress_mannequin  set_sign_display  deposit_silo_hay  toggle_tool_light
+                                          design/tasks/active/cards/lane-L2-facility-seams.md
+use_raft  mount_transport                 design/tasks/active/cards/lane-L3-movement-seams.md
+collect_crab_pot_output                   design/tasks/active/cards/lane-L2-facility-seams.md
+```
+
+**Four actions appear in this file only as coverage prose, not as receipts**, and are called out
+because a plain search finds them and they look like a pass:
+
+| action | what the mention actually is | read the receipt at |
+|---|---|---|
+| `collect_crab_pot_output` | a heading that says **bounded, non-live** — it documents the fixture's provenance, not a run | `lane-L2-facility-seams.md` |
+| `enter_mine` | quoted inside section 36's discussion of `select_mine_elevator_floor` ("verified live at 10,4 vs the requested 6,6") | `lane-L3-movement-seams.md` |
+| `express_emote`, `face_direction` | named in the SOP header as *covered by* the read-only observation procedure, plus one audit-table row | `design/analysis/ladder4-live-run-audit.md` |
+
+**A count check for the next reader**: the table above lists 24 names and the code block lists 24
+names; if your re-run disagrees, the classifier's rule is the one to compare against, not this
+prose. (`mount_transport` is the one that is easy to drop by eye: it sits on the `use_raft` line.)
+
+**The integrity statement, since this is the number that matters:** zero gated actions are
+live_verified without any record anywhere. Every one of the 64 has either a receipt in this file or a
+named record in another document. That is a weaker claim than "every action has a receipt in the
+RUNBOOK" — which was never true — and a stronger one than nothing.
+
 ## Failure rules
 
 - **No target:** `blocked`; do not issue an action request.
