@@ -48,13 +48,23 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Equal(NormalizeWindowsPath(generation.ExactChildRuntimePath), NormalizeWindowsPath(report.RootElement.GetProperty("executablePath").GetString()!));
         Assert.True(new FileInfo(generation.ExactChildRuntimePath).Length < 33_554_432);
 
-        // The child environment is wholly replaced by the governed bootstrap block:
-        // the admitted bundled Host must receive the frozen wire environment and
-        // nothing inherited from the launcher, and no narrative nonce by default.
+        // The child environment is a DECLARED block, not the launcher's environment.
+        // What was wrong was what the declaration omitted: the Host composes the
+        // GAME's child environment itself and fails closed without PATH, WINDIR and
+        // USERPROFILE, so in the Desktop topology the game could never start. The
+        // declared set is now the wire block plus exactly what the Host forwards to the
+        // game (the guardian admits the same names at that boundary) and what it needs
+        // to reach the player's provider through a proxy.
         var environment = report.RootElement.GetProperty("environment");
-        Assert.Equal(
-            new[] { "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST", "GAMEBUDDY_HOST_GAME_SESSION_MODE", "GAMEBUDDY_HOST_SURFACE", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP" },
-            environment.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal));
+        var names = environment.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var declared = new List<string> { "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST", "GAMEBUDDY_HOST_GAME_SESSION_MODE", "GAMEBUDDY_HOST_SURFACE", "LOCALAPPDATA", "PATH", "SystemRoot", "TEMP", "TMP", "USERPROFILE", "WINDIR" };
+        foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY" })
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(optional))) declared.Add(optional);
+        Assert.Equal(declared.OrderBy(name => name, StringComparer.Ordinal), names);
+        // The values the Host requires to compose a Stardew child environment reach it:
+        // this is the launcher's half of that contract.
+        foreach (var carried in new[] { "PATH", "WINDIR", "USERPROFILE" })
+            Assert.Equal(Environment.GetEnvironmentVariable(carried), environment.GetProperty(carried).GetString());
         Assert.Equal(Path.Combine(layout.OperationalRoot, "deployment-manifest.json"), environment.GetProperty("GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST").GetString());
         Assert.Equal("fresh", environment.GetProperty("GAMEBUDDY_HOST_GAME_SESSION_MODE").GetString());
         Assert.Equal("composed-reference-game", environment.GetProperty("GAMEBUDDY_HOST_SURFACE").GetString());
@@ -77,7 +87,11 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("new StringBuilder(Quote(WindowsNative.ToExtendedLengthPath(runtime.BootstrapPath)))", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.CreateProcess(runtimePath, commandLine", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Process.Start", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("PATH", source, StringComparison.Ordinal);
+        // The supervisor must not hand the child a WHOLESALE environment: the block is
+        // declared name by name, with the reason each name is carried. (The earlier form
+        // of this assertion forbade the literal "PATH", which encoded the very starvation
+        // that stopped the Host from composing the game's child environment.)
+        Assert.DoesNotContain("Environment.GetEnvironmentVariables", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new GuardianSupervisor", source, StringComparison.Ordinal);
         Assert.DoesNotContain("StartResidentAsync", source, StringComparison.Ordinal);
     }
