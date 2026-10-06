@@ -2489,12 +2489,12 @@
       {
         "actionId": "dismiss_modal",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "dismiss_modal",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {},
           "outputFacts": {},
@@ -2516,12 +2516,12 @@
       {
         "actionId": "answer_dialogue",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "answer_dialogue",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "responseKey": {
@@ -2635,6 +2635,8 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "dismiss_modal",
+      "answer_dialogue",
       "advance_day"
     ],
     "executableActionIds": [
@@ -2688,6 +2690,8 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "dismiss_modal",
+      "answer_dialogue",
       "advance_day"
     ],
     "readOnlyActionIds": [
@@ -2695,10 +2699,7 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [
-      "dismiss_modal",
-      "answer_dialogue"
-    ],
+    "experimentalActionIds": [],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
       "snapshotCapabilitiesFromCapabilitySet": true,
@@ -3660,6 +3661,16 @@
         "actionId": "enter_mine",
         "runner": "run-stardew-native-local-player-enter-mine-smoke.mjs",
         "fixtureScenario": "native_enter_mine_v1"
+      },
+      {
+        "actionId": "dismiss_modal",
+        "runner": "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
+        "fixtureScenario": "native_wia_modal_dismiss_chain_v1"
+      },
+      {
+        "actionId": "answer_dialogue",
+        "runner": "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
+        "fixtureScenario": "native_wia_answer_question_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",

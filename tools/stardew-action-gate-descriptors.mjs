@@ -247,6 +247,17 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
   gate("mount_transport", 1, "run-stardew-native-local-player-mount-transport-smoke.mjs", "horse_mounted", "native_mount_transport_v1"),
   gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
+  // WIA §4.2: the two modal-handling primitives. Promoted to live_verified on owner ruling
+  // (2026-10-06) after both crossed the live gate: a real native-local run each, with its own
+  // receipt (RUNBOOK 32 dismiss-chain, 33 answer-question). They stay Experimental in name
+  // nowhere — the reason the promotion matters is that WIA's whole design is interrupt ->
+  // breakpoint -> self-healing continuation, and an Agent that cannot answer or dismiss a
+  // modal is DEADLOCKED by any NPC conversation that interrupts its work. Each runner drives a
+  // three-phase chain (interrupt, handle, resume), and the terminal below is the ACTION's
+  // receipt, which is what the harness joins to the dispatch; the chain's own completion code
+  // is the runner's verdict, not the action's terminal.
+  gate("dismiss_modal", 1, "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs", "modal_dismissed", "native_wia_modal_dismiss_chain_v1"),
+  gate("answer_dialogue", 1, "run-stardew-native-local-player-wia-answer-question-smoke.mjs", "answer_dialogue_answered", "native_wia_answer_question_v1"),
 ]);
 
 /**
@@ -343,7 +354,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
-  ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
+  // ride_bus was listed here as well until it was promoted; the entry is removed because a key
+  // present in BOTH this map and STARDEW_PUBLISHED_ACTION_GATES makes
+  // resolve-stardew-action-gate-runner.test.mjs fail ('ride_bus must not enter the published
+  // gate list') while check-stardew-action-promotion.mjs stays green. Promotion is therefore
+  // three edits, not one: the gate list, this map, and the descriptor test's two frozen lists.
   // The fixture already puts the actor beside the shop owner inside trading hours, so
   // the runner's contract is the purchase itself.
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until

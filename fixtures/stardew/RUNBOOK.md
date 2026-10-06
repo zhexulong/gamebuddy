@@ -2038,12 +2038,17 @@ the artefact report **what it actually did** rather than by reasoning about what
 
 ### Deliberate deviations, stated
 
-- `menu.safetyTimer = 0` is cleared before clicking. `ShopMenu.receiveLeftClick` only reaches
-  its purchase branch when `safetyTimer <= 0` (ShopMenu.cs:1022) and the field starts at 250
-  (:264). It is a guard against a human double-clicking, not world state, so a scripted click
-  clears it rather than waiting. **Not proven to have been necessary** — the rounds that
-  followed showed the click was being processed anyway — but kept, with the reasoning
-  recorded.
+- `menu.safetyTimer = 0` is cleared before clicking. **Kept by owner ruling (2026-10-06).**
+  `ShopMenu.receiveLeftClick` only reaches its purchase branch when `safetyTimer <= 0`
+  (ShopMenu.cs:1022); the field starts at 250 (:264) and is decremented every frame (:1751).
+  It is ConcernedApe's debounce against a human double-clicking the mouse, not world state,
+  so a scripted same-frame or rapid repeat call clears it rather than waiting out a
+  hand-speed constraint. The rounds that followed this change did NOT observe it firing, but
+  that is not evidence it is unnecessary: by the time those clicks were dispatched the menu
+  had already been open for many ticks and the counter had naturally reached zero. Leaving
+  it armed can silently swallow the click inside the first 250 ms and surface as a sporadic
+  `purchase_not_effective` — the failure mode this whole gate was chasing. Keeping it is the
+  deterministic fix; removing it trades a known mechanism for an intermittent one.
 - The runner prefers a non-seasonal shop with stock. Discovery advertises every shop whose
   owner entry is currently eligible, and a live run picked `DesertFestival_Pierre` — a
   festival stall — because the content data lists it first. Demonstrating "buy something"
