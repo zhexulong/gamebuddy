@@ -110,6 +110,15 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
    * charged so a runaway caller cannot exceed the budget through records. */
   async function record(name, value) {
     const path = join(dir, name);
+    // What charge() actually took, so the catch can roll back exactly that much. Declared OUTSIDE the
+    // try on purpose: a `let`/`const` inside a try is scoped to it and the catch below is a sibling
+    // scope, so reading `size` there threw a ReferenceError — inside the one module whose first
+    // discipline is "NEVER throw", meaning a failed record destroyed the evidence of its own failure.
+    // Found by tools/check-scope-references.mjs; the same shape cost three real live runs their result
+    // file. Rolling back only what was charged is also more honest than the previous unconditional
+    // decrement, which would have subtracted a charge that never happened (e.g. an mkdir failure).
+    let chargedBytes = 0;
+    let chargedFiles = 0;
     try {
       await mkdir(join(path, ".."), { recursive: true });
       const text = `${JSON.stringify(value, null, 2)}\n`;
@@ -119,13 +128,15 @@ export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
         skipped.push({ reason: "max_bytes_record", name });
         return undefined;
       }
+      chargedBytes = size;
+      chargedFiles = 1;
       await writeFile(path, text, "utf8");
       return path;
     } catch (error) {
       // Roll back the charge on a failed write so filesWritten/bytesWritten stay
       // the honest counts of files actually on disk (audit NOTE-2).
-      bytesWritten -= size;
-      filesWritten -= 1;
+      bytesWritten -= chargedBytes;
+      filesWritten -= chargedFiles;
       failures.push({ op: "record", path, error: String(error?.message ?? error) });
       return undefined;
     }
