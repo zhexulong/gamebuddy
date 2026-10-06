@@ -40,6 +40,7 @@ async function loadGenerationModules(artifactRoot: string) {
     load("tavern/connection-service.js"),
     load("tavern/connection-probe.js"),
     load("settings/player-preference-store.js"),
+    load("settings/model-profile-store.js"),
     load("tavern/world-info-management/world-info-management.js"),
     load("tavern/world-info-binding/world-info-binding-management-service.js"),
     load("tavern/tavern-management-state.js"),
@@ -96,6 +97,7 @@ async function startMountedManagementComposition(
     connectionModule,
     connectionProbeModule,
     playerPreferenceModule,
+    modelProfileStoreModule,
     worldInfoManagementModule,
     worldInfoBindingModule,
     stateModule,
@@ -161,6 +163,8 @@ async function startMountedManagementComposition(
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "settings.profiles.read",
+      "settings.profiles.update",
       ...(options.withCharacters === true
         ? [
             "companion.list",
@@ -200,6 +204,8 @@ async function startMountedManagementComposition(
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "settings.profiles.read",
+      "settings.profiles.update",
       ...(options.withCharacters === true
         ? [
             "companion.list",
@@ -381,6 +387,11 @@ async function startMountedManagementComposition(
     },
     ...(connectionProbe === undefined ? {} : { probe: connectionProbe }),
   });
+  // The one Host-owned Chat/Game model profile record, at the exact production
+  // path the Chat and Game runtime construction reads at mount.
+  const modelProfileStore = new modelProfileStoreModule.ModelProfileStore(
+    resolve(root, "settings", "model-profiles.json"),
+  );
   const server = await composition.startTavernManagementStaticShellComposition({
     artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     inspector,
@@ -390,6 +401,7 @@ async function startMountedManagementComposition(
     worldInfoService,
     playerPreferenceStore,
     connectionService,
+    modelProfileStore,
     ...(personaService === undefined ? {} : { personaService }),
     ...(scenarioService === undefined ? {} : { scenarioService }),
     ...(greetingService === undefined ? {} : { greetingService }),
@@ -1521,6 +1533,102 @@ test("management browser sets the companion language once, durably, and the runt
     // is the player's switch. A third would mean a write loop.
     assert.equal(languageCalls.filter((method) => method === "PUT").length, 2);
     assert.ok(languageCalls.includes("GET"));
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+/**
+ * The model-profile journey, design/28 §2.3. The player types the model each
+ * surface uses; a model id the shipped recommendation does not name saves just
+ * as well, because the recommendation is guidance, never the upper bound.
+ *
+ * UNRUN: this journey needs a current production generation under `host/dist`
+ * and a real Windows mounted coordinator, neither of which exists in this
+ * session (the slice must not build a production generation). It is written to
+ * the shared harness so the next generation build exercises it. What it owns is
+ * the frozen player-visible result: a non-catalog model id round-trips, and
+ * `settings/model-profiles.json`'s `game` entry - the only source the Game
+ * runtime construction reads at mount - carries the player's own choice.
+ */
+test("management browser saves a player-typed model id per surface and the Game profile is the durable authority", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const profileCalls: string[] = [];
+    const profileResponses: string[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/tavern/v1/settings/profiles") {
+        profileCalls.push(request.method());
+      }
+    });
+    page.on("response", (response) => {
+      if (new URL(response.url()).pathname !== "/api/tavern/v1/settings/profiles") return;
+      void response
+        .text()
+        .then((body) => profileResponses.push(body))
+        .catch(() => undefined);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-model-profiles]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(panel.getByRole("heading", { name: "Model profiles" })).toBeVisible();
+
+    const chatEditor = panel.locator('[data-model-profile-surface="chat"]');
+    const gameEditor = panel.locator('[data-model-profile-surface="game"]');
+    await expect(chatEditor).toBeVisible();
+    await expect(gameEditor).toBeVisible();
+    // The panel starts from the durable read-back, not a local guess.
+    await expect(chatEditor.locator("#model-profile-model-chat")).toHaveValue("deepseek-v4-flash");
+    await expect(gameEditor.locator("#model-profile-model-game")).toHaveValue("deepseek-v4-flash");
+
+    // The suggestions are the Host catalog projection: they are offered, and the
+    // player is not limited to them.
+    const suggestions = gameEditor.locator("[data-model-profile-suggestions]");
+    await expect(suggestions.getByRole("button", { name: "deepseek-v4-flash", exact: true })).toBeVisible();
+    await expect(suggestions.getByRole("button", { name: "gpt-5.6-luna", exact: true })).toBeVisible();
+
+    // The defect this slice removes: a model id the recommendation does not name
+    // is the player's own input, so it saves byte for byte.
+    const playerModelId = "qwen2.5-coder:7b";
+    await gameEditor.locator("#model-profile-model-game").fill(playerModelId);
+    await gameEditor.locator("#model-profile-level-game").fill("xhigh");
+    await gameEditor.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator(".success-banner").first()).toBeVisible({ timeout: 10_000 });
+    // The editor adopts the Host's validated read-back, never the local choice.
+    await expect(gameEditor.locator("#model-profile-model-game")).toHaveValue(playerModelId);
+
+    // Durable read-back on reload: the file is the authority.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    const reloaded = page.locator('[data-model-profile-surface="game"]');
+    await expect(reloaded.locator("#model-profile-model-game")).toHaveValue(playerModelId, { timeout: 10_000 });
+    await expect(reloaded.locator("#model-profile-level-game")).toHaveValue("xhigh");
+    // The Chat surface keeps its own model; one profile never overrides the other.
+    await expect(
+      page.locator('[data-model-profile-surface="chat"]').locator("#model-profile-model-chat"),
+    ).toHaveValue("deepseek-v4-flash");
+
+    // The Game runtime reads exactly this record at mount, so the durable `game`
+    // entry is the model the Game surface receives.
+    const stored = JSON.parse(await readFile(resolve(mounted.root, "settings", "model-profiles.json"), "utf8"));
+    assert.equal(stored.game.modelId, playerModelId);
+    assert.equal(stored.game.thinkingLevel, "xhigh");
+    assert.equal(stored.game.revision, 1);
+    assert.equal(stored.chat.revision, 0);
+    assert.equal(stored.chat.modelId, "deepseek-v4-flash");
+
+    // One read at mount and one write for the save; a write loop would show up here.
+    assert.equal(profileCalls.filter((method) => method === "PUT").length, 1);
+    assert.ok(profileCalls.includes("GET"));
+    // The projection carries no credential and no endpoint fact.
+    assert.ok(profileResponses.length > 0);
+    for (const body of profileResponses) {
+      assert.doesNotMatch(body, /apiKey|"key"|baseUrl|auth\.json|sk-/);
+      assert.doesNotMatch(body, /https?:\/\//);
+    }
   } finally {
     await browser.close();
     await mounted.close();

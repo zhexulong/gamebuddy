@@ -64,6 +64,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.connection.activate"
     | "settings.connection.model"
     | "settings.connection.remove"
+    | "settings.profiles.read"
+    | "settings.profiles.update"
     | "companion.list"
     | "companion.detail"
     | "companion.create"
@@ -102,6 +104,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.connection.activate"
     | "tavern.operation.settings.connection.model"
     | "tavern.operation.settings.connection.remove"
+    | "tavern.operation.settings.profiles.read"
+    | "tavern.operation.settings.profiles.update"
     | "tavern.operation.companion.list"
     | "tavern.operation.companion.detail"
     | "tavern.operation.companion.create"
@@ -467,6 +471,44 @@ export type TavernConnectionProbeV1 = Readonly<{
   state: TavernConnectionStateV1;
 }>;
 
+/**
+ * The player-managed model profiles (design/28 §2.3).
+ *
+ * `modelId` and `thinkingLevel` are exactly what the player typed: a general
+ * bounded string, never a closed union and never a catalog membership test.
+ * `recommendedModels` is guidance the panel may offer — it is never the set of
+ * values a profile may hold.
+ */
+export type TavernRecommendedModelV1 = Readonly<{
+  providerId: string;
+  providerLabel: string;
+  modelId: string;
+  modelLabel: string;
+  allowedThinkingLevels: readonly TavernConnectionThinkingLevelV1[];
+  defaultThinkingLevel: TavernConnectionThinkingLevelV1;
+}>;
+
+export type TavernModelProfileV1 = Readonly<{
+  revision: number;
+  modelId: string;
+  thinkingLevel: string;
+}>;
+
+export type TavernModelProfilesV1 = Readonly<{
+  apiVersion: 1;
+  chat: TavernModelProfileV1;
+  game: TavernModelProfileV1;
+  recommendedModels: readonly TavernRecommendedModelV1[];
+}>;
+
+export type TavernModelProfileUpdateCommandV1 = Readonly<{
+  apiVersion: 1;
+  surface: "chat" | "game";
+  expectedRevision: number;
+  modelId: string;
+  thinkingLevel: string;
+}>;
+
 // --- Errors. ---
 
 /** A validated RFC-9457-style server problem; carries the frozen problem fields. */
@@ -535,6 +577,8 @@ const OPERATION_IDS = [
   "settings.connection.activate",
   "settings.connection.model",
   "settings.connection.remove",
+  "settings.profiles.read",
+  "settings.profiles.update",
   // design/28 §2 Character / Persona / Scenario / Greeting + Chat retention.
   "companion.list",
   "companion.detail",
@@ -576,6 +620,8 @@ const LABEL_KEYS = [
   "tavern.operation.settings.connection.activate",
   "tavern.operation.settings.connection.model",
   "tavern.operation.settings.connection.remove",
+  "tavern.operation.settings.profiles.read",
+  "tavern.operation.settings.profiles.update",
   "tavern.nav.characters",
   "tavern.operation.companion.list",
   "tavern.operation.companion.detail",
@@ -787,6 +833,28 @@ const CONNECTION_FAILURES = [
   "timeout",
   "invalid_response",
 ] as const;
+// Mirrors of the Host's open model-profile bounds (design/28 §2.3.1): the panel
+// refuses only a malformed value, never a model id the recommendation omits.
+const MODEL_PROFILE_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,127}$/;
+const MODEL_PROFILE_THINKING_LEVEL_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const MODEL_PROFILES_KEYS = ["apiVersion", "chat", "game", "recommendedModels"] as const;
+const MODEL_PROFILE_KEYS = ["revision", "modelId", "thinkingLevel"] as const;
+const RECOMMENDED_MODEL_KEYS = [
+  "providerId",
+  "providerLabel",
+  "modelId",
+  "modelLabel",
+  "allowedThinkingLevels",
+  "defaultThinkingLevel",
+] as const;
+const MODEL_PROFILE_UPDATE_KEYS = [
+  "apiVersion",
+  "surface",
+  "expectedRevision",
+  "modelId",
+  "thinkingLevel",
+] as const;
+const MODEL_PROFILE_SURFACES = ["chat", "game"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -1598,6 +1666,71 @@ export function validateConnectionProbe(value: unknown): TavernConnectionProbeV1
   return value as TavernConnectionProbeV1;
 }
 
+function isModelProfile(value: unknown): value is TavernModelProfileV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MODEL_PROFILE_KEYS) &&
+    isNonNegativeSafeInteger(value.revision) &&
+    typeof value.modelId === "string" &&
+    MODEL_PROFILE_MODEL_ID_PATTERN.test(value.modelId) &&
+    typeof value.thinkingLevel === "string" &&
+    MODEL_PROFILE_THINKING_LEVEL_PATTERN.test(value.thinkingLevel)
+  );
+}
+
+function isRecommendedModel(value: unknown): value is TavernRecommendedModelV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, RECOMMENDED_MODEL_KEYS) &&
+    isLengthBoundedString(value.providerId, 1, 64) &&
+    isLengthBoundedString(value.providerLabel, 1, 128) &&
+    isLengthBoundedString(value.modelId, 1, 128) &&
+    isLengthBoundedString(value.modelLabel, 1, 128) &&
+    Array.isArray(value.allowedThinkingLevels) &&
+    value.allowedThinkingLevels.length > 0 &&
+    value.allowedThinkingLevels.length <= 5 &&
+    value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
+    isOneOf(value.defaultThinkingLevel, CONNECTION_THINKING_LEVELS)
+  );
+}
+
+function isModelProfiles(value: unknown): value is TavernModelProfilesV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MODEL_PROFILES_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isModelProfile(value.chat) &&
+    isModelProfile(value.game) &&
+    Array.isArray(value.recommendedModels) &&
+    value.recommendedModels.length <= 64 &&
+    value.recommendedModels.every(isRecommendedModel)
+  );
+}
+
+function isModelProfileUpdateCommand(value: unknown): value is TavernModelProfileUpdateCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MODEL_PROFILE_UPDATE_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOneOf(value.surface, MODEL_PROFILE_SURFACES) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    typeof value.modelId === "string" &&
+    MODEL_PROFILE_MODEL_ID_PATTERN.test(value.modelId) &&
+    typeof value.thinkingLevel === "string" &&
+    MODEL_PROFILE_THINKING_LEVEL_PATTERN.test(value.thinkingLevel)
+  );
+}
+
+export function validateModelProfiles(value: unknown): TavernModelProfilesV1 {
+  if (!isModelProfiles(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateModelProfileUpdateCommand(value: unknown): TavernModelProfileUpdateCommandV1 {
+  if (!isModelProfileUpdateCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommandV1 {
   if (
     !isRecord(value) ||
@@ -1809,6 +1942,20 @@ export type ManagementPipelineApi = Readonly<{
     expectedRevision: number,
     csrfToken: string,
   ): Promise<TavernConnectionStateV1>;
+  /**
+   * GET /api/tavern/v1/settings/profiles (browser session; no CSRF header). The
+   * two surfaces' own model profiles plus the shipped guidance catalog.
+   */
+  readModelProfiles(): Promise<TavernModelProfilesV1>;
+  /**
+   * PUT /api/tavern/v1/settings/profiles with the surface's durable revision.
+   * The model id may be anything the player typed; the Host never checks it
+   * against the recommended catalog.
+   */
+  updateModelProfile(
+    command: TavernModelProfileUpdateCommandV1,
+    csrfToken: string,
+  ): Promise<TavernModelProfilesV1>;
   /** GET /api/tavern/v1/companions: metadata-only companion library. */
   listCompanions(): Promise<CompanionListV1>;
   /** GET /api/tavern/v1/companions/:handle: safe detail for one projected handle. */
@@ -2135,6 +2282,26 @@ export function createManagementPipelineApi(
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
       );
+    },
+    async readModelProfiles(): Promise<TavernModelProfilesV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/profiles", 200, validateModelProfiles);
+    },
+    async updateModelProfile(
+      command: TavernModelProfileUpdateCommandV1,
+      csrfToken: string,
+    ): Promise<TavernModelProfilesV1> {
+      if (!isModelProfileUpdateCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/profiles",
+        200,
+        validateModelProfiles,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("settings.profiles.update", "passed", String(result[command.surface].revision));
+      return result;
     },
     async listCompanions(): Promise<CompanionListV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/companions", 200, validateCompanionList);

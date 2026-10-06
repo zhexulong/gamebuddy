@@ -5,6 +5,8 @@ import {
   createManagementPipelineApi,
   validateMemoryMutationCommand,
   validateMemoryRead,
+  validateModelProfileUpdateCommand,
+  validateModelProfiles,
   validateSetWorldInfoBindingCommand,
   validateSnapshot,
   validateStCardImportHistory,
@@ -328,4 +330,88 @@ test("the hand-written client mirror covers the Host contract's whole operation,
       );
     }
   }
+});
+
+function modelProfiles(overrides = {}) {
+  return {
+    apiVersion: 1,
+    chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    recommendedModels: [
+      {
+        providerId: "deepseek",
+        providerLabel: "DeepSeek",
+        modelId: "deepseek-v4-flash",
+        modelLabel: "DeepSeek V4 Flash",
+        allowedThinkingLevels: ["low", "high", "max"],
+        defaultThinkingLevel: "high",
+      },
+    ],
+    ...overrides,
+  };
+}
+
+test("management model-profile validators and client round-trip a player-typed model id through the exact session and CSRF-bound routes", async () => {
+  const profiles = modelProfiles();
+  assert.deepEqual(validateModelProfiles(profiles), profiles);
+
+  // A model id outside the recommendation is the player's own value: a general
+  // bounded string, never a closed union and never a catalog membership test.
+  const playerValue = modelProfiles({
+    game: { revision: 1, modelId: "qwen2.5-coder:7b", thinkingLevel: "xhigh" },
+  });
+  assert.deepEqual(validateModelProfiles(playerValue), playerValue);
+
+  const command = {
+    apiVersion: 1,
+    surface: "game",
+    expectedRevision: 0,
+    modelId: "qwen2.5-coder:7b",
+    thinkingLevel: "xhigh",
+  };
+  assert.deepEqual(validateModelProfileUpdateCommand(command), command);
+  for (const surface of ["chat", "game"]) {
+    assert.deepEqual(validateModelProfileUpdateCommand({ ...command, surface }), { ...command, surface });
+  }
+
+  // Only the bounded shape is refused, and both schemas are strict.
+  assert.throws(() => validateModelProfiles({ ...profiles, extra: true }), TavernProtocolError);
+  assert.throws(
+    () => validateModelProfiles({ ...profiles, game: { revision: 1, modelId: "has space", thinkingLevel: "high" } }),
+    TavernProtocolError,
+  );
+  assert.throws(
+    () => validateModelProfiles({ ...profiles, recommendedModels: [{ providerId: "deepseek" }] }),
+    TavernProtocolError,
+  );
+  assert.throws(() => validateModelProfileUpdateCommand({ ...command, surface: "both" }), TavernProtocolError);
+  assert.throws(() => validateModelProfileUpdateCommand({ ...command, expectedRevision: -1 }), TavernProtocolError);
+  assert.throws(() => validateModelProfileUpdateCommand({ ...command, thinkingLevel: "high level" }), TavernProtocolError);
+
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(init.method === "PUT" ? playerValue : profiles);
+  });
+  assert.deepEqual(await api.readModelProfiles(), profiles);
+  assert.deepEqual(calls[0], {
+    path: "/api/tavern/v1/settings/profiles",
+    init: { method: "GET", credentials: "same-origin" },
+  });
+
+  // A malformed command and a non-canonical CSRF token are refused before any fetch.
+  await assert.rejects(api.updateModelProfile({ ...command, modelId: "has space" }, HANDLE), TavernProtocolError);
+  await assert.rejects(api.updateModelProfile(command, "not-a-canonical-csrf-token="), TavernProtocolError);
+  assert.equal(calls.length, 1);
+
+  assert.deepEqual(await api.updateModelProfile(command, HANDLE), playerValue);
+  assert.deepEqual(calls[1], {
+    path: "/api/tavern/v1/settings/profiles",
+    init: {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "x-csrf-token": HANDLE },
+      body: JSON.stringify(command),
+    },
+  });
 });
