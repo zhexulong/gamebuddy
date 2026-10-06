@@ -68,6 +68,11 @@ try
             await RunEofRaceAsync(writer, reader, binding, dataRoot);
             return;
         }
+        if (File.Exists(Path.Combine(dataRoot, "broker-arm-live.trigger")))
+        {
+            await RunArmLiveAsync(writer, reader, binding, dataRoot);
+            return;
+        }
         await Task.Delay(10);
     }
 }
@@ -98,6 +103,48 @@ static async Task RunEofRaceAsync(StreamWriter writer, StreamReader reader, dyna
     File.WriteAllText(Path.Combine(dataRoot, "broker-eof-race.queued"), "queued", new UTF8Encoding(false));
     while (!File.Exists(Path.Combine(dataRoot, "broker-eof-race.release")) && !File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) await Task.Delay(5);
     if (File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) return;
+}
+
+// One real arm exchange: the same production-shaped opaque arm body the Host's
+// own composition encoder emits (the correlation triple plus the four durable
+// arm binding facts plus the approved executable), written to the broker over
+// the authenticated session. The broker's answer is written out verbatim so a
+// live run can observe the native's own armed result instead of inferring it.
+static async Task RunArmLiveAsync(StreamWriter writer, StreamReader reader, dynamic binding, string dataRoot)
+{
+    var instance = Guid.NewGuid().ToString("D");
+    var attempt = Guid.NewGuid().ToString("D");
+    // A role executable that ignores stdin and exits at once: the exchange is
+    // about the frame, not about a game process. The arm approval and the launch
+    // plan must name the same executable, which is what the native enforces.
+    var roleExecutable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "whoami.exe");
+    var roleEnvironment = new Dictionary<string, string>
+    {
+        ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "C:\\Windows\\System32",
+        ["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot") ?? "C:\\Windows",
+        ["WINDIR"] = Environment.GetEnvironmentVariable("WINDIR") ?? "C:\\Windows",
+        ["TEMP"] = Environment.GetEnvironmentVariable("TEMP") ?? "C:\\Windows\\Temp",
+        ["TMP"] = Environment.GetEnvironmentVariable("TMP") ?? "C:\\Windows\\Temp",
+        ["USERPROFILE"] = Environment.GetEnvironmentVariable("USERPROFILE") ?? "C:\\Users\\Default",
+    };
+    var arm = new Dictionary<string, object> { ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["revision"] = Guid.NewGuid().ToString("D"), ["leaseName"] = $"Local\\Lease-{Guid.NewGuid():N}", ["playerJobName"] = $"Local\\Player-{Guid.NewGuid():N}", ["aiJobName"] = $"Local\\Ai-{Guid.NewGuid():N}", ["approvedExecutable"] = roleExecutable };
+    var privateArm = Base64Url(JsonSerializer.SerializeToUtf8Bytes(arm));
+    var armCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "arm_attempt", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["operationWaitBudgetMs"] = 60_000L, ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["privateFrame"] = privateArm };
+    File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.arm-body.json"), JsonSerializer.Serialize(arm), new UTF8Encoding(false));
+    var answers = new List<string>();
+    await writer.WriteLineAsync(JsonSerializer.Serialize(armCommand));
+    answers.Add(await reader.ReadLineAsync() ?? "null");
+    var plan = new Dictionary<string, object> { ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["planId"] = Guid.NewGuid().ToString("D"), ["role"] = "player_host", ["deadlineUnixMs"] = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds(), ["executable"] = roleExecutable, ["cwd"] = Path.GetDirectoryName(roleExecutable)!, ["arguments"] = Array.Empty<string>(), ["environment"] = roleEnvironment };
+    var privatePlan = Base64Url(JsonSerializer.SerializeToUtf8Bytes(plan));
+    var launchCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "launch_role", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["deadlineUnixMs"] = plan["deadlineUnixMs"], ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["role"] = "player_host", ["privateFrame"] = privatePlan };
+    File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.launch-body.json"), JsonSerializer.Serialize(plan), new UTF8Encoding(false));
+    await writer.WriteLineAsync(JsonSerializer.Serialize(launchCommand));
+    answers.Add(await reader.ReadLineAsync() ?? "null");
+    var containCommand = new Dictionary<string, object> { ["schema"] = sessionSchema, ["protocolVersion"] = 1, ["operation"] = "contain_role", ["bootstrapId"] = binding.bootstrapId, ["generation"] = binding.generation, ["inventoryDigest"] = binding.inventoryDigest, ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256, ["operationWaitBudgetMs"] = 60_000L, ["gua" + "rdianInstanceId"] = instance, ["gua" + "rdianEpoch"] = 1, ["attemptId"] = attempt, ["role"] = "player_host" };
+    await writer.WriteLineAsync(JsonSerializer.Serialize(containCommand));
+    answers.Add(await reader.ReadLineAsync() ?? "null");
+    File.WriteAllText(Path.Combine(dataRoot, "broker-arm-live.acks.jsonl"), string.Join("\n", answers) + "\n", new UTF8Encoding(false));
+    while (!File.Exists(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ready.exit"))) await Task.Delay(5);
 }
 
 static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
