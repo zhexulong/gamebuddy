@@ -82,13 +82,28 @@ export function isFullyQualifiedWindowsPath(value: string): boolean {
 }
 
 /**
+ * The widest positive integer the native Guardian accepts for an int32 field.
+ *
+ * The native reads these with `TryGetInt32` (`GuardianPrivateLaunchIngress.Int`
+ * and `GuardianRecoveryIngress`), so a wider value would be emitted here and
+ * then refused by the native as an invalid request. Bounding it on this side
+ * keeps the failure where it can still carry a bounded code.
+ */
+const NATIVE_POSITIVE_INT32_MAX = 2_147_483_647;
+
+/** Exactly the int32 domain the native parses for epoch and record revision. */
+function isNativePositiveInt32(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= NATIVE_POSITIVE_INT32_MAX;
+}
+
+/**
  * Validates and freezes one exact native role launch plan. Every rule mirrors
  * `GuardianPrivateLaunchIngress.ParseLaunch`; any violation means the frame
  * would be rejected by the native Guardian, so the plan fails closed here.
  */
 function modelNativeRoleLaunchPlan(input: NativeRoleLaunchPlanInput): NativeRoleLaunchPlan {
   if (typeof input.guardianInstanceId !== "string" || input.guardianInstanceId.length === 0 || input.guardianInstanceId.length > 1024) throw new Error("stardew_native_launch_plan_guardian_instance_invalid");
-  if (!Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1) throw new Error("stardew_native_launch_plan_guardian_epoch_invalid");
+  if (!isNativePositiveInt32(input.guardianEpoch)) throw new Error("stardew_native_launch_plan_guardian_epoch_invalid");
   if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024) throw new Error("stardew_native_launch_plan_attempt_invalid");
   if (!Number.isSafeInteger(input.deadlineUnixMs) || input.deadlineUnixMs <= Date.now() || input.deadlineUnixMs - Date.now() > 2_147_483_647) throw new Error("stardew_native_launch_plan_deadline_invalid");
   if (input.role !== "player_host" && input.role !== "ai_client") throw new Error("stardew_native_launch_plan_role_invalid");
@@ -169,7 +184,7 @@ function requireRecoveryOpaqueGuid(facts: TypedPrivateGameFacts, key: string): s
 
 function requireRecoveryPositiveInteger(facts: TypedPrivateGameFacts, key: string): number {
   const value = requireRecoveryFact(facts, key);
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw new Error(`contained game runtime: recovery fact ${key} is not a positive integer`);
+  if (!isNativePositiveInt32(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a positive integer`);
   return value;
 }
 
