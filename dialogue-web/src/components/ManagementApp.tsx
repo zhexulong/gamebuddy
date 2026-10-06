@@ -991,7 +991,7 @@ type ConnectionForm = Readonly<{
  * forwards whatever the player typed to the embedded runtime, which clamps a
  * level the chosen model does not advertise (design/28 §2.3.5).
  */
-const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = ["low", "medium", "high", "xhigh", "max"] as const;
+const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function modelProfileProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
   if (error instanceof TavernProblemError) {
@@ -1430,13 +1430,11 @@ function ConnectionRow({
   onRemove: (connectionId: string) => void;
 }>): ReactElement {
   const failure = connectionFailureText(connection.failure, labels);
-  const levels: readonly TavernConnectionThinkingLevelV1[] = [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-  ];
+  // Offer exactly what the chosen model accepts. The Host refuses a level the model
+  // does not advertise, so listing every level would hand the player options that
+  // cannot be saved. The record's own `allowedThinkingLevels` is the authority.
+  const levels: readonly TavernConnectionThinkingLevelV1[] =
+    connection.allowedThinkingLevels.length > 0 ? connection.allowedThinkingLevels : ["high"];
   return (
     <li className="connection-row" data-connection-row data-readiness={connection.readiness}>
       <dl className="management-settings-details">

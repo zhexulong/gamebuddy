@@ -32,7 +32,24 @@ export type RuntimePaths = Readonly<{
 }>;
 
 /** Thinking levels a Host-owned catalog model advertises for selection. */
-export type CompanionThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type CompanionThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * The thinking levels the embedded runtime accepts, in pi's own order.
+ *
+ * The authority is pi's `VALID_THINKING_LEVELS` (pi-coding-agent/dist/cli/args.js). A
+ * level outside this set is not a preference the runtime can express: pi's own parser
+ * refuses it. So this mirrors that set rather than choosing a subset of its own.
+ */
+export const COMPANION_THINKING_LEVELS: readonly CompanionThinkingLevel[] = Object.freeze([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 /**
  * Bounded player-supplied model id. One spelling for every store that accepts a
