@@ -238,6 +238,109 @@ test("launch and arm fail closed before the native session when facts violate th
   assert.equal(attempted.length, 0);
 });
 
+/**
+ * `guardianEpoch` is one of the two fields the native reads with `TryGetInt32`
+ * (`GuardianPrivateLaunchIngress.Int`), so the first value past that domain must
+ * be refused by the Host itself, with the bounded code it already uses for this
+ * field, instead of being emitted as a plan the native answers with its generic
+ * invalid-request failure. Both sides of the boundary are asserted, and the
+ * refusal is asserted to happen before the authenticated session sees a frame.
+ */
+test("launch refuses a guardian epoch past int32 before the session sees a frame and accepts int32 max", async () => {
+  const calls: RecordedCall[] = [];
+  const platform = createDesktopGuardianGameRuntimePlatform(recordingSession(calls));
+  const base = {
+    guardianInstanceId: "guardian",
+    attemptId: "attempt",
+    deadlineUnixMs: Date.now() + 60_000,
+    role: "player_host" as const,
+    authorization: launchFacts(),
+  };
+  await assert.rejects(
+    () => platform.launch({ ...base, guardianEpoch: 2_147_483_648 }),
+    /stardew_native_launch_plan_guardian_epoch_invalid/,
+  );
+  assert.equal(calls.length, 0, "an out-of-domain guardian epoch must not reach the session");
+  // The largest value the native can parse is still accepted, and it is the value
+  // the encoded plan carries - so the bound is the native's, not a narrower guess.
+  await platform.launch({ ...base, guardianEpoch: 2_147_483_647 });
+  assert.deepEqual(calls.map(({ operation }) => operation), ["launch"]);
+  assert.equal((JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).guardianEpoch, 2_147_483_647);
+  // The new bound must not widen the existing one: a non-positive epoch is still
+  // refused, and it still mints no frame.
+  await assert.rejects(() => platform.launch({ ...base, guardianEpoch: 0 }), /stardew_native_launch_plan_guardian_epoch_invalid/);
+  assert.deepEqual(calls.map(({ operation }) => operation), ["launch"]);
+});
+
+/**
+ * `ownerRecordRevision` is the other field the native reads with `TryGetInt32`
+ * (`GuardianRecoveryIngress.ParsePostCas`), and the Host now bounds it to the
+ * same domain.
+ *
+ * The gate body is produced before the durable post-CAS step, so the bound this
+ * test pins belongs to the post-CAS body: an out-of-domain revision must never
+ * produce one. The gate body is asserted too, so the test states exactly which
+ * body was and was not handed to the session.
+ */
+test("recovery refuses an owner record revision past int32 and accepts int32 max", async () => {
+  const correlation = Object.freeze({ guardianInstanceId: "11111111-1111-4111-8111-111111111111", guardianEpoch: 1, attemptId: "22222222-2222-4222-8222-222222222222" });
+  const recoveryInstanceId = "33333333-3333-4333-8333-333333333333";
+  const bindingRevision = "44444444-4444-4444-8444-444444444444";
+  const leaseName = "Local\\GameBuddy-Lease-1";
+  const successorFacts = (ownerRecordRevision: number): TypedPrivateGameFacts => Object.freeze({
+    bindingRevision,
+    ownerRecordRevision,
+    leaseName,
+    playerJobName: "Local\\GameBuddy-Player-1",
+    aiJobName: "Local\\GameBuddy-Ai-1",
+    playerHostState: "armed",
+    aiClientState: "armed",
+  });
+  const run = async (ownerRecordRevision: number) => {
+    let gateFrame: Uint8Array | undefined;
+    let postCasFrame: Uint8Array | undefined;
+    let postCasRefusal: unknown;
+    const session: DesktopGuardianSession = Object.freeze({
+      arm: async () => ack("arm"),
+      launch: async (input) => ack("launch", input.role),
+      contain: async (input) => ack("contain", input.role),
+      recover: async (input) => {
+        gateFrame = input.preCasFrame;
+        try { postCasFrame = await input.beginRecovery(); } catch (error) { postCasRefusal = error; }
+        return Object.freeze({ outcome: "gate_held" as const });
+      },
+      close: async () => {},
+    });
+    await createDesktopGuardianGameRuntimePlatform(session).recover({
+      ...correlation,
+      operationWaitBudgetMs: 1_000,
+      recoveryInstanceId,
+      gateFacts: Object.freeze({ bindingRevision, leaseName }),
+      beginRecovery: async () => successorFacts(ownerRecordRevision),
+      roleContained: async () => {},
+    });
+    return Object.freeze({ gateFrame, postCasFrame, postCasRefusal });
+  };
+
+  const refused = await run(2_147_483_648);
+  assert.match(String((refused.postCasRefusal as Error | undefined)?.message), /recovery fact ownerRecordRevision is not a positive integer/, "the bounded recovery fact code is the one this field already uses");
+  assert.equal(refused.postCasFrame, undefined, "an out-of-domain owner record revision must not produce a post-CAS body");
+  // The only frame the platform produced here is the Host encoder's own five-key
+  // gate body, which is what makes the refusal a post-CAS bound.
+  assert.deepEqual(Object.keys(JSON.parse(new TextDecoder().decode(refused.gateFrame)) as Record<string, unknown>).sort(), ["attemptId", "bindingRevision", "guardianEpoch", "guardianInstanceId", "leaseName"]);
+
+  const accepted = await run(2_147_483_647);
+  assert.equal(accepted.postCasRefusal, undefined, "the int32 max owner record revision must be accepted");
+  const decoded = JSON.parse(new TextDecoder().decode(accepted.postCasFrame)) as Record<string, unknown>;
+  assert.equal(decoded.ownerRecordRevision, 2_147_483_647);
+  assert.deepEqual(Object.keys(decoded).sort(), ["aiClientState", "aiJobName", "attemptId", "bindingRevision", "guardianEpoch", "guardianInstanceId", "leaseName", "ownerRecordRevision", "playerHostState", "playerJobName", "recoveryInstanceId"]);
+
+  // The bound must not widen what was already refused.
+  const belowDomain = await run(0);
+  assert.match(String((belowDomain.postCasRefusal as Error | undefined)?.message), /recovery fact ownerRecordRevision is not a positive integer/);
+  assert.equal(belowDomain.postCasFrame, undefined);
+});
+
 // A close that FAILED must stay retryable, and a successful close must be latched
 // so a later caller cannot race a second close onto the same authenticated session.
 // The previous latch set `sessionClosed = true` BEFORE awaiting `session.close()`,
