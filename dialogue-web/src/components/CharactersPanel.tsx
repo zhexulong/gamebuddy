@@ -6,8 +6,17 @@ import type {
   ManagementPipelineApi,
   PersonaV1,
   ScenarioV1,
+  StCardImportHistoryV1,
   StCardImportStageResultV1,
 } from "../management-pipeline-api";
+
+/** The decoder's closed disposition classes, in the order the loss report reads. */
+const DISPOSITION_CLASSES = [
+  "accepted_typed",
+  "preserved_opaque",
+  "dropped_unsupported",
+  "rejected_invalid",
+] as const;
 
 /**
  * Characters surface (design/28 §2): companion library + Persona / Scenario /
@@ -58,6 +67,12 @@ export function CharactersPanel({
   const [importStaged, setImportStaged] = useState<StCardImportStageResultV1 | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importNotice, setImportNotice] = useState<"created" | "error" | null>(null);
+  // The durable loss report of every confirmed import (design/28 Import/export
+  // row). It is read back from the Host verbatim: the panel never re-derives a
+  // disposition, and it renders no card body text.
+  const [importHistory, setImportHistory] = useState<StCardImportHistoryV1 | "failed" | "unavailable">(
+    "unavailable",
+  );
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -110,6 +125,16 @@ export function CharactersPanel({
       } catch {
         if (!activeRef.current) return;
         setGreeting("unavailable");
+      }
+    })();
+    void (async () => {
+      try {
+        const value = await api.readStCardImportHistory();
+        if (!activeRef.current) return;
+        setImportHistory(value);
+      } catch {
+        if (!activeRef.current) return;
+        setImportHistory("unavailable");
       }
     })();
     return () => {
@@ -258,6 +283,16 @@ export function CharactersPanel({
         setImportCardText("");
         setImportNotice("created");
       }
+      // The confirmed import is durable evidence by the time confirm returns, so
+      // the loss report shows it without waiting for a reload. A failed history
+      // read is reported as exactly that; it never turns a created companion
+      // into a failed import.
+      try {
+        const history = await api.readStCardImportHistory();
+        if (activeRef.current) setImportHistory(history);
+      } catch {
+        if (activeRef.current) setImportHistory("failed");
+      }
     } catch {
       if (activeRef.current) setImportNotice("error");
     } finally {
@@ -384,6 +419,38 @@ export function CharactersPanel({
               </p>
             )}
           </section>
+
+          {importHistory !== "unavailable" && (
+            <section aria-label={labels.cardImportHistoryTitle} data-card-import-history>
+              <h3>{labels.cardImportHistoryTitle}</h3>
+              <p className="management-settings-hint">{labels.cardImportHistoryHint}</p>
+              {importHistory === "failed" ? (
+                <p className="error-banner" role="status">
+                  {labels.cardImportHistoryFailed}
+                </p>
+              ) : importHistory.entries.length === 0 ? (
+                <p>{labels.cardImportHistoryEmpty}</p>
+              ) : (
+                <ul data-import-history-entries>
+                  {importHistory.entries.map((entry) => (
+                    <li key={entry.importId} data-import-history-entry>
+                      <span>{entry.cardName}</span>
+                      <span className="management-settings-hint">
+                        {new Date(entry.occurredAtMs).toLocaleString()}
+                      </span>
+                      <ul data-import-history-counts>
+                        {DISPOSITION_CLASSES.map((classification) => (
+                          <li key={classification}>
+                            {classification} · {entry.counts[classification]}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           {persona !== "unavailable" && (
             <section aria-label={labels.personaEditTitle} data-persona-editor>

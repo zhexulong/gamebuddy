@@ -262,6 +262,10 @@ const en = {
   cardImportCreated: "Imported companion created.",
   cardImportError: "The card could not be imported. Paste a valid character card and try again.",
   cardImportLongHint: "This description is long ({{chars}} chars); it may raise per-turn token use.",
+  cardImportHistoryTitle: "Import history",
+  cardImportHistoryHint: "Every confirmed import and what it kept or dropped, by class.",
+  cardImportHistoryEmpty: "No confirmed imports yet.",
+  cardImportHistoryFailed: "The import history could not be read.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -526,7 +530,12 @@ const zh: Messages = {
   cardImportConfirming: "创建中…",
   cardImportCreated: "已导入并创建同伴。",
   cardImportError: "无法导入该卡片。请粘贴有效角色卡后重试。",
-  cardImportLongHint: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",} satisfies Record<MessageKey, string>;
+  cardImportLongHint: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",
+  cardImportHistoryTitle: "导入历史",
+  cardImportHistoryHint: "每次已确认的导入，以及按类别保留或丢弃的内容。",
+  cardImportHistoryEmpty: "暂无已确认的导入。",
+  cardImportHistoryFailed: "无法读取导入历史。",
+} satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
   return locale === "zh-CN" ? zh : en;
