@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
+import type { PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import { composeTavernProfile, type StCardImportHistoryV1 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
@@ -102,19 +102,21 @@ function worldInfoService(): WorldInfoBindingManagementService {
   });
 }
 
-const voicePreferenceStore = Object.freeze({
+const playerPreferenceStore = Object.freeze({
   async read() {
     return {
       revision: 0,
+      locale: null,
       disclosureVersion: null,
       consent: "undecided" as const,
       decidedAtMs: null,
       outputDevice: null,
     };
   },
-  async update(_expectedRevision: number, _update: VoicePreferenceUpdate) {
+  async update(_expectedRevision: number, _update: PlayerPreferenceUpdate) {
     return {
       revision: 1,
+      locale: null,
       disclosureVersion: null,
       consent: "revoked" as const,
       decidedAtMs: 1,
@@ -199,7 +201,7 @@ test("management history route serves the durable loss report to the exact brows
     managementStateFacade: facade,
     managementService: managementService(),
     worldInfoService: worldInfoService(),
-    voicePreferenceStore,
+    playerPreferenceStore,
     stCardImportService,
     confirmStCardImport: async () => Object.freeze({ name: "Safe Rin" }),
     stCardImportHistoryService: Object.freeze({ list: async () => historyEntries }),
@@ -254,7 +256,7 @@ test("management history route is absent from a profile that declares no reviewe
     managementStateFacade: facade,
     managementService: managementService(),
     worldInfoService: worldInfoService(),
-    voicePreferenceStore,
+    playerPreferenceStore,
     profile: noImportProfile,
     bootstrapToken: token,
   });
@@ -280,7 +282,7 @@ test("a profile that declares the import group without its history service fails
       managementStateFacade: facade,
       managementService: managementService(),
       worldInfoService: worldInfoService(),
-      voicePreferenceStore,
+      playerPreferenceStore,
       stCardImportService,
       confirmStCardImport: async () => Object.freeze({ name: "Safe Rin" }),
       profile: importProfile,

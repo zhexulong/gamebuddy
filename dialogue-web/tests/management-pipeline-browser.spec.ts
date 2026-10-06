@@ -39,8 +39,7 @@ async function loadGenerationModules(artifactRoot: string) {
     load("tavern/memory-management/memory-management.js"),
     load("tavern/connection-service.js"),
     load("tavern/connection-probe.js"),
-    load("settings/voice-preference-store.js"),
-    load("settings/language-preference-store.js"),
+    load("settings/player-preference-store.js"),
     load("tavern/world-info-management/world-info-management.js"),
     load("tavern/world-info-binding/world-info-binding-management-service.js"),
     load("tavern/tavern-management-state.js"),
@@ -96,8 +95,7 @@ async function startMountedManagementComposition(
     memoryModule,
     connectionModule,
     connectionProbeModule,
-    voicePreferenceModule,
-    languagePreferenceModule,
+    playerPreferenceModule,
     worldInfoManagementModule,
     worldInfoBindingModule,
     stateModule,
@@ -347,17 +345,14 @@ async function startMountedManagementComposition(
   const managementService = serviceModule.createChatManagementService({ manifest, lease, profile });
   const memoryService = memoryModule.createMemoryManagementService({ manifest, lease, profile });
   const inspector = await inspectorModule.createPublishedWindowsReparseInspector(artifactRoot);
-  // The durable voice preference store and the connection service are the same
-  // production authorities the desktop owner composes (design/28 §5.3): the
-  // connection service reports the exact mounted Chat's turn state so an
+  // The one Host-owned player preference record and the connection service are
+  // the same production authorities the desktop owner composes (design/28 §5.3):
+  // the connection service reports the exact mounted Chat's turn state so an
   // activation cannot switch a running turn.
-  // The same root-level preference the runtime reads at mount: the panel writes
-  // it here, and the companion speaks it.
-  const languagePreferenceStore = new languagePreferenceModule.LanguagePreferenceStore(
-    languagePreferenceModule.companionLocalePath(root),
-  );
-  const voicePreferenceStore = new voicePreferenceModule.VoicePreferenceStore(
-    resolve(root, "settings", "voice-preference.json"),
+  // The same root-level record the runtime reads at mount: the panel writes it
+  // here, and the companion speaks it.
+  const playerPreferenceStore = new playerPreferenceModule.PlayerPreferenceStore(
+    playerPreferenceModule.playerPreferencePath(root),
   );
   const connectionProbe =
     options.endpointHandler === undefined
@@ -393,8 +388,7 @@ async function startMountedManagementComposition(
     managementService,
     memoryService,
     worldInfoService,
-    voicePreferenceStore,
-    languagePreferenceStore,
+    playerPreferenceStore,
     connectionService,
     ...(personaService === undefined ? {} : { personaService }),
     ...(scenarioService === undefined ? {} : { scenarioService }),

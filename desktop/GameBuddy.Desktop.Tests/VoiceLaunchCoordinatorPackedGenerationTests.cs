@@ -43,7 +43,7 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
 
         // Drive the real coordinator: generation root, selection identity and
         // the Host-owned preference path under the data root.
-        var preferencePath = Path.Combine(generation.LocalApplicationData, "GameBuddy", "data", "settings", "voice-preference.json");
+        var preferencePath = Path.Combine(generation.LocalApplicationData, "GameBuddy", "data", "settings", "player-preference.json");
         Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);
         WriteAcceptedPreference(preferencePath);
 
@@ -74,7 +74,7 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
         await using var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         await using var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
 
-        var preferencePath = Path.Combine(generation.LocalApplicationData, "GameBuddy", "data", "settings", "voice-preference.json");
+        var preferencePath = Path.Combine(generation.LocalApplicationData, "GameBuddy", "data", "settings", "player-preference.json");
         Directory.CreateDirectory(Path.GetDirectoryName(preferencePath)!);
         // No preference file at all (undecided): must stay pure-text.
         Assert.Null(VoiceLaunchCoordinator.Resolve(generation.GenerationRoot, generation.GenerationId, selection.InventoryDigest, preferencePath));
@@ -92,6 +92,7 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
         {
             schemaVersion = 1,
             revision,
+            locale = (string?)null,
             disclosureVersion,
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,

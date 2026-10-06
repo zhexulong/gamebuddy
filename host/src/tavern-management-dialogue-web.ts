@@ -2,8 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
-import type { VoicePreference, VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
-import type { LanguagePreference, LanguagePreferenceUpdate } from "./settings/language-preference-store.js";
+import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import {
   type ChatListQueryV1,
   type ChatRetentionCommandV1,
@@ -201,9 +200,15 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   managementService?: ChatManagementService;
   memoryService?: MemoryManagementService;
   worldInfoService?: WorldInfoBindingManagementService;
-  voicePreferenceStore?: Readonly<{
-    read(): Promise<VoicePreference>;
-    update(expectedRevision: number, update: VoicePreferenceUpdate): Promise<VoicePreference>;
+  /**
+   * The one Host-owned player preference record: the companion language and the
+   * cloud TTS consent/output live in a single revision. Both settings surfaces
+   * read and write this same record, so a write from either surface advances the
+   * same revision and each must send the revision it read.
+   */
+  playerPreferenceStore?: Readonly<{
+    read(): Promise<PlayerPreference>;
+    update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference>;
   }>;
   /**
    * Optional read-only output endpoint enumeration forwarded to the Voice
@@ -211,11 +216,6 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * available; the browser still offers the Windows default selection.
    */
   listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
-  /** Single configuration point for the companion language (frontend-set). */
-  languagePreferenceStore?: Readonly<{
-    read(): Promise<LanguagePreference>;
-    update(expectedRevision: number, update: LanguagePreferenceUpdate): Promise<LanguagePreference>;
-  }>;
   /**
    * Host-owned connection/model management (design/28 §5.3). Present only when
    * the mounted profile declares the connection routes; the routes themselves
@@ -404,9 +404,8 @@ export function createTavernManagementDialogueWebRequestHandler(
   const managementService = options.managementService;
   const memoryService = options.memoryService;
   const worldInfoService = options.worldInfoService;
-  const voicePreferenceStore = options.voicePreferenceStore;
+  const playerPreferenceStore = options.playerPreferenceStore;
   const listVoiceOutputDevices = options.listVoiceOutputDevices;
-  const languagePreferenceStore = options.languagePreferenceStore;
   const connectionService = options.connectionService;
   const libraryService = options.libraryService;
   const companionDetailService = options.companionDetailService;
@@ -438,14 +437,15 @@ export function createTavernManagementDialogueWebRequestHandler(
     worldInfoService === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
+  // Both settings field groups read and write the one Host-owned player
+  // preference record; a profile that advertises either group without the bound
+  // record fails closed before any route.
   if (
-    (profile.routeIds.includes("settings.voice.read") || profile.routeIds.includes("settings.voice.consent")) &&
-    voicePreferenceStore === undefined
-  )
-    throw new Error("tavern_management_composition_unavailable");
-  if (
-    (profile.routeIds.includes("settings.language.read") || profile.routeIds.includes("settings.language.update")) &&
-    languagePreferenceStore === undefined
+    (profile.routeIds.includes("settings.voice.read") ||
+      profile.routeIds.includes("settings.voice.consent") ||
+      profile.routeIds.includes("settings.language.read") ||
+      profile.routeIds.includes("settings.language.update")) &&
+    playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
   if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
@@ -555,12 +555,12 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (
           !profile.routeIds.includes("settings.voice.read") ||
           !profile.operationIds.includes("settings.voice.read") ||
-          voicePreferenceStore === undefined
+          playerPreferenceStore === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
-        const preference: TavernVoicePreferenceV1 = await voicePreferenceStore.read();
+        const preference: TavernVoicePreferenceV1 = voicePreference(await playerPreferenceStore.read());
         if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
-          throw new Error("voice_preference_store_unavailable");
+          throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
@@ -572,16 +572,16 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (
           !profile.routeIds.includes("settings.voice.consent") ||
           !profile.operationIds.includes("settings.voice.consent") ||
-          voicePreferenceStore === undefined
+          playerPreferenceStore === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!voicePreferenceConsentValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const command = body as TavernVoicePreferenceConsentCommandV1;
         const { expectedRevision, ...update } = command;
-        const preference = await voicePreferenceStore.update(expectedRevision, update);
+        const preference = voicePreference(await playerPreferenceStore.update(expectedRevision, update));
         if (!TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema.Check(preference))
-          throw new Error("voice_preference_store_unavailable");
+          throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-devices") {
@@ -617,12 +617,12 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (
           !profile.routeIds.includes("settings.language.read") ||
           !profile.operationIds.includes("settings.language.read") ||
-          languagePreferenceStore === undefined
+          playerPreferenceStore === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
-        const preference: TavernLanguagePreferenceV1 = await languagePreferenceStore.read();
+        const preference: TavernLanguagePreferenceV1 = languagePreference(await playerPreferenceStore.read());
         if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
-          throw new Error("language_preference_store_unavailable");
+          throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/language") {
@@ -634,16 +634,20 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (
           !profile.routeIds.includes("settings.language.update") ||
           !profile.operationIds.includes("settings.language.update") ||
-          languagePreferenceStore === undefined
+          playerPreferenceStore === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!languagePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const command = body as TavernLanguagePreferenceCommandV1;
-        const { expectedRevision, ...update } = command;
-        const preference = await languagePreferenceStore.update(expectedRevision, update);
+        const preference = languagePreference(
+          await playerPreferenceStore.update(command.expectedRevision, {
+            action: "setLocale",
+            locale: command.locale,
+          }),
+        );
         if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
-          throw new Error("language_preference_store_unavailable");
+          throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
@@ -1619,6 +1623,26 @@ function connectionRouteAvailable(
   return service !== undefined && routeIds.includes(operationId) && operationIds.includes(operationId);
 }
 
+/**
+ * The Voice field group of the one player preference record. The record itself
+ * also carries the language field group, so every response is an exact
+ * projection of the frozen v1 shape rather than the whole record.
+ */
+function voicePreference(preference: PlayerPreference): TavernVoicePreferenceV1 {
+  return {
+    revision: preference.revision,
+    disclosureVersion: preference.disclosureVersion,
+    consent: preference.consent,
+    decidedAtMs: preference.decidedAtMs,
+    outputDevice: preference.outputDevice,
+  };
+}
+
+/** The language field group of the one player preference record. */
+function languagePreference(preference: PlayerPreference): TavernLanguagePreferenceV1 {
+  return { revision: preference.revision, locale: preference.locale };
+}
+
 function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {
   const message = error instanceof Error ? error.message : "";
   if (message === "payload_too_large") return { status: 413, code: "payload_too_large" };
@@ -1637,9 +1661,9 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "memory_read_storage_unavailable") return { status: 503, code: "storage_unavailable" };
-  if (message === "voice_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
-  if (message === "invalid_voice_preference_update") return { status: 400, code: "invalid_request" };
-  if (message === "voice_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };
+  if (message === "player_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
+  if (message === "invalid_player_preference_update") return { status: 400, code: "invalid_request" };
+  if (message === "player_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "dialogue_busy") return { status: 409, code: "dialogue_busy" };
   if (message === "connection_limit_reached") return { status: 409, code: "connection_limit_reached" };
   if (message === "tavern_connection_revision_conflict") return { status: 409, code: "connection_conflict" };
@@ -1660,7 +1684,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "active_connection_cannot_be_removed") return { status: 409, code: "connection_conflict" };
   if (message === "tavern_connection_storage_unavailable") return { status: 503, code: "storage_unavailable" };
   if (message === "tavern_connection_service_unavailable") return { status: 503, code: "runtime_unavailable" };
-  if (message === "invalid_voice_preference_store" || message === "voice_preference_readback_mismatch")
+  if (message === "invalid_player_preference_store" || message === "player_preference_readback_mismatch")
     return { status: 503, code: "storage_unavailable" };
   if (message === "memory_mutation_conflict" || message === "memory_projection_conflict")
     return { status: 409, code: "state_reconciliation_required" };

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { resolveCompanionLocale } from "../settings/language-preference-store.js";
+import { resolveCompanionLocale } from "../settings/player-preference-store.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
