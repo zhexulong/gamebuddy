@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -80,6 +81,26 @@ test("a store that cannot yield a Game profile refuses the attachment instead of
       }),
     /invalid_model_profile_store/,
   );
+});
+
+test("the attachment builder keeps its named refusal for a Game profile it cannot resolve", async () => {
+  // ModelProfileStore validates every profile it returns, so today the
+  // reachable refusal for a store without a usable Game profile is the store's
+  // own `invalid_model_profile_store` (asserted above). This named second gate
+  // is the only thing between a future store change and a silently model-less
+  // Game surface, so its removal must be a decision rather than an accident.
+  const source = await readFile(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../src/continuity-semantic-game-runtime-materializer/game-runtime-attachment.ts",
+    ),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /if \(modelConfig === null\)\s*\n\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
+  );
+  assert.match(source, /\.read\("game"\)/);
 });
 
 test("the construction zone's recovery composition reaches the attachment unchanged", async () => {
