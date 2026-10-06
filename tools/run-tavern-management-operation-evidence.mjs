@@ -364,11 +364,31 @@ async function exerciseOperations(origin, client) {
     // the accept path is what gets exercised. A record already accepted would
     // need a revoke, but this gate always boots a fresh root.
     if (consent !== "undecided" && consent !== "revoked") throw new Error("voice_consent_state_unexpected");
-    await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/voice-preference", {
+    const written = await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/voice-preference", {
       expectedRevision: revision,
       action: "accept",
       disclosureVersion: "mimo-cloud-tts-v1",
     });
+    // Everything above guards the revision this write CASes - a guard a write
+    // that stored nothing satisfies just as well. The write's own postcondition
+    // is what the reply projects: the consent state that was requested, the
+    // disclosure it was requested against, the decision stamp, and a revision
+    // the write advanced. Without this the operation reported a pass for a
+    // consent that was never recorded.
+    if (written === null || typeof written !== "object") throw new Error("voice_consent_write_unavailable");
+    if (written.consent !== "accepted") throw new Error("voice_consent_not_applied");
+    if (written.disclosureVersion !== "mimo-cloud-tts-v1") throw new Error("voice_disclosure_not_applied");
+    if (!Number.isSafeInteger(written.decidedAtMs) || written.decidedAtMs <= 0)
+      throw new Error("voice_consent_decision_timestamp_missing");
+    if (!Number.isInteger(written.revision) || written.revision <= revision)
+      throw new Error("voice_consent_revision_unadvanced");
+    // The reply is not the durable postcondition; a separate read through the
+    // read route is. It must still report the consented state, on the revision
+    // the write returned, or the record never landed in the one player
+    // preference document every settings surface shares.
+    const after = await readJson(origin, client, "/api/tavern/v1/settings/voice-preference");
+    if (after?.consent !== "accepted") throw new Error("voice_consent_not_durable");
+    if (after?.revision !== written.revision) throw new Error("voice_consent_readback_revision_mismatch");
   });
 
   await attempt("settings.voice.devices", async () => {
@@ -533,10 +553,29 @@ async function exerciseOperations(origin, client) {
     const revision = created?.revision;
     if (typeof freshId !== "string" || !Number.isInteger(revision) || revision < 0)
       throw new Error("connection_remove_setup_invalid");
-    await sendJson(origin, client, "DELETE", `/api/tavern/v1/settings/connections/${freshId}`, {
+    const removed = await sendJson(origin, client, "DELETE", `/api/tavern/v1/settings/connections/${freshId}`, {
       apiVersion: 1,
       expectedRevision: revision,
     });
+    // A delete that is only issued is not a delete: the reply is the whole
+    // connection document (TavernConnectionStateV1Schema), so the removed
+    // record must be gone from it and the document revision must have advanced
+    // past the one the create returned.
+    if (!Array.isArray(removed?.connections)) throw new Error("connection_remove_document_unavailable");
+    if (removed.connections.some((candidate) => candidate?.connectionId === freshId))
+      throw new Error("connection_remove_record_retained");
+    if (!Number.isInteger(removed.revision) || removed.revision <= revision)
+      throw new Error("connection_remove_revision_unadvanced");
+    // The reply is the write's own projection, not proof the record is durably
+    // gone. Re-read through the read route: the removed handle must not be in
+    // the list that route returns, and that list must carry a revision past the
+    // one the create returned.
+    const after = await readJson(origin, client, "/api/tavern/v1/settings/connection");
+    if (!Array.isArray(after?.connections)) throw new Error("connection_remove_readback_unavailable");
+    if (after.connections.some((candidate) => candidate?.connectionId === freshId))
+      throw new Error("connection_remove_not_durable");
+    if (!Number.isInteger(after.revision) || after.revision <= revision)
+      throw new Error("connection_remove_readback_revision_unadvanced");
   });
 
   // design/28 §2.3: the player's own model choice. The read projects the two
@@ -610,14 +649,35 @@ async function exerciseOperations(origin, client) {
 
   await attempt("companion.detail", async () => {
     const list = await readJson(origin, client, "/api/tavern/v1/companions");
-    const handle = Array.isArray(list?.companions) ? list.companions.find((entry) => entry?.isCurrent === true)?.handle : undefined;
+    const current = Array.isArray(list?.companions)
+      ? list.companions.find((entry) => entry?.isCurrent === true)
+      : undefined;
+    const handle = current?.handle;
     if (typeof handle !== "string" || handle.length === 0) throw new Error("companion_handle_unavailable");
+    if (typeof current.name !== "string" || current.name.length === 0) throw new Error("companion_name_missing");
     const detail = await readJson(origin, client, `/api/tavern/v1/companions/${handle}`);
     if (detail === null || typeof detail !== "object") throw new Error("companion_detail_unavailable");
-    // The detail must name the same current companion back; a route that
-    // answered with a generic shape would be reporting a capability it does
-    // not actually bind.
-    if (typeof detail.name !== "string" || detail.name.length === 0) throw new Error("companion_detail_name_missing");
+    // The detail projection is `apiVersion` + `name` by contract
+    // (CompanionDetailV1Schema: "name only (companion-detail boundary)"), so it
+    // carries no handle to compare: the identity proof available here is that
+    // the name this route answers with for `handle` is the name the LIST
+    // attributed to that same handle. "Some non-empty name came back" would pass
+    // for any companion the surface felt like answering with - including the
+    // current one regardless of the handle in the path.
+    if (detail.apiVersion !== 1) throw new Error("companion_detail_api_version_invalid");
+    if (detail.name !== current.name) throw new Error("companion_detail_identity_mismatch");
+    // ...and the route must resolve an EXACT handle: a near-miss of the handle
+    // the list projected has to be refused as `companion_not_found` rather than
+    // answered with whatever companion the surface holds. That refusal is what
+    // makes the name comparison above evidence about THIS companion instead of
+    // evidence that the route answered at all.
+    const nearMiss = `${handle[0] === "A" ? "B" : "A"}${handle.slice(1)}`;
+    const refused = await deadlineFetch(`${origin}/api/tavern/v1/companions/${nearMiss}`, {
+      headers: { Cookie: client.cookie, Origin: origin },
+    });
+    const problem = await refused.json().catch(() => undefined);
+    if (refused.status !== 404 || problem?.code !== "companion_not_found")
+      throw new Error("companion_detail_foreign_handle_resolved");
   });
 
   await attempt("companion.create", async () => {
