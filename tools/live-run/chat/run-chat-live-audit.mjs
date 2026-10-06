@@ -94,6 +94,10 @@ const SUBMIT_PROMPT_TEXT = process.env.GAMEBUDDY_CHAT_PROMPT ?? "Please respond 
 // How many COMPLETED conversation turns a default run drives. The cancel probe is separate and always
 // last (see below), so this number is exactly how many durable companion replies the run can produce.
 const CONVERSATION_TURNS = Math.max(1, Math.min(8, Number(process.env.GAMEBUDDY_CHAT_TURNS ?? 2)));
+// Keep the disposable runtime root on request, so the agent conversation's actual input and output can be
+// READ after the run instead of inferred from the reply's wording. Off by default: the root is throwaway
+// state, and a run that keeps it must say so in its own evidence.
+const KEEP_RUNTIME_ROOT = process.env.GAMEBUDDY_CHAT_KEEP_ROOT === "1";
 // One prompt per conversation turn, when the run wants to ask different questions (the always-on entry and
 // an ordinary entry are retrieved differently, so proving the world book is in context needs both). Fewer
 // prompts than turns repeats the last one; absent, every turn uses SUBMIT_PROMPT_TEXT.
@@ -1645,6 +1649,8 @@ export async function main(argv = process.argv.slice(2)) {
       ...buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() }),
       persona: environment.persona?.identity ?? null,
       personaMounted: environment.personaMounted?.ok === true,
+      // Where the agent conversation's input/output lives, when the caller asked to keep it.
+      runtimeRoot: KEEP_RUNTIME_ROOT ? root : null,
     });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
@@ -1653,7 +1659,8 @@ export async function main(argv = process.argv.slice(2)) {
     else console.log(JSON.stringify(trace));
     return 0;
   } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
+    if (KEEP_RUNTIME_ROOT) console.log(JSON.stringify({ keptRuntimeRoot: root }));
+    else await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
   }
 }
 
