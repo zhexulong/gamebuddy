@@ -387,3 +387,20 @@ test("a pre-readiness bridge disconnect is retried, a post-readiness one is term
   assert.ok(retryLine.includes("$previewDeadline"), "the deadline still bounds the retry");
   assert.ok(retryLine.includes("$previewReady"), "a post-readiness disconnect is still terminal");
 });
+
+test("a headless preview never puts windows on the operator's desktop", () => {
+  // The preview is a headless Node harness and the retry loop starts one per
+  // attempt; without -WindowStyle Hidden each attempt opened a console window.
+  // Measured 2026-10-06: a retrying run buried the desktop in windows and
+  // interfered with unrelated work.
+  const previewLaunch = launcher.slice(
+    launcher.indexOf('$previewProcess = Start-Process -FilePath "node.exe"'),
+    launcher.indexOf("while ($true)", launcher.indexOf('$previewProcess = Start-Process -FilePath "node.exe"')),
+  );
+  assert.ok(previewLaunch.includes("-NoNewWindow"), "the preview process must not create a window");
+  assert.ok(!launcher.includes("-WindowStyle"), "window shape stays owned by the shared window-mode contract");
+  // The log reader must tolerate a writer holding the file open, or the reason a
+  // preview failed is lost (measured 2026-10-06: every attempt unreadable).
+  assert.ok(launcher.includes("Get-Content -LiteralPath $Path -Raw -ErrorAction Stop"), "the preview log is read through the redirect-compatible reader");
+  assert.ok(!launcher.includes("[IO.File]::ReadAllText($Path)"), "the exclusive reader is gone");
+});

@@ -265,12 +265,13 @@ function Get-PreviewFailureCode([string]$Path) {
     # Preview stderr may contain config and bridge details. Publish only a
     # known typed Error code; never retain or echo the raw child output.
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "preview_failure_code_unavailable" }
-    # The child - or the redirect handle the launcher itself handed it - can still
-    # hold the log open just after exit. Measured 2026-10-05: ReadAllText threw an
-    # IOException ('being used by another process') and killed a run that was making
-    # progress on attempt 13 of the bounded retry. An unreadable log is a missing
-    # code, never a launcher crash.
-    try { $content = [IO.File]::ReadAllText($Path) } catch { return "preview_failure_code_unreadable" }
+    # The redirect writer (the child, or the handle Start-Process handed it) can
+    # still hold the log open just after exit, and ReadAllText opens exclusively.
+    # Measured 2026-10-05/06: one run died with an IOException, and the retry then
+    # reported `preview_failure_code_unreadable` for every attempt, losing the real
+    # reason. Get-Content -Raw is the launcher's redirect-compatible reader (see
+    # Test-PreviewReadySignal); an unreadable log stays a code, never a crash.
+    try { $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch { return "preview_failure_code_unreadable" }
     $match = [regex]::Match($content, '(?m)\b(farmhand_[a-z0-9_]+|invalid_farmhand_companion_preview_config|stardew_[a-z0-9_]+|integration_[a-z0-9_]+|production_[a-z0-9_]+|bridge_[a-z0-9_]+|pipe_[a-z0-9_]+|unexpected_[a-z0-9_]+|ERR_[A-Z0-9_]+)(:[A-Za-z0-9_.-]{1,96})?')
     # Keep the bounded reason suffix: `bridge_disconnected:<reason>` names WHY the
     # bridge dropped, and truncating it at the colon reports the symptom only
@@ -516,7 +517,13 @@ try {
             $previewConfigPath
         )
         $previewCommandLine = [string]::Join(" ", @($previewArguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }))
-        $previewProcess = Start-Process -FilePath "node.exe" -ArgumentList $previewCommandLine -WorkingDirectory (Join-Path (Split-Path $PSScriptRoot -Parent) "host") -RedirectStandardOutput $previewStdoutPath -RedirectStandardError $previewStderrPath -PassThru
+        # -NoNewWindow: the preview is a headless Node harness and the retry loop
+        # starts one per attempt. Without it every attempt opened a console window
+        # on the operator's desktop and interfered with unrelated work (measured
+        # 2026-10-06). This creates no window and keeps the file redirects; window
+        # SHAPE for the two game roles is still owned solely by the shared
+        # window-mode contract (see Resolve-LiveRunWindowMode).
+        $previewProcess = Start-Process -FilePath "node.exe" -ArgumentList $previewCommandLine -WorkingDirectory (Join-Path (Split-Path $PSScriptRoot -Parent) "host") -RedirectStandardOutput $previewStdoutPath -RedirectStandardError $previewStderrPath -NoNewWindow -PassThru
         while ($true) {
             $previewProcess.Refresh()
             $hasReadySignal = Test-PreviewReadySignal $previewStdoutPath
