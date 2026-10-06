@@ -123,12 +123,17 @@ export async function assertKeyboardReachable(
  * Obligation: every named region that offers a control can be reached by keyboard
  * alone. A section with nothing focusable inside it is not part of the obligation
  * (there is nothing to reach), so those are excluded rather than silently passing.
- * One bounded Tab walk records which sections received focus; the rest are named.
+ *
+ * One full focus cycle is walked — Tab until focus leaves the document — rather
+ * than a fixed number of presses: a bound that is too small reports a section as
+ * unreachable simply because the walk ran out of tabs, which is a false negative
+ * and would make this criterion untrustworthy. The cap only guards against a page
+ * that never releases focus.
  */
 export async function assertSectionsKeyboardReachable(
   page: Page,
   sectionSelector: string,
-  maxTabs = 160,
+  maxTabs = 500,
 ): Promise<void> {
   executedObligations.add("frontend-keyboard-reach");
   const focusable =
@@ -142,18 +147,80 @@ export async function assertSectionsKeyboardReachable(
     focusable,
   );
   assert.ok(labels.length > 0, `the surface renders at least one operable ${sectionSelector}`);
+  // Tag every focusable once so the walk can stop on a TRUE cycle (a focus target
+  // it has already visited) instead of on a transient `body` observation: a React
+  // re-render can drop focus to the body mid-page, and treating that as the end of
+  // the cycle reports rendered, reachable sections as unreachable.
+  await page.evaluate((selector) => {
+    document
+      .querySelectorAll(selector)
+      .forEach((element, index) => element.setAttribute("data-criteria-tab-order", String(index)));
+  }, focusable);
   const touched = new Set<string>();
+  const visited = new Set<string>();
   for (let press = 0; press < maxTabs; press += 1) {
     await page.keyboard.press("Tab");
-    const label = await page.evaluate((selector) => {
+    const step = await page.evaluate((selector) => {
       const active = document.activeElement;
-      const section = active?.closest(selector) ?? null;
-      return section === null ? null : section.getAttribute("aria-label");
+      if (active === null || active === document.body || active === document.documentElement)
+        return { key: null, labels: [] };
+      // Every enclosing section counts, not just the nearest one: the management
+      // surface nests labelled sub-sections inside a labelled group, so a control
+      // in "Your Persona" also reaches "Characters". Counting only the closest
+      // ancestor reported the wrapping group as unreachable.
+      const labels = [];
+      for (
+        let node = active.closest(selector);
+        node !== null;
+        node = node.parentElement === null ? null : node.parentElement.closest(selector)
+      ) {
+        const label = node.getAttribute("aria-label");
+        if (label !== null) labels.push(label);
+      }
+      return {
+        key: active.getAttribute("data-criteria-tab-order") ?? `other:${active.tagName}`,
+        labels,
+      };
     }, sectionSelector);
-    if (label !== null) touched.add(label);
+    if (step.key === null) continue;
+    if (visited.has(step.key)) break;
+    visited.add(step.key);
+    for (const label of step.labels) touched.add(label);
+    if (process.env.GAMEBUDDY_CRITERIA_DIAG === "1")
+      console.log(`[criteria] tab ${press}: ${step.key} sections=${step.labels.join(">") || "-"}`);
   }
   const missed = labels.filter((label) => !touched.has(label));
-  assert.deepEqual(missed, [], "every operable section is reachable by keyboard alone");
+  // Say why a missed section could not be reached: a control that is present but
+  // not rendered (inside a collapsed disclosure, a hidden subtree) is a different
+  // defect from one that is rendered and simply skipped by the Tab order.
+  const diagnosis =
+    missed.length === 0
+      ? []
+      : await page.locator(sectionSelector).evaluateAll(
+          (nodes, input) => {
+            const [selector, wanted] = input;
+            return nodes
+              .filter((node) => wanted.includes(node.getAttribute("aria-label") ?? ""))
+              .map((node) => {
+                const controls = [...node.querySelectorAll(selector)];
+                return {
+                  label: node.getAttribute("aria-label"),
+                  controls: controls.length,
+                  rendered: controls.filter((control) => control.offsetParent !== null).length,
+                  inCollapsedDetails: controls.filter((control) => {
+                    const details = control.closest("details");
+                    return details !== null && !details.open;
+                  }).length,
+                };
+              });
+          },
+          [focusable, missed],
+        );
+  assert.deepEqual(
+    missed.map((label) => ({ label, why: diagnosis.find((row) => row.label === label) ?? null })),
+    [],
+    "every operable section is reachable by keyboard alone",
+  );
 }
 
 /**

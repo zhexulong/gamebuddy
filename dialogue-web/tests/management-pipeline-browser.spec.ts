@@ -1458,6 +1458,11 @@ test("conformance: management surface meets the frontend criteria", async () => 
     const noise = watchSurface(page);
     await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-language-settings]")).toBeVisible({ timeout: 20_000 });
+    // Wait for the async panels to finish loading before judging keyboard reach:
+    // a panel that appears after the walk would be reported unreachable for the
+    // wrong reason, which is a false negative and would make this criterion
+    // untrustworthy. The Characters panel is the slowest of them.
+    await expect(page.locator("[data-characters-panel]")).toBeVisible({ timeout: 20_000 });
 
     // The criteria that need a real walk: the surface is judged as rendered, and
     // every settings section it shows must be reachable without a pointer. A
