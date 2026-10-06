@@ -189,6 +189,26 @@ const enforcedSurfaces = contract.surfaces.filter(
   (surface) => surface.deferredReason === undefined && (surface.suites ?? []).length > 0,
 );
 
+// A contract that disagrees with the shell is not a contract: stop here rather
+// than spending minutes proving things about a surface set nobody agreed on.
+if (failures.some((failure) => /^the (shell|contract) /u.test(failure))) {
+  const inventoryReport = Object.freeze({
+    schema: "tavern_frontend_conformance/v1",
+    generation: outputRoot,
+    credentialPresent: credential !== undefined,
+    shellSurfaces: Object.freeze(derivedSurfaces.map((surface) => surface.id)),
+    failures: Object.freeze(failures),
+    verdict: "failed",
+  });
+  if (options.reportPath !== undefined)
+    await writeFile(options.reportPath, `${JSON.stringify(inventoryReport, null, 2)}\n`, "utf8");
+  process.stderr.write(
+    `[frontend-conformance] failed (surface inventory): the contract and the shell disagree, so no suite was run\n`,
+  );
+  for (const failure of failures) process.stderr.write(`  - ${failure}\n`);
+  process.exit(2);
+}
+
 // 2. Run the enforced suites against the real generation.
 const files = enforcedSuites.map(({ suite }) => suite.file);
 process.stderr.write(
