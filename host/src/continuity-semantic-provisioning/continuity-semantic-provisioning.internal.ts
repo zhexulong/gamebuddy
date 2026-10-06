@@ -287,6 +287,14 @@ function provision(
       requireOpen();
       return rawStore.transitionChatLifecycle(input);
     },
+    recordChatSelectionIntent(input) {
+      requireOpen();
+      return rawStore.recordChatSelectionIntent(input);
+    },
+    clearChatSelectionIntent(input) {
+      requireOpen();
+      return rawStore.clearChatSelectionIntent(input);
+    },
     prepareChatRuntime(input) {
       requireOpen();
       return rawStore.prepareChatRuntime(input);

@@ -12,7 +12,7 @@ import {
 } from "./continuity-semantic-deadline-cancellation.internal.js";
 
 /** Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports. */
-export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 44;
+export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 45;
 export type ProductionPrincipal = Readonly<{ continuityId: string; companionId: string; playerId: string }>;
 export type ProductionBootstrapInput = Readonly<{
   principal: ProductionPrincipal;
@@ -64,9 +64,29 @@ export type ProductionChatLifecycleInput = Readonly<{
   operation: "archive" | "trash" | "restore";
 }>;
 type ProductionChatLifecycle = "active" | "archived" | "trashed";
+/**
+ * ADR 0009: a player's create/select is recorded as an expected selection -
+ * intent, not a vector-advancing command. The next start's pre-mount phase
+ * settles it with the ordinary `select_chat` bridge, so the runtime teardown
+ * and successor comparisons keep comparing the values they compare today.
+ */
+export type ProductionChatSelectionIntent = Readonly<{
+  kind: "create" | "select";
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+}>;
+/** One CAS-guarded write of the recorded expectation; it never advances the vector. */
+export type ProductionChatSelectionIntentInput = Readonly<{
+  intent: ProductionChatSelectionIntent;
+  expected: SagaVector;
+}>;
+/** Clears a settled expectation under the same CAS. */
+export type ProductionChatSelectionClearInput = Readonly<{ expected: SagaVector }>;
 export type ProductionChatCatalog = Readonly<{
   vector: SagaVector;
   activeSelection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string; selectionRevision: number }> | null;
+  /** The recorded expectation for the next mount, or null when none is pending. */
+  expectedSelection: ProductionChatSelectionIntent | null;
   threads: readonly Readonly<{
     chatThreadId: string;
     chatSurfaceSessionId: string;
@@ -557,6 +577,14 @@ export type ProductionSagaStore = Readonly<{
   ): ProductionChatCommandReadback;
   selectChat(input: ProductionChatCommandInput): ProductionChatCommandReadback;
   transitionChatLifecycle(input: ProductionChatLifecycleInput): ProductionChatCommandReadback;
+  /**
+   * ADR 0009 intent. Recording never advances the runtime vector: the committed
+   * expectation is settled by the next start's single `select_chat` bridge, so
+   * a mounted runtime's teardown and successor comparisons stay unchanged.
+   */
+  recordChatSelectionIntent(input: ProductionChatSelectionIntentInput): ProductionChatCatalog;
+  /** Clears an expectation the settlement already satisfied. */
+  clearChatSelectionIntent(input: ProductionChatSelectionClearInput): ProductionChatCatalog;
   /** Short SQLite prepare only; runtime materialization must execute outside the mutex. */
   prepareChatRuntime(input: ProductionChatRuntimeRequest): ProductionChatRuntimePrepareOutcome;
   commitChatRuntime(input: ProductionChatRuntimeTerminalInput): ProductionChatRuntimeReadback;
@@ -662,7 +690,7 @@ const indexNames = [
   "production_chat_runtime_teardown_predecessor_index",
 ] as const;
 const schema = `
- CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=44));
+ CREATE TABLE production_store_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL CHECK(schema_version=45));
 CREATE TABLE production_bootstrap (singleton INTEGER PRIMARY KEY CHECK(singleton=1), store_id TEXT NOT NULL REFERENCES production_store_meta(store_id), bootstrap_operation_id TEXT NOT NULL UNIQUE, continuity_id TEXT NOT NULL, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, authority_generation INTEGER NOT NULL CHECK(authority_generation>=1), authority_root_identity TEXT NOT NULL);
 CREATE TABLE production_partition (singleton INTEGER PRIMARY KEY CHECK(singleton=1), continuity_id TEXT NOT NULL UNIQUE, companion_id TEXT NOT NULL, player_id TEXT NOT NULL, partition_revision INTEGER NOT NULL CHECK(partition_revision>=1), fence_epoch INTEGER NOT NULL CHECK(fence_epoch>=1), selection_revision INTEGER NOT NULL CHECK(selection_revision>=0), game_partition_revision INTEGER NOT NULL CHECK(game_partition_revision>=1), game_fence_epoch INTEGER NOT NULL CHECK(game_fence_epoch>=1));
 CREATE TABLE production_surface_session (session_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), surface TEXT NOT NULL CHECK(surface IN ('chat','game')), state TEXT NOT NULL CHECK(state IN ('suspended','active','ended','pending','recovery_required')), created_at_ms INTEGER NOT NULL CHECK(created_at_ms>=0), updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0));
@@ -671,7 +699,7 @@ CREATE TABLE production_chat_lifecycle_metadata (chat_surface_session_id TEXT PR
 CREATE TABLE production_chat_runtime_intent (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, request_id TEXT NOT NULL, chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, payload_digest TEXT NOT NULL, request_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','terminal','recovery_required')), runtime_binding_digest TEXT NOT NULL, owner_json TEXT NOT NULL, fence_token TEXT NOT NULL, deadline_at_ms INTEGER NOT NULL CHECK(deadline_at_ms>=0), prepared_at_ms INTEGER NOT NULL CHECK(prepared_at_ms>=0), prepared_vector_json TEXT NOT NULL, committed_vector_json TEXT, receipt_json TEXT, receipt_digest TEXT, recovery_reason TEXT CHECK(recovery_reason IN ('effect_failed','receipt_invalid','deadline_expired','revision_conflict')), PRIMARY KEY(continuity_id,operation_id), UNIQUE(continuity_id,request_id));
 CREATE TABLE production_chat_runtime_teardown_intent (continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), operation_id TEXT NOT NULL, request_id TEXT NOT NULL, bootstrap_operation_id TEXT NOT NULL, chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, payload_digest TEXT NOT NULL, request_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','terminal','recovery_required')), runtime_binding_digest TEXT NOT NULL, owner_json TEXT NOT NULL, fence_token TEXT NOT NULL, deadline_at_ms INTEGER NOT NULL CHECK(deadline_at_ms>=0), prepared_at_ms INTEGER NOT NULL CHECK(prepared_at_ms>=0), prepared_vector_json TEXT NOT NULL, committed_vector_json TEXT, receipt_json TEXT, receipt_digest TEXT, recovery_reason TEXT CHECK(recovery_reason IN ('effect_failed','receipt_invalid','deadline_expired','revision_conflict')), PRIMARY KEY(continuity_id,operation_id), UNIQUE(continuity_id,request_id));
 CREATE TABLE production_continuity_event (event_id TEXT PRIMARY KEY, continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), session_id TEXT NOT NULL REFERENCES production_surface_session(session_id), type TEXT NOT NULL CHECK(type='chat_registered'), surface TEXT NOT NULL CHECK(surface='chat'), occurred_at_ms INTEGER NOT NULL CHECK(occurred_at_ms>=0));
-CREATE TABLE production_active_selection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, selection_revision INTEGER NOT NULL CHECK(selection_revision>=1));
+ CREATE TABLE production_active_selection (singleton INTEGER PRIMARY KEY CHECK(singleton=1), chat_surface_session_id TEXT NOT NULL REFERENCES production_continuity_thread(chat_surface_session_id), chat_thread_id TEXT NOT NULL, selection_revision INTEGER NOT NULL CHECK(selection_revision>=1), expected_selection_json TEXT);
 CREATE TABLE production_game_session (session_id TEXT PRIMARY KEY REFERENCES production_surface_session(session_id), continuity_id TEXT NOT NULL REFERENCES production_partition(continuity_id), state TEXT NOT NULL CHECK(state IN ('pending','active','ended','recovery_required')));
 CREATE TABLE production_game_session_metadata (game_session_id TEXT PRIMARY KEY, creation_request_id TEXT NOT NULL UNIQUE, integration_id TEXT NOT NULL, continuity_identity_id TEXT REFERENCES production_partition(continuity_id), status TEXT NOT NULL CHECK(status IN ('pending','resumable','failed')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='pending' AND revision=1) OR (status='resumable' AND revision=2) OR (status='failed' AND revision IN (2,3))));
  CREATE TABLE production_game_session_world_binding (game_session_id TEXT PRIMARY KEY REFERENCES production_game_session_metadata(game_session_id), integration_id TEXT NOT NULL, binding_ref TEXT NOT NULL, operation_id TEXT NOT NULL UNIQUE, holder_handle TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('registered','terminal')), revision INTEGER NOT NULL CHECK(revision>=1), CHECK((status='registered' AND revision=1) OR (status='terminal' AND revision=2)));
@@ -882,6 +910,14 @@ export function openProductionContinuityStore(
           requireOpen();
           return runChatLifecycleCommand(db, immutable, input);
         },
+        recordChatSelectionIntent(input) {
+          requireOpen();
+          return recordChatSelectionIntent(db, immutable, input);
+        },
+        clearChatSelectionIntent(input) {
+          requireOpen();
+          return clearChatSelectionIntent(db, immutable, input);
+        },
         prepareChatRuntime(input) {
           requireOpen();
           return prepareChatRuntime(db, immutable, input, nowMs);
@@ -1046,6 +1082,27 @@ export function openProductionContinuityStore(
       }
     },
   });
+}
+/**
+ * ADR 0009: the recorded expectation is durable state, so every materialization
+ * revalidates its canonical shape and - for `select` - that it still names a
+ * known Chat. A `create` names a Chat that only the settlement registers.
+ */
+function validateChatSelectionIntent(selection: any[], threads: any[]): void {
+  const row = selection.length === 1 ? selection[0] : undefined;
+  const raw = row?.expected_selection_json ?? null;
+  if (raw === null) return;
+  const intent = parseStoredSelectionIntent(raw);
+  if (!intent || raw !== canonical(intent)) throw new Error("production_store_materialization_invalid");
+  if (
+    intent.kind === "select" &&
+    !threads.some(
+      (thread) =>
+        thread.chat_thread_id === intent.chatThreadId &&
+        thread.chat_surface_session_id === intent.chatSurfaceSessionId,
+    )
+  )
+    throw new Error("production_store_materialization_invalid");
 }
 function transaction<T>(db: DatabaseSync, callback: () => T): T {
   db.exec("BEGIN IMMEDIATE");
@@ -1479,6 +1536,7 @@ function validateMaterialization(db: DatabaseSync): void {
     lifecycle = db.prepare("SELECT * FROM production_chat_lifecycle_metadata").all() as any[],
     event = db.prepare("SELECT * FROM production_continuity_event").all() as any[],
     selection = db.prepare("SELECT * FROM production_active_selection").all() as any[];
+  validateChatSelectionIntent(selection, thread);
   const chatRuntimeIntents = db.prepare("SELECT * FROM production_chat_runtime_intent").all() as any[];
   const bootstrap = db
     .prepare("SELECT continuity_id,companion_id,player_id FROM production_bootstrap WHERE singleton=1")
@@ -1486,7 +1544,7 @@ function validateMaterialization(db: DatabaseSync): void {
   const liveGameState = null,
     successorActive = false,
     successorEnter = false;
-  const chatRuntimeState = currentChatRuntimeState(db, chatRuntimeIntents);
+  const chatRuntimeState = currentChatRuntimeState(db, p.continuity_id, chatRuntimeIntents);
   if (count(db, "production_continuity_command")) {
     validateV35ChatExtension(
       db,
@@ -1634,6 +1692,109 @@ function sagaVector(db: DatabaseSync): SagaVector {
   });
 }
 
+const selectionIntentKeys = ["chatThreadId", "chatSurfaceSessionId", "kind"] as const;
+function validSelectionIntent(value: unknown): value is ProductionChatSelectionIntent {
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  if (Reflect.ownKeys(value).length !== selectionIntentKeys.length) return false;
+  const intent = value as ProductionChatSelectionIntent;
+  return (
+    (intent.kind === "create" || intent.kind === "select") &&
+    safeId(intent.chatThreadId) &&
+    safeId(intent.chatSurfaceSessionId)
+  );
+}
+function parseStoredSelectionIntent(value: unknown): ProductionChatSelectionIntent | null {
+  const parsed = parse(value);
+  if (!validSelectionIntent(parsed)) return null;
+  const intent = parsed as ProductionChatSelectionIntent;
+  return Object.freeze({
+    kind: intent.kind,
+    chatThreadId: intent.chatThreadId,
+    chatSurfaceSessionId: intent.chatSurfaceSessionId,
+  });
+}
+/**
+ * The one recorded expectation. A non-null stored value that is not its own
+ * canonical form is store corruption, never a defaultable field.
+ */
+function readExpectedSelection(db: DatabaseSync): ProductionChatSelectionIntent | null {
+  const row = db
+    .prepare("SELECT expected_selection_json AS value FROM production_active_selection WHERE singleton=1")
+    .get() as any;
+  if (!row || row.value === null) return null;
+  const intent = parseStoredSelectionIntent(row.value);
+  if (!intent || row.value !== canonical(intent)) throw new Error("production_store_materialization_invalid");
+  return intent;
+}
+function writeExpectedSelection(db: DatabaseSync, intent: ProductionChatSelectionIntent | null): void {
+  db.prepare("UPDATE production_active_selection SET expected_selection_json=? WHERE singleton=1").run(
+    intent === null ? null : canonical(intent),
+  );
+}
+/**
+ * ADR 0009: the player's create/select intent, recorded without touching any
+ * vector. It fails closed while a runtime transition is in flight and refuses a
+ * target the settlement could never legitimately select.
+ */
+function recordChatSelectionIntent(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionChatSelectionIntentInput,
+): ProductionChatCatalog {
+  if (!input || typeof input !== "object" || !validSelectionIntent(input.intent) || !validVector(input.expected))
+    throw new Error("invalid_chat_selection_operation");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    try {
+      rejectChatRuntimeTransition(db);
+    } catch {
+      throw new Error("chat_selection_transition_in_flight");
+    }
+    if (canonical(sagaVector(db)) !== canonical(input.expected)) throw new Error("chat_selection_conflict");
+    const initialSaga = db.prepare("SELECT phase FROM production_initial_chat_saga WHERE singleton=1").get() as any;
+    if (initialSaga?.phase !== "selected") throw new Error("chat_initialization_incomplete");
+    const principal = bootstrap.bootstrap.principal;
+    const existing = db
+      .prepare(
+        "SELECT * FROM production_continuity_thread WHERE chat_surface_session_id=? OR (continuity_id=? AND chat_thread_id=?)",
+      )
+      .get(input.intent.chatSurfaceSessionId, principal.continuityId, input.intent.chatThreadId) as any;
+    if (input.intent.kind === "create") {
+      // A created Chat is new content: an id that already exists is a conflict,
+      // not a rename of the existing Chat.
+      if (existing) throw new Error("chat_selection_conflict");
+    } else if (
+      // `chat.select` names an existing, verified, active Chat (ADR 0009).
+      !existing ||
+      existing.continuity_id !== principal.continuityId ||
+      existing.chat_thread_id !== input.intent.chatThreadId ||
+      existing.companion_id !== principal.companionId ||
+      existing.lifecycle !== "active" ||
+      !existing.content_receipt_json ||
+      !existing.content_receipt_digest
+    )
+      throw new Error("chat_selection_conflict");
+    writeExpectedSelection(db, Object.freeze({ ...input.intent }));
+    return readChatCatalog(db, bootstrap);
+  });
+}
+/** Clears an expectation the pre-mount settlement already satisfied. */
+function clearChatSelectionIntent(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+  input: ProductionChatSelectionClearInput,
+): ProductionChatCatalog {
+  if (!input || typeof input !== "object" || !validVector(input.expected))
+    throw new Error("invalid_chat_selection_operation");
+  return transaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    if (canonical(sagaVector(db)) !== canonical(input.expected)) throw new Error("chat_selection_conflict");
+    writeExpectedSelection(db, null);
+    return readChatCatalog(db, bootstrap);
+  });
+}
 function validChatInput(input: unknown): input is ProductionChatCommandInput {
   if (!input || typeof input !== "object") return false;
   const value = input as ProductionChatCommandInput;
@@ -1860,6 +2021,14 @@ function runChatLifecycleCommand(
     const selected = selectedReadback(db);
     if (selected?.chatSurfaceSessionId === input.chatSurfaceSessionId)
       throw new Error("chat_selected_lifecycle_forbidden");
+    const pendingSelection = readExpectedSelection(db);
+    // The recorded expectation is a pending player request: the Chat it names
+    // cannot leave the active list before the settlement honours or replaces it.
+    if (
+      pendingSelection?.chatThreadId === input.chatThreadId &&
+      pendingSelection.chatSurfaceSessionId === input.chatSurfaceSessionId
+    )
+      throw new Error("chat_selection_pending_lifecycle_forbidden");
     let lifecycle: ProductionChatLifecycle,
       restore: null | "active" | "archived" = null;
     if (input.operation === "archive") {
@@ -1931,6 +2100,69 @@ function rejectChatRuntimeTransition(db: DatabaseSync): void {
     throw new Error("chat_runtime_transition_pending");
 }
 type ChatRuntimeSuccessorAdmission = Readonly<{ predecessor: any; teardown: any; bridge: any }>;
+type ChatCommandChainStep = Readonly<{
+  kind: ProductionChatCommandReadback["kind"];
+  response: ProductionChatCommandReadback;
+}>;
+/**
+ * ADR 0009: the recorded command chain that starts exactly at `start`. Every
+ * step's `expected` is the previous step's committed vector, so the chain is a
+ * linear replay of the immutable command ledger; a vector bump the ledger does
+ * not record (a runtime prepare/commit/teardown) ends it. The trail validator
+ * already refuses two commands with one expected vector, so at most one chain
+ * starts at any vector.
+ */
+function chatCommandChain(db: DatabaseSync, continuityId: string, start: SagaVector): readonly ChatCommandChainStep[] {
+  const rows = db
+    .prepare("SELECT * FROM production_continuity_command WHERE continuity_id=?")
+    .all(continuityId) as any[];
+  const byExpected = new Map<string, ChatCommandChainStep>();
+  for (const row of rows) {
+    const request = parse(row.payload_json);
+    if (!request || !validStoredVector(request.expected)) continue;
+    byExpected.set(
+      canonical(request.expected),
+      Object.freeze({ kind: row.command_kind, response: parse(row.response_json) }),
+    );
+  }
+  const steps: ChatCommandChainStep[] = [];
+  let cursor: SagaVector = start;
+  for (let index = 0; index < rows.length; index += 1) {
+    const step = byExpected.get(canonical(cursor));
+    if (!step || !validStoredVector(step.response?.vector)) break;
+    steps.push(step);
+    cursor = step.response.vector;
+  }
+  return Object.freeze(steps);
+}
+/** The vector a recorded command chain reaches from `start`; `start` itself when none does. */
+function chatCommandChainTip(db: DatabaseSync, continuityId: string, start: SagaVector): SagaVector {
+  const steps = chatCommandChain(db, continuityId, start);
+  return steps.length ? steps[steps.length - 1]!.response.vector : start;
+}
+/**
+ * The unique settling `select_chat` bridge of `root`: the tip of root's recorded
+ * command chain, when that tip is a select whose committed readback is exactly
+ * the requested mount vector and Chat. Anything else - a chain that ends in a
+ * register or verify, a chain whose tip is another vector or another Chat - is
+ * not a successor.
+ */
+function chatChainSettledSelection(
+  db: DatabaseSync,
+  continuityId: string,
+  root: SagaVector,
+  mount: Readonly<{ expected: SagaVector; chatThreadId: string; chatSurfaceSessionId: string }>,
+): boolean {
+  const steps = chatCommandChain(db, continuityId, root);
+  const tip = steps[steps.length - 1];
+  return (
+    !!tip &&
+    tip.kind === "select_chat" &&
+    canonical(tip.response.vector) === canonical(mount.expected) &&
+    tip.response.chatThreadId === mount.chatThreadId &&
+    tip.response.chatSurfaceSessionId === mount.chatSurfaceSessionId
+  );
+}
 function requireSameChatRuntimeSuccessorBridge(
   db: DatabaseSync,
   continuityId: string,
@@ -1962,11 +2194,6 @@ function chatRuntimeSuccessorAdmissions(
   const predecessors = db
     .prepare("SELECT * FROM production_chat_runtime_intent WHERE continuity_id=? AND status='terminal'")
     .all(input.continuityId) as any[];
-  const bridges = db
-    .prepare(
-      "SELECT payload_json,response_json FROM production_continuity_command WHERE continuity_id=? AND command_kind='select_chat'",
-    )
-    .all(input.continuityId) as any[];
   const admissions: ChatRuntimeSuccessorAdmission[] = [];
   for (const predecessor of predecessors) {
     const teardown = db
@@ -1977,19 +2204,19 @@ function chatRuntimeSuccessorAdmissions(
     if (!teardown || teardown.status !== "terminal") continue;
     const teardownVector = parse(teardown.committed_vector_json);
     if (!validStoredVector(teardownVector)) continue;
-    const matches = bridges.filter((bridge) => {
-      const payload = parse(bridge.payload_json),
-        response = parse(bridge.response_json);
-      return (
-        validStoredVector(payload?.expected) &&
-        canonical(payload.expected) === canonical(teardownVector) &&
-        validStoredVector(response?.vector) &&
-        canonical(response.vector) === canonical(input.expected) &&
-        response.chatThreadId === input.chatThreadId &&
-        response.chatSurfaceSessionId === input.chatSurfaceSessionId
-      );
+    if (
+      !chatChainSettledSelection(db, input.continuityId, teardownVector, {
+        expected: input.expected,
+        chatThreadId: input.chatThreadId,
+        chatSurfaceSessionId: input.chatSurfaceSessionId,
+      })
+    )
+      continue;
+    admissions.push({
+      predecessor,
+      teardown,
+      bridge: chatCommandChain(db, input.continuityId, teardownVector).at(-1),
     });
-    if (matches.length === 1) admissions.push({ predecessor, teardown, bridge: matches[0] });
   }
   return admissions;
 }
@@ -2011,7 +2238,24 @@ function requireChatRuntimeSuccessorAdmission(db: DatabaseSync, input: Productio
         canonical(response.vector) === canonical(vector)
       );
     });
-    if (bridges.length !== 1 || canonical(input.expected) !== canonical(parse(bridges[0].committed_vector_json)))
+    if (bridges.length !== 1) throw new Error("chat_runtime_chain_invalid");
+    const rootVector = parse(bridges[0].committed_vector_json);
+    if (!validStoredVector(rootVector)) throw new Error("chat_runtime_chain_invalid");
+    // No Chat command has run since the initial selection: the initial saga's
+    // own selection is the mount (the fresh-root shape).
+    if (!chatCommandChain(db, input.principal.continuityId, rootVector).length) {
+      if (canonical(input.expected) !== canonical(rootVector)) throw new Error("chat_runtime_chain_invalid");
+      return;
+    }
+    // ADR 0009: the same single settling bridge rule for a root that has no
+    // terminal runtime yet - a Chat created or picked before the first mount.
+    if (
+      !chatChainSettledSelection(db, input.principal.continuityId, rootVector, {
+        expected: input.expected,
+        chatThreadId: input.chatThreadId,
+        chatSurfaceSessionId: input.chatSurfaceSessionId,
+      })
+    )
       throw new Error("chat_runtime_chain_invalid");
     return;
   }
@@ -2089,6 +2333,7 @@ function readChatCatalog(db: DatabaseSync, bootstrap: ProductionBootstrapContext
     return Object.freeze({
       vector: sagaVector(db),
       activeSelection: selectedReadback(db),
+      expectedSelection: readExpectedSelection(db),
       threads: Object.freeze(threads),
     });
   });
@@ -2135,6 +2380,7 @@ function validateV35ChatExtension(
     throw new Error("production_store_materialization_invalid");
   const selected = selection[0],
     knownSessions = new Map(chat.map((row) => [row.session_id, row]));
+  validateChatSelectionIntent(selection, threads);
   const knownMetadata = new Map(metadataRows.map((row) => [row.chat_surface_session_id, row]));
   const selectedThread = threads.find(
     (row) =>
@@ -3355,6 +3601,7 @@ function teardownReceiptMatches(
 }
 function currentChatRuntimeState(
   db: DatabaseSync,
+  continuityId: string,
   intents: any[],
 ): "pending" | "recovery_required" | "active" | "closed" | null {
   const current = sagaVector(db);
@@ -3366,20 +3613,14 @@ function currentChatRuntimeState(
   const liveTeardowns = teardowns.filter((row) => row.status === "pending" || row.status === "recovery_required");
   if (liveTeardowns.length > 1) throw new Error("production_store_materialization_invalid");
   const terminalTeardowns = teardowns.filter((row) => row.status === "terminal");
+  // ADR 0009: a terminal teardown's tip is the vector its recorded command chain
+  // reaches - the same-selection re-entry bridge, or the settlement chain of the
+  // Chat the player asked for. An equal-delta advance is no longer the test: a
+  // settlement records a register and a verify before its select bridge.
   const exactTipCandidates = terminalTeardowns.filter((row) => {
     const committed = parse(row.committed_vector_json);
-    return (
-      validStoredVector(committed) &&
-      ((committed.partitionRevision === current.partitionRevision &&
-        committed.fenceEpoch === current.fenceEpoch &&
-        committed.selectionRevision === current.selectionRevision) ||
-        (current.partitionRevision >= committed.partitionRevision &&
-          current.fenceEpoch >= committed.fenceEpoch &&
-          current.selectionRevision >= committed.selectionRevision &&
-          current.partitionRevision - committed.partitionRevision === current.fenceEpoch - committed.fenceEpoch &&
-          current.partitionRevision - committed.partitionRevision ===
-            current.selectionRevision - committed.selectionRevision))
-    );
+    if (!validStoredVector(committed)) return false;
+    return sameSagaVector(chatCommandChainTip(db, continuityId, committed), current);
   });
   if (exactTipCandidates.length > 1) throw new Error("production_store_materialization_invalid");
   const teardown = liveTeardowns[0] ?? exactTipCandidates[0];
@@ -3416,27 +3657,19 @@ function currentChatRuntimeState(
             vector.selectionRevision === current.selectionRevision,
         );
       if (successor) return "active";
-      if (current.selectionRevision > committed.selectionRevision) {
-        if (
-          current.partitionRevision !==
-            committed.partitionRevision + (current.selectionRevision - committed.selectionRevision) ||
-          current.fenceEpoch !== committed.fenceEpoch + (current.selectionRevision - committed.selectionRevision) ||
-          !db
-            .prepare(
-              "SELECT 1 FROM production_surface_session WHERE session_id=? AND surface='chat' AND state='active'",
-            )
-            .get(teardown.chat_surface_session_id)
-        )
-          throw new Error("production_store_materialization_invalid");
-        return "active";
+      if (chatCommandChain(db, continuityId, committed).length || sameSagaVector(committed, current)) {
+        // ADR 0009: the pre-mount window is classified by the active selection's
+        // own surface session. Before the settlement the torn-down Chat is still
+        // selected and its session is `ended` (closed); a settled selection -
+        // the same Chat re-entered or the one the player asked for - is `active`.
+        const selected = db
+          .prepare(
+            "SELECT s.state AS state FROM production_active_selection a JOIN production_surface_session s ON s.session_id=a.chat_surface_session_id WHERE a.singleton=1",
+          )
+          .get() as any;
+        return selected?.state === "active" ? "active" : "closed";
       }
-      if (
-        current.partitionRevision !== committed.partitionRevision ||
-        current.fenceEpoch !== committed.fenceEpoch ||
-        current.selectionRevision !== committed.selectionRevision
-      )
-        throw new Error("production_store_materialization_invalid");
-      return "closed";
+      throw new Error("production_store_materialization_invalid");
     }
     return null;
   }
@@ -3619,10 +3852,9 @@ function step(
           count(db, "production_game_intent")
         )
           throw new Error("saga_materialization_invalid");
-        db.prepare("INSERT INTO production_active_selection VALUES(1,?,?,1)").run(
-          saga.chat_surface_session_id,
-          saga.chat_thread_id,
-        );
+        db.prepare(
+          "INSERT INTO production_active_selection(singleton,chat_surface_session_id,chat_thread_id,selection_revision) VALUES(1,?,?,1)",
+        ).run(saga.chat_surface_session_id, saga.chat_thread_id);
         db.prepare("UPDATE production_surface_session SET state='active',updated_at_ms=0 WHERE session_id=?").run(
           saga.chat_surface_session_id,
         );
