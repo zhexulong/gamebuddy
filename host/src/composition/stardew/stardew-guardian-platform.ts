@@ -424,6 +424,17 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
         guardianEpoch: armFrame.guardianEpoch,
         attemptId: armFrame.attemptId,
         operationWaitBudgetMs: DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS,
+        // The four durable arm binding facts the native arm body carries. They
+        // have no other production consumer (the correlation triple above is all
+        // the launch/contain/settle path needs), so the arm encoder is their only
+        // reader - and they come from the exact owner record the recovery and
+        // launch paths read, never from a launch fact bag.
+        armFacts: Object.freeze({
+          revision: armFrame.revision,
+          leaseName: armFrame.leaseName,
+          playerJobName: armFrame.playerJobName,
+          aiJobName: armFrame.aiJobName,
+        }),
       });
       const core = createContainedGameRuntime(platform, binding);
       runtime = Object.freeze({
@@ -641,7 +652,9 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
  * platform session. Native frame bytes are created and consumed only here;
  * the generic runtime core never sees this transport representation.
  *
- * Arm frames use simple JSON encoding for the arm schema; launch frames use
+ * Arm frames are built from the attempt's native arm binding facts - the
+ * composition's own arm frame (revision, lease and the two Job names) plus the
+ * approved executable - and never from the launch facts bag; launch frames use
  * the native Stardew role-launch-plan encoder ("ParseLaunch" schema) so the
  * native Guardian receives the exact 10-key plan it expects. Recovery frames use
  * the two exact bodies `GuardianRecoveryIngress` parses: a tokenless pre-CAS gate
@@ -679,16 +692,43 @@ export function createDesktopGuardianGameRuntimePlatform(
       if (!sessionClosed) closeInFlight = undefined;
     }
   };
-  const encodeArmAuthorization = (facts: TypedPrivateGameFacts): Uint8Array => {
-    // The attested installation executable is fixed at arm time and is later
-    // enforced by the native Guardian's ParseLaunch. The Host wire mirrors the
-    // native ParseArm/ParseLaunch executable constraints here (existence,
-    // NUL, fully-qualified drive path, size bound) and fails closed before the
-    // authenticated session sees a frame the native Guardian would reject;
-    // the ordinal-ignore-case equality gate itself remains native-only.
-    const approvedExecutable = facts.executable;
-    if (typeof approvedExecutable !== "string" || !isFullyQualifiedWindowsPath(approvedExecutable)) throw new Error("contained game runtime: arm authorization missing approved executable");
-    const encoded = JSON.stringify({ ...facts, approvedExecutable });
+  /**
+   * The exact arm binding keys the native arm parser takes from the durable arm
+   * frame beyond the correlation triple. `GuardianPrivateLaunchIngress.ParseArm`
+   * requires `revision`, `leaseName`, `playerJobName` and `aiJobName` (its
+   * `RequireExactKeys` is a count AND membership check).
+   */
+  const NATIVE_ARM_BINDING_KEYS = ["revision", "leaseName", "playerJobName", "aiJobName"] as const;
+
+  /**
+   * Encodes the exact eight-key body `GuardianPrivateLaunchIngress.ParseArm`
+   * requires. The Desktop supervisor injects the single `token` key into this
+   * frame, so the Host's body stays tokenless exactly as the recovery gate body
+   * does.
+   *
+   * The body is built key by key from the attempt's arm binding facts plus the
+   * approved executable; the launch facts bag is never spread into it. That is
+   * the whole point: the native parser refuses a body whose key COUNT is off, so
+   * a tempted `executable`/`cwd`/`arguments`/`environment` mirror here is
+   * structurally fatal rather than cosmetic.
+   */
+  const encodeArmAuthorization = (
+    correlation: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string }>,
+    armFacts: TypedPrivateGameFacts,
+    approvedExecutable: string,
+  ): Uint8Array => {
+    const body: Record<string, string | number> = {
+      guardianInstanceId: correlation.guardianInstanceId,
+      guardianEpoch: correlation.guardianEpoch,
+      attemptId: correlation.attemptId,
+    };
+    for (const key of NATIVE_ARM_BINDING_KEYS) {
+      const value = armFacts[key];
+      if (typeof value !== "string" || value.length === 0) throw new Error(`contained game runtime: arm authorization is missing ${key}`);
+      body[key] = value;
+    }
+    body.approvedExecutable = approvedExecutable;
+    const encoded = JSON.stringify(body);
     if (encoded === undefined) throw new Error("contained game runtime: authorization encoding failed");
     return new TextEncoder().encode(encoded);
   };
@@ -721,8 +761,17 @@ export function createDesktopGuardianGameRuntimePlatform(
 
   return Object.freeze({
     async arm(input) {
-      const { authorization, ...transportInput } = input;
-      await session.arm({ ...transportInput, privateFrame: encodeArmAuthorization(authorization) });
+      const { authorization, armFacts, ...transportInput } = input;
+      // The attested installation executable is fixed at arm time and is later
+      // enforced by the native Guardian's ParseLaunch. The Host wire mirrors the
+      // native ParseArm/ParseLaunch executable constraints here (existence,
+      // NUL, fully-qualified drive path, size bound) and fails closed before the
+      // authenticated session sees a frame the native Guardian would reject;
+      // the ordinal-ignore-case equality gate itself remains native-only. It is
+      // the ONLY launch fact the arm body takes.
+      const approvedExecutable = authorization.executable;
+      if (typeof approvedExecutable !== "string" || !isFullyQualifiedWindowsPath(approvedExecutable)) throw new Error("contained game runtime: arm authorization missing approved executable");
+      await session.arm({ ...transportInput, privateFrame: encodeArmAuthorization(transportInput, armFacts, approvedExecutable) });
     },
     async launch(input) {
       const { authorization, guardianInstanceId, guardianEpoch, attemptId, deadlineUnixMs, role } = input;
