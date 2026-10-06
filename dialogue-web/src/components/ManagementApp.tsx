@@ -10,6 +10,9 @@ import {
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
   type TavernConnectionV1,
+  type TavernModelProfileV1,
+  type TavernModelProfilesV1,
+  type TavernRecommendedModelV1,
   type TavernVoicePreferenceV1,
   type TavernVoiceDevicesV1,
   TavernProblemError,
@@ -103,6 +106,24 @@ type ConnectionView =
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "ready"; state: TavernConnectionStateV1; pending: boolean; notice: "activation" | "busy" | "conflict" | null }>;
 
+/**
+ * Model profiles state (design/28 §2.3). `pending` names the one surface whose
+ * write is in flight: a second click would reuse the same durable revision and
+ * manufacture a `settings_revision_conflict`. `notice` carries only closed
+ * categories, and the panel always shows the durable read-back, never the local
+ * choice.
+ */
+type ModelProfilesView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{
+      kind: "ready";
+      profiles: TavernModelProfilesV1;
+      pending: "chat" | "game" | null;
+      notice: "conflict" | null;
+    }>;
+
 type MemoryView =
   | Readonly<{ kind: "idle" }>
   | Readonly<{ kind: "loading" }>
@@ -134,6 +155,8 @@ export function ManagementApp() {
   const settingsRevisionRef = useRef(0);
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
   const connectionLoadedRef = useRef(false);
+  const [modelProfilesView, setModelProfilesView] = useState<ModelProfilesView>({ kind: "loading" });
+  const modelProfilesLoadedRef = useRef(false);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
 
@@ -256,6 +279,19 @@ export function ManagementApp() {
             // A management profile without the connection extension group does
             // not publish these routes at all.
             setConnectionView({ kind: "unavailable" });
+          }
+        }
+        if (!modelProfilesLoadedRef.current) {
+          modelProfilesLoadedRef.current = true;
+          try {
+            // The read-probe is how the panel learns whether the mounted profile
+            // published the model-profile routes: an absent route must not render
+            // an editor the Host cannot serve.
+            const profiles = await api.readModelProfiles();
+            if (!active) return;
+            setModelProfilesView({ kind: "ready", profiles, pending: null, notice: null });
+          } catch {
+            setModelProfilesView({ kind: "unavailable" });
           }
         }
       } catch (error) {
@@ -665,6 +701,51 @@ export function ManagementApp() {
     }, false);
   };
 
+  /**
+   * One model-profile mutation at a time. The Host owns both the durable record
+   * and the validation, so the panel sends exactly what the player typed and
+   * adopts the validated read-back as the only thing it shows; a rejected write
+   * re-reads the authority before the failure notice appears.
+   */
+  const handleModelProfileMutation = async (
+    surface: "chat" | "game",
+    modelId: string,
+    thinkingLevel: string,
+  ): Promise<void> => {
+    const current = viewRef.current;
+    const profiles = modelProfilesView;
+    if (current.kind !== "ready" || profiles.kind !== "ready" || profiles.pending !== null) return;
+    setModelProfilesView({ ...profiles, pending: surface, notice: null });
+    try {
+      const written = await apiRef.current.updateModelProfile(
+        {
+          apiVersion: 1,
+          surface,
+          expectedRevision: profiles.profiles[surface].revision,
+          modelId,
+          thinkingLevel,
+        },
+        current.session.snapshot.csrfToken,
+      );
+      setModelProfilesView({ kind: "ready", profiles: written, pending: null, notice: null });
+      commit({ ...current, notice: { kind: "success", text: labels().modelProfilesApplied } });
+    } catch (error) {
+      // A rejection can still hide a committed change (a same-cookie stale tab
+      // hits settings_revision_conflict), so re-read the authority before the
+      // failure is shown and never keep a local value the store did not accept.
+      const notice = error instanceof TavernProblemError && error.code === "settings_revision_conflict"
+        ? ("conflict" as const)
+        : null;
+      try {
+        const restated = await apiRef.current.readModelProfiles();
+        setModelProfilesView({ kind: "ready", profiles: restated, pending: null, notice });
+      } catch {
+        setModelProfilesView({ kind: "error" });
+      }
+      commit({ ...current, notice: { kind: "failure", text: modelProfileProblemText(error, labels()) } });
+    }
+  };
+
   const handleWorldInfoBinding = async (sourceHandle: string | null): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
@@ -805,6 +886,17 @@ export function ManagementApp() {
                 onRemove={(connectionId) => void handleRemoveConnection(connectionId)}
               />
             )}
+            {modelProfilesView.kind === "ready" && (
+              // Rendered only when the mounted profile published the model-profile
+              // routes; a profile without them never shows an editor it cannot serve.
+              <ModelProfilesPanel
+                view={modelProfilesView}
+                labels={labels()}
+                onSave={(surface, modelId, thinkingLevel) =>
+                  void handleModelProfileMutation(surface, modelId, thinkingLevel)
+                }
+              />
+            )}
             {charactersAvailable && (
               <CharactersPanel api={apiRef.current} csrfToken={view.session.snapshot.csrfToken} labels={labels()} />
             )}
@@ -888,6 +980,154 @@ type ConnectionForm = Readonly<{
   catalogModelId: string;
   thinkingLevel: TavernConnectionThinkingLevelV1;
 }>;
+
+/**
+ * The thinking levels the panel suggests. They are suggestions only: the Host
+ * forwards whatever the player typed to the embedded runtime, which clamps a
+ * level the chosen model does not advertise (design/28 §2.3.5).
+ */
+const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+function modelProfileProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
+  if (error instanceof TavernProblemError) {
+    if (error.code === "settings_revision_conflict") return labels.modelProfilesRevisionConflict;
+    if (error.code === "invalid_request") return labels.modelProfilesModelRequired;
+  }
+  return labels.failure;
+}
+
+/**
+ * One surface's model editor (design/28 §2.3). The player types the model id and
+ * the thinking level; the shipped catalog is offered as suggestions the player
+ * may click or ignore, and typing any other model name saves just as well,
+ * because a recommended model is never the upper bound of what may be chosen.
+ * The controls always show the durable read-back, never the local choice.
+ */
+function ModelProfileEditor({
+  surface,
+  surfaceLabel,
+  profile,
+  suggestions,
+  labels,
+  pending,
+  onSave,
+}: Readonly<{
+  surface: "chat" | "game";
+  surfaceLabel: string;
+  profile: TavernModelProfileV1;
+  suggestions: readonly TavernRecommendedModelV1[];
+  labels: ReturnType<typeof messages>;
+  pending: "chat" | "game" | null;
+  onSave: (modelId: string, thinkingLevel: string) => void;
+}>): ReactElement {
+  const [modelId, setModelId] = useState(profile.modelId);
+  const [thinkingLevel, setThinkingLevel] = useState(profile.thinkingLevel);
+  // Adopt the durable profile whenever it changes: a save's read-back is the
+  // only thing the editor ever shows.
+  useEffect(() => {
+    setModelId(profile.modelId);
+    setThinkingLevel(profile.thinkingLevel);
+  }, [profile.modelId, profile.thinkingLevel]);
+  const busy = pending !== null;
+  const dirty = modelId !== profile.modelId || thinkingLevel !== profile.thinkingLevel;
+  const canSave = !busy && dirty && modelId.trim().length > 0 && thinkingLevel.trim().length > 0;
+  return (
+    <form
+      className="model-profile-editor"
+      data-model-profile-surface={surface}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!canSave) return;
+        onSave(modelId.trim(), thinkingLevel.trim());
+      }}
+    >
+      <h3>{surfaceLabel}</h3>
+      <label htmlFor={`model-profile-model-${surface}`}>{labels.modelProfilesModelId}</label>
+      <input
+        id={`model-profile-model-${surface}`}
+        className="form-input"
+        list={`model-profile-suggestions-${surface}`}
+        value={modelId}
+        disabled={busy}
+        onChange={(event) => setModelId(event.target.value)}
+      />
+      <datalist id={`model-profile-suggestions-${surface}`}>
+        {suggestions.map((model) => (
+          <option key={`${model.providerId}:${model.modelId}`} value={model.modelId} />
+        ))}
+      </datalist>
+      <label htmlFor={`model-profile-level-${surface}`}>{labels.modelProfilesThinkingLevel}</label>
+      <input
+        id={`model-profile-level-${surface}`}
+        className="form-input"
+        list={`model-profile-thinking-levels-${surface}`}
+        value={thinkingLevel}
+        disabled={busy}
+        onChange={(event) => setThinkingLevel(event.target.value)}
+      />
+      <datalist id={`model-profile-thinking-levels-${surface}`}>
+        {MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS.map((level) => (
+          <option key={level} value={level} />
+        ))}
+      </datalist>
+      <div className="model-profile-suggestions" data-model-profile-suggestions>
+        <span>{labels.modelProfilesRecommended}</span>
+        {suggestions.map((model) => (
+          <button
+            key={`${model.providerId}:${model.modelId}`}
+            type="button"
+            className="small-button"
+            disabled={busy}
+            onClick={() => setModelId(model.modelId)}
+          >
+            {model.modelId}
+          </button>
+        ))}
+      </div>
+      <button type="submit" className="small-button" disabled={!canSave}>
+        {labels.modelProfilesApply}
+      </button>
+    </form>
+  );
+}
+
+function ModelProfilesPanel({
+  view,
+  labels,
+  onSave,
+}: Readonly<{
+  view: Extract<ModelProfilesView, { kind: "ready" }>;
+  labels: ReturnType<typeof messages>;
+  onSave: (surface: "chat" | "game", modelId: string, thinkingLevel: string) => void;
+}>): ReactElement {
+  return (
+    <section className="management-settings-section" aria-label={labels.modelProfilesTitle} data-model-profiles>
+      <h2>{labels.modelProfilesTitle}</h2>
+      <p className="management-settings-hint" data-model-profiles-hint>
+        {labels.modelProfilesHint}
+      </p>
+      {view.notice === "conflict" && <p data-model-profiles-conflict>{labels.modelProfilesRevisionConflict}</p>}
+      <ModelProfileEditor
+        surface="chat"
+        surfaceLabel={labels.modelProfilesChat}
+        profile={view.profiles.chat}
+        suggestions={view.profiles.recommendedModels}
+        labels={labels}
+        pending={view.pending}
+        onSave={(modelId, thinkingLevel) => onSave("chat", modelId, thinkingLevel)}
+      />
+      <ModelProfileEditor
+        surface="game"
+        surfaceLabel={labels.modelProfilesGame}
+        profile={view.profiles.game}
+        suggestions={view.profiles.recommendedModels}
+        labels={labels}
+        pending={view.pending}
+        onSave={(modelId, thinkingLevel) => onSave("game", modelId, thinkingLevel)}
+      />
+    </section>
+  );
+}
 
 function connectionProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
   if (error instanceof TavernProblemError) {
