@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { resolveCompanionLocale } from "../settings/player-preference-store.js";
+import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -312,8 +312,12 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
    * preference (Tavern settings). Subsumes every presentation/Agent-session
    * locale so Host and Mod stay aligned; default zh-CN kept for existing
    * callers that predate the preference store.
+   *
+   * The value is the player's own BCP-47 tag (bounded by the preference store's
+   * COMPANION_LOCALE_PATTERN), not a closed pair: an operator or fixture may hand in
+   * any tag the runtime can speak, and the prompt layer names what it knows.
    */
-  companionLocale?: "zh-CN" | "en-US";
+  companionLocale?: CompanionLocale;
   /**
    * Optional fire-and-forget companion-language listener invoked after a
    * companion text successfully presented to the Game (e.g. to stream the
@@ -714,7 +718,7 @@ async function createMaterializedGameRuntime(
   gameSessionId: string,
   gameOperationalGateNonceSha256: string | undefined,
   _gameVoicePresentation: GameVoicePresentationAttachment | undefined,
-  companionLocale: "zh-CN" | "en-US",
+  companionLocale: CompanionLocale,
   onCompanionTextPresented: ((text: string, locale: string) => void) | undefined,
   fixedTools: readonly ToolDefinition[],
   recoveryAttachment?: Pick<import("../runtime.js").GameCompanionRuntimeAttachment, "recoveryJournal" | "recoveryBinding" | "recoveryPort"> & Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,

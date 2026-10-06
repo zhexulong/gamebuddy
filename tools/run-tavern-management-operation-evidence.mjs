@@ -31,6 +31,12 @@ import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The same bounded BCP-47 shape the Host stores for the companion language
+// (settings/player-preference-store.ts). The shape is bounded; the language set is the
+// player's choice, so this operation's evidence deliberately uses a tag outside the
+// pair the panel used to be limited to.
+const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { readMountedTavernManagementProfile } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
@@ -410,10 +416,10 @@ async function exerciseOperations(origin, client) {
     const language = await readJson(origin, client, "/api/tavern/v1/settings/language");
     if (language === null || typeof language !== "object") throw new Error("language_preference_unavailable");
     // The declared projection (design/28 5.1), not just "some object came
-    // back": a revision and the closed locale set (null = never configured).
+    // back": a revision and a bounded BCP-47 tag (null = never configured).
     if (!Number.isInteger(language.revision) || language.revision < 0)
       throw new Error("language_revision_unavailable");
-    if (language.locale !== null && language.locale !== "zh-CN" && language.locale !== "en-US")
+    if (language.locale !== null && !COMPANION_LOCALE_PATTERN.test(language.locale))
       throw new Error("language_locale_invalid");
   });
 
@@ -423,8 +429,10 @@ async function exerciseOperations(origin, client) {
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0)
       throw new Error("language_revision_unavailable");
     // Write the locale the record does not already carry, so the assertions
-    // below cannot pass on a value that was there before the write.
-    const locale = before?.locale === "en-US" ? "zh-CN" : "en-US";
+    // below cannot pass on a value that was there before the write. The tag is
+    // deliberately outside the pair the panel used to be limited to: accepting it is
+    // the capability this operation is evidence for.
+    const locale = before?.locale === "ja-JP" ? "en-US" : "ja-JP";
     const written = await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/language", {
       expectedRevision,
       locale,

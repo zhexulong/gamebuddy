@@ -11,6 +11,7 @@ import {
   TavernBrowserContractV1,
   TavernBrowserFixtureV1,
   TavernBrowserValidatorsV1,
+  TavernCompanionLocaleV1Schema,
 } from "./index.js";
 
 const handle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
@@ -1545,4 +1546,34 @@ test("import operations carry CSRF-bound write routes and safe projections", () 
     "importId",
     "name",
   ]);
+});
+test("the companion language is the same bounded BCP-47 shape on the wire and in the store", async () => {
+  // The contract must stay dependency-free (a dialogue-web test loads it directly under
+  // Node), so its locale shape is a literal. This is the pin that keeps that literal and
+  // the Host's own COMPANION_LOCALE_PATTERN from drifting: the shape is bounded, and the
+  // set of languages is the player's choice.
+  const { COMPANION_LOCALE_PATTERN, COMPANION_LOCALE_MAX_LENGTH } = await import(
+    "../../settings/player-preference-store.js"
+  );
+  const declared = TavernCompanionLocaleV1Schema as unknown as {
+    readonly pattern: string;
+    readonly maxLength: number;
+    readonly minLength: number;
+  };
+  assert.equal(declared.pattern, COMPANION_LOCALE_PATTERN.source);
+  assert.equal(declared.maxLength, COMPANION_LOCALE_MAX_LENGTH);
+
+  const write = TavernBrowserValidatorsV1.TavernLanguagePreferenceCommandV1Schema;
+  for (const tag of ["zh-CN", "en-US", "ja-JP", "pt-BR", "zh-Hant-TW"]) {
+    assert.equal(write.Check({ expectedRevision: 1, locale: tag }), true, `${tag} must save`);
+  }
+  for (const tag of ["", "x", "ja_JP", "ja-JP-x-private-extra-tag"]) {
+    assert.equal(write.Check({ expectedRevision: 1, locale: tag }), false, `${tag} must be refused`);
+  }
+
+  // The stored locale is the same shape with the "never chosen" null.
+  const read = TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema;
+  assert.equal(read.Check({ revision: 0, locale: null }), true);
+  assert.equal(read.Check({ revision: 0, locale: "ja-JP" }), true);
+  assert.equal(read.Check({ revision: 0, locale: "not a locale" }), false);
 });

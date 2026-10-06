@@ -276,13 +276,13 @@ export type TavernVoicePreferenceConsentCommandV1 =
 export type TavernLanguagePreferenceV1 = Readonly<{
   revision: number;
   /** `null` = the player has never chosen; the runtime then uses its default. */
-  locale: "zh-CN" | "en-US" | null;
+  locale: string | null;
 }>;
 
 /** Mirrors the Host's TavernLanguagePreferenceCommandV1. */
 export type TavernLanguagePreferenceCommandV1 = Readonly<{
   expectedRevision: number;
-  locale: "zh-CN" | "en-US";
+  locale: string;
 }>;
 
 export type TavernStateSnapshotV1 = Readonly<{
@@ -1555,8 +1555,14 @@ function isLanguagePreferenceCommand(value: unknown): value is TavernLanguagePre
   );
 }
 
-function isLanguageLocale(value: unknown): value is "zh-CN" | "en-US" {
-  return value === "zh-CN" || value === "en-US";
+// The companion language is the player's own BCP-47 tag: the shape is bounded and the
+// set is open. Mirrors the Host's COMPANION_LOCALE_PATTERN (settings/player-preference-store.ts),
+// spelled as a literal because this module is deliberately dependency-free; a test in
+// dialogue-web asserts the two spellings agree.
+const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+
+function isLanguageLocale(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 64 && COMPANION_LOCALE_PATTERN.test(value);
 }
 
 export function validateVoicePreference(value: unknown): TavernVoicePreferenceV1 {

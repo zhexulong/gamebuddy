@@ -160,6 +160,10 @@ const en = {
   languageHint: "The language your companion speaks. It applies from the next time your companion starts.",
   languageChinese: "Chinese (Simplified)",
   languageEnglish: "English",
+  languageCompanionField: "Companion language tag",
+  languageCompanionPlaceholder: "For example zh-CN, en-US, ja-JP",
+  languageUiField: "Interface language",
+  languageUiHint: "The language of this management interface. It does not change what your companion speaks.",
   languageUnavailable: "The companion language preference is unavailable.",
   voiceSettingsUnavailable: "Voice settings are unavailable.",
 
@@ -446,6 +450,10 @@ const zh: Messages = {
   languageHint: "伴侣说话使用的语言，下次伴侣启动时生效。",
   languageChinese: "简体中文",
   languageEnglish: "English",
+  languageCompanionField: "伴侣语言标签",
+  languageCompanionPlaceholder: "例如 zh-CN、en-US、ja-JP",
+  languageUiField: "界面语言",
+  languageUiHint: "本管理界面使用的语言，不会改变伴侣说话的语言。",
   languageUnavailable: "伴侣语言偏好不可用。",
   voiceSettingsUnavailable: "语音设置不可用。",
 

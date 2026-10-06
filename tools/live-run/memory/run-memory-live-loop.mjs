@@ -51,6 +51,11 @@ import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommit
 import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, m0SourcesFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 
+// The same bounded BCP-47 shape the Host stores for the companion language
+// (settings/player-preference-store.ts). Spelled here for the same reason the browser
+// contract spells it: the shape is bounded, the language set is the player's choice.
+const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
 // its own directory with the runtime root's evidence and the child stderr, so a
 // reviewer can see what actually reached the model instead of only digest facts.
@@ -138,8 +143,8 @@ function parseArguments(argv) {
     index += 1;
   }
   const language = flags.get("--language");
-  if (language !== undefined && language !== "zh-CN" && language !== "en-US")
-    throw new Error(`${usage()} (--language must be zh-CN or en-US)`);
+  if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
+    throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({

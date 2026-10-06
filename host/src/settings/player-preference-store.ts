@@ -12,11 +12,26 @@ import { join } from "node:path";
  */
 export const PLAYER_PREFERENCE_SCHEMA_VERSION = 1 as const;
 
+/**
+ * Bounded BCP-47 shape for the companion language.
+ *
+ * The companion language is the PLAYER's value, so the rule for player input applies:
+ * bound the shape, never close the set. A primary subtag plus up to three subtags is all
+ * a language tag needs here - `ja-JP`, `pt-BR` and `zh-Hant-TW` are expressible, an
+ * unbounded or empty tag is not. This is the same shape the Host already uses for a
+ * system-notice locale (system-notices.ts); there is one spelling of it in the Host and
+ * the browser contract asserts it mirrors this one.
+ */
+export const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+
+/** The longest tag the pattern admits: 8 + 3 x (1 + 16). */
+export const COMPANION_LOCALE_MAX_LENGTH = 64;
+
 /** The companion language. The frontend (Tavern) is the single configuration
  * point; everything that needs a locale (Agent prompt/session language,
  * companion presentation locale, fixture required-live-locale) reads this same
  * preference instead of each side hard-coding its own. */
-export type CompanionLocale = "zh-CN" | "en-US";
+export type CompanionLocale = string;
 
 /** The companion language when the player has not chosen one. */
 export const DEFAULT_COMPANION_LOCALE: CompanionLocale = "zh-CN";
@@ -227,7 +242,11 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
 }
 
 function isLocale(value: unknown): value is CompanionLocale {
-  return value === "zh-CN" || value === "en-US";
+  return (
+    typeof value === "string" &&
+    value.length <= COMPANION_LOCALE_MAX_LENGTH &&
+    COMPANION_LOCALE_PATTERN.test(value)
+  );
 }
 
 function isLocaleOrNull(value: unknown): value is CompanionLocale | null {
