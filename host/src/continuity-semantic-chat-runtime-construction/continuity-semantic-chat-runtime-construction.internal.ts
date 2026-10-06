@@ -5,7 +5,7 @@ import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
-import { resolveCompanionLocale } from "../settings/language-preference-store.js";
+import { resolveCompanionLocale } from "../settings/player-preference-store.js";
 import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";

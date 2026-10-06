@@ -23,10 +23,10 @@ import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-bind
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
-  companionLocalePath,
-  LanguagePreferenceStore,
+  PlayerPreferenceStore,
+  playerPreferencePath,
   resolveCompanionLocale,
-} from "../settings/language-preference-store.js";
+} from "../settings/player-preference-store.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
@@ -273,11 +273,11 @@ test("Chat construction takes the companion language from the player's stored pr
   let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
     const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
-    const store = new LanguagePreferenceStore(companionLocalePath(value.runtimeRoot));
+    const store = new PlayerPreferenceStore(playerPreferencePath(value.runtimeRoot));
     // Never configured: the runtime's own default, unchanged from before the
     // preference existed.
     assert.equal(await resolveCompanionLocale(value.runtimeRoot), "zh-CN");
-    const english = await store.update(0, { locale: "en-US" });
+    const english = await store.update(0, { action: "setLocale", locale: "en-US" });
     assert.equal(english.locale, "en-US");
     prepared = await value.binding.executeWithBinding((token) =>
       withConsumedChatRuntimeBinding(token, (execution) =>
@@ -294,7 +294,7 @@ test("Chat construction takes the companion language from the player's stored pr
     assert.doesNotMatch(prompt, /Chinese/u);
     // A second construction on the same root sees the update: the preference is
     // durable state, not a mount-time snapshot.
-    await store.update(english.revision, { locale: "zh-CN" });
+    await store.update(english.revision, { action: "setLocale", locale: "zh-CN" });
     assert.equal(await resolveCompanionLocale(value.runtimeRoot), "zh-CN");
     const chinese = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
     assert.match(chinese, /Consistently converse in Chinese \(Simplified\)/u);
@@ -311,12 +311,12 @@ test("Chat construction refuses an unreadable language preference instead of gue
   const value = await fixture();
   let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
-    const path = companionLocalePath(value.runtimeRoot);
+    const path = playerPreferencePath(value.runtimeRoot);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, "{ not a preference", "utf8");
     await assert.rejects(
       () => resolveCompanionLocale(value.runtimeRoot),
-      /invalid_language_preference_store/u,
+      /invalid_player_preference_store/u,
     );
   } finally {
     await value.binding.close();

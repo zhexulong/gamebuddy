@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
@@ -9,11 +9,7 @@ import type { MountedChatRuntimeLease } from "../continuity-semantic-production-
 import { settleMountedAuthoredContext } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
-import { VoicePreferenceStore } from "../settings/voice-preference-store.js";
-import {
-  companionLocalePath,
-  LanguagePreferenceStore,
-} from "../settings/language-preference-store.js";
+import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
@@ -254,16 +250,14 @@ export async function startTavernManagementPresentationAdmission(
       },
     });
     createdServices.push(connectionService);
-    const voicePreferenceStore = new VoicePreferenceStore(
-      join(input.manifest.runtimeRoot, "settings", "voice-preference.json"),
-    );
-    // The companion language preference the player writes through this same
-    // surface, at the one root-level path every runtime reads. Without this the
+    // The one Host-owned player preference record: the companion language the
+    // runtimes read at mount and the cloud TTS consent/output, at the one
+    // root-level path every settings surface reads and writes. Without this the
     // routes would fail closed ("A profile that advertises a route without the
-    // exact service cannot serve it") and the player's choice would have nowhere
-    // to live.
-    const languagePreferenceStore = new LanguagePreferenceStore(
-      companionLocalePath(input.manifest.runtimeRoot),
+    // exact service cannot serve it") and the player's choices would have
+    // nowhere to live.
+    const playerPreferenceStore = new PlayerPreferenceStore(
+      playerPreferencePath(input.manifest.runtimeRoot),
     );
     // The Character / Persona / Scenario / Greeting library is the real
     // durable tavern artifact store (design/28 §2). Companion handles are
@@ -395,8 +389,7 @@ export async function startTavernManagementPresentationAdmission(
       managementService,
       memoryService,
       worldInfoService,
-      voicePreferenceStore,
-      languagePreferenceStore,
+      playerPreferenceStore,
       connectionService,
       libraryService,
       companionDetailService,

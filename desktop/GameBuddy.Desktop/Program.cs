@@ -72,7 +72,7 @@ internal static class Program
                 selection.GenerationRoot,
                 selection.Generation,
                 selection.InventoryDigest,
-                Path.Combine(layout.DataRoot, "settings", "voice-preference.json"));
+                Path.Combine(layout.DataRoot, "settings", "player-preference.json"));
             await using var voiceSupervisor = voiceLaunch is null ? null : new VoiceGatewaySupervisor();
             VoiceGatewayLease? voiceLease = null;
             try

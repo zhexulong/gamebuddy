@@ -76,13 +76,14 @@ type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" 
 /**
  * Companion language state. The Host preference is the authority: the panel
  * adopts whatever it holds (so two browsers agree) and writes through it, never
- * keeping a local selection the durable store did not accept.
+ * keeping a local selection the durable store did not accept. The revision it
+ * writes with is the one record's, held once (see `settingsRevisionRef`).
  */
 type LanguageView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "error" }>
-  | Readonly<{ kind: "ready"; revision: number; locale: "zh-CN" | "en-US" | null; pending: boolean }>;
+  | Readonly<{ kind: "ready"; locale: "zh-CN" | "en-US" | null; pending: boolean }>;
 
 /** The UI's locale and the Host's companion locale are the same choice, spelled differently. */
 function companionLocaleToUi(locale: "zh-CN" | "en-US"): Locale {
@@ -126,6 +127,11 @@ export function ManagementApp() {
   const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
   const voiceLoadedRef = useRef(false);
   const languageLoadedRef = useRef(false);
+  // The one Host-owned preference record's revision, shared by both settings
+  // panels. The language and voice field groups live in a single record, so a
+  // panel-local counter would let one panel's write be silently overwritten by
+  // the other's; both read it here and both advance it from the response.
+  const settingsRevisionRef = useRef(0);
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
   const connectionLoadedRef = useRef(false);
   const localeRef = useRef<Locale>(resolveLocale());
@@ -190,6 +196,7 @@ export function ManagementApp() {
             } catch {
               devices = null;
             }
+            settingsRevisionRef.current = preference.revision;
             setVoiceView({ kind: "ready", preference, devices, pending: false });
           } catch {
             // Older management fixtures may not publish the optional voice route.
@@ -207,19 +214,22 @@ export function ManagementApp() {
             // chosen, the UI records the language it is already showing, so the
             // companion speaks what the player sees from the first reply on.
             if (preference.locale === null) {
+              settingsRevisionRef.current = preference.revision;
               try {
                 const written = await api.updateLanguagePreference(
-                  { expectedRevision: preference.revision, locale: uiLocaleToCompanion(localeRef.current) },
+                  { expectedRevision: settingsRevisionRef.current, locale: uiLocaleToCompanion(localeRef.current) },
                   snapshot.csrfToken,
                 );
-                setLanguageView({ kind: "ready", revision: written.revision, locale: written.locale, pending: false });
+                settingsRevisionRef.current = written.revision;
+                setLanguageView({ kind: "ready", locale: written.locale, pending: false });
               } catch {
                 // A lost race (another tab chose first) is not a panel failure: the
                 // read-back on the next load carries the winner.
-                setLanguageView({ kind: "ready", revision: preference.revision, locale: preference.locale, pending: false });
+                setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
               }
             } else {
-              setLanguageView({ kind: "ready", revision: preference.revision, locale: preference.locale, pending: false });
+              settingsRevisionRef.current = preference.revision;
+              setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
               const adopted = companionLocaleToUi(preference.locale);
               if (adopted !== localeRef.current) {
                 localeRef.current = adopted;
@@ -281,25 +291,25 @@ export function ManagementApp() {
       // The validated response IS the durable read-back, so the control always
       // shows what the store holds.
       const written = await apiRef.current.updateLanguagePreference(
-        { expectedRevision: language.revision, locale: uiLocaleToCompanion(locale) },
+        { expectedRevision: settingsRevisionRef.current, locale: uiLocaleToCompanion(locale) },
         current.session.snapshot.csrfToken,
       );
       const adopted = companionLocaleToUi(written.locale ?? uiLocaleToCompanion(locale));
       localeRef.current = adopted;
       persistLocale(adopted);
       applyDocumentLocale(adopted);
-      setLanguageView({ kind: "ready", revision: written.revision, locale: written.locale, pending: false });
+      settingsRevisionRef.current = written.revision;
+      setLanguageView({ kind: "ready", locale: written.locale, pending: false });
       commit({ ...current, locale: adopted, notice: { kind: "success", text: labels().success } });
     } catch {
       // A rejection can still hide a committed change (a same-cookie stale tab
       // hits the revision conflict), so re-read the authority before reverting.
       let restored: "zh-CN" | "en-US" | null = uiLocaleToCompanion(previous);
-      let revision = language.revision;
       try {
         const preference = await apiRef.current.readLanguagePreference();
         restored = preference.locale;
-        revision = preference.revision;
-        setLanguageView({ kind: "ready", revision, locale: restored, pending: false });
+        settingsRevisionRef.current = preference.revision;
+        setLanguageView({ kind: "ready", locale: restored, pending: false });
       } catch {
         setLanguageView({ kind: "error" });
       }
@@ -315,11 +325,15 @@ export function ManagementApp() {
     const current = viewRef.current;
     const voice = voiceView;
     if (current.kind !== "ready" || voice.kind !== "ready" || voice.pending) return;
+    // The record's one revision, shared with the language panel: a stale value
+    // here is a real conflict, never a second counter that lets this write
+    // silently discard the other panel's.
+    const expectedRevision = settingsRevisionRef.current;
     const command = action === "accept"
-      ? { action, expectedRevision: voice.preference.revision, disclosureVersion: "mimo-cloud-tts-v1" as const }
+      ? { action, expectedRevision, disclosureVersion: "mimo-cloud-tts-v1" as const }
       : action === "setOutputDevice"
-        ? { action, expectedRevision: voice.preference.revision, outputDevice }
-        : { action, expectedRevision: voice.preference.revision };
+        ? { action, expectedRevision, outputDevice }
+        : { action, expectedRevision };
     // One in-flight mutation at a time: a second identical action would reuse
     // the same expectedRevision and turn an ordinary double click into a
     // durable revision conflict.
@@ -329,6 +343,7 @@ export function ManagementApp() {
       // re-reads the written file and compares it before projecting), so the
       // selector always shows the persisted selection, never the local choice.
       const preference = await apiRef.current.updateVoicePreference(command, current.session.snapshot.csrfToken);
+      settingsRevisionRef.current = preference.revision;
       setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
       commit({ ...current, notice: { kind: "success", text: labels().success } });
     } catch {
@@ -338,6 +353,7 @@ export function ManagementApp() {
       // local selection the durable store did not accept.
       try {
         const preference = await apiRef.current.readVoicePreference();
+        settingsRevisionRef.current = preference.revision;
         setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
       } catch {
         setVoiceView({ kind: "error" });

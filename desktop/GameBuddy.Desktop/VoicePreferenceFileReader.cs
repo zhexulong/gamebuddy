@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace GameBuddy.Desktop;
 
 /// <summary>
-/// Cloud TTS consent projected from the Host-owned voice-preference.json.
+/// Cloud TTS consent projected from the one Host-owned player preference record.
 /// Narrow and immutable: only the fields the desktop launch gate consumes.
 /// </summary>
 internal sealed record VoicePreference(VoiceCloudTtsConsent Consent, string? DisclosureVersion, long Revision, string? OutputDevice)
@@ -26,11 +26,13 @@ internal enum VoiceCloudTtsConsent
 }
 
 /// <summary>
-/// Pure read-only seam over one Host-owned voice-preference.json (schema frozen by
-/// host/src/settings/voice-preference-store.ts). A missing file is the undecided
-/// default; any existing file that is not an exact valid preference fails closed so
-/// a bad file can never be projected as accepted. No CAS, no writes, no token or
-/// key material is read and no Host composition surface is referenced.
+/// Pure read-only seam over the one Host-owned player preference record (schema
+/// frozen by host/src/settings/player-preference-store.ts). A missing file is the
+/// undecided default; any existing file that is not an exact valid record fails
+/// closed so a bad file can never be projected as accepted. The record also
+/// carries the companion language; this launch gate consumes only its own Voice
+/// fields. No CAS, no writes, no token or key material is read and no Host
+/// composition surface is referenced.
 /// </summary>
 internal sealed class VoicePreferenceFileReader
 {
@@ -64,10 +66,19 @@ internal sealed class VoicePreferenceFileReader
 
     private static VoicePreference Project(JsonElement value)
     {
-        var properties = new[] { "schemaVersion", "revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice" };
+        // The record's exact key set IS the frozen shape, and it now carries the
+        // companion language, so a record written before that field existed is
+        // refused rather than half-read.
+        var properties = new[] { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice" };
         if (!InstalledGenerationPaths.ExactProperties(value, properties) ||
             !value.GetProperty("schemaVersion").TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion ||
             !value.GetProperty("revision").TryGetInt64(out var revision) || revision < 0)
+            throw new InvalidVoicePreferenceException();
+
+        // The language a player speaks is the Host's business, not this launch
+        // gate's: only the declared null-or-string kind is required here. Naming
+        // the languages would let a newly added one silently switch Voice off.
+        if (value.GetProperty("locale").ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
             throw new InvalidVoicePreferenceException();
 
         var disclosureElement = value.GetProperty("disclosureVersion");
@@ -130,6 +141,6 @@ internal sealed class VoicePreferenceFileReader
 
 internal sealed class InvalidVoicePreferenceException : Exception
 {
-    internal InvalidVoicePreferenceException(string message = "invalid_voice_preference_store", Exception? innerException = null)
+    internal InvalidVoicePreferenceException(string message = "invalid_player_preference_store", Exception? innerException = null)
         : base(message, innerException) { }
 }

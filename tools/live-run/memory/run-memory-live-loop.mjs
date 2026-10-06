@@ -301,8 +301,8 @@ async function readMemory(origin, client) {
 async function installLanguagePreference(root, locale) {
   if (locale === undefined) return undefined;
   const storeDir = new URL("../../../host/dist-test/", import.meta.url);
-  const { LanguagePreferenceStore, companionLocalePath } = await import(
-    new URL("settings/language-preference-store.js", storeDir),
+  const { PlayerPreferenceStore, playerPreferencePath } = await import(
+    new URL("settings/player-preference-store.js", storeDir),
   );
   // The store writes under the product's durable path lock, which releases
   // through the Windows stale-lock reclaimer the runtime binds; this process
@@ -312,9 +312,9 @@ async function installLanguagePreference(root, locale) {
     new URL("windows-stale-lock-reclaimer/index.js", storeDir),
   );
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-  const store = new LanguagePreferenceStore(companionLocalePath(root));
+  const store = new PlayerPreferenceStore(playerPreferencePath(root));
   const current = await store.read();
-  const written = await store.update(current.revision, { locale });
+  const written = await store.update(current.revision, { action: "setLocale", locale });
   return Object.freeze({ requested: locale, stored: written.locale, revision: written.revision });
 }
 
