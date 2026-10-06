@@ -1800,6 +1800,9 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
     message === "base_url_required" ||
     message === "base_url_not_accepted" ||
     message === "invalid_base_url" ||
+    message === "api_shape_required" ||
+    message === "api_shape_not_accepted" ||
+    message === "invalid_api_shape" ||
     message === "model_not_allowed" ||
     message === "invalid_model_id" ||
     message === "thinking_level_not_allowed"

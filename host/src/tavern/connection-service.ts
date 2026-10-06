@@ -122,6 +122,7 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
           providerId: command.providerId,
           apiKey: command.apiKey ?? null,
           baseUrl: command.baseUrl ?? null,
+          apiShape: command.apiShape ?? null,
           modelId: command.modelId ?? null,
         });
         return await project();

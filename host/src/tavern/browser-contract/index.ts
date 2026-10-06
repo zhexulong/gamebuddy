@@ -314,14 +314,39 @@ export const StCardImportHistoryV1Schema = strictObject({
  * a closed union with no free-form script, header, arbitrary URL or provider
  * payload field. Every model the browser may select appears in
  * `allowedPlayerModels`; the single escape-hatch entry declares
- * `setupFields: ["baseUrl", "apiKey", "modelId"]` instead, so it is a catalog
- * entry like any other that additionally lets the player supply the one
- * endpoint it points at.
+ * `setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"]` instead, so it is
+ * a catalog entry like any other that additionally lets the player supply the
+ * endpoint it points at, the API shape that endpoint speaks and the model id it
+ * serves.
  */
 export const TavernConnectionSetupFieldV1Schema = Type.Union([
   Type.Literal("apiKey"),
+  Type.Literal("apiShape"),
   Type.Literal("baseUrl"),
   Type.Literal("modelId"),
+]);
+/**
+ * The exact `api` shapes the assistant runtime can speak.
+ *
+ * This is a wire mirror, like every other closed union in this file: the single
+ * authority is `TAVERN_PI_API_SHAPES` in `tavern/provider-catalog.ts`, which
+ * mirrors Pi's own chat provider adapters, and the Host test suite pins the two
+ * together. The contract stays dependency-free on purpose — the browser client
+ * loads this module directly.
+ *
+ * The escape hatch is the one entry whose player record chooses one of these,
+ * and the chosen value is written verbatim into Pi's provider entry, so a shape
+ * Pi cannot speak must never be admitted here.
+ */
+export const TavernConnectionApiShapeV1Schema = Type.Union([
+  Type.Literal("anthropic-messages"),
+  Type.Literal("openai-completions"),
+  Type.Literal("openai-responses"),
+  Type.Literal("openai-codex-responses"),
+  Type.Literal("google-generative-ai"),
+  Type.Literal("google-vertex"),
+  Type.Literal("bedrock-converse-stream"),
+  Type.Literal("mistral-conversations"),
 ]);
 export const TavernConnectionThinkingLevelV1Schema = Type.Union([
   Type.Literal("low"),
@@ -339,7 +364,7 @@ export const TavernConnectionModelV1Schema = strictObject({
 export const TavernConnectionProviderV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   label: Type.String({ minLength: 1, maxLength: 128 }),
-  setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 3 }),
+  setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 4 }),
   allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: 32 }),
   /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
   escapeHatch: Type.Boolean(),
@@ -421,8 +446,10 @@ export const TavernConnectionCreateCommandV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   /** Write-only. Never echoed, projected, logged or read back by any route. */
   apiKey: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
-  /** The escape hatch's player-supplied endpoint. */
+  /** The escape hatch's player-supplied endpoint. A query string is admitted there. */
   baseUrl: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+  /** The escape hatch's player-supplied API shape, from the runtime's own set. */
+  apiShape: Type.Optional(TavernConnectionApiShapeV1Schema),
   modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
 });
 export const TavernConnectionRevisionCommandV1Schema = strictObject({
@@ -1709,6 +1736,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     MemoryMutationCommandV1Schema,
     MemoryMutationResultV1Schema,
     TavernConnectionSetupFieldV1Schema,
+    TavernConnectionApiShapeV1Schema,
     TavernConnectionThinkingLevelV1Schema,
     TavernConnectionModelV1Schema,
     TavernConnectionProviderV1Schema,
@@ -1824,6 +1852,7 @@ export type MemoryReadV1 = Readonly<{
   memories: readonly MemoryItemV1[];
 }>;
 export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
+export type TavernConnectionApiShapeV1 = Static<typeof TavernConnectionApiShapeV1Schema>;
 export type TavernConnectionThinkingLevelV1 = Static<typeof TavernConnectionThinkingLevelV1Schema>;
 export type TavernConnectionModelV1 = Static<typeof TavernConnectionModelV1Schema>;
 export type TavernConnectionProviderV1 = Static<typeof TavernConnectionProviderV1Schema>;

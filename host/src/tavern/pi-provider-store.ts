@@ -5,7 +5,9 @@ import { connectionDocumentPath } from "./connection-store.js";
 import {
   catalogModel,
   catalogProvider,
+  isTavernPiApi,
   type TavernModelReasoningDialect,
+  type TavernPiApi,
   TAVERN_ENVIRONMENT_PROVIDER_ID,
 } from "./provider-catalog.js";
 
@@ -28,8 +30,9 @@ import {
  *   deliberately contributes no `models` list: the model middleware already
  *   ships full metadata for those model ids, and replacing that with a minimal
  *   description would degrade the model the player selected;
- * - the OpenAI-compatible escape hatch is the one entry whose endpoint and
- *   model id the player supplied, so it must describe its model locally.
+ * - the endpoint escape hatch is the one entry whose endpoint, API shape and
+ *   model id the player supplied, so it must describe its model locally and
+ *   carry the exact API shape that endpoint speaks.
  *
  * The credential is never written here. API keys go to `auth.json`, which Pi
  * resolves first, so `models.json` carries endpoint and model description only.
@@ -129,14 +132,18 @@ export async function modelProviderEntry(
     return Object.freeze({ providerId: TAVERN_ENVIRONMENT_PROVIDER_ID, entry: environmentProviderEntry(config.modelId) });
   const provider = catalogProvider(config.provider);
   if (provider === null) return null;
-  const baseUrl = provider.baseUrl ?? (await storedConnectionBaseUrl(agentDir, provider.providerId, config.modelId));
+  const selection =
+    provider.baseUrl === null ? await storedEscapeHatchSelection(agentDir, provider.providerId, config.modelId) : null;
+  const baseUrl = provider.baseUrl ?? selection?.baseUrl ?? null;
   if (baseUrl === null) return null;
+  const api = provider.piApi ?? selection?.apiShape ?? null;
+  if (api === null) return null;
   return Object.freeze({
     providerId: provider.piProviderId,
     entry: {
       name: provider.label,
       baseUrl,
-      api: provider.piApi,
+      api,
       ...(provider.authHeader ? { authHeader: true } : {}),
       // A catalog provider's model metadata already ships with Pi; only the one
       // entry whose model the player named has to describe it here.
@@ -145,12 +152,18 @@ export async function modelProviderEntry(
   });
 }
 
-/** The endpoint a player typed for this exact provider/model, or null. */
-async function storedConnectionBaseUrl(
+/**
+ * The endpoint and API shape a player typed for this exact provider/model, or
+ * null. Both facts come from the same record, so an entry can never pair one
+ * player's endpoint with another player's API shape; a record whose shape is
+ * not one Pi speaks yields null and the runtime fails closed rather than
+ * handing Pi an API id it has no adapter for.
+ */
+async function storedEscapeHatchSelection(
   agentDir: string,
   providerId: string,
   modelId: string,
-): Promise<string | null> {
+): Promise<Readonly<{ baseUrl: string; apiShape: TavernPiApi }> | null> {
   let document: unknown;
   try {
     document = await readStrictJsonFile(connectionDocumentPath(agentDir));
@@ -170,7 +183,9 @@ async function storedConnectionBaseUrl(
       (entry as { readonly modelId?: unknown }).modelId === modelId &&
       typeof (entry as { readonly baseUrl?: unknown }).baseUrl === "string",
   );
-  return match === undefined ? null : (match as { readonly baseUrl: string }).baseUrl;
+  if (match === undefined) return null;
+  const record = match as { readonly baseUrl: string; readonly apiShape?: unknown };
+  return isTavernPiApi(record.apiShape) ? { baseUrl: record.baseUrl, apiShape: record.apiShape } : null;
 }
 
 /**

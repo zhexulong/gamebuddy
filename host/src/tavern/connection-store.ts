@@ -9,7 +9,9 @@ import {
   catalogModel,
   catalogProvider,
   isAllowedThinkingLevel,
+  isTavernPiApi,
   type TavernCatalogProvider,
+  type TavernPiApi,
 } from "./provider-catalog.js";
 
 /**
@@ -58,6 +60,8 @@ export type TavernConnectionRecord = Readonly<{
   providerId: string;
   /** Player-supplied endpoint fact (escape hatch only); null for catalog endpoints. */
   baseUrl: string | null;
+  /** Player-supplied API shape fact (escape hatch only); null when the entry pins it. */
+  apiShape: TavernPiApi | null;
   modelId: string;
   thinkingLevel: CompanionThinkingLevel;
   readiness: TavernConnectionReadiness;
@@ -75,6 +79,7 @@ export type TavernConnectionDraftInput = Readonly<{
   providerId: string;
   apiKey: string | null;
   baseUrl: string | null;
+  apiShape: string | null;
   modelId: string | null;
 }>;
 
@@ -110,6 +115,9 @@ export type TavernConnectionInputReason =
   | "base_url_required"
   | "base_url_not_accepted"
   | "invalid_base_url"
+  | "api_shape_required"
+  | "api_shape_not_accepted"
+  | "invalid_api_shape"
   | "model_not_allowed"
   | "invalid_model_id"
   | "thinking_level_not_allowed"
@@ -139,10 +147,13 @@ export function connectionKeysPath(agentDir: string): string {
 
 /**
  * Bounded player-supplied endpoint. Only an absolute http(s) URL without
- * credentials, query or fragment is accepted; the trailing slash is dropped so
- * one endpoint has exactly one spelling.
+ * credentials or fragment is accepted; the trailing slash is dropped so one
+ * endpoint has exactly one spelling. A query string is refused by default — a
+ * catalog endpoint is Host-owned and never carries one — and admitted only for
+ * the escape hatch, whose endpoint (an Azure-style `?api-version=…` route, say)
+ * may require it.
  */
-export function normalizePlayerBaseUrl(value: unknown): string | null {
+export function normalizePlayerBaseUrl(value: unknown, allowQuery = false): string | null {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_BASE_URL_LENGTH) return null;
   let url: URL;
   try {
@@ -152,10 +163,11 @@ export function normalizePlayerBaseUrl(value: unknown): string | null {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (url.username !== "" || url.password !== "") return null;
-  if (url.search !== "" || url.hash !== "") return null;
+  if (url.hash !== "") return null;
+  if (url.search !== "" && !allowQuery) return null;
   if (url.hostname === "") return null;
   const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
-  return `${url.origin}${path}`;
+  return `${url.origin}${path}${url.search}`;
 }
 
 export class TavernConnectionStore {
@@ -174,6 +186,7 @@ export class TavernConnectionStore {
     const provider = catalogProvider(input.providerId);
     if (provider === null) throw new TavernConnectionInputError("provider_unknown");
     const baseUrl = this.resolveBaseUrl(provider, input.baseUrl);
+    const apiShape = this.resolveApiShape(provider, input.apiShape);
     const modelId = this.resolveModelId(provider, input.modelId);
     const apiKey = this.resolveApiKey(provider, input.apiKey);
     return await this.mutate((current) => {
@@ -183,6 +196,7 @@ export class TavernConnectionStore {
         connectionId,
         providerId: provider.providerId,
         baseUrl,
+        apiShape,
         modelId,
         thinkingLevel:
           catalogModel(provider, modelId)?.defaultThinkingLevel ??
@@ -337,9 +351,24 @@ export class TavernConnectionStore {
       return null;
     }
     if (value === null) throw new TavernConnectionInputError("base_url_required");
-    const normalized = normalizePlayerBaseUrl(value);
+    const normalized = normalizePlayerBaseUrl(value, provider.escapeHatch);
     if (normalized === null) throw new TavernConnectionInputError("invalid_base_url");
     return normalized;
+  }
+
+  /**
+   * The API shape the emitted Pi provider entry will carry. A catalog entry
+   * pins its own, so a submitted value is refused; the escape hatch has none
+   * and requires the player's one exact shape from Pi's adapter set.
+   */
+  private resolveApiShape(provider: TavernCatalogProvider, value: string | null): TavernPiApi | null {
+    if (provider.piApi !== null) {
+      if (value !== null) throw new TavernConnectionInputError("api_shape_not_accepted");
+      return null;
+    }
+    if (value === null) throw new TavernConnectionInputError("api_shape_required");
+    if (!isTavernPiApi(value)) throw new TavernConnectionInputError("invalid_api_shape");
+    return value;
   }
 
   private resolveModelId(provider: TavernCatalogProvider, value: string | null): string {
@@ -501,6 +530,7 @@ function serialize(document: TavernConnectionDocument): string {
       connectionId: entry.connectionId,
       providerId: entry.providerId,
       baseUrl: entry.baseUrl,
+      apiShape: entry.apiShape,
       modelId: entry.modelId,
       thinkingLevel: entry.thinkingLevel,
       readiness: entry.readiness,
@@ -549,7 +579,8 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     !isConnectionId(value.connectionId) ||
     typeof value.providerId !== "string" ||
     catalogProvider(value.providerId) === null ||
-    (value.baseUrl !== null && normalizePlayerBaseUrl(value.baseUrl) !== value.baseUrl) ||
+    (value.baseUrl !== null && typeof value.baseUrl !== "string") ||
+    (value.apiShape !== null && typeof value.apiShape !== "string") ||
     typeof value.modelId !== "string" ||
     value.modelId.length === 0 ||
     value.modelId.length > 128 ||
@@ -563,6 +594,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
       "connectionId",
       "providerId",
       "baseUrl",
+      "apiShape",
       "modelId",
       "thinkingLevel",
       "readiness",
@@ -572,9 +604,18 @@ function validateRecord(value: unknown): TavernConnectionRecord {
   )
     throw new Error("invalid_tavern_connection_store");
   const provider = catalogProvider(value.providerId as string)!;
-  // A record's endpoint/model shape must still match its catalog entry: a
-  // record may never smuggle an endpoint the catalog did not authorize.
+  // A record's endpoint, API shape and model must still match its catalog
+  // entry: a record may never smuggle an endpoint or an API shape the catalog
+  // did not authorize. Only the escape hatch carries a player-supplied URL, and
+  // only there is a query string a legitimate part of that URL.
   if ((provider.baseUrl === null) !== (value.baseUrl !== null)) throw new Error("invalid_tavern_connection_store");
+  if (value.baseUrl !== null && normalizePlayerBaseUrl(value.baseUrl, provider.escapeHatch) !== value.baseUrl)
+    throw new Error("invalid_tavern_connection_store");
+  if (provider.piApi !== null) {
+    if (value.apiShape !== null) throw new Error("invalid_tavern_connection_store");
+  } else if (!isTavernPiApi(value.apiShape)) {
+    throw new Error("invalid_tavern_connection_store");
+  }
   if (!provider.allowedPlayerModels.some((model) => model.modelId === value.modelId)) {
     if (!acceptsPlayerModel(provider) || !PLAYER_MODEL_ID_PATTERN.test(value.modelId as string))
       throw new Error("invalid_tavern_connection_store");
@@ -588,6 +629,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     connectionId: recordValue.connectionId,
     providerId: recordValue.providerId,
     baseUrl: recordValue.baseUrl,
+    apiShape: recordValue.apiShape,
     modelId: recordValue.modelId,
     thinkingLevel: recordValue.thinkingLevel,
     readiness: recordValue.readiness,

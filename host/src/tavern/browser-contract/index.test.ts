@@ -75,6 +75,37 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
   assert.deepEqual(Object.keys(TavernBrowserValidatorsV1).sort(), Object.keys(TavernBrowserContractV1.schemas).sort());
 });
 
+/**
+ * The wire API-shape union and the runtime's own adapter list are one
+ * vocabulary. The frozen contract cannot import `tavern/provider-catalog.ts`
+ * (the browser client loads this module directly, so it stays
+ * dependency-free), so this test is the pin that keeps the two from drifting:
+ * a shape the escape hatch may choose is exactly a shape Pi can speak.
+ */
+test("the wire API-shape union is exactly the runtime's own adapter set", async () => {
+  const { TAVERN_PI_API_SHAPES } = await import("../provider-catalog.js");
+  const declared = TavernBrowserContractV1.schemas.TavernConnectionApiShapeV1Schema.anyOf.map(
+    (member) => (member as { readonly const: string }).const,
+  );
+  assert.deepEqual(declared, [...TAVERN_PI_API_SHAPES]);
+
+  // The escape hatch's create command admits every one of them and nothing
+  // else: a garbage shape must never reach the runtime's provider entry.
+  const create = TavernBrowserValidatorsV1.TavernConnectionCreateCommandV1Schema;
+  for (const apiShape of declared)
+    assert.equal(
+      create.Check({ apiVersion: 1, providerId: "gamebuddy-openai-compatible", apiShape }),
+      true,
+      `expected ${apiShape} to be a valid shape`,
+    );
+  for (const apiShape of ["invented-messages", "openai", "Anthropic-Messages", "", " openai-responses"])
+    assert.equal(
+      create.Check({ apiVersion: 1, providerId: "gamebuddy-openai-compatible", apiShape }),
+      false,
+      `expected ${JSON.stringify(apiShape)} to be refused`,
+    );
+});
+
 test("text format accepts NFC astral Unicode and enforces NFC plus exact UTF-8 byte boundaries", () => {
   const validator = Compile(SubmitMessageCommandV1Schema);
   assert.equal(validator.Check(submit("😀 café 𐐷")), true);
