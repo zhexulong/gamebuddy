@@ -633,6 +633,101 @@ test("formal Preview Game composition does not load Magic Context", async () => 
   }
 });
 
+test("a Game runtime attachment without a model configuration leaves the surface model-less", async () => {
+  // The materializer now supplies the player's own Game profile model to every
+  // Game runtime, so this pins the runtime-core half of that contract: an
+  // attachment that carries no `modelConfig` produces a session with no model
+  // and thinking level `off`, and no provider entry is written. Nothing else
+  // turns provider networking on: `allowModelNetwork` is exactly
+  // `modelConfig !== undefined`, and the provider entry is merged under that
+  // same condition. A model configuration is therefore not an enhancement of a
+  // Game session; without one the session cannot reach a provider at all.
+  const root = await mkdtemp(
+    join(await canonicalTemporaryRoot(), "gamebuddy-game-model-configuration-"),
+  );
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  const [hostEndpoint] = createDeterministicBridgePair(scope);
+  const integration = new GameConnectionTestClient(
+    scope,
+    hostEndpoint,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
+  );
+  const attachmentFields = {
+    gameplaySubagentEnabled: false,
+    disableMagicContextMemory: true as const,
+    hostBindingFactory: () => undefined,
+  };
+  const withoutModel = await createGameCompanionRuntime(
+    identity,
+    join(root, "absent"),
+    integration,
+    "game_model_absent_01",
+    undefined,
+    undefined,
+    attachmentFields,
+  );
+  const withModel = await createGameCompanionRuntime(
+    identity,
+    join(root, "present"),
+    integration,
+    "game_model_present_01",
+    undefined,
+    undefined,
+    { ...attachmentFields, modelConfig: DEFAULT_COMPANION_MODEL_CONFIG },
+  );
+  try {
+    assert.equal(withoutModel.session.agent.state.model, undefined);
+    assert.equal(withoutModel.session.agent.state.thinkingLevel, "off");
+    const absentManifest = JSON.parse(
+      await readFile(withoutModel.paths.runManifestPath, "utf8"),
+    ) as CompanionRunManifest;
+    assert.deepEqual(absentManifest.model, {
+      provider: null,
+      modelId: null,
+      thinkingLevel: null,
+    });
+    await assert.rejects(
+      access(join(withoutModel.paths.agentDir, "models.json")),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT",
+    );
+
+    assert.equal(
+      withModel.session.agent.state.model?.provider,
+      DEFAULT_COMPANION_MODEL_CONFIG.provider,
+    );
+    assert.equal(
+      withModel.session.agent.state.model?.id,
+      DEFAULT_COMPANION_MODEL_CONFIG.modelId,
+    );
+    assert.equal(
+      withModel.session.agent.state.thinkingLevel,
+      DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
+    );
+    const presentManifest = JSON.parse(
+      await readFile(withModel.paths.runManifestPath, "utf8"),
+    ) as CompanionRunManifest;
+    assert.deepEqual(presentManifest.model, DEFAULT_COMPANION_MODEL_CONFIG);
+    assert.match(
+      await readFile(join(withModel.paths.agentDir, "models.json"), "utf8"),
+      /cpa-oai/,
+    );
+  } finally {
+    withoutModel.session.dispose();
+    withModel.session.dispose();
+    integration.dispose();
+  }
+});
+
 test("Stardew action tools fail closed when a connection lacks the launcher execution gate", async () => {
   const root = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-runtime-no-execution-gate-"),

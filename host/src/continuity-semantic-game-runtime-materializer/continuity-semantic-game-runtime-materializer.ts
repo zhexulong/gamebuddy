@@ -762,23 +762,22 @@ async function createMaterializedGameRuntime(
       ),
     });
   };
+  // The player's own Game profile model is a precondition of every Game
+  // runtime, exactly as it is for Preview and for the gameplay worker. The
+  // operational gate nonce decides only whether this process arms the gate
+  // marker and the gameplay worker; it must never decide whether the surface
+  // has a model at all. A model-less Game session is not a degraded session but
+  // a dead one, so a store that cannot yield a resolvable profile fails closed
+  // here instead of constructing one: no default model is invented and no other
+  // surface's profile is substituted.
+  const modelConfig = resolveModelProfileConfig(
+    await new ModelProfileStore(
+      join(runtimeRoot, "settings", "model-profiles.json"),
+    ).read("game"),
+  );
+  if (modelConfig === null)
+    throw new Error("game_runtime_model_configuration_unavailable");
   const gameplayWorkerEnabled = gameOperationalGateNonceSha256 !== undefined;
-  const workerAttachment = gameplayWorkerEnabled
-    ? await (async () => {
-        const modelConfig = resolveModelProfileConfig(
-          await new ModelProfileStore(
-            join(runtimeRoot, "settings", "model-profiles.json"),
-          ).read("game"),
-        );
-        if (modelConfig === null)
-          throw new Error("game_runtime_model_configuration_unavailable");
-        return Object.freeze({
-          modelConfig,
-          gameplaySubagentEnabled: true as const,
-          hostBindingFactory,
-        });
-      })()
-    : undefined;
   const recoveryFields = recoveryAttachment === undefined
     ? {}
     : Object.freeze({
@@ -786,17 +785,12 @@ async function createMaterializedGameRuntime(
         ...(recoveryAttachment.recoveryBinding === undefined ? {} : { recoveryBinding: recoveryAttachment.recoveryBinding }),
         ...(recoveryAttachment.recoveryPort === undefined ? {} : { recoveryPort: recoveryAttachment.recoveryPort }),
       });
-  const runtimeAttachment = workerAttachment === undefined && recoveryAttachment === undefined
-    ? undefined
-    : workerAttachment === undefined
-      ? Object.freeze({
-          hostBindingFactory,
-          gameplaySubagentEnabled: false as const,
-          ...recoveryFields,
-        })
-      : recoveryAttachment === undefined
-        ? workerAttachment
-        : Object.freeze({ ...workerAttachment, ...recoveryFields });
+  const runtimeAttachment = Object.freeze({
+    modelConfig,
+    gameplaySubagentEnabled: gameplayWorkerEnabled,
+    hostBindingFactory,
+    ...recoveryFields,
+  });
   const runtime = await createMaterializedGameCompanionRuntime(
     identity,
     runtimeRoot,
@@ -805,7 +799,7 @@ async function createMaterializedGameRuntime(
     gameOperationalGateNonceSha256 === undefined
       ? undefined
       : Object.freeze({ nonceSha256: gameOperationalGateNonceSha256 }),
-    runtimeAttachment === undefined ? hostBindingFactory : undefined,
+    undefined,
     runtimeAttachment,
     Object.freeze({
       fixedTools,

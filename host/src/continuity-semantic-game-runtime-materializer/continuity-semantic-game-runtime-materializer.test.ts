@@ -746,23 +746,23 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /const workerAttachment = gameplayWorkerEnabled\s*\n\s*\? await/,
-    "armed production Game materialization constructs the worker attachment",
+    /const gameplayWorkerEnabled = gameOperationalGateNonceSha256 !== undefined;/,
+    "the construction-owned operational marker decides only whether the gameplay worker is armed",
   );
   assert.match(
     sources[0],
-    /gameplaySubagentEnabled: true[\s\S]*hostBindingFactory/,
-    "armed production Game materialization constructs the worker attachment",
+    /const modelConfig = resolveModelProfileConfig\([\s\S]*?\.read\("game"\),[\s\S]*?if \(modelConfig === null\)\s*\n\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
+    "every Game materialization resolves the player's own Game profile model and fails closed without one",
   );
   assert.match(
     sources[0],
-    /workerAttachment === undefined && recoveryAttachment === undefined \? hostBindingFactory : undefined,/,
-    "unarmed production Game materialization preserves ordinary Host binding without an attachment",
+    /const runtimeAttachment = Object\.freeze\(\{\s*\n\s*modelConfig,\s*\n\s*gameplaySubagentEnabled: gameplayWorkerEnabled,\s*\n\s*hostBindingFactory,\s*\n\s*\.\.\.recoveryFields,\s*\n\s*\}\);/,
+    "the Game runtime attachment always carries the model configuration and the ordinary Host binding",
   );
   assert.match(
     sources[0],
-    /workerAttachment === undefined[\s\S]*?gameplaySubagentEnabled: false,[\s\S]*?hostBindingFactory,[\s\S]*?recoveryJournal:/,
-    "recovery-only materialization preserves the ordinary Host binding in its attachment",
+    /gameOperationalGateNonceSha256 === undefined\s*\n\s*\? undefined\s*\n\s*: Object\.freeze\(\{ nonceSha256: gameOperationalGateNonceSha256 \}\),\s*\n\s*undefined,\s*\n\s*runtimeAttachment,/,
+    "the armed gate marker stays construction-owned while the binding travels in the attachment",
   );
   assert.match(
     sources.join("\n"),
