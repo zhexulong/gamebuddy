@@ -1973,7 +1973,7 @@
       {
         "actionId": "dismiss_modal",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {},
         "outputFacts": {},
@@ -1993,7 +1993,7 @@
       {
         "actionId": "answer_dialogue",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "responseKey": {
@@ -2105,6 +2105,8 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "dismiss_modal",
+      "answer_dialogue",
       "advance_day"
     ],
     "readOnlyActionIds": [
@@ -2112,10 +2114,7 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [
-      "dismiss_modal",
-      "answer_dialogue"
-    ]
+    "experimentalActionIds": []
   },
   "protocol": {
     "schemas": [
@@ -2197,6 +2196,8 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "dismiss_modal",
+      "answer_dialogue",
       "advance_day"
     ]
   },

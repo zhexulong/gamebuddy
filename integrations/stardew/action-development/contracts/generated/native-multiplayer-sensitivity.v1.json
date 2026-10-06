@@ -1228,7 +1228,7 @@
     },
     {
       "actionId": "dismiss_modal",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1245,7 +1245,7 @@
     },
     {
       "actionId": "answer_dialogue",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

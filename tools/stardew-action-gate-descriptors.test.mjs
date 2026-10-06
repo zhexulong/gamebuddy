@@ -132,6 +132,13 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     // passed their own native-local runs (minecart_ride_completed / bus_arrived).
     ride_minecart: "run-stardew-native-local-player-ride-minecart-smoke.mjs",
     ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
+    // NOTE: adding a gate above is only half the change. This map and the fixture-backed
+    // list further down are INDEPENDENT frozen copies, and a promotion that updates the gate
+    // list alone leaves this test red while `check-stardew-action-promotion.mjs` still passes.
+    // That is exactly what happened to the two rows below, which went missing in fcc749d4 and
+    // e28dd26. Both lists must be updated together.
+    shop_purchase: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
+    select_mine_elevator_floor: "run-stardew-native-local-player-mine-elevator-smoke.mjs",
     // Loop-closure wave (2026-10-04): live_verified after each action produced its
     // own native-local receipt on the recorded fixture scenario.
     cut_grass: "run-stardew-native-local-player-cut-grass-smoke.mjs",
@@ -148,6 +155,8 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     use_raft: "run-stardew-native-local-player-use-raft-smoke.mjs",
     mount_transport: "run-stardew-native-local-player-mount-transport-smoke.mjs",
     enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
+    dismiss_modal: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
+    answer_dialogue: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -244,6 +253,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "ship_item",
       "ride_minecart",
       "ride_bus",
+      "shop_purchase",
+      "select_mine_elevator_floor",
       "cut_grass",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -258,6 +269,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "use_raft",
       "mount_transport",
       "enter_mine",
+      "dismiss_modal",
+      "answer_dialogue",
     ],
   );
   assert.deepEqual(
