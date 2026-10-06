@@ -1905,6 +1905,36 @@
         }
       },
       {
+        "actionId": "shop_purchase",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "expectedTargetId": {
+            "type": "string"
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "item_purchased"
+        }
+      },
+      {
         "actionId": "ship_item",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2073,6 +2103,7 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
+      "shop_purchase",
       "ship_item",
       "advance_day"
     ],
@@ -2164,6 +2195,7 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
+      "shop_purchase",
       "ship_item",
       "advance_day"
     ]

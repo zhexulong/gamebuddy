@@ -216,6 +216,12 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
   gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
 
+  // Buying is the transaction only; the action refuses if the owner is out of reach so a
+  // walk failure can never be reported as a trade failure. The runner also proves the two
+  // world facts a receipt cannot: the purse really paid, and the goods really arrived.
+  // Live evidence: fixtures/stardew/RUNBOOK.md 37.
+  gate("shop_purchase", 1, "run-stardew-native-local-player-shop-purchase-smoke.mjs", "item_purchased", "native_shop_purchase_v1"),
+
   // The elevator's floor selection only exists inside MineElevatorMenu's click
   // handler, so it is its own action rather than an `enter_mine` argument (Lane L3
   // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
@@ -340,7 +346,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   ride_bus: "run-stardew-native-local-player-ride-bus-smoke.mjs",
   // The fixture already puts the actor beside the shop owner inside trading hours, so
   // the runner's contract is the purchase itself.
-  shop_purchase: "run-stardew-native-local-player-shop-purchase-smoke.mjs",
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
 });
