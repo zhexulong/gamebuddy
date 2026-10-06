@@ -199,16 +199,34 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         if (voiceToken is not null && !ValidVoiceToken(voiceToken))
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
 
+        // The child environment is a DECLARED block, not the launcher's environment:
+        // the admitted bundled Host receives exactly the frozen wire environment plus
+        // the names it cannot do its own job without, each listed here with the reason
+        // it is carried. A starved block was the real bug: the Host composes the GAME's
+        // child environment itself and fails closed without PATH, WINDIR and
+        // USERPROFILE, so the game could never start in the Desktop topology.
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            // Windows session facts the Host forwards to the game process (the guardian
+            // admits this same set at the game boundary).
+            ["PATH"] = RequiredEnvironment("PATH"),
+            ["WINDIR"] = RequiredEnvironment("WINDIR"),
+            ["USERPROFILE"] = RequiredEnvironment("USERPROFILE"),
             ["SystemRoot"] = RequiredEnvironment("SystemRoot"),
             ["TEMP"] = RequiredEnvironment("TEMP"),
             ["TMP"] = RequiredEnvironment("TMP"),
             ["LOCALAPPDATA"] = RequiredEnvironment("LOCALAPPDATA"),
+            // The Host reaches the player's provider itself, so a player behind a proxy
+            // keeps working; absent is normal and simply not carried.
+            ["HTTP_PROXY"] = OptionalEnvironment("HTTP_PROXY"),
+            ["HTTPS_PROXY"] = OptionalEnvironment("HTTPS_PROXY"),
+            ["NO_PROXY"] = OptionalEnvironment("NO_PROXY"),
             ["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"] = manifestPath,
             ["GAMEBUDDY_HOST_GAME_SESSION_MODE"] = options.GameSessionMode,
             ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
         };
+        foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY" })
+            if (values[optional].Length == 0) values.Remove(optional);
         if (nonce is not null) values["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"] = nonce;
         if (voicePort is not null && voiceToken is not null)
         {
@@ -230,6 +248,16 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value) || value.Contains('\0')) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
         return value;
+    }
+
+    /// <summary>
+    /// A declared name the Host benefits from but does not require: a player behind a
+    /// proxy, or without one. Absent or blank means "not carried", never a failure.
+    /// </summary>
+    private static string OptionalEnvironment(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(value) || value.Contains('\0') ? string.Empty : value;
     }
 
     private static void VerifyCreatedProcessBeforeFrame(WindowsNative.SafeProcessHandle process, uint expectedProcessId, string admittedRuntimePath)
