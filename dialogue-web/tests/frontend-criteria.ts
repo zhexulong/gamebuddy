@@ -24,6 +24,37 @@ export type SurfaceNoise = Readonly<{
 }>;
 
 /**
+ * Which obligations actually ran for the surface currently under judgement.
+ *
+ * A criteria function that nobody calls cannot fail, so a conformance test that
+ * quietly drops one would keep passing while the requirement it stood for stopped
+ * being checked. Each checker records itself here, and `assertCriteriaCoverage`
+ * fails naming anything the surface declared but never executed.
+ */
+const executedObligations = new Set<string>();
+
+export function resetCriteriaLedger(): void {
+  executedObligations.clear();
+}
+
+export function executedCriteriaObligations(): readonly string[] {
+  return [...executedObligations].sort();
+}
+
+/**
+ * Obligation: the surface was judged by every criterion it declares. Call last.
+ * Adding an obligation to the contract without implementing it fails here, and so
+ * does removing a checker from an existing conformance test.
+ */
+export function assertCriteriaCoverage(
+  surface: string,
+  declared: readonly string[],
+): void {
+  const missing = declared.filter((obligation) => !executedObligations.has(obligation));
+  assert.deepEqual(missing, [], `the ${surface} surface was judged by every declared criterion`);
+}
+
+/**
  * Start collecting the two kinds of failure that a passing journey otherwise
  * hides: an exception thrown inside the app and a request the Host answered 5xx.
  * Call before `goto` - a failure during first paint is exactly what matters.
@@ -49,6 +80,7 @@ export function watchSurface(page: Page): SurfaceNoise {
  * surface, judged by the standard engine rather than by hand-rolled heuristics.
  */
 export async function assertAccessibilityBaseline(page: Page, surface: string): Promise<void> {
+  executedObligations.add("frontend-accessibility-baseline");
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
     .analyze();
@@ -76,6 +108,7 @@ export async function assertKeyboardReachable(
   label: string,
   maxTabs = 40,
 ): Promise<void> {
+  executedObligations.add("frontend-keyboard-reach");
   let reached = false;
   for (let press = 0; press < maxTabs && !reached; press += 1) {
     await page.keyboard.press("Tab");
@@ -97,6 +130,7 @@ export async function assertSectionsKeyboardReachable(
   sectionSelector: string,
   maxTabs = 160,
 ): Promise<void> {
+  executedObligations.add("frontend-keyboard-reach");
   const focusable =
     'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
   const labels = await page.locator(sectionSelector).evaluateAll(
@@ -137,6 +171,7 @@ export async function assertLayoutFloor(
     { width: 1280, height: 800 },
   ],
 ): Promise<void> {
+  executedObligations.add("frontend-layout-floor");
   for (const viewport of widths) {
     await page.setViewportSize(viewport);
     const metrics = await page.evaluate(() => {
@@ -177,6 +212,7 @@ export async function assertLayoutFloor(
  * requests 5xx is broken even when the asserted control still works.
  */
 export function assertQuiet(noise: SurfaceNoise, surface: string): void {
+  executedObligations.add("frontend-quiet-walk");
   assert.deepEqual(noise.pageErrors, [], `the ${surface} surface throws no uncaught error`);
   assert.deepEqual(noise.serverErrors, [], `the ${surface} surface answers no 5xx`);
   assert.deepEqual(noise.consoleErrors, [], `the ${surface} surface logs no console error`);

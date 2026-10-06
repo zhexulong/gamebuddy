@@ -1,24 +1,67 @@
 {
-  "$comment": "The Tavern frontend gate's contract. Authority: design/architecture/tavern-frontend-criteria.md. The remote illusion: this file is what makes a frontend requirement impossible to delete quietly - a removed suite, a removed headline journey, a shrunk corpus or a disabled test all fail the gate instead of passing it with less evidence.",
+  "$comment": "The Tavern frontend gate's contract. Authority: design/architecture/tavern-frontend-criteria.md. This file is what makes a frontend requirement impossible to delete quietly: the surface list here must equal the pane inventory derived from the shell entry, every declared suite must exist and run at least its declared number of tests, every declared criterion must be exercised, and a disabled test fails the gate instead of reducing it.",
   "profile": "tavern_frontend_conformance/v1",
+  "surfaceInventory": {
+    "derivedFrom": "dialogue-web/src/main.tsx",
+    "rule": "Every profile the shell can render is a surface: the gate derives them from the shell's own branch map and requires this file to declare exactly those, so adding a pane without declaring it fails, and so does declaring a pane that no longer exists."
+  },
   "surfaces": [
     {
-      "file": "tests/reference-pipeline-browser.spec.ts",
-      "capability": "B5 Chat lifecycle in the browser",
-      "minimumTests": 8,
-      "requiresCredential": false
+      "id": "reference",
+      "pane": "ReferenceApp",
+      "suites": [
+        {
+          "file": "tests/reference-pipeline-browser.spec.ts",
+          "minimumTests": 8,
+          "capability": "B5 Chat lifecycle in the browser: live SSE, durable cancellation, replay and recovery"
+        },
+        {
+          "file": "tests/companion-turn-browser.spec.ts",
+          "minimumTests": 4,
+          "capability": "B4/B5/B6 Chat surface: a real provider turn, the same conversation across an app restart, the operability floor"
+        }
+      ],
+      "criteriaTitle": "conformance: chat surface meets the frontend criteria",
+      "obligations": [
+        "frontend-accessibility-baseline",
+        "frontend-keyboard-reach",
+        "frontend-layout-floor",
+        "frontend-quiet-walk"
+      ]
     },
     {
-      "file": "tests/management-pipeline-browser.spec.ts",
-      "capability": "B1-B3 P9 management surface in the browser",
-      "minimumTests": 13,
-      "requiresCredential": false
+      "id": "composed-reference-game",
+      "pane": "ComposedReferenceGameApp",
+      "suites": [
+        {
+          "file": "tests/composed-reference-game-browser.spec.ts",
+          "minimumTests": 27,
+          "capability": "Game surface composition, lifecycle and STOP/Resume projections"
+        },
+        {
+          "file": "tests/stardew-installation-discovery.spec.ts",
+          "minimumTests": 4,
+          "capability": "Installation discovery in the browser"
+        }
+      ],
+      "deferredReason": "The game pane's own criteria run needs a real Stardew installation and belongs to the game lane. This deferral names the suites that cover it today and the gate verifies they exist, so the deferral cannot hide a deleted suite."
     },
     {
-      "file": "tests/companion-turn-browser.spec.ts",
-      "capability": "B4/B5/B6 real provider turn, app restart, operability floor and the frontend criteria",
-      "minimumTests": 4,
-      "requiresCredential": true
+      "id": "management",
+      "pane": "ManagementApp",
+      "suites": [
+        {
+          "file": "tests/management-pipeline-browser.spec.ts",
+          "minimumTests": 13,
+          "capability": "B1-B3 P9 management surface: World Info, connections, characters, the reviewed card import and the companion language"
+        }
+      ],
+      "criteriaTitle": "conformance: management surface meets the frontend criteria",
+      "obligations": [
+        "frontend-accessibility-baseline",
+        "frontend-keyboard-reach",
+        "frontend-quiet-walk"
+      ]
     }
   ],
   "requiredTitles": [

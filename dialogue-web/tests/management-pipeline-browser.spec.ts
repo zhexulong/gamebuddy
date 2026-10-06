@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import {
   assertAccessibilityBaseline,
+  assertCriteriaCoverage,
   assertQuiet,
   assertSectionsKeyboardReachable,
+  resetCriteriaLedger,
   watchSurface,
 } from "./frontend-criteria.js";
+
+/** The obligations the contract declares for the Management surface. */
+const MANAGEMENT_CRITERIA_OBLIGATIONS = [
+  "frontend-accessibility-baseline",
+  "frontend-keyboard-reach",
+  "frontend-quiet-walk",
+] as const;
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -1453,9 +1462,11 @@ test("conformance: management surface meets the frontend criteria", async () => 
     // The criteria that need a real walk: the surface is judged as rendered, and
     // every settings section it shows must be reachable without a pointer. A
     // panel that a future change wraps in a pointer-only widget fails here.
+    resetCriteriaLedger();
     await assertAccessibilityBaseline(page, "management");
     await assertSectionsKeyboardReachable(page, "section[aria-label]");
     assertQuiet(noise, "management");
+    assertCriteriaCoverage("management", MANAGEMENT_CRITERIA_OBLIGATIONS);
   } finally {
     await context.close();
     await browser.close();
