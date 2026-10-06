@@ -94,6 +94,13 @@ const SUBMIT_PROMPT_TEXT = process.env.GAMEBUDDY_CHAT_PROMPT ?? "Please respond 
 // How many COMPLETED conversation turns a default run drives. The cancel probe is separate and always
 // last (see below), so this number is exactly how many durable companion replies the run can produce.
 const CONVERSATION_TURNS = Math.max(1, Math.min(8, Number(process.env.GAMEBUDDY_CHAT_TURNS ?? 2)));
+// One prompt per conversation turn, when the run wants to ask different questions (the always-on entry and
+// an ordinary entry are retrieved differently, so proving the world book is in context needs both). Fewer
+// prompts than turns repeats the last one; absent, every turn uses SUBMIT_PROMPT_TEXT.
+const CONVERSATION_PROMPTS = (process.env.GAMEBUDDY_CHAT_PROMPTS ?? "")
+  .split("|")
+  .map((prompt) => prompt.trim())
+  .filter((prompt) => prompt.length > 0);
 
 const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "failed"]));
 
@@ -1420,7 +1427,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     // how often it was asked. Now: `CONVERSATION_TURNS` completed turns (default 2), then the cancel
     // probe, which stays because the cancel route settling durably is a product fact of its own.
     for (let index = 0; index < CONVERSATION_TURNS; index += 1) {
-      const turn = await runTurn({ cancel: false });
+      const message = CONVERSATION_PROMPTS.length === 0
+        ? SUBMIT_PROMPT_TEXT
+        : CONVERSATION_PROMPTS[Math.min(index, CONVERSATION_PROMPTS.length - 1)];
+      const turn = await runTurn({ cancel: false, message });
       if (turn?.terminal !== true) environment.boundaryReason ??= "conversation_turn_not_terminal";
     }
     await runTurn({ cancel: true });
