@@ -66,6 +66,7 @@ import {
   createManifestDerivedInitialChatExactContentPort,
   type InitialChatExactContentPort,
   isTrustedTavernExactContentReceipt,
+  TavernInitialChatExactContentPortError,
   type TavernExactContentReceipt,
 } from "../tavern/initial-chat-exact-content-port.js";
 import { WindowsNamedMutexBroker, WindowsNamedMutexBrokerError } from "../windows-named-mutex-broker.js";
@@ -150,6 +151,34 @@ export type MountedChatRuntimeLease = Readonly<{
 }>;
 export type SemanticChatRuntimeMountOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
+}>;
+/**
+ * ADR 0009: the narrow production capability a player action uses to say which
+ * Chat the next mount opens. `create` mints the new Chat's identity inside the
+ * authority; `select` names an existing verified Chat the caller resolved from
+ * its own safe projection. Neither form can name a durable vector or command.
+ */
+export type SemanticChatSelectionRequest =
+  | Readonly<{ kind: "create"; selectionGeneration: number }>
+  | Readonly<{
+      kind: "select";
+      selectionGeneration: number;
+      chatThreadId: string;
+      chatSurfaceSessionId: string;
+    }>;
+/**
+ * The recorded expectation. `restart_required` is the honest product answer:
+ * the expectation is durable and settled by the next start's pre-mount phase,
+ * because this process already minted its one runtime lease.
+ */
+export type SemanticChatSelectionOutcome = Readonly<{
+  status: "restart_required";
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+}>;
+/** The slice of the Chat runtime authority a management surface may hold. */
+export type SemanticChatSelectionCapability = Readonly<{
+  requestChatSelection(input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome>;
 }>;
 type MountedChatRuntimeLeaseRecord = {
   active: boolean;
@@ -1277,6 +1306,12 @@ export type SemanticChatRuntimeProductionAuthority = Readonly<{
   authority: "SEMANTIC";
   startChatRuntime(): Promise<ProductionChatRuntimeReadback>;
   startMountedChatRuntime(): Promise<MountedChatRuntimeLease>;
+  /**
+   * ADR 0009: records the player's expected Chat selection. The recorded
+   * expectation never advances a runtime vector; the next start's pre-mount
+   * settlement honours it with the single `select_chat` bridge.
+   */
+  requestChatSelection(input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome>;
   close(): Promise<void>;
 }>;
 
@@ -1482,7 +1517,7 @@ export async function createFreshSemanticChatRuntimeProductionAuthorityFromDeplo
     semantic = create(provision, mutex);
     await initializeInitialChatAndCloseContentPort(semantic, manifest);
     binding = await createChatRuntimeBinding(manifest);
-    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options);
+    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, false, manifest);
   } catch (error) {
     try {
       await binding?.close();
@@ -1542,7 +1577,7 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // durable successor bridge so a failed owner-proof check cannot orphan one.
     binding = await createChatRuntimeBinding(manifest);
     await semantic.reselectTerminalChatRuntimeSuccessor();
-    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options);
+    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, false, manifest);
   } catch (error) {
     try {
       await binding?.close();
@@ -1665,7 +1700,7 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     // The real mounted runtime projection shares the provision/mutex/broker;
     // its own close tears down the runtime and closes its Chat binding and
     // drain-only store projection, leaving shared resources for the owner.
-    chat = await createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, true);
+    chat = await createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, true, manifest);
     binding = undefined;
     return createSharedSemanticProductionAuthorityOwner(chat, game, provision, mutex, broker);
   } catch (error) {
@@ -1762,7 +1797,8 @@ async function createFreshChatRuntimeAuthority(
   mutex: WindowsAuthorityRootMutex,
   broker: WindowsNamedMutexBroker,
   options: SemanticChatRuntimeMountOptions,
-  sharedOwnerClose = false,
+  sharedOwnerClose: boolean,
+  manifest: HostDeploymentManifest,
 ): Promise<SemanticChatRuntimeProductionAuthority> {
   let pending = 0;
   let closing = false;
@@ -1846,6 +1882,9 @@ async function createFreshChatRuntimeAuthority(
   const startChatRuntime = (): Promise<ProductionChatRuntimeReadback> => {
     if (startPromise) return startPromise;
     startPromise = begin(async () => {
+      // ADR 0009: the recorded expectation is settled before anything of this
+      // mount is prepared, so the runtime mounts the Chat the player asked for.
+      await settleExpectedChatSelection();
       let reservation:
         | import("../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js").ReservedChatRuntimeMaterialization
         | undefined;
@@ -1941,9 +1980,196 @@ async function createFreshChatRuntimeAuthority(
     });
     return startPromise;
   };
+  function mintChatSelectionIdentity(): Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }> {
+    const suffix = randomUUID().replaceAll("-", "");
+    return Object.freeze({
+      chatThreadId: `chat-${suffix.slice(0, 16)}`,
+      chatSurfaceSessionId: `surface-${suffix.slice(16, 32)}`,
+    });
+  }
+  /**
+   * One settlement command id, derived from the exact committed vector and
+   * target it runs against. A resumed settlement therefore reuses the id of the
+   * step it already committed and can never mint a second command for it.
+   */
+  function chatSelectionOperationId(
+    kind: "settle-register" | "settle-verify" | "settle-select",
+    catalog: ProductionChatCatalog,
+    target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  ): string {
+    const suffix = createHash("sha256")
+      .update(
+        `${provision.authorityRootIdentity}\u0000${kind}\u0000${catalog.vector.partitionRevision}\u0000${catalog.vector.fenceEpoch}\u0000${catalog.vector.selectionRevision}\u0000${target.chatThreadId}\u0000${target.chatSurfaceSessionId}`,
+      )
+      .digest("hex");
+    return `chat-${kind}-${suffix.slice(0, 32)}`;
+  }
+  const requestChatSelection = (input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome> =>
+    begin(() =>
+      locked(() => {
+        const target =
+          input?.kind === "select"
+            ? Object.freeze({
+                chatThreadId: input.chatThreadId,
+                chatSurfaceSessionId: input.chatSurfaceSessionId,
+              })
+            : mintChatSelectionIdentity();
+        const catalog = provision.store.readChatCatalog();
+        if (
+          (input?.kind !== "create" && input?.kind !== "select") ||
+          !Number.isSafeInteger(input.selectionGeneration) ||
+          input.selectionGeneration < 1 ||
+          catalog.activeSelection?.selectionRevision !== input.selectionGeneration
+        )
+          throw new SemanticProductionCoordinatorError("semantic_chat_selection_generation_conflict");
+        try {
+          provision.store.recordChatSelectionIntent(
+            Object.freeze({
+              intent: Object.freeze({ kind: input.kind, ...target }),
+              expected: { ...catalog.vector },
+            }),
+          );
+        } catch (error) {
+          // A runtime transition in flight and a target the settlement could
+          // never honour are the same product answer: this request conflicts
+          // with the current selection state and changes nothing.
+          if (
+            error instanceof Error &&
+            (error.message === "chat_selection_transition_in_flight" ||
+              error.message === "chat_selection_conflict")
+          )
+            throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
+          throw error;
+        }
+        return Object.freeze({ status: "restart_required" as const, ...target });
+      }),
+    );
+  /**
+   * ADR 0009 pre-mount settlement. It runs under the same mutex as the runtime
+   * start and reuses the ordinary register/verify/select commands: a Chat the
+   * player created is registered, its Tavern content is materialized outside the
+   * semantic mutex through the manifest-derived content port (exactly as the
+   * initial-Chat saga does), verified, selected, and the expectation is cleared.
+   * The single `select_chat` bridge this leaves behind is the successor bridge
+   * the store's admission demands; nothing here changes what the teardown or
+   * successor comparisons read.
+   */
+  async function settleExpectedChatSelection(): Promise<void> {
+    const pending = await locked(() => {
+      const catalog = provision.store.readChatCatalog();
+      const intent = catalog.expectedSelection;
+      if (intent === null) return null;
+      const target = Object.freeze({
+        chatThreadId: intent.chatThreadId,
+        chatSurfaceSessionId: intent.chatSurfaceSessionId,
+      });
+      const thread = catalog.threads.find(
+        (candidate) =>
+          candidate.chatThreadId === target.chatThreadId &&
+          candidate.chatSurfaceSessionId === target.chatSurfaceSessionId,
+      );
+      if (thread?.contentState === "verified") {
+        const active =
+          catalog.activeSelection?.chatThreadId === target.chatThreadId &&
+          catalog.activeSelection.chatSurfaceSessionId === target.chatSurfaceSessionId;
+        if (!active)
+          provision.store.selectChat(
+            Object.freeze({
+              operationId: chatSelectionOperationId("settle-select", catalog, target),
+              chatThreadId: target.chatThreadId,
+              chatSurfaceSessionId: target.chatSurfaceSessionId,
+              expected: { ...catalog.vector },
+            }),
+          );
+        provision.store.clearChatSelectionIntent(
+          Object.freeze({ expected: { ...provision.store.readChatCatalog().vector } }),
+        );
+        return null;
+      }
+      if (thread) return null;
+      provision.store.registerChat(
+        Object.freeze({
+          operationId: chatSelectionOperationId("settle-register", catalog, target),
+          chatThreadId: target.chatThreadId,
+          chatSurfaceSessionId: target.chatSurfaceSessionId,
+          expected: { ...catalog.vector },
+        }),
+      );
+      return Object.freeze({ kind: intent.kind, target });
+    });
+    if (pending === null) return;
+    const receipt = await materializeExpectedChatContent(pending.kind, pending.target);
+    await locked(() => {
+      const registered = provision.store.readChatCatalog();
+      provision.store.verifyChatContent(
+        Object.freeze({
+          operationId: chatSelectionOperationId("settle-verify", registered, pending.target),
+          chatThreadId: pending.target.chatThreadId,
+          chatSurfaceSessionId: pending.target.chatSurfaceSessionId,
+          expected: { ...registered.vector },
+        }),
+        receipt,
+      );
+      const verified = provision.store.readChatCatalog();
+      provision.store.selectChat(
+        Object.freeze({
+          operationId: chatSelectionOperationId("settle-select", verified, pending.target),
+          chatThreadId: pending.target.chatThreadId,
+          chatSurfaceSessionId: pending.target.chatSurfaceSessionId,
+          expected: { ...verified.vector },
+        }),
+      );
+      provision.store.clearChatSelectionIntent(
+        Object.freeze({ expected: { ...provision.store.readChatCatalog().vector } }),
+      );
+    });
+  }
+  /**
+   * The Tavern content behind the recorded expectation, materialized with the
+   * semantic mutex released. Only a `create` may create missing content: a
+   * `select` names a Chat whose content already exists, so any other readback
+   * failure stays the failure it is.
+   */
+  async function materializeExpectedChatContent(
+    kind: "create" | "select",
+    target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  ): Promise<TavernExactContentReceipt> {
+    const content = createManifestDerivedInitialChatExactContentPort(manifest);
+    try {
+      try {
+        const resumed = await content.port.resumeExact(
+          target.chatThreadId,
+          provision.principal.companionId,
+          provision.principal.continuityId,
+          target.chatSurfaceSessionId,
+        );
+        if (!isTrustedTavernExactContentReceipt(resumed))
+          throw new SemanticProductionCoordinatorError("untrusted_tavern_exact_content_receipt");
+        return resumed;
+      } catch (error) {
+        if (kind !== "create" || !(error instanceof TavernInitialChatExactContentPortError) || error.code !== "chat_thread_not_found")
+          throw error;
+        const created = await content.port.createExplicit(
+          Object.freeze({
+            chatThreadId: target.chatThreadId,
+            companionId: provision.principal.companionId,
+            continuityId: provision.principal.continuityId,
+            chatSurfaceSessionId: target.chatSurfaceSessionId,
+            opening: "blank" as const,
+          }),
+        );
+        if (!isTrustedTavernExactContentReceipt(created))
+          throw new SemanticProductionCoordinatorError("untrusted_tavern_exact_content_receipt");
+        return created;
+      }
+    } finally {
+      content.close();
+    }
+  }
   authority = Object.freeze({
     authority: "SEMANTIC" as const,
     startChatRuntime,
+    requestChatSelection,
     startMountedChatRuntime: () => {
       // This is a synchronous acceptance boundary. Once close begins, neither a
       // previously-created start promise nor an already-active runtime may mint
