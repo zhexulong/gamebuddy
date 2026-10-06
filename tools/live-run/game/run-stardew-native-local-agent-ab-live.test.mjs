@@ -107,7 +107,22 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /import \{ assessIdentityProfile \} from "\.\.\/core\/content-gate\.mjs";/);
   assert.match(RUNNER_SOURCE, /contentGate: canonicalProfile === null \? null : assessIdentityProfile\(canonicalProfile\),/);
   assert.match(RUNNER_SOURCE, /const contentGate = personaWorldBook\.contentGate \?\? null;/);
-  assert.match(RUNNER_SOURCE, /contentGate\.personaPresent && contentGate\.macroResidue\.length === 0/);
+  // The three assembly/content gates must go through the evidence-verdict
+  // vocabulary: a boolean there used to default to PASS when there was nothing to
+  // look at, which reported "assembly passed" for a companion with no persona
+  // (measured 2026-10-06). This pins the vocabulary AND that the persona/macro
+  // check survives inside it.
+  assert.match(RUNNER_SOURCE, /import \{ isPass, judgeExpectation \} from "\.\.\/core\/evidence-verdict\.mjs";/);
+  assert.match(
+    RUNNER_SOURCE,
+    /const contentVerdict = judgeExpectation\(\{[\s\S]{0,200}observed: contentGate\?\.profileRead === true,[\s\S]{0,120}ok: contentGate\?\.personaPresent === true && \(contentGate\?\.macroResidue\?\.length \?\? 0\) === 0,/,
+  );
+  assert.match(RUNNER_SOURCE, /const contentPassed = isPass\(contentVerdict\);/);
+  assert.match(RUNNER_SOURCE, /const contextAssembled = isPass\(contextVerdict\);/);
+  assert.match(RUNNER_SOURCE, /const worldBookAssembled = isPass\(worldBookVerdict\);/);
+  // And the outcome vocabulary reaches the artifact, so a reader can tell
+  // "verified" from "nobody looked".
+  assert.match(RUNNER_SOURCE, /assemblyEvidence,/);
   // Audit MEDIUM-3: a settled-but-never-delivered turn must be distinguishable
   // from a real (possibly quiet) turn — steerObserved is an observed fact.
   assert.match(RUNNER_SOURCE, /worldBookGate/);
@@ -261,22 +276,26 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
   // The failure path must never be the thing that crashes: run N played twelve actions and wrote
   // NO artifact because the catch block read a try-scoped binding, losing both the artifact and
-  // the root error.
-  assert.match(RUNNER_SOURCE, /let personaWorldBook = null;/);
-  assert.match(RUNNER_SOURCE, /personaWorldBook = await readAssembledContextEvidence\(gameSessionPaths\);/);
-  assert.match(RUNNER_SOURCE, /console\.error\(error\);\n  const partialResult = \{/);
-  // ORDER, not mere presence: a `let` inside the try is scoped to the try, so the catch that
-  // exists to report a failed run cannot see it (it threw instead, destroying the artifact of a
-  // real failed session), and a const read before its declaration is a temporal dead zone. Both
-  // mistakes produced runs with no artifact at all, so the order is asserted here.
+  // the root error. Nor may it silently lose the artifact at all — three runs (N, O, P) died with
+  // no result file — so whatever escapes the run's own try/catch still writes one.
+  assert.match(RUNNER_SOURCE, /function writeFailureArtifact\(reason\)/);
+  assert.match(RUNNER_SOURCE, /process\.on\("uncaughtException"/);
+  assert.match(RUNNER_SOURCE, /process\.on\("unhandledRejection"/);
+  assert.match(RUNNER_SOURCE, /reason: "runner_failed_before_reporting"/);
+  assert.match(RUNNER_SOURCE, /console\.error\(error\);/);
+  // The catch must not read a binding that only the try can see.
+  // The catch used the OPTIONAL-CHAINED form (a try-scoped name); the try legitimately reports
+  // personaWorldBook.model, so the assertion targets the optional-chained form precisely.
+  assert.doesNotMatch(RUNNER_SOURCE, /runManifestModel: personaWorldBook\?\.model/);
+  assert.match(RUNNER_SOURCE, /runManifestModel: null,/);
+  // ORDER, not mere presence: `sessionSpoken`/`spokeToPlayer` are read by the verdict, so they must
+  // be declared before it (they were read through a temporal dead zone, which also ended a run
+  // before it could report).
   const positionOf = (needle) => {
     const at = RUNNER_SOURCE.indexOf(needle);
     assert.ok(at >= 0, `runner must contain: ${needle}`);
     return at;
   };
-  const hoistAt = positionOf("let personaWorldBook = null;");
-  const afterHoist = RUNNER_SOURCE.slice(RUNNER_SOURCE.indexOf("\n", hoistAt) + 1);
-  assert.match(afterHoist, /^\s*\n?\s*try \{/, "personaWorldBook must be declared immediately outside the run-level try");
   assert.ok(
     positionOf("const spokeToPlayer = typeof presentedSummary") < positionOf("const sessionVerdict ="),
     "spokeToPlayer is read by the verdict, so it must be declared first",
