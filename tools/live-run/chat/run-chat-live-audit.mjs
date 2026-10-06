@@ -591,33 +591,28 @@ export async function writeAuditTrace(path, trace) {
  * contract is untouched. Macro residue and obvious secret shapes are redacted rather than dropped, so a
  * reader can still see that the reply contained one.
  */
+import {
+  buildLiveRunTextSideFile,
+  createLiveRunTextCollector,
+  LIVE_RUN_TEXT_MAX_CHARS,
+  LIVE_RUN_TEXT_MAX_ENTRIES,
+  liveRunTextSideFilePath,
+  redactLiveRunText,
+} from "../core/capture-text.mjs";
+
+// The surface's own schema name; the POLICY (bounds, redaction, beside-not-inside) lives in core, so a
+// change to it lands in one place instead of once per surface.
 export const CHAT_TRANSCRIPT_SCHEMA = "chat_run_transcript/v1";
 export const CHAT_TRANSCRIPT_MAX_ENTRIES = 40;
 export const CHAT_TRANSCRIPT_MAX_CHARS = 600;
-const SECRET_SHAPES = /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{10,}|[A-Za-z0-9_-]{32,})/g;
-
-export function redactForTranscript(value) {
-  const raw = typeof value === "string" ? value : "";
-  return raw
-    .slice(0, CHAT_TRANSCRIPT_MAX_CHARS)
-    .replace(SECRET_SHAPES, "<REDACTED>")
-    .replace(/\{\{[^}]*\}\}/g, "<MACRO>");
-}
+// Thin adapters over the one capture policy in core (tools/live-run/core/capture-text.mjs).
+export const redactForTranscript = (value) => redactLiveRunText(value, { maxChars: LIVE_RUN_TEXT_MAX_CHARS });
 
 export function buildTranscriptSideFile({ runId, entries }) {
-  return Object.freeze({
+  return buildLiveRunTextSideFile({
     schema: CHAT_TRANSCRIPT_SCHEMA,
     runId,
-    entryCount: entries.length,
-    entries: Object.freeze(
-      entries.slice(-CHAT_TRANSCRIPT_MAX_ENTRIES).map((entry) =>
-        Object.freeze({
-          role: entry.role,
-          chars: entry.text.length,
-          text: redactForTranscript(entry.text),
-        }),
-      ),
-    ),
+    entries: entries.map((entry) => ({ role: entry?.role, text: entry?.text })),
   });
 }
 
@@ -631,14 +626,9 @@ export function buildTranscriptSideFile({ runId, entries }) {
  * `awaitTerminal`. A run-scoped buffer cannot be seen by both — declaring one inside `collectRun` is
  * exactly what made a real run fail with `chat_audit_runner_internal_error`.
  */
-const capturedTranscriptEntries = [];
+const capturedTranscriptEntries = createLiveRunTextCollector({ maxEntries: LIVE_RUN_TEXT_MAX_ENTRIES });
 
-export function transcriptSideFilePath(reportTarget) {
-  if (typeof reportTarget !== "string" || reportTarget.length === 0) return undefined;
-  return reportTarget.endsWith(".json")
-    ? `${reportTarget.slice(0, -".json".length)}-transcript.json`
-    : `${reportTarget}-transcript.json`;
-}
+export const transcriptSideFilePath = (reportTarget) => liveRunTextSideFilePath(reportTarget);
 
 export function buildAuditTrace({ runId, startedAt, completedAt, artifact, providerObserved, events }) {
   return Object.freeze({
@@ -1110,9 +1100,7 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
     });
     // The committed reply, in the side-file transcript only. The trace keeps its content-free shape.
     if (typeof projection.committedCompanionText === "string" && projection.committedCompanionText.length > 0)
-      capturedTranscriptEntries.push(
-        Object.freeze({ role: "companion", text: projection.committedCompanionText }),
-      );
+      capturedTranscriptEntries.push("companion", projection.committedCompanionText);
   }
   // The durable committed-presentation delta is returned so a caller that needs
   // "was there a durable reply for THIS turn" can use the transcript authority
@@ -1310,9 +1298,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const runTurn = async ({ cancel, message = SUBMIT_PROMPT_TEXT }) => {
     activeTurnIndex += 1;
     const turnIndex = activeTurnIndex;
-    capturedTranscriptEntries.push(
-      Object.freeze({ role: "player", text: typeof message === "string" ? message : "" }),
-    );
+    capturedTranscriptEntries.push("player", typeof message === "string" ? message : "");
     const opened = await readStateSnapshot({ origin, client, recorder });
     if (!opened.ok) throw new Error(opened.reasonCode);
     noteMemoryProjection(opened.projection);
@@ -1637,7 +1623,7 @@ export async function main(argv = process.argv.slice(2)) {
     // Option B: the bounded transcript travels BESIDE the trace, never inside it.
     const transcriptPath = transcriptSideFilePath(reportTarget);
     if (transcriptPath !== undefined) {
-      const side = buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries });
+      const side = buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
     }
