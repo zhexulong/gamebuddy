@@ -5,16 +5,40 @@ import type { CompanionThinkingLevel } from "../runtime-identity.js";
  * (design/28 §1 and §5.1).
  *
  * The browser may only select an entry of this catalog. Exactly one entry is
- * the OpenAI-compatible escape hatch: it is a catalog entry like any other,
- * carries a Host-owned API shape, passes the same validation and appears in
- * the same list, but the player supplies its base URL (and the model id that
- * endpoint serves, because a local server's model id is part of where the
- * endpoint lives, not a provider choice). Every other entry pins the endpoint
- * itself, so no route can accept an arbitrary endpoint for them.
+ * the endpoint escape hatch: it is a catalog entry like any other, passes the
+ * same validation and appears in the same list, but the player supplies its
+ * base URL, the API shape that endpoint speaks, and the model id that endpoint
+ * serves (because a local server's model id is part of where the endpoint
+ * lives, not a provider choice). Every other entry pins the endpoint and the
+ * API shape itself, so no route can accept an arbitrary endpoint for them.
  */
 
-/** Pi API shape a catalog entry pins for its `models.json` provider block. */
-export type TavernPiApi = "openai-completions" | "openai-responses";
+/**
+ * The exact `api` shapes Pi's own chat provider adapters speak (pi-ai
+ * `KnownApi`), in the one Host-side copy of that list. The value is written
+ * verbatim into the `models.json` provider entry's `api` field, so a shape Pi
+ * cannot speak must never be admitted: a typo here would hand the Pi runtime
+ * an API id it has no adapter for. The escape hatch is the only caller that
+ * gets to pick one; every other catalog entry pins its own.
+ */
+export const TAVERN_PI_API_SHAPES = Object.freeze([
+  "anthropic-messages",
+  "openai-completions",
+  "openai-responses",
+  "openai-codex-responses",
+  "google-generative-ai",
+  "google-vertex",
+  "bedrock-converse-stream",
+  "mistral-conversations",
+] as const);
+
+/** Pi API shape a provider entry contributes to `models.json`. */
+export type TavernPiApi = (typeof TAVERN_PI_API_SHAPES)[number];
+
+/** True when `value` is exactly one API shape Pi's provider entry may carry. */
+export function isTavernPiApi(value: unknown): value is TavernPiApi {
+  return typeof value === "string" && (TAVERN_PI_API_SHAPES as readonly string[]).includes(value);
+}
 
 /**
  * The reasoning dialect one model speaks through an `openai-completions`
@@ -36,7 +60,7 @@ export const TAVERN_ENVIRONMENT_VARIABLE = "CPA_OAI_API_KEY" as const;
  * The complete set of player-fillable setup fields. It is a closed allowlist:
  * no script, header, provider payload or free-form configuration field exists.
  */
-export type TavernProviderSetupFieldId = "apiKey" | "baseUrl" | "modelId";
+export type TavernProviderSetupFieldId = "apiKey" | "apiShape" | "baseUrl" | "modelId";
 
 export type TavernCatalogModel = Readonly<{
   modelId: string;
@@ -53,7 +77,8 @@ export type TavernCatalogProvider = Readonly<{
   label: string;
   /** Pi provider id this entry configures in the provider store. */
   piProviderId: string;
-  piApi: TavernPiApi;
+  /** Host-owned API shape, or null only for the escape hatch, whose record supplies it. */
+  piApi: TavernPiApi | null;
   /** Fixed Host-owned endpoint, or null only for the escape hatch. */
   baseUrl: string | null;
   /** Environment-provided credential: never stored, read back or edited. */
@@ -139,13 +164,13 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
     label: "OpenAI-compatible endpoint",
     piProviderId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-    piApi: "openai-completions",
+    piApi: null,
     baseUrl: null,
     environmentVariable: null,
-    // The escape hatch relaxes exactly one constraint — where the compatible
-    // endpoint lives — plus the model id that endpoint serves, which the Host
-    // cannot know for a local server. Its API shape stays Host-owned.
-    setupFields: ["baseUrl", "apiKey", "modelId"],
+    // The escape hatch relaxes where the endpoint lives, the API shape that
+    // endpoint speaks and the model id it serves — three facts about an
+    // endpoint the Host cannot know. Everything else stays Host-owned.
+    setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"],
     allowedPlayerModels: [],
     escapeHatch: true,
     authHeader: true,

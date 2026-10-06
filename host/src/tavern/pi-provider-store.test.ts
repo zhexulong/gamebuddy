@@ -211,6 +211,7 @@ test("the runtime provider entry follows the selected connection and its own end
       providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
       apiKey: "sk-synthetic-hatch-key",
       baseUrl: "http://127.0.0.1:11434/v1",
+      apiShape: "openai-completions",
       modelId: "qwen2.5-coder:7b",
     });
     const hatch = await modelProviderEntry(root, {
@@ -236,6 +237,111 @@ test("the runtime provider entry follows the selected connection and its own end
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the emitted provider entry carries the escape hatch's own API shape", async () => {
+  const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-models-shape-"));
+  try {
+    // The document the connection store persists for two escape-hatch records:
+    // one speaking Anthropic messages, one speaking Responses at an endpoint
+    // whose route carries the required `?api-version=` query string.
+    await writeFile(
+      connectionDocumentPath(root),
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 2,
+        activeConnectionId: null,
+        connections: [
+          hatchConnection("A".repeat(43), "https://anthropic-gateway.example.com", "anthropic-messages", "claude-3-5-sonnet"),
+          hatchConnection(
+            "B".repeat(43),
+            "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01",
+            "openai-responses",
+            "gpt-5.5",
+          ),
+        ],
+      }),
+      "utf8",
+    );
+
+    const anthropic = await modelProviderEntry(root, {
+      provider: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      modelId: "claude-3-5-sonnet",
+      thinkingLevel: "high",
+    });
+    assert.deepEqual(anthropic?.entry, {
+      name: "OpenAI-compatible endpoint",
+      baseUrl: "https://anthropic-gateway.example.com",
+      api: "anthropic-messages",
+      authHeader: true,
+      models: [{ id: "claude-3-5-sonnet", name: "claude-3-5-sonnet" }],
+    });
+
+    const responses = await modelProviderEntry(root, {
+      provider: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      modelId: "gpt-5.5",
+      thinkingLevel: "high",
+    });
+    assert.equal(responses?.entry.api, "openai-responses");
+    assert.equal(
+      responses?.entry.baseUrl,
+      "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01",
+    );
+    // One record's shape never leaks into another's entry.
+    assert.equal(anthropic?.entry.api, "anthropic-messages");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A record whose API shape is not one Pi speaks yields no provider entry at
+ * all: the runtime fails closed instead of receiving an API id with no adapter.
+ */
+test("an escape-hatch record with an unspokable API shape yields no provider entry", async () => {
+  const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-models-shape-corrupt-"));
+  try {
+    for (const apiShape of ["invented-messages", null]) {
+      await writeFile(
+        connectionDocumentPath(root),
+        JSON.stringify({
+          schemaVersion: 1,
+          revision: 2,
+          activeConnectionId: null,
+          connections: [
+            { ...hatchConnection("A".repeat(43), "https://gateway.example.com/v1", "openai-responses", "gpt-5.5"), apiShape },
+          ],
+        }),
+        "utf8",
+      );
+      assert.equal(
+        await modelProviderEntry(root, {
+          provider: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          modelId: "gpt-5.5",
+          thinkingLevel: "high",
+        }),
+        null,
+        `expected ${JSON.stringify(apiShape)} to yield no provider entry`,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** One persisted escape-hatch record, in the exact shape the store writes. */
+function hatchConnection(connectionId: string, baseUrl: string, apiShape: string, modelId: string) {
+  return {
+    connectionId,
+    providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+    baseUrl,
+    apiShape,
+    modelId,
+    thinkingLevel: "high",
+    readiness: "configured",
+    failure: null,
+    lastCheckedAtMs: null,
+  };
+}
 
 /**
  * The record a selection is read from is the same document the store writes; a

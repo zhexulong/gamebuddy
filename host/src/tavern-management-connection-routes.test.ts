@@ -12,7 +12,7 @@ import type { ChatManagementService } from "./tavern/chat-management/chat-manage
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { createTavernConnectionService, type TavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernConnectionProbe } from "./tavern/connection-probe.js";
-import { connectionAuthPath } from "./tavern/connection-store.js";
+import { connectionAuthPath, connectionDocumentPath } from "./tavern/connection-store.js";
 import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
@@ -338,11 +338,11 @@ test("the connection read projects the catalog, and selectable models are the ca
     const escapeHatches = body.providers.filter((provider) => provider.escapeHatch);
     assert.equal(escapeHatches.length, 1);
     assert.equal(escapeHatches[0]!.providerId, TAVERN_ESCAPE_HATCH_PROVIDER_ID);
-    assert.deepEqual([...escapeHatches[0]!.setupFields].sort(), ["apiKey", "baseUrl", "modelId"]);
+    assert.deepEqual([...escapeHatches[0]!.setupFields].sort(), ["apiKey", "apiShape", "baseUrl", "modelId"]);
     // No provider payload, script or arbitrary-URL field exists anywhere.
     assert.deepEqual(
       [...new Set(body.providers.flatMap((provider) => provider.setupFields))].sort(),
-      ["apiKey", "baseUrl", "modelId"],
+      ["apiKey", "apiShape", "baseUrl", "modelId"],
     );
   });
 });
@@ -398,6 +398,16 @@ test("a rejected credential submission is an ordinary request error, not a leak"
       apiKey: "sk-synthetic",
     });
     assert.equal(unknown.status, 400);
+    // A setup value the selected entry does not declare is refused, not stored.
+    const garbageShape = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+      apiVersion: 1,
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: "sk-synthetic",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiShape: "invented-messages",
+      modelId: "m",
+    });
+    assert.equal(garbageShape.status, 400);
     // The environment connection refuses a submitted key outright.
     const environment = await request("POST", "/api/tavern/v1/settings/connections", {}, {
       apiVersion: 1,
@@ -424,6 +434,7 @@ test("the escape hatch is a catalog entry whose base URL round-trips and whose p
         providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
         apiKey: "sk-synthetic-hatch-key",
         baseUrl: "http://127.0.0.1:11434/v1",
+        apiShape: "openai-completions",
         modelId: "qwen2.5-coder:7b",
       });
       assert.equal(created.status, 200);
@@ -486,6 +497,70 @@ test("the escape hatch is a catalog entry whose base URL round-trips and whose p
       assert.doesNotMatch(activated.raw, /runtime|switched/);
     },
   );
+});
+
+/**
+ * The two endpoint configurations a fixed `openai-completions` escape hatch and
+ * a query-less URL made unreachable, over the real authenticated route the
+ * browser uses and into the durable record the runtime reads next.
+ */
+test("the escape hatch round-trips a player-chosen API shape and a query-string endpoint", async () => {
+  await withHandler({}, async (root, request, bootstrap) => {
+    await bootstrap();
+    const baseUrl = "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01";
+    const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+      apiVersion: 1,
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: "sk-synthetic-shape-key",
+      baseUrl,
+      apiShape: "anthropic-messages",
+      modelId: "claude-3-5-sonnet",
+    });
+    assert.equal(created.status, 200);
+    const connection = (created.body as { connections: readonly { baseUrl: string; readiness: string }[] })
+      .connections[0]!;
+    assert.equal(connection.baseUrl, baseUrl);
+    assert.equal(connection.readiness, "configured");
+    // The durable record is what the runtime construction reads next, so both
+    // facts must survive the write, not just the response projection.
+    const persisted = JSON.parse(await readFile(connectionDocumentPath(root), "utf8"));
+    assert.equal(persisted.connections[0].apiShape, "anthropic-messages");
+    assert.equal(persisted.connections[0].baseUrl, baseUrl);
+    assert.doesNotMatch(created.raw, /sk-synthetic-shape-key/);
+
+    // A shape Pi cannot speak is refused before it can reach the runtime.
+    const garbage = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+      apiVersion: 1,
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: "sk-synthetic-shape-key",
+      baseUrl: "https://gateway.example.com/v1",
+      apiShape: "invented-messages",
+      modelId: "claude-3-5-sonnet",
+    });
+    assert.equal(garbage.status, 400);
+    assert.equal((garbage.body as { code: string }).code, "invalid_request");
+
+    // A catalog entry still refuses both overrides: its endpoint and its API
+    // shape stay ours.
+    for (const override of [
+      { providerId: "openai", apiKey: "sk-synthetic", baseUrl: "https://api.openai.com/v1?api-version=2024-02-01" },
+      { providerId: "openai", apiKey: "sk-synthetic", apiShape: "openai-responses" },
+    ] as const) {
+      const refused = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+        apiVersion: 1,
+        ...override,
+      });
+      assert.equal(refused.status, 400, `expected ${JSON.stringify(override)} to be refused`);
+    }
+    // The operator-credentialed environment connection owns its URL too: a
+    // player-supplied endpoint there would send the operator's secret elsewhere.
+    const environmentRedirect = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+      apiVersion: 1,
+      providerId: "cpa-oai",
+      baseUrl: "https://attacker.example.com/v1",
+    });
+    assert.equal(environmentRedirect.status, 400);
+  });
 });
 
 test("probe failures are reported as closed categories with no provider text", async () => {
@@ -597,6 +672,7 @@ test("model selection is restricted to the catalog and to the model's own thinki
       providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
       apiKey: "ollama",
       baseUrl: "http://127.0.0.1:11434/v1",
+      apiShape: "openai-completions",
       modelId: "qwen2.5-coder:7b",
     });
     const hatchId = (hatch.body as { connections: readonly { connectionId: string }[] }).connections[1]!.connectionId;
