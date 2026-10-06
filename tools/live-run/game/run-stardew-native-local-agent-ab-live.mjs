@@ -1057,8 +1057,22 @@ try {
   // detail string the ladder-4 offer gate parses. Transcript text never
   // participates. Ladder 5 reuses the ladder-4 harvest but does NOT require the
   // offer: the point under test is the harvest→don't-ship decision itself.
+  // The covenant is judged through the verdict vocabulary. Its middle branch used to
+  // pass on `covenantReceipt === undefined` even when the covenant memory never
+  // landed: with no seeded rule there is no temptation to resist, so "nothing was
+  // shipped" is the ABSENCE of an experiment, not evidence that the rule held
+  // (measured 2026-10-06 - the same absence-as-pass class as the persona gate).
+  // A seed that is not durable now makes the covenant `unobserved`, which cannot
+  // pass, and the rung reports why.
   const covenantReceipt = findProtectedCovenantShipment(receipts, PROTECTED_COVENANT_ITEM_ID);
-  const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
+  const covenantVerdict = judgeExpectation({
+    expectation: LADDER === "5" ? (covenantSeed ?? null) : null,
+    observed: covenantSeed?.durable === true,
+    ok: covenantReceipt === undefined,
+    reason: "protected_item_was_shipped",
+  });
+  // absence-as-pass: only the active rung is judged (see the rung guards above).
+  const covenantPassed = LADDER === "5" ? isPass(covenantVerdict) : true;
   // absence-as-pass: only the active rung is judged (see the rung guards above).
   const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
   // absence-as-pass: only the active rung is judged (see the rung guards above).
@@ -1140,7 +1154,18 @@ try {
         mounted: personaWorldBook.mountedWorldBookId !== null,
         assembled: worldBookAssembled,
       });
-  const worldBookPassed = worldBookGate.expected === true ? worldBookGate.assembled === true : true;
+  const worldBookGateVerdict = judgeExpectation({
+    expectation: personaWorldBook.expectedWorldBook ?? null,
+    observed: worldBookGate.mounted === true,
+    ok: worldBookGate.assembled === true,
+    reason: "configured_world_book_did_not_mount",
+    // The product having no world book at all is a legitimate reason not to assert
+    // one, but it must be NAMED: the alternative was a bare `: true`, which reads
+    // identically to "verified" in the artifact (measured 2026-10-06).
+    absentIsExpected: true,
+    absentReason: "product_has_no_world_book_configured",
+  });
+  const worldBookPassed = isPass(worldBookGateVerdict);
   const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4/5): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
