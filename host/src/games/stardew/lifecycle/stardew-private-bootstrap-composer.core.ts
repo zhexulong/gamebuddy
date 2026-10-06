@@ -1163,6 +1163,26 @@ type DurableOwnerFor<TRecord extends StardewPrivateBootstrapOwnerRecord> =
   Omit<DurableOwner, "record"> & Readonly<{ record: TRecord }>;
 
 
+/**
+ * The ONE terminal-state predicate for the private owner record.
+ *
+ * Every consumer of "is this attempt closed out?" reads this predicate, so a new
+ * terminal can never be added to the state matrix while one of them keeps
+ * reading the old pair: a consumer that missed one terminal would treat a closed
+ * attempt as a recoverable one (or the reverse) with no test going red.
+ *
+ * The three states are terminal for the same reason: nothing more may be driven
+ * on the attempt. `contained` drained both roles,
+ * `ai_settled_player_preserved` records the AI-side recovery terminal (the
+ * player's world was deliberately preserved and no role containment was
+ * observed), and `quarantined` is the residue of a cleanup that could not
+ * finish. None of them is openable, recoverable, or a legal predecessor of the
+ * ordinary close.
+ */
+function isTerminalOwnerState(state: string): boolean {
+  return state === "contained" || state === "quarantined" || state === "ai_settled_player_preserved";
+}
+
 async function reconcileSettledRegistrationMarker(
   runtimeRoot: string,
   terminal: StardewPrivateBootstrapOwnerRecord,
@@ -1175,7 +1195,7 @@ async function reconcileSettledRegistrationMarker(
   const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", terminal.bootstrapId, OWNER_FILE);
   const persisted = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), { containmentRoot: runtimeRoot });
   if (!sameImmutableFence(persisted, immutableFence) || persisted.ownerRecordRevision !== marker.ownerRecordRevision ||
-      persisted.bootstrapId !== marker.bootstrapCorrelation || (persisted.state !== "contained" && persisted.state !== "quarantined")) {
+      persisted.bootstrapId !== marker.bootstrapCorrelation || !isTerminalOwnerState(persisted.state)) {
     throw new Error("stardew_bootstrap_registration_unavailable");
   }
   const current = await registration.readRegistration();
@@ -1270,7 +1290,7 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
          !sameImmutableFence(terminal, facts.immutableFence) ||
          terminal.ownerRecordRevision !== proofReservation.expectedTerminalOwnerRecordRevision ||
          terminal.bootstrapId !== bootstrapCorrelation ||
-         (terminal.state !== "contained" && terminal.state !== "quarantined")
+         !isTerminalOwnerState(terminal.state)
        ) {
         throw new Error("stardew_bootstrap_registration_unavailable");
       }
@@ -3580,6 +3600,7 @@ type StardewOwnerTransitionPrimitives = Readonly<{
   containRecoveringRole(role: "playerHost" | "aiClient", expectedRevision: number, recoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
   finalizeControlledContained(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
   finalizeRecoveredContained(expectedRevision: number, requiredRecoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+  finalizeRecoveredAiSettledPlayerPreserved(expectedRevision: number, requiredRecoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
   quarantine(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
   quarantineRecovery(expectedRevision: number, requiredRecoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
 }>;
@@ -3678,8 +3699,30 @@ function createStardewBootstrapOwnerTransitionPrimitives(
           current.playerHostState !== "contained" || current.aiClientState !== "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
       return { ...current, state: "contained", guardianState: "contained", recoveryInstanceId: null };
     }, recoveryInstanceId),
+    // The AI-side recovery terminal. It is reachable ONLY from `recovering`, and
+    // only on the outcome the driver observed as "the AI side is settled and the
+    // player's world was deliberately preserved": the recovery's player-role
+    // classification returned before any role CAS, so neither role was observed
+    // contained.
+    //
+    // The transition therefore refuses a predecessor that already carries a role
+    // containment. Recording this terminal over a contained role would be the
+    // record claiming a containment this recovery never observed (and, for the
+    // AI side, one the broker never reported to the Host at all). A record whose
+    // role was contained by an EARLIER controlled close is not this terminal, and
+    // the refusal travels back through the recovery's own failure closure, which
+    // quarantines it - a bounded refusal, never a fabricated terminal.
+    finalizeRecoveredAiSettledPlayerPreserved: (revision, recoveryInstanceId) => transition(revision, (current) => {
+      if (!isOpaque(recoveryInstanceId) || current.state !== "recovering" || current.guardianState !== "recovering" ||
+          current.playerHostState === "contained" || current.aiClientState === "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      // `cleanupDisposition` stays `pending`: the AI side really was cleaned up
+      // and the player's world needs no retry, so this terminal owes no
+      // `retry_required` residue. The consumption of that declaration happens in
+      // the finalize that drives this transition.
+      return { ...current, state: "ai_settled_player_preserved", guardianState: "ai_settled_player_preserved", recoveryInstanceId: null };
+    }, recoveryInstanceId),
     quarantine: (revision) => transition(revision, (current) => {
-      if (current.state === "recovering" || current.state === "contained" || current.state === "quarantined") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      if (current.state === "recovering" || isTerminalOwnerState(current.state)) throw new Error("stardew_bootstrap_owner_transition_invalid");
       return { ...current, state: "quarantined", guardianState: "quarantined", playerHostState: current.playerHostState === "contained" ? "contained" : "quarantined", aiClientState: current.aiClientState === "contained" ? "contained" : "quarantined", recoveryInstanceId: null, cleanupDisposition: "retry_required" };
     }),
     quarantineRecovery: (revision, recoveryInstanceId) => transition(revision, (current) => {
@@ -3734,6 +3777,7 @@ function createStardewBootstrapOwnerTransitionPort(
     beginRecovery: (actor) => advance((current) => primitives.beginRecovery(current, actor)),
     recoveryRoleContained: (role, actor) => advance((current) => primitives.containRecoveringRole(role, current, actor)),
     finalizeRecoveredContained: (actor) => advance((current) => primitives.finalizeRecoveredContained(current, actor)),
+    finalizeRecoveredAiSettledPlayerPreserved: (actor) => advance((current) => primitives.finalizeRecoveredAiSettledPlayerPreserved(current, actor)),
     quarantine: () => advance((current) => primitives.quarantine(current)),
     quarantineRecovery: (actor) => advance((current) => primitives.quarantineRecovery(current, actor)),
   });
@@ -3762,6 +3806,7 @@ export type StardewBootstrapGuardianOwnerTransitionPort = Readonly<{
   beginRecovery(recoveryInstanceId: string): Promise<void>;
   recoveryRoleContained(role: "playerHost" | "aiClient", recoveryInstanceId: string): Promise<void>;
   finalizeRecoveredContained(recoveryInstanceId: string): Promise<void>;
+  finalizeRecoveredAiSettledPlayerPreserved(recoveryInstanceId: string): Promise<void>;
   quarantine(): Promise<void>;
   quarantineRecovery(recoveryInstanceId: string): Promise<void>;
 }>;
@@ -3861,6 +3906,7 @@ export function createStardewBootstrapGuardianOwnerBinding(
     beginRecovery: (actor) => advance((current) => transitions.beginRecovery(current, actor)),
     recoveryRoleContained: (role, actor) => advance((current) => transitions.containRecoveringRole(role, current, actor)),
     finalizeRecoveredContained: (actor) => advance((current) => transitions.finalizeRecoveredContained(current, actor)),
+    finalizeRecoveredAiSettledPlayerPreserved: (actor) => advance((current) => transitions.finalizeRecoveredAiSettledPlayerPreserved(current, actor)),
     quarantine: () => advance((current) => transitions.quarantine(current)),
     quarantineRecovery: (actor) => advance((current) => transitions.quarantineRecovery(current, actor)),
   });
@@ -4081,7 +4127,7 @@ export async function openRecoverableStardewBootstrapOwner(
   ) {
     throw new Error("stardew_bootstrap_owner_recovery_principal_mismatch");
   }
-  if (record.state === "contained" || record.state === "quarantined") {
+  if (isTerminalOwnerState(record.state)) {
     throw new Error(STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL);
   }
   return Object.freeze({
@@ -4166,7 +4212,7 @@ export async function readRecoverableStardewBootstrapOwnerRecoveryBinding(
   // from the same durable facts.
   const root = dirname(dirname(durableOwner.transactionDirectory));
   const record = await readAndValidateOwner(join(durableOwner.transactionDirectory, OWNER_FILE), root);
-  if (record.state === "contained" || record.state === "quarantined") {
+  if (isTerminalOwnerState(record.state)) {
     throw new Error(STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL);
   }
   return Object.freeze({
@@ -4234,6 +4280,57 @@ export async function finalizeRecoveredPlayerHostContainedRuntimeAttempt(
   owner: StardewOwnedPlayerHostBootstrap,
   recoveryInstanceId: string,
 ): Promise<void> {
+  return finalizeRecoveredPlayerHostRuntimeAttempt(owner, recoveryInstanceId, "contained");
+}
+
+/**
+ * Closes out a recovery that reached the AI-side terminal: the durable parent
+ * record advances from `recovering` to `ai_settled_player_preserved`, and only
+ * then is the bound registration pointer released.
+ *
+ * It is the sibling of `finalizeRecoveredPlayerHostContainedRuntimeAttempt` and
+ * runs on exactly the same owner path, the same consumed one-shot Guardian
+ * binding, the same settlement proof and the same cleanup consumption. Only the
+ * terminal the durable engine is asked for differs, because only the recovery
+ * OUTCOME differs:
+ *
+ * - `ai_settled_player_preserved` is the outcome where the broker classified
+ *   the player role as not contained (the native never adopts the player's
+ *   world) and settled the AI side by its own classification, so the
+ *   conversation returned before any role CAS. No role is recorded contained,
+ *   and this finalize neither claims nor needs one: the terminal transition
+ *   refuses a predecessor carrying a role containment.
+ *
+ * The two durable steps are still one contract unit, for the same reason as the
+ * contained finalize: without it the attempt keeps occupying the registration
+ * whose own admission path refuses a non-pristine record, so the next
+ * reservation - the create path's AND the resume path's alike - stays refused.
+ * That is the whole reason this exists.
+ *
+ * The attempt's cleanup declaration is consumed here too. The AI side really was
+ * cleaned up and the player's world needs no retry, so this terminal owes no
+ * `retry_required` residue: the attempt's transaction is deleted rather than
+ * left as a debt.
+ */
+export async function finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(
+  owner: StardewOwnedPlayerHostBootstrap,
+  recoveryInstanceId: string,
+): Promise<void> {
+  return finalizeRecoveredPlayerHostRuntimeAttempt(owner, recoveryInstanceId, "ai_settled_player_preserved");
+}
+
+/**
+ * The one finalization body both recovered terminal kinds share. It advances the
+ * durable record to the requested terminal through the exact owner's consumed
+ * one-shot Guardian binding, mints the settlement proof for that terminal
+ * revision, releases the bound registration pointer, and consumes the attempt's
+ * cleanup declaration.
+ */
+async function finalizeRecoveredPlayerHostRuntimeAttempt(
+  owner: StardewOwnedPlayerHostBootstrap,
+  recoveryInstanceId: string,
+  terminal: "contained" | "ai_settled_player_preserved",
+): Promise<void> {
   const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const guardianFacts = guardianOwnerBindings.get(owner);
   if (guardianFacts === undefined || !guardianFacts.consumed) {
@@ -4241,7 +4338,8 @@ export async function finalizeRecoveredPlayerHostContainedRuntimeAttempt(
   }
   const transitions = guardianFacts.port;
   try {
-    await transitions.finalizeRecoveredContained(recoveryInstanceId);
+    if (terminal === "contained") await transitions.finalizeRecoveredContained(recoveryInstanceId);
+    else await transitions.finalizeRecoveredAiSettledPlayerPreserved(recoveryInstanceId);
   } catch (error) {
     // A recovery that cannot be taken to its terminal parent state must not stay
     // in a state another authority could mistake for a live recovery, so it runs
@@ -4635,6 +4733,11 @@ function isOwnerStateMatrix(value: Record<string, unknown>): boolean {
   }
   if (parent === "contained" && guardian === "contained") return player === "contained" && ai === "contained" && recovery === null && value.cleanupDisposition === "pending";
   if (parent === "quarantined" && guardian === "quarantined") return recovery === null && value.cleanupDisposition === "retry_required" && [player, ai].every((item) => item === "contained" || item === "quarantined") && (player === "quarantined" || ai === "quarantined");
+  if (parent === "ai_settled_player_preserved" && guardian === "ai_settled_player_preserved") {
+    if (recovery !== null || value.cleanupDisposition !== "pending") return false;
+    const neverContained = (states: readonly string[]) => [player, ai].every((item) => states.includes(item as string));
+    return neverContained(["reserved"]) || neverContained(["armed", "active"]) || neverContained(["closing"]);
+  }
   return false;
 }
 

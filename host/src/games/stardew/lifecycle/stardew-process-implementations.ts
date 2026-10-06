@@ -56,6 +56,10 @@ export function productionPlayerHostProbe(pid: number): StardewPlayerHostProcess
 
 function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate: string }> | null {
   const result = spawnSync(
+    // NOTE: bare PATH resolution is a known limitation here. ADR-0007 keeps
+    // `games/stardew` free of desktop/native modules, so this cannot import the
+    // shared absolute-path resolver; the fix belongs in the composition root
+    // that wire this probe (inject the resolved executable).
     "powershell.exe",
     [
       "-NoProfile", "-NonInteractive", "-Command",

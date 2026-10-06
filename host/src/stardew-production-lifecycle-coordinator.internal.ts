@@ -40,9 +40,12 @@ import {
 } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
 import {
   didStardewOwnedPlayerHostStageCEnterControlledLaunch,
+  finalizeRecoveredPlayerHostAiSettledRuntimeAttempt,
   openRecoverableStardewBootstrapOwner,
   readRecoverableStardewBootstrapOwnerRecoveryBinding,
+  STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL,
   type StardewManifestHandoffChoice,
+  type StardewRecoverableBootstrapOwner,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type {
   GameCreateCommandV1,
@@ -487,8 +490,27 @@ export type StardewContainedRuntimeTeardown = Readonly<{
    * binding is already consumed (that is what drove the recovery), and the request
    * it takes is the one the recovery took, so the actor the durable CASes recorded
    * and the actor this must match cannot drift apart.
+   *
+   * This is the closure for a recovery that reached CONTAINMENT. The AI-side
+   * terminal has its own member below, because it records a different fact and
+   * must never be closed out as a containment the recovery did not observe.
    */
   finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void>;
+  /**
+   * Terminal closure of the AI-side recovery terminal THIS seam drove, on the
+   * same owner path, the same request, the same consumed one-shot owner binding
+   * and the same registration release as `finalizeRecovered`.
+   *
+   * It exists as its own member rather than as a parameter of `finalizeRecovered`
+   * for exactly the reason the two outcomes are named separately everywhere else:
+   * the durable record has two different terminals, and a single member would make
+   * "recovered" and "the AI side is settled, the player's world was preserved"
+   * indistinguishable at the one place that closes an attempt out. On this
+   * terminal NO role is recorded contained, the attempt's transaction is consumed
+   * rather than left as a retry-required debt, and the world slot is still never
+   * released - it belongs to the player.
+   */
+  finalizeRecoveredAiSettled(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void>;
   close(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
@@ -604,6 +626,21 @@ export function containedRuntimeTeardownFromCollaborator(
       if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
       await recoveryDriver.finalizeRecovered(owner, request);
     },
+    finalizeRecoveredAiSettled: async (owner, request) => {
+      // The AI-side terminal's own closure, under the same refusal for the same
+      // reason: with no owner-held recovery half nothing can have consumed the
+      // binding this needs, so there is nothing that could close the attempt out.
+      //
+      // It is forwarded to the composer's dedicated finalize rather than through
+      // the collaborator, because the collaborator's `finalizeRecovered` is the
+      // CONTAINMENT closure: the terminal is chosen by the outcome the drive
+      // observed, and only the composer owns those terminals. It is still one
+      // owner path and one durable seam - the composer's finalize requires the
+      // exact owner's consumed one-shot binding, which is the same binding
+      // `recover` above just drove through.
+      if (recoveryDriver === undefined) throw new Error("stardew_contained_recovery_drive_unavailable");
+      await finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(owner, request.recoveryInstanceId);
+    },
     close: async (owner) => runtimeLaunch.close(owner),
     settle: async (owner) => runtimeLaunch.settle(owner),
   });
@@ -641,17 +678,21 @@ export const STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL = "stardew_owner_recovery_
  * It is never `gate_held` either: the gate DID open (the conversation reached
  * the role classification), so this is not a lease verdict about the holder.
  *
- * The AI-side terminal does not finalize the attempt here. Finalizing a
- * recovered attempt requires BOTH roles to be durably `contained`
- * (`stardew-private-bootstrap-composer.core.ts` `finalizeRecoveredContained`),
- * and on this path no role ever is - the conversation returns before any role
- * CAS. Calling the finalize on this outcome would therefore make the durable
- * engine QUARANTINE the attempt as a side effect of its own refusal, which would
- * fabricate a terminal state for a world that was deliberately preserved. So
- * the drive refuses under its own bounded code and leaves the attempt exactly as
- * the deliberate terminal left it; the finalize step that releases this
- * attempt's registration pointer is blocked on the durable-engine decision that
- * gives the AI-side terminal a terminal state of its own.
+ * The AI-side terminal DOES finalize the attempt now, and it is why this drive
+ * exists in its current shape. The attempt's own durable terminal -
+ * `ai_settled_player_preserved`, reached from `recovering` and recording NO role
+ * containment - is what `finalizeRecoveredPlayerHostAiSettledRuntimeAttempt`
+ * drives, and on it the attempt's bound registration pointer is released and its
+ * transaction consumed. Without that the crashed attempt kept occupying the
+ * registration whose own admission path refuses a non-pristine record, so the
+ * next lifecycle could neither create nor resume: the two-way wedge this
+ * terminal closes.
+ *
+ * The finalize is attempted BEFORE this refusal is reported, and a finalize the
+ * durable engine refuses is not swallowed: the refusal travels out of the drive
+ * and the caller's own failure path settles. What never happens here is
+ * fabrication - the terminal this path records claims only what the recovery
+ * observed (the AI side settled, the player's world deliberately preserved).
  */
 export const STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED = "stardew_owner_recovery_ai_settled_player_preserved";
 
@@ -698,27 +739,33 @@ export const STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED = "stardew
 /**
  * One bounded recovery of an attempt whose durable record is not terminal,
  * closed out in the same step: drive the existing per-owner recovery seam, and
- * only when that recovery actually reached containment, finalize it so the
- * attempt's parent record becomes terminal and its registration pointer is
- * released.
+ * when that recovery reached one of the two terminal outcomes the Host accepts
+ * - containment, or the AI-side terminal where the player's world was
+ * deliberately preserved - finalize it so the attempt's parent record becomes
+ * terminal and its registration pointer is released. A recovery that reached
+ * neither is not finalized at all.
  *
  * The finalization deliberately takes the SAME request object the recovery took,
  * so the recovery actor the durable CASes recorded and the actor the finalization
  * must match cannot drift apart, and a caller cannot close out a recovery under
  * an actor it never drove.
  *
- * Nothing short of `recovered` is ever finalized, and the failing outcomes are
- * deliberately NOT folded into one code. A recovery that did not reach
- * containment reports `stardew_owner_recovery_unavailable`: the native position
- * stays unproven, an uncertain native recovery is neither closed out as if it had
- * succeeded nor re-driven here, and nothing is finalized. A recovery whose gate
- * was held reports `STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL` instead, the lease
- * verdict rather than a recovery result. The AI-side terminal reports
- * `STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED`, checked BEFORE that
- * generic non-recovered refusal so it takes its own path: it is checked after
- * the held-gate verdict, and it is never reached through a default arm.
- * Everything else this can fail with is likewise bounded: a missing seam, and
- * whatever the finalization itself refuses with.
+ * Nothing short of `recovered` or the AI-side terminal is ever finalized, and the
+ * failing outcomes are deliberately NOT folded into one code. A recovery that did
+ * not reach containment reports `stardew_owner_recovery_unavailable`: the native
+ * position stays unproven, an uncertain native recovery is neither closed out as
+ * if it had succeeded nor re-driven here, and nothing is finalized. A recovery
+ * whose gate was held reports `STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL` instead,
+ * the lease verdict rather than a recovery result. Everything else this can fail
+ * with is likewise bounded: a missing seam, and whatever the finalization itself
+ * refuses with.
+ *
+ * The AI-side terminal is finalized through the seam's OWN terminal member (see
+ * the constant above) and then reports `STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED`,
+ * checked BEFORE the generic non-recovered refusal so it takes its own path: it
+ * is checked after the held-gate verdict, and it is never reached through a
+ * default arm. Its terminal is not `recovered` and must never be reported as
+ * one, which is exactly why the outcome keeps its own name after the finalize.
  */
 export async function driveStardewOwnedPlayerHostRecovery(
   teardown: StardewContainedRuntimeTeardown | undefined,
@@ -729,9 +776,20 @@ export async function driveStardewOwnedPlayerHostRecovery(
   const outcome = await teardown.recover(owner, request);
   if (outcome.status === "gate_held") throw new Error(STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL);
   // Before the generic non-recovered refusal below: the AI-side terminal is not
-  // an uncertainty, so it must not be reported as one. See the constant's doc for
-  // why this path does not (yet) finalize.
-  if (outcome.status === "ai_settled_player_preserved") throw new Error(STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED);
+  // an uncertainty, so it must not be reported as one. It is closed out FIRST -
+  // through the seam's own AI-side terminal member, so its own durable terminal,
+  // its registration pointer release and its transaction consumption all happen
+  // before the code below is reported - and only then reported under its own
+  // code. The finalize above the throw is why the next lifecycle's reservation is
+  // no longer refused by this attempt; the code is still this outcome's own,
+  // because the world slot stays the player's and the product answer stays
+  // "resume this world", never "this recovered". A finalize that refuses is not
+  // swallowed either: it travels out instead of this code being reported for an
+  // attempt that was not actually closed out.
+  if (outcome.status === "ai_settled_player_preserved") {
+    await teardown.finalizeRecoveredAiSettled(owner, request);
+    throw new Error(STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED);
+  }
   if (outcome.status !== "recovered") throw new Error("stardew_owner_recovery_unavailable");
   await teardown.finalizeRecovered(owner, request);
 }
@@ -751,6 +809,25 @@ function isTransientFarmhandBridgeConnectError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ENOENT" || code === "ECONNREFUSED";
+}
+
+/**
+ * The two shapes of "the leftover attempt this world slot names is already closed
+ * out", read at the one place that opens it.
+ *
+ * A durable record that reached a terminal state is refused by the sanctioned
+ * opener under its own bounded code; a record an earlier close-out CONSUMED is
+ * simply not on disk any more, which surfaces as the strict read's ENOENT. The
+ * slot's own holder handle names an attempt that really did register a binding,
+ * so either answer means the same product fact: nothing is recoverable here and
+ * the world is still the player's. Read as the closed case below, that keeps the
+ * create's answer the bounded "resume this world" instead of degrading into the
+ * generic unavailable outcome the caller cannot act on.
+ */
+function isClosedLeftoverAttemptError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message === STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL) return true;
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 /**
@@ -1232,10 +1309,19 @@ function createCoordinator(
    *   (non-pristine, non-terminal) attempt. It refuses a terminal or quarantined
    *   record with its own bounded code, so a terminal attempt is never recovered
    *   through this path.
+   * - An attempt that is ALREADY CLOSED OUT is read as closed, not as an unknown
+   *   failure: a terminal record (the opener's bounded refusal, which now
+   *   includes the AI-side terminal) and a record an earlier close-out consumed
+   *   (no record on disk at all) both mean nothing is recoverable here and the
+   *   world is still the player's, so this create refuses under the SAME
+   *   resume-instead code. That is the ordinary state of a world slot after the
+   *   AI-side terminal has been closed out: the slot deliberately keeps the
+   *   player's world bound, and every later create on it must keep getting the
+   *   bounded product answer rather than a generic outcome.
    * - The drive is the existing one (`driveStardewOwnedPlayerHostRecovery`): the
    *   same teardown seam, the same consumed one-shot owner binding, one attempt,
    *   one recovery. A recovery that did not reach containment is never retried,
-   *   and nothing short of `recovered` is ever finalized.
+   *   and nothing short of `recovered` or the AI-side terminal is ever finalized.
    * - The WORLD SLOT is never released by this create. The slot binds the
    *   PLAYER'S WORLD, and the player's world does not die with the AI attempt, so
    *   the ruling makes the slot the player's to keep: after a crash the next stop
@@ -1246,9 +1332,11 @@ function createCoordinator(
    *   was NOT proven gone, so nothing is finalized, nothing is released, and the
    *   leftover attempt's durable state is left exactly as it was found.
    * - The AI-side terminal - the broker settled and cleaned up the AI side and
-   *   deliberately preserved the player's world - is refused under its own
-   *   bounded code, whose meaning is that the world is still the player's and the
-   *   session must be RESUMED rather than created again.
+   *   deliberately preserved the player's world - is finalized through its own
+   *   durable terminal (the attempt's registration pointer released and its
+   *   transaction consumed) and then refused under its own bounded code, whose
+   *   meaning is that the world is still the player's and the session must be
+   *   RESUMED rather than created again.
    * - A recovery that did reach containment is finalized (its own registration
    *   pointer released, its transaction consumed) and then this create is refused
    *   under the SAME resume-instead code, because the world slot is still the
@@ -1279,15 +1367,26 @@ function createCoordinator(
     // create. The release refuses a terminal holder too, so driving one here
     // could not even make progress.
     if (holder === null || holder.status !== "registered") return;
-    const opened = await openRecoverableStardewBootstrapOwner({
-      // The root the reservation path persists the attempt's `owner.json`
-      // under: the same `runtimeRoot` this lifecycle read the registration and
-      // the holder correlation from.
-      transactionRoot: runtimeRoot,
-      // The slot's own handle names the attempt, so the attempt opened is the
-      // one the slot names - passed through verbatim, never derived.
-      bootstrapFacts: { bootstrapId: holder.holderHandle, playerId, companionId },
-    });
+    let opened: StardewRecoverableBootstrapOwner;
+    try {
+      opened = await openRecoverableStardewBootstrapOwner({
+        // The root the reservation path persists the attempt's `owner.json`
+        // under: the same `runtimeRoot` this lifecycle read the registration and
+        // the holder correlation from.
+        transactionRoot: runtimeRoot,
+        // The slot's own handle names the attempt, so the attempt opened is the
+        // one the slot names - passed through verbatim, never derived.
+        bootstrapFacts: { bootstrapId: holder.holderHandle, playerId, companionId },
+      });
+    } catch (error) {
+      // The attempt this slot names is already closed out; see the branch doc
+      // above. The world slot is deliberately NOT released - the world is still
+      // the player's - so this refuses under the resume-instead code, exactly
+      // like a leftover that was just closed out by this same path.
+      if (isClosedLeftoverAttemptError(error))
+        throw new Error(STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED, { cause: error });
+      throw error;
+    }
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     // ONE request for both halves of the recovery: the actor the durable CASes
     // record and the actor the finalization must match are the same value, and

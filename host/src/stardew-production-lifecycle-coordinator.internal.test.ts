@@ -1653,14 +1653,17 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
  * exactly-once attempt count and every refusal path are observed rather than
  * assumed.
  *
- * A recovery that did not reach containment is never finalized: an uncertain
- * native recovery must be neither closed out as if it had succeeded nor
- * re-driven. Its two failing answers are pinned separately, because they do not
+ * A recovery that did not reach a terminal the drive accepts is never finalized:
+ * an uncertain native recovery must be neither closed out as if it had succeeded
+ * nor re-driven. Its two failing answers are pinned separately, because they do not
  * mean the same thing: `unavailable` reports a recovery that did not reach
  * containment, while a held native gate reports the LEASE verdict - the holder
- * was not proven gone - under its own bounded code.
+ * was not proven gone - under its own bounded code. The two terminals the drive
+ * DOES accept each go through their own closure, and the order is pinned: the
+ * closure runs before the terminal's code is reported, and a closure that refuses
+ * replaces that code rather than being swallowed.
  */
-test("the owner recovery drive finalizes only a recovery that reached containment, exactly once", async () => {
+test("the owner recovery drive finalizes every terminal it accepts, exactly once, and never fabricates one", async () => {
   const request: StardewOwnerRecoveryRequest = Object.freeze({
     recoveryInstanceId: "0a5c1e7b-2f3d-4a90-8c11-6d2b7e4f9a02",
     readRecoveryBinding: async () => Object.freeze({}),
@@ -1670,6 +1673,7 @@ test("the owner recovery drive finalizes only a recovery that reached containmen
     events: string[],
     recover: (received: StardewOwnerRecoveryRequest) => Promise<RedactedRecoveryOutcome>,
     finalize: (received: StardewOwnerRecoveryRequest) => Promise<void>,
+    finalizeAiSettled: (received: StardewOwnerRecoveryRequest) => Promise<void> = finalize,
   ): StardewContainedRuntimeTeardown => Object.freeze({
     containPlayerHost: async () => { events.push("containPlayerHost"); },
     containAiClient: async () => { events.push("containAiClient"); },
@@ -1681,6 +1685,10 @@ test("the owner recovery drive finalizes only a recovery that reached containmen
     finalizeRecovered: async (_owner, received) => {
       events.push("finalizeRecovered");
       await finalize(received);
+    },
+    finalizeRecoveredAiSettled: async (_owner, received) => {
+      events.push("finalizeRecoveredAiSettled");
+      await finalizeAiSettled(received);
     },
     close: async () => { events.push("close"); },
   });
@@ -1777,16 +1785,12 @@ test("the owner recovery drive finalizes only a recovery that reached containmen
   );
   assert.deepEqual(gateHeldEvents, ["recover"]);
 
-  // (g) The AI-side terminal carries its own bounded code too, and it is checked
-  // BEFORE the generic non-recovered refusal so it is never reported as an
-  // uncertainty or as a held gate: the gate DID open, the AI side is settled and
-  // the player's world was deliberately preserved. It finalizes nothing TODAY -
-  // the durable finalize requires both roles contained, which this path never
-  // records, so calling it would make the durable engine quarantine the attempt
-  // as a side effect of its own refusal, fabricating a terminal state for a world
-  // that was preserved. The finalize step that releases this attempt's
-  // registration pointer is blocked on the durable-engine decision that gives the
-  // AI-side terminal a terminal state of its own.
+  // (g) The AI-side terminal is closed out through the seam's OWN terminal member
+  // and only then reported under its own bounded code, checked BEFORE the generic
+  // non-recovered refusal so it is never reported as an uncertainty or as a held
+  // gate: the gate DID open, the AI side is settled and the player's world was
+  // deliberately preserved. The close-out runs FIRST, so no attempt is ever
+  // reported as closed out while it still occupies its registration.
   const aiSettledEvents: string[] = [];
   await assert.rejects(
     () => driveStardewOwnedPlayerHostRecovery(
@@ -1794,13 +1798,34 @@ test("the owner recovery drive finalizes only a recovery that reached containmen
         aiSettledEvents,
         async () => Object.freeze({ status: "ai_settled_player_preserved" as const }),
         async () => { throw new Error("finalization_must_not_run"); },
+        async () => undefined,
       ),
       owner,
       request,
     ),
     (error: unknown) => error instanceof Error && error.message === "stardew_owner_recovery_ai_settled_player_preserved",
   );
-  assert.deepEqual(aiSettledEvents, ["recover"]);
+  assert.deepEqual(aiSettledEvents, ["recover", "finalizeRecoveredAiSettled"]);
+
+  // (h) A close-out that refuses is never swallowed, and the terminal code is NOT
+  // reported for an attempt that was not closed out: the attempt would still
+  // occupy its registration, so reporting the terminal would be exactly the
+  // fabricated success this seam must never produce.
+  const aiSettledRefusedEvents: string[] = [];
+  await assert.rejects(
+    () => driveStardewOwnedPlayerHostRecovery(
+      scripted(
+        aiSettledRefusedEvents,
+        async () => Object.freeze({ status: "ai_settled_player_preserved" as const }),
+        async () => { throw new Error("finalization_must_not_run"); },
+        async () => { throw new Error("stardew_bootstrap_owner_recovery_finalize_failed"); },
+      ),
+      owner,
+      request,
+    ),
+    (error: unknown) => error instanceof Error && error.message === "stardew_bootstrap_owner_recovery_finalize_failed",
+  );
+  assert.deepEqual(aiSettledRefusedEvents, ["recover", "finalizeRecoveredAiSettled"]);
 });
 
 /**
@@ -5454,10 +5479,11 @@ test("game.create reports the terminal create failure when its durable settle ca
  * own record, projects something else here instead of passing by default. The
  * outcome is the caller's to script, in the drive's own vocabulary: `recovered`
  * (containment reached, so the drive finalizes), `ai_settled_player_preserved`
- * (the broker's player-role early return), `gate_held` (the lease verdict) and
- * `unavailable` (the recovery did not reach containment); `never` installs
- * outright refusals, so a trigger that drove a recovery it should not have driven
- * fails loudly instead of silently succeeding.
+ * (the broker's player-role early return, closed out through that terminal's own
+ * seam member), `gate_held` (the lease verdict) and `unavailable` (the recovery
+ * did not reach containment); `never` installs outright refusals, so a trigger
+ * that drove a recovery it should not have driven fails loudly instead of
+ * silently succeeding.
  */
 function scriptedRecoveryTeardown(outcome: "recovered" | "ai_settled_player_preserved" | "gate_held" | "unavailable" | "never") {
   const events: string[] = [];
@@ -5479,6 +5505,11 @@ function scriptedRecoveryTeardown(outcome: "recovered" | "ai_settled_player_pres
     },
     finalizeRecovered: async (_owner, request) => {
       events.push("finalizeRecovered");
+      if (outcome === "never") throw new Error("finalization_must_not_run");
+      requests.push(request);
+    },
+    finalizeRecoveredAiSettled: async (_owner, request) => {
+      events.push("finalizeRecoveredAiSettled");
       if (outcome === "never") throw new Error("finalization_must_not_run");
       requests.push(request);
     },
@@ -5737,23 +5768,20 @@ test("game.create's leftover trigger adopts the record's recorded recovery actor
  * itself under its OWN bounded code, whose meaning is that the world is still the
  * player's and the session must be RESUMED rather than created again.
  *
- * Nothing is fabricated and nothing is thrown away. The finalize step that would
- * release this attempt's registration pointer is blocked on the durable-engine
- * decision that gives this terminal a durable state of its own, so the trigger
- * deliberately does NOT call the finalize here: the durable finalize requires BOTH
- * roles contained, which this path never records, so calling it would make the
- * engine quarantine the attempt as a side effect of its own refusal. What this
- * test pins is the CURRENT honest behaviour: the create is refused, the world
- * slot is still held by the crashed session, and that session is still resumable -
- * its attempt record is intact and non-terminal, and the slot still names it.
+ * The attempt is closed out on the same step, through that terminal's own seam
+ * member: the drive closes the attempt out FIRST and only then reports the
+ * terminal, so an attempt is never reported as closed while it still occupies its
+ * registration. What the durable closure itself does - the record's own terminal,
+ * the registration pointer release and the consumed transaction - is asserted in
+ * the composer test and in the cross-layer recovery integration test, where a real
+ * owner binding exists; this level scripts the seam, so here it is the ORDER that
+ * is pinned together with everything the trigger must never do: no world-slot
+ * release, no fabricated record, no invented role containment.
  *
- * The residual is stated plainly here so it does not read as resolved: the
- * registration pointer is STILL BOUND to the crashed attempt's reservation, so the
- * resume this refusal points at is itself refused with
- * `stardew_bootstrap_registration_unavailable` until the durable-engine change
- * lands. The cross-layer lane asserts that end to end; what this test pins is that
- * the record the pointer belongs to was not touched, not quarantined and not
- * fabricated into anything.
+ * The residual this test used to record is closed: the registration pointer is no
+ * longer left bound to the crashed attempt, so the resume this refusal points at
+ * is no longer refused with `stardew_bootstrap_registration_unavailable`. The
+ * cross-layer lane asserts that end to end.
  */
 test("game.create over a slot whose recovery settled the AI side refuses itself and leaves the player's world to resume", async () => {
   const fake = fakeGameSessionCreationAuthority();
@@ -5796,10 +5824,12 @@ test("game.create over a slot whose recovery settled the AI side refuses itself 
       (error: unknown) => error instanceof Error && error.message === "stardew_game_create_world_held_by_player_resume_required",
     );
 
-    // The drive ran its recover step exactly once and stopped there: no finalize
-    // was attempted, so the attempt record cannot have been quarantined by a
-    // refused finalize's own failure closure.
-    assert.deepEqual(scripted.events, ["recover"]);
+    // The drive ran its recover step exactly once and then closed the attempt out
+    // through that terminal's OWN seam member - never through the containment one,
+    // which would close it out as a containment the recovery never observed. The
+    // closure itself is the composer's real one in production (asserted in the
+    // composer and cross-layer tests); the scripted seam here records the order.
+    assert.deepEqual(scripted.events, ["recover", "finalizeRecoveredAiSettled"]);
     // The world slot is still held by the crashed session, with its own handle,
     // and its row is untouched. This is the evidence for the ruling's third goal:
     // the player's world is preserved, waiting for its resume.
@@ -5815,10 +5845,13 @@ test("game.create over a slot whose recovery settled the AI side refuses itself 
       gameSessionId: leftover.gameSessionId, integrationId: "stardew", bindingRef: "Farm_389124477",
       status: "registered", revision: 1, holderHandle: crashedBootstrapId,
     });
-    // Nothing was fabricated into the attempt record and nothing was thrown away:
-    // it is exactly the non-terminal record the deliberate terminal left, so the
-    // session is still resumable. Read back field by field, so a silent rewrite
-    // into a terminal or quarantined shape cannot pass as "unchanged bytes".
+    // Nothing was fabricated into the attempt record: what this create's drive did
+    // to it is exactly what the closure this level scripted did - nothing. It is
+    // still the record the deliberate terminal left, read back field by field, so a
+    // silent rewrite into a terminal or quarantined shape cannot pass as "unchanged
+    // bytes". The durable closure's own effect on that record (its terminal
+    // successor, the released pointer, the consumed transaction) is asserted where
+    // a real owner binding exists: the composer test and the cross-layer test.
     assert.equal(await readFile(
       join(fixture.runtimeRoot, "stardew-private-bootstrap", crashedBootstrapId, "owner.json"), "utf8",
     ), recordBefore);

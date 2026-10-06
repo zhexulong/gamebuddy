@@ -1260,30 +1260,38 @@ test("a create over an already-settled leftover refuses without presenting any r
  * the world slot is the player's to keep, so the create refuses under its own
  * resume-instead code and presents NO release at all.
  *
- * WHAT THIS TEST ALSO RECORDS, because it must not read as resolved: the durable
- * finalize is deliberately NOT driven on this terminal. It requires BOTH roles
- * durably contained, which this path never records, so driving it would make the
- * engine quarantine the attempt as a side effect of its own refusal - burning the
- * very recoverability the follow-up change needs. So today a crash like this leaves
- * the session BLOCKED: the create is refused with "this world is the player's,
- * resume it", and the resume is itself refused, because the crashed attempt's
- * registration pointer is still bound to its reservation. The attempt record
- * itself is untouched, still non-terminal, and still openable by the sanctioned
- * opener - so the gap is exactly the pointer release that the durable-engine
- * change exists to land, and nothing else. This is asserted below rather than
- * described, so the gap stays visible instead of silently reading as healed.
+ * The attempt itself, though, IS closed out here, and this test asserts both halves
+ * as the product consequence they are:
+ *
+ * - the durable record reaches its own AI-side terminal (no role recorded
+ *   contained), the crashed attempt's registration pointer is released, and its
+ *   declared transaction is consumed;
+ * - consequently the NEXT lifecycle's reservation - the exact point
+ *   `stardew_bootstrap_registration_unavailable` used to refuse, and the point both
+ *   the next create and the next resume depend on - succeeds. That is the whole
+ *   reason the terminal exists, so it is driven end to end here rather than
+ *   asserted as a flag;
+ * - and the world slot is still NOT released, because it binds the player's world.
+ *   A later create on that slot is refused under the same resume-instead code, and
+ *   the coordinator reads the now-closed leftover as closed instead of degrading
+ *   the answer into the generic unavailable outcome.
+ *
+ * WHAT THIS TEST DOES NOT CLAIM, because it must not read as stronger than it is:
+ * the native answer is still the scripted Desktop stand-in's (no real named-mutex
+ * gate, no real Guardian process, no live run - see this file's header), and the
+ * world slot's own release stays a separate explicit operation that no create path
+ * performs.
  */
-test("the create-side trigger refuses a world whose recovery settled the AI side, and the still-bound pointer blocks its own resume", async () => {
+test("an AI-side recovery terminal is closed out so the next lifecycle's reservation stops being blocked, while the world slot stays the player's", async () => {
   const harness = await integrationHarness({ bootstrapId: crashedAttemptId, recoveryAnswer: "ai_settled_player_preserved" });
   const { runtimeRoot, store, fixture, control } = harness;
-  let blockedFixture: IntegrationFixture | undefined;
+  let successorFixture: IntegrationFixture | undefined;
   try {
     await prepareLaunchedPlayerHost(fixture);
     await crashCreate(fixture, "integration-ai-side-terminal-crash");
 
     const leftover = await readSlotLeftover(fixture);
     assert.notEqual(leftover, null);
-    const registrationBytes = JSON.stringify(await readStardewInstallationRegistration(runtimeRoot));
     const membersBefore = fixture.authorityMembers().length;
 
     const outcome = await driveAdmittedCreate(fixture, "integration-ai-side-terminal-create");
@@ -1305,38 +1313,37 @@ test("the create-side trigger refuses a world whose recovery settled the AI side
       "createGameSessionMetadata",
       "failGameSessionCreation",
     ]);
-    // The leftover's own rows are exactly what the crash left: it still holds the
-    // world slot, with its own handle, and the pointer still names it.
+    // The world slot is deliberately NOT released: it binds the player's world, so
+    // its own rows are exactly what the crash left - it still holds the slot, with
+    // the crashed attempt's handle, and a later create on it must keep getting the
+    // resume-instead answer.
     assert.deepEqual(await readSlotLeftover(fixture), leftover);
-    assert.equal(await readRegistrationPointer(runtimeRoot), crashedAttemptId);
-    assert.equal(JSON.stringify(await readStardewInstallationRegistration(runtimeRoot)), registrationBytes);
 
-    // The attempt record is exactly the shape the deliberate terminal leaves: the
-    // durable `recovering` CAS ran (the gate opened), the recorded actor is the one
-    // the drive adopted, NO role is recorded contained, and nothing claims a pending
-    // cleanup retry - so nothing was fabricated and nothing was quarantined.
-    const record = await readCrashedAttemptRecord(fixture);
-    assert.equal(record.state, "recovering");
-    assert.equal(record.guardianState, "recovering");
-    assert.equal(record.playerHostState, "reserved");
-    assert.equal(record.aiClientState, "reserved");
-    assert.equal(record.cleanupDisposition, "pending");
-    assert.notEqual(record.recoveryInstanceId, null);
+    // The ATTEMPT, unlike the world slot, is closed out now: its registration
+    // pointer is released (so the next lifecycle can reserve at all) and its
+    // declared transaction is consumed (so no `retry_required` debt and no
+    // per-crash transaction leak survives).
+    assert.equal(await readRegistrationPointer(runtimeRoot), null);
+    assert.equal(await readOwnerRecord(runtimeRoot, crashedAttemptId), null);
+    // The sanctioned opener has nothing left to open either: the record was
+    // consumed rather than left behind in a shape anything could mistake for a
+    // live attempt, and the closure above is what the evidence names.
+    await assert.rejects(
+      openRecoverableStardewBootstrapOwner({
+        transactionRoot: runtimeRoot,
+        bootstrapFacts: { bootstrapId: crashedAttemptId, playerId: principal.playerId, companionId: principal.companionId },
+      }),
+      (error: unknown) =>
+        error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT",
+      "a closed-out attempt has no durable record left to open",
+    );
 
-    // Still openable by the sanctioned opener: the refusal did not burn the
-    // attempt's recoverability, and no terminal or quarantined state was invented
-    // for a world that was deliberately preserved.
-    const opened = await openRecoverableStardewBootstrapOwner({
-      transactionRoot: runtimeRoot,
-      bootstrapFacts: { bootstrapId: crashedAttemptId, playerId: principal.playerId, companionId: principal.companionId },
-    });
-    assert.equal(opened.ownerRecordRevision, record.ownerRecordRevision);
-
-    // THE RESIDUAL, asserted rather than described: with the finalize half still
-    // blocked, the crashed attempt keeps its registration pointer, and a fresh
-    // lifecycle cannot even reserve - so the resume this refusal points at is
-    // refused too, with the registration refusal as its cause.
-    blockedFixture = await createIntegrationFixture({
+    // THE ACCEPTANCE CRITERION, driven end to end: this exact lifecycle used to be
+    // refused at its own activation with `stardew_bootstrap_registration_unavailable`
+    // because the crashed attempt still held the registration pointer - the point
+    // both the next create and the next resume depend on. It now activates, stages
+    // and launches, and its own attempt is what the pointer names.
+    successorFixture = await createIntegrationFixture({
       runtimeRoot,
       bootstrapId: successorAttemptId,
       slotRef: runtimeSlotRef,
@@ -1344,8 +1351,28 @@ test("the create-side trigger refuses a world whose recovery settled the AI side
       crashPolicy: { unappliableSettleClosure: false },
       recoveryAnswer: "contained",
     });
-    await expectActivationRefused(blockedFixture, "stardew_bootstrap_registration_unavailable");
-    assert.equal(await readRegistrationPointer(runtimeRoot), crashedAttemptId);
+    await prepareLaunchedPlayerHost(successorFixture);
+    assert.equal(await readRegistrationPointer(runtimeRoot), successorAttemptId);
+
+    // And the world slot is still the player's: this lifecycle's create over the
+    // leftover is refused under the same bounded resume-instead code. The
+    // coordinator reads the already-closed leftover as CLOSED (the closed attempt
+    // has no record to recover), so the answer stays the bounded product one
+    // instead of degrading into the generic unavailable outcome - and the slot's
+    // own rows are still the crashed attempt's.
+    const successorMembersBefore = successorFixture.authorityMembers().length;
+    const second = await driveAdmittedCreate(successorFixture, "integration-ai-side-terminal-later-create");
+    assert.equal(second.kind, "refusal");
+    assert.equal(
+      (second as Readonly<{ message: string }>).message,
+      STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED,
+    );
+    assert.deepEqual(successorFixture.authorityMembers().slice(successorMembersBefore), [
+      "createGameSessionMetadata",
+      "failGameSessionCreation",
+    ]);
+    assert.deepEqual(await readSlotLeftover(successorFixture), leftover);
+    assert.equal(await readRegistrationPointer(runtimeRoot), successorAttemptId);
   } finally {
     // The same-attempt consequence this file's report names: a recovery driven from
     // inside this create's own lifecycle leaves the attempt in a position its own
@@ -1357,7 +1384,7 @@ test("the create-side trigger refuses a world whose recovery settled the AI side
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );
     assert.equal(closeOutcome, "stardew_lifecycle_close_incomplete");
-    await blockedFixture?.close();
+    await successorFixture?.close();
     await fixture.broker.close();
     control.close();
   }
