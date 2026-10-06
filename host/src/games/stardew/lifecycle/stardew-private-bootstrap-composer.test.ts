@@ -864,6 +864,53 @@ test("a refused recovery finalization quarantines the recovery instead of invent
       revision: 4,
     },
   );
+
+  // The same construction, driven to the AI-side terminal instead: a recovery
+  // that recorded a role containment is NOT the outcome that terminal describes
+  // (its transition refuses a predecessor carrying a containment, because the
+  // record may not claim a containment the recovery never observed), so its
+  // finalize refuses and its own failure closure quarantines too. This is the
+  // half that keeps the new terminal from being a loophole around the refusal
+  // asserted above, and it is deliberately pinned on the same one-role-contained
+  // outcome so the two terminals cannot drift apart.
+  const aiHarness = createHarness();
+  const aiRoot = await createRoot();
+  const aiTriple = mintOwnedTriple(aiHarness.composition);
+  const aiOwner = await aiHarness.composition.reserveOwnedPlayerHostBootstrap(
+    aiRoot, aiTriple.claim, aiTriple.playerHostReservation, aiTriple.aiClientReservation,
+  );
+  const aiTransitions = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(aiOwner),
+  ).transitions;
+  const aiActor = "9c2d4a86-1f57-4e02-8b39-5a7c0e1d6f28";
+  await aiTransitions.beginRecovery(aiActor);
+  await aiTransitions.recoveryRoleContained("playerHost", aiActor);
+
+  await assert.rejects(
+    productionCore.finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(aiOwner, aiActor),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
+  const aiPersisted = JSON.parse(await readFile(ownerPath(aiRoot), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(
+    {
+      state: aiPersisted.state,
+      guardian: aiPersisted.guardianState,
+      playerHost: aiPersisted.playerHostState,
+      aiClient: aiPersisted.aiClientState,
+      recovery: aiPersisted.recoveryInstanceId,
+      cleanup: aiPersisted.cleanupDisposition,
+      revision: aiPersisted.ownerRecordRevision,
+    },
+    {
+      state: "quarantined",
+      guardian: "quarantined",
+      playerHost: "contained",
+      aiClient: "quarantined",
+      recovery: null,
+      cleanup: "retry_required",
+      revision: 4,
+    },
+  );
 });
 
 /**
@@ -924,6 +971,239 @@ test("finalizing a recovered attempt releases the bound registration pointer and
   );
   await assert.rejects(readFile(ownerPath(root), "utf8"), { code: "ENOENT" }, "a repeated finalization rewrites nothing");
   assert.equal((await readStardewInstallationRegistration(root))?.revision, 3);
+});
+
+/**
+ * The AI-side recovery terminal, on the durable engine.
+ *
+ * It is the terminal for the recovery OUTCOME where the gate opened, the broker
+ * classified the player role as not contained (the player's world is
+ * deliberately left untouched) and settled the AI side by its own
+ * classification, so the conversation returned before any role CAS. The test
+ * pins the three things that make it honest rather than convenient:
+ *
+ * - it is reachable from `recovering` and from nowhere else;
+ * - the successor it writes is a shape the strict v4 validator accepts (proved
+ *   the only way a successor can be proved: the opener re-reads and validates the
+ *   persisted record before it decides anything, so reaching its terminal refusal
+ *   means the record passed that validator);
+ * - it records what the recovery observed and nothing more: no role containment,
+ *   the recovery actor cleared, and the recovery disposition left `pending`
+ *   rather than an invented retry debt.
+ */
+test("the AI-side recovery terminal is reachable only from `recovering` and records no role containment", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const actor = "7f4b2e91-6c05-4a3d-b8e7-1d9a0f3c5b62";
+  // Not reachable from a predecessor that is not `recovering`. On such a record
+  // the transition's own actor precondition fires first (a record that never began
+  // a recovery has no recorded actor), and on an armed one the terminal refusal
+  // follows; both are bounded codes and both leave the bytes exactly as they were.
+  const before = await readFile(path, "utf8");
+  await assert.rejects(
+    transition.finalizeRecoveredAiSettledPlayerPreserved(1, actor),
+    /stardew_bootstrap_owner_transition_(?:invalid|mismatch)/,
+  );
+  assert.equal(await readFile(path, "utf8"), before, "a refused terminal transition rewrites nothing");
+
+  // The crashed attempt's own residue: the durable `recovering` CAS ran and then
+  // the conversation returned at the player position, so no role CAS followed.
+  await transition.beginRecovery(1, actor);
+  const terminal = await transition.finalizeRecoveredAiSettledPlayerPreserved(2, actor);
+  assert.deepEqual(
+    {
+      state: terminal.state,
+      guardian: terminal.guardianState,
+      playerHost: terminal.playerHostState,
+      aiClient: terminal.aiClientState,
+      recovery: terminal.recoveryInstanceId,
+      cleanup: terminal.cleanupDisposition,
+      revision: terminal.ownerRecordRevision,
+    },
+    {
+      state: "ai_settled_player_preserved",
+      guardian: "ai_settled_player_preserved",
+      playerHost: "reserved",
+      aiClient: "reserved",
+      recovery: null,
+      cleanup: "pending",
+      revision: 3,
+    },
+    "the terminal records the observed outcome: no role contained, no actor, no retry debt",
+  );
+
+  // The terminal is not a state the same recovery can step out of, and the
+  // opener - the ONE sanctioned opening path - refuses it AS terminal, which
+  // also proves the persisted record satisfied the strict validator. The repeat
+  // refuses because the terminal cleared the recovered actor, which is the same
+  // bounded precondition an unstarted recovery meets.
+  await assert.rejects(
+    transition.finalizeRecoveredAiSettledPlayerPreserved(3, actor),
+    /stardew_bootstrap_owner_transition_(?:invalid|mismatch)/,
+  );
+  const terminalBytes = await readFile(path, "utf8");
+  await assert.rejects(
+    productionCore.openRecoverableStardewBootstrapOwner({
+      transactionRoot: root,
+      bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+    }),
+    /stardew_bootstrap_owner_recovery_terminal/,
+  );
+  assert.equal(await readFile(path, "utf8"), terminalBytes, "a terminal record is never reopened or rewritten");
+});
+
+/**
+ * The AI-side terminal's validator shape, attacked from the outside.
+ *
+ * The terminal is a terminal the recovery OBSERVED, not a containment it did
+ * not: every shape that would let a record wearing it claim more than that is
+ * rejected by the same strict v4 validator every CAS successor goes through. The
+ * honest shape is written first as the positive control - the opener refuses it
+ * as TERMINAL, which is only reachable after validation - so the rejections
+ * below cannot be passing for the wrong reason.
+ */
+test("no shape of the AI-side recovery terminal can claim a containment the recovery did not observe", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const terminalShape = {
+    state: "ai_settled_player_preserved",
+    guardianState: "ai_settled_player_preserved",
+  };
+
+  await writeFile(path, `${JSON.stringify({ ...expectedRecord(), ...terminalShape })}\n`, "utf8");
+  await assert.rejects(
+    productionCore.openRecoverableStardewBootstrapOwner({
+      transactionRoot: root,
+      bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+    }),
+    /stardew_bootstrap_owner_recovery_terminal/,
+    "the honest terminal shape passes the validator and is then refused as terminal",
+  );
+
+  for (const forged of [
+    // A containment in either role: the AI side is a fact the broker never
+    // reported to the Host, and the player's world is deliberately preserved.
+    { ...expectedRecord(), ...terminalShape, playerHostState: "contained" },
+    { ...expectedRecord(), ...terminalShape, aiClientState: "contained" },
+    // The retry-required debt this terminal must never carry: the AI side really
+    // was cleaned up and the player's world needs no retry.
+    { ...expectedRecord(), ...terminalShape, cleanupDisposition: "retry_required" },
+    // A recovery actor that outlived the terminal, or a parent/guardian pair
+    // that disagrees.
+    { ...expectedRecord(), ...terminalShape, recoveryInstanceId: "recovery-forged" },
+    { ...expectedRecord(), ...terminalShape, guardianState: "contained" },
+    // A role state that is not even a role state.
+    { ...expectedRecord(), ...terminalShape, playerHostState: "settled" },
+  ]) {
+    await writeFile(path, `${JSON.stringify(forged)}\n`, "utf8");
+    const forgedBytes = await readFile(path, "utf8");
+    await assert.rejects(
+      productionCore.openRecoverableStardewBootstrapOwner({
+        transactionRoot: root,
+        bootstrapFacts: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1" },
+      }),
+      /invalid_stardew_bootstrap_owner/,
+      `a forged terminal shape must be rejected: ${JSON.stringify(forged)}`,
+    );
+    assert.equal(await readFile(path, "utf8"), forgedBytes, "a rejected record is never rewritten");
+  }
+});
+
+/**
+ * Closing out the AI-side terminal is one contract unit, and this is its whole
+ * product effect: the durable parent record reaches its terminal successor, the
+ * registration pointer the crashed attempt had bound is released, the attempt's
+ * declared transaction is consumed - and the activation reservation the attempt
+ * used to refuse now succeeds.
+ *
+ * The reservation is asserted on BOTH sides of the finalize because "the pointer
+ * was released" is not the claim that matters: the claim is that the exact
+ * reservation every later lifecycle's create AND resume depend on stopped being
+ * refused. No flag is read here; the real reservation path runs twice.
+ */
+test("finalizing an AI-side recovery terminal releases the pointer, consumes the attempt and stops refusing the next reservation", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  // The crash residual this terminal exists for: the attempt's own reservation
+  // had already bound the registration pointer when the process died.
+  await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
+  const triple = mintOwnedTriple(harness.composition);
+  const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+  );
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
+  );
+  const actor = "3e8a1c64-7b29-4d05-9f83-2c5e0a7b61d4";
+  // A bare activation claim: the reservation path this test drives must not be
+  // pre-bound to a role launch, because it reserves the roles itself.
+  const mintActivationClaim = (composition: StardewPrivateBootstrapComposition, browserSessionId: string) =>
+    composition.broker.confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId,
+      expiresAtMs: 5_000,
+    }).consume(browserSessionId);
+  // The broker's player-role early return: the durable `recovering` CAS ran and
+  // then the conversation stopped, so no role CAS ever followed.
+  await transitions.beginRecovery(actor);
+
+  // BEFORE: the attempt still occupies the registration, so a real activation
+  // reservation - the exact point both the next create and the next resume are
+  // refused at - is refused with the registration code. It is driven on its own
+  // composition because one composition owns at most one Player Host launch
+  // registration for its whole lifetime; the reservation PATH is the same
+  // production one on both sides of the finalize.
+  const beforeHarness = createHarness();
+  await assert.rejects(
+    beforeHarness.testCore.reserveOwnedPlayerHostBootstrapForActivation(
+      root,
+      mintActivationClaim(beforeHarness.composition, "browser-before"),
+    ),
+    /stardew_bootstrap_registration_unavailable/,
+  );
+
+  await productionCore.finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(owner, actor);
+
+  const registration = await readStardewInstallationRegistration(root);
+  assert.equal(registration?.state, "ready");
+  assert.equal(registration?.activeAttempt, null);
+  assert.equal(registration?.revision, 3);
+  // The disposition is CONSUMED here, not left as a retry-required debt: the AI
+  // side really was cleaned up and the player's world needs no retry, so the
+  // attempt's whole declared transaction is gone.
+  await assert.rejects(
+    readFile(ownerPath(root), "utf8"),
+    { code: "ENOENT" },
+    "an AI-side terminal consumes its attempt's declared transaction",
+  );
+
+  // AFTER: the same reservation the crashed attempt refused now succeeds and
+  // binds the pointer itself - the product outcome this terminal exists for.
+  const afterHarness = createHarness();
+  const next = await afterHarness.testCore.reserveOwnedPlayerHostBootstrapForActivation(
+    root,
+    mintActivationClaim(afterHarness.composition, "browser-after"),
+  );
+  assert.notEqual(next, undefined);
+  const rebound = await readStardewInstallationRegistration(root);
+  assert.equal(rebound?.revision, 4, "the reservation took the pointer past the release it found");
+  assert.equal(rebound?.activeAttempt?.bootstrapCorrelation, "bootstrap-1");
+
+  // Not repeatable: the terminal cleared the recovered actor, so a second
+  // finalize refuses instead of fabricating a second terminal transition.
+  await assert.rejects(
+    productionCore.finalizeRecoveredPlayerHostAiSettledRuntimeAttempt(owner, actor),
+    /stardew_bootstrap_owner_recovery_finalize_failed/,
+  );
 });
 
 /**

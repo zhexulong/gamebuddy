@@ -10,8 +10,18 @@ export type StardewGuardianBinding = Readonly<{
   aiJobName: string;
 }>;
 
-type StardewBootstrapParentState = "reserved" | "closing" | "recovering" | "contained" | "quarantined";
-type StardewBootstrapGuardianState = "reserved" | "armed" | "closing" | "recovering" | "contained" | "quarantined";
+/**
+ * Parent states of one durable attempt. `ai_settled_player_preserved` is the
+ * AI-side recovery terminal: the recovery gate opened, the broker classified
+ * the player role as NOT contained (the player's world is deliberately left
+ * untouched) and settled the AI side by its own kill-on-close classification,
+ * so no role CAS ever ran. It is named for what the recovery OBSERVED and never
+ * for a containment it did not observe: a record carrying it may not claim
+ * either role was contained. `contained` and `quarantined` stay the only two
+ * states that record role containment.
+ */
+type StardewBootstrapParentState = "reserved" | "closing" | "recovering" | "ai_settled_player_preserved" | "contained" | "quarantined";
+type StardewBootstrapGuardianState = "reserved" | "armed" | "closing" | "recovering" | "ai_settled_player_preserved" | "contained" | "quarantined";
 type StardewBootstrapRoleState = "reserved" | "armed" | "active" | "closing" | "contained" | "quarantined";
 
 type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
