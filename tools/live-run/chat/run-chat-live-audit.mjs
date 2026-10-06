@@ -591,6 +591,7 @@ export async function writeAuditTrace(path, trace) {
  * contract is untouched. Macro residue and obvious secret shapes are redacted rather than dropped, so a
  * reader can still see that the reply contained one.
  */
+import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
 import {
   buildLiveRunTextSideFile,
   createLiveRunTextCollector,
@@ -1129,6 +1130,13 @@ function emitNewPresentationMarkers({ stderr, recorder, seen }) {
 async function collectRun({ root, recorder, nonceSha256, environment, attachChild, probeManifest }) {
   const artifact = await productionArtifactIdentity();
   environment.artifact = artifact;
+  // Mount the live-run persona BEFORE anything reads the runtime cwd: the product's convention is
+  // <runtimeCwd>/card.json + worldbook.json, and a run without them has no persona at all — so this is
+  // provisioned (byte for byte, no preprocessing) and then ASSERTED, never assumed.
+  environment.persona = await provisionLiveRunPersona(root);
+  environment.personaMounted = await assertLiveRunPersonaMounted(root);
+  if (!environment.personaMounted.ok)
+    throw new Error(`live_run_persona_not_mounted:${environment.personaMounted.problems.join(",")}`);
   const configPath = join(root, "chat-audit.json");
   await writeFile(
     configPath,
@@ -1623,7 +1631,11 @@ export async function main(argv = process.argv.slice(2)) {
     // Option B: the bounded transcript travels BESIDE the trace, never inside it.
     const transcriptPath = transcriptSideFilePath(reportTarget);
     if (transcriptPath !== undefined) {
-      const side = buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() });
+      const side = Object.freeze({
+      ...buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() }),
+      persona: environment.persona?.identity ?? null,
+      personaMounted: environment.personaMounted?.ok === true,
+    });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
     }
