@@ -633,31 +633,85 @@ test("formal Preview Game composition does not load Magic Context", async () => 
   }
 });
 
-test("a Game runtime attachment without a model configuration leaves the surface model-less", async () => {
-  // The materializer now supplies the player's own Game profile model to every
-  // Game runtime, so this pins the runtime-core half of that contract: an
-  // attachment that carries no `modelConfig` produces a session with no model
-  // and thinking level `off`, and no provider entry is written. Nothing else
-  // turns provider networking on: `allowModelNetwork` is exactly
-  // `modelConfig !== undefined`, and the provider entry is merged under that
-  // same condition. A model configuration is therefore not an enhancement of a
-  // Game session; without one the session cannot reach a provider at all.
+test("a Game runtime attachment without a model configuration gets only the unknown placeholder model", async () => {
+  // The materializer never constructs a Game runtime this way: it supplies the
+  // player's own Game profile model to every Game runtime and refuses the whole
+  // materialization when the store cannot yield one. This case states exactly
+  // why, so that a silent regression to a model-less Game surface cannot hide:
+  // the embedded runtime substitutes its `unknown` placeholder model — no
+  // provider, no context window, no tokens — keeps the thinking level at `off`,
+  // records nulls in the durable run manifest, and writes no provider entry.
+  // `allowModelNetwork` is exactly `modelConfig !== undefined`, and the provider
+  // entry is merged under that same condition, so a missing `models.json` is
+  // the observable proof that provider networking stays off. A model
+  // configuration is therefore not an enhancement of a Game session: without
+  // one the session exists but can never reach a provider.
   const root = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-game-model-configuration-"),
   );
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
-  );
+  const registrations = [
+    {
+      actionId: "activate_console",
+      familyId: "arcade",
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+    },
+  ];
+  const policy = Object.freeze({
+    policyVersion: 1 as const,
+    deniedActions: [],
+    deniedFamilies: [],
+  });
+  const connection = {
+    scope: Object.freeze({ integrationId: "test-arcade" }),
+    executionGate: { executable: true },
+    state: Object.freeze({}),
+    module: {
+      descriptor: Object.freeze({
+        integrationId: "test-arcade",
+        version: "fixture-v1",
+        toolNamePrefix: "arcade_",
+      }),
+      actionCatalog: createIntegrationActionCatalog([
+        { actionId: "activate_console" },
+      ]),
+      defaultPolicy: policy,
+      parsePolicy: (value: unknown) => value as typeof policy,
+      actorId: () => identity.playerId,
+      assertIdentityBinding: () => undefined,
+      worldScope: () => null,
+      createToolSet: () => ({ observation: [], actions: [], knowledge: [] }),
+      knowledgeMetadata: () => ({
+        mounted: false,
+        gameVersion: null,
+        bundleVersion: null,
+      }),
+      status: () => ({
+        connected: true,
+        capabilities: [],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        latestReceiptState: null,
+        latestReasonCode: null,
+      }),
+      readState: () => ({
+        connected: true,
+        sessionId: "session_01",
+        capabilities: [],
+        registrations,
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        activeExecution: null,
+        latestReceipt: null,
+        latestReasonCode: null,
+      }),
+      cancelExecution: () => "not_supported",
+      parseReceipt: () => null,
+      actionIdForToolName: () => null,
+      isCancellationTool: () => false,
+    },
+  } as unknown as GameConnection;
   const attachmentFields = {
     gameplaySubagentEnabled: false,
     disableMagicContextMemory: true as const,
@@ -666,7 +720,7 @@ test("a Game runtime attachment without a model configuration leaves the surface
   const withoutModel = await createGameCompanionRuntime(
     identity,
     join(root, "absent"),
-    integration,
+    connection,
     "game_model_absent_01",
     undefined,
     undefined,
@@ -675,14 +729,27 @@ test("a Game runtime attachment without a model configuration leaves the surface
   const withModel = await createGameCompanionRuntime(
     identity,
     join(root, "present"),
-    integration,
+    connection,
     "game_model_present_01",
     undefined,
     undefined,
     { ...attachmentFields, modelConfig: DEFAULT_COMPANION_MODEL_CONFIG },
   );
   try {
-    assert.equal(withoutModel.session.agent.state.model, undefined);
+    assert.deepEqual(
+      {
+        provider: withoutModel.session.agent.state.model?.provider,
+        id: withoutModel.session.agent.state.model?.id,
+        contextWindow: withoutModel.session.agent.state.model?.contextWindow,
+        maxTokens: withoutModel.session.agent.state.model?.maxTokens,
+      },
+      {
+        provider: "unknown",
+        id: "unknown",
+        contextWindow: 0,
+        maxTokens: 0,
+      },
+    );
     assert.equal(withoutModel.session.agent.state.thinkingLevel, "off");
     const absentManifest = JSON.parse(
       await readFile(withoutModel.paths.runManifestPath, "utf8"),
@@ -692,6 +759,7 @@ test("a Game runtime attachment without a model configuration leaves the surface
       modelId: null,
       thinkingLevel: null,
     });
+    // No provider entry, therefore `allowModelNetwork: false`.
     await assert.rejects(
       access(join(withoutModel.paths.agentDir, "models.json")),
       (error: unknown) =>
@@ -724,7 +792,6 @@ test("a Game runtime attachment without a model configuration leaves the surface
   } finally {
     withoutModel.session.dispose();
     withModel.session.dispose();
-    integration.dispose();
   }
 });
 

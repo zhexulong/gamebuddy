@@ -751,13 +751,13 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /const modelConfig = resolveModelProfileConfig\([\s\S]*?\.read\("game"\),[\s\S]*?if \(modelConfig === null\)\s*\n\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
-    "every Game materialization resolves the player's own Game profile model and fails closed without one",
+    /const runtimeAttachment = await createGameRuntimeAttachment\(\{\s*\n\s*runtimeRoot,\s*\n\s*gameplayWorkerEnabled,\s*\n\s*hostBindingFactory,\s*\n\s*\.\.\.\(recoveryAttachment === undefined \? \{\} : \{ recoveryAttachment \}\),\s*\n\s*\}\);/,
+    "every Game materialization builds its attachment unconditionally, with the player's Game model profile inside it",
   );
-  assert.match(
-    sources[0],
-    /const runtimeAttachment = Object\.freeze\(\{\s*\n\s*modelConfig,\s*\n\s*gameplaySubagentEnabled: gameplayWorkerEnabled,\s*\n\s*hostBindingFactory,\s*\n\s*\.\.\.recoveryFields,\s*\n\s*\}\);/,
-    "the Game runtime attachment always carries the model configuration and the ordinary Host binding",
+  assert.equal(
+    sources[0].includes("workerAttachment"),
+    false,
+    "the gate nonce may no longer choose between an attachment with and without a model configuration",
   );
   assert.match(
     sources[0],
