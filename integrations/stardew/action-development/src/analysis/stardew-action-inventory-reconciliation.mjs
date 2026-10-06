@@ -134,13 +134,21 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // only be built by driving that menu or by reproducing its three statements as a
   // shadow of native logic. Game1.enterMine(level) alone bypasses the player's
   // choice, which is what enter_mine already does for the descent.
+  // CORRECTED 2026-10-06. This entry used to say explicit_exclusion / B1_menu_owned_transaction
+  // ("binding the action would require the menu stack or input ingress"). That was wrong, and the
+  // action now ships: select_mine_elevator_floor is registered, LiveVerified and gated. The menu is
+  // not required because the terminal is two PUBLIC UI-FREE faces — Game1.enterMine(level) plus the
+  // public Farmer.ridingMineElevator field — and the level domain is a pure function of
+  // MineShaft.lowestLevelReached, so the menu never had to be driven. Kept in the record because the
+  // mistake is instructive: "the only vanilla entry opens a menu" does not imply "the only possible
+  // seam is the menu".
   MineElevator: {
     at: "GameLocation",
-    group: "explicit_exclusion",
-    boundary: "B1_menu_owned_transaction",
+    group: "already_registered",
+    actionIds: ["select_mine_elevator_floor"],
     reason:
-      "the case only mounts MineElevatorMenu, and the level choice exists only inside that menu (MineElevatorMenu.receiveLeftClick is its public entry, x/y-driven); the transition it performs is public, but binding the action would require the menu stack or input ingress",
-    anchor: "GameLocation.cs:9797 + MineElevatorMenu.cs receiveLeftClick",
+      "the menu is not the seam: Game1.enterMine(mineLevel) (Game1.cs:10569) is public and UI-free, Farmer.ridingMineElevator is a public field, and the floor domain is derived from MineShaft.lowestLevelReached. Shipped as select_mine_elevator_floor (registered + LiveVerified + gated)",
+    anchor: "GameLocation.cs:9797 -> Game1.cs:10569 / Farmer.ridingMineElevator",
   },
   // Both of these case bodies exist but shipped content cannot reach them: the
   // action string occurs exactly once in the whole tree (the case itself), no map
@@ -154,6 +162,8 @@ export const SELECTOR_VERDICTS = Object.freeze({
       "the case body is a real gameplay write (consumes a held item with Price >= 60 and sets team.sharedDailyLuck to +/-0.12), but the action string exists only as this case: no map declares a SpiritAltar tile and no source writes the property, so there is no native entry to bind",
     anchor: "GameLocation.cs:9972 (case only)",
   },
+  // [SUPERSEDED 2026-10-06 — see the corrected MineElevator entry, which is now group
+  // already_registered. The verdict below is kept only as the record of a mistake.]
   // The B6 claim that used to live here was WRONG, and the reason is instructive:
   // it scanned maps, and this entry is not a map tile. The action string comes from
   // `Data/Buildings` ActionTiles (mill Input/Output etc.), reached through
@@ -233,19 +243,42 @@ export const SELECTOR_VERDICTS = Object.freeze({
     reason: "terminal is Game1.warpFarmer, the same native transition `enter_exit` registers; a warp is not a new intent",
     anchor: "GameLocation.cs:9475",
   },
+  // CORRECTED 2026-10-06: this was merge_into_existing -> [travel, enter_exit], which was a
+  // COVERAGE CLAIM THE IMPLEMENTATION DOES NOT HONOR. Verified blockers, two independent ones:
+  //   * enter_exit's building branch requires `building.HasIndoors() && getPointForHumanDoor() == source`
+  //     (farmhandexecutioncontroller.movementactions.cs:437-445) and an obelisk has no indoors
+  //     (Building.cs:1819-1826), so it is skipped outright;
+  //   * its other branch admits only keys of location.doors, and updateDoors builds that table from
+  //     MAP Buildings-layer Actions whose string contains "Warp" (GameLocation.cs:17586-17631),
+  //     while this action string comes from Data/Buildings ActionTiles via
+  //     Building.doAction -> GetActionAtTile -> performAction (Building.cs:981-991).
+  // The public UI-free seam is Building.TryPerformObeliskWarp (Building.cs:1009) -> PerformObeliskWarp
+  // (:1030) -> obeliskWarpForReal (:1067); TryPerformObeliskWarp maps building type -> destination.
+  // Broadening enter_exit to any building footprint tile is NOT the fix: Building.doAction also runs
+  // non-warp actions there (animal door :976-980, ActionTiles, drop-in :1000-1003), so enter_exit
+  // could mutate the world and then report a failed warp.
   ObeliskWarp: {
     at: "GameLocation",
-    group: "merge_into_existing",
-    actionIds: ["travel", "enter_exit"],
-    reason: "Building.PerformObeliskWarp is a public UI-free warp helper whose terminal is Game1.warpFarmer / obeliskWarpForReal",
-    anchor: "GameLocation.cs:9036 -> Building.cs:1030",
+    group: "new_primitive_needed",
+    actionId: "use_obelisk",
+    reason:
+      "reachable in shipped content as a Data/Buildings ActionTile, but NO registered action reaches it: travel serves only GameLocation.warps and enter_exit requires HasIndoors plus a location.doors key. Public UI-free seam Building.PerformObeliskWarp (Building.cs:1030 -> obeliskWarpForReal :1067). NOTE: TryPerformObeliskWarp (:1009) is NOT this seam — doAction reaches it only when GetData() == null (:994-999), so a modern data-driven obelisk never goes through it",
+    anchor: "GameLocation.cs:9036 -> Building.cs:1030 (PerformObeliskWarp) / :1067",
   },
+  // CORRECTED 2026-10-06, same false-coverage problem as ObeliskWarp above. This one is not even the
+  // same seam: IslandWest overrides performAction and handles the "FarmObelisk" tile itself
+  // (IslandWest.cs:184-199: temp sprites, wand sound, displayFarmer = false, freezePause,
+  // DelayedAction.fadeAfterDelay), and its action string does NOT contain "Warp", so updateDoors could
+  // never put it in the door table either. Same Agent-facing intent ("activate a fixed-point warp
+  // structure"), different native seam — which is why it shares the proposed id rather than getting a
+  // second one, and why the implementation must drive both seams.
   FarmObelisk: {
     at: "IslandWest",
-    group: "merge_into_existing",
-    actionIds: ["travel", "enter_exit"],
-    reason: "same farm-obelisk warp intent on IslandWest; terminal Game1.warpFarmer after a fade",
-    anchor: "IslandWest.cs:186",
+    group: "new_primitive_needed",
+    actionId: "use_obelisk",
+    reason:
+      "no registered action reaches it, and not via the same seam as ObeliskWarp either: IslandWest.performAction handles this tile itself, and the string lacks \"Warp\" so it is never in location.doors. Reachable only after the island obelisk upgrade applies the Island_W_Obelisk override (IslandWest.cs:425-440)",
+    anchor: "IslandWest.cs:184-199",
   },
 
   // ---- plain-world-effect 里属内容操作的（分类默认只覆盖对话/菜单/传送）----

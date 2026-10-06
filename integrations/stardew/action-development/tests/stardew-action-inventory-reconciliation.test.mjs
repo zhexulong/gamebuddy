@@ -135,8 +135,11 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
   // `Lamp` 不在其中：内容扫描证明出货地图没有该 action 瓦片，裁定表记为
   // explicit_exclusion（边界 B6），其 action 已撤除。
-  assert.deepEqual(a.newPrimitiveIntents, []);
-  assert.equal(a.counts.newPrimitivesRequired, 0);
+  // NOT empty any more, and that is the correction: use_obelisk is a real gap the table used to
+  // hide behind a false "merge_into_existing" on the obelisk selectors. The synthetic case below
+  // (:287-293) has always fed unregistered ids through this field, so this is the field working.
+  assert.deepEqual(a.newPrimitiveIntents, ["use_obelisk"]);
+  assert.equal(a.counts.newPrimitivesRequired, 1);
   assert.equal(a.counts.pendingAdjudicationItems, 0);
   assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 0);
 
