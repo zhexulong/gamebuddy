@@ -248,11 +248,8 @@ public sealed class RuntimeSupervisorEnvironmentTests
         var root = Path.Combine(Path.GetTempPath(), "GameBuddy.Desktop.Tests", "environment", Guid.NewGuid().ToString("N"));
         var registration = new CurrentUserRootRegistrationRecord(
             CurrentUserRootRegistration.SchemaVersion,
-            Path.Combine(root, "Programs", "GameBuddy"),
-            Path.Combine(root, "GameBuddy", "data"),
-            Path.Combine(root, "GameBuddy", "operational"),
-            Path.Combine(root, "GameBuddy", "presentation"));
-        foreach (var path in new[] { registration.ProgramRoot, registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot })
+            Path.Combine(root, "Programs", "GameBuddy"));
+        foreach (var path in new[] { registration.ProgramRoot, Path.Combine(root, "GameBuddy", "data"), Path.Combine(root, "GameBuddy", "operational"), Path.Combine(root, "GameBuddy", "presentation") })
         {
             Directory.CreateDirectory(path);
         }

@@ -2,59 +2,42 @@ using Microsoft.Win32;
 
 namespace GameBuddy.Desktop.Tests.Fixtures;
 
-internal sealed class DisposableCurrentUserRegistration : IDisposable, ICurrentUserRegistrationStore
+// Models what Setup writes: the layout marker with the registration schema
+// version and the installed program root. The launcher only ever reads it.
+internal sealed class DisposableCurrentUserRegistration : ICurrentUserRegistrationStore
 {
     internal static readonly string[] ExpectedValueNames =
     [
-        "dataRoot",
-        "operationalRoot",
-        "presentationRoot",
         "programRoot",
         "schema",
     ];
 
     private readonly Dictionary<string, CurrentUserRegistrationValue> values = new(StringComparer.Ordinal);
-    private bool exists;
+    private readonly bool exists;
 
     private DisposableCurrentUserRegistration(bool exists)
     {
         this.exists = exists;
     }
 
-    internal static DisposableCurrentUserRegistration Create() => new(exists: true);
-
     internal static DisposableCurrentUserRegistration CreateMissing() => new(exists: false);
 
-    internal void WriteRaw(string schema) => WriteValue("schema", schema);
-
-    internal void WriteExtraValue() => WriteValue("unexpected", "unexpected");
-
-    internal void WriteValue(string name, string value)
+    internal static DisposableCurrentUserRegistration CreateForProgramRoot(string programRoot)
     {
-        exists = true;
-        values[name] = new CurrentUserRegistrationValue(value, RegistryValueKind.String);
+        var fixture = new DisposableCurrentUserRegistration(exists: true);
+        fixture.WriteValue(CurrentUserRootRegistration.SchemaValueName, CurrentUserRootRegistration.SchemaVersion);
+        fixture.WriteValue(CurrentUserRootRegistration.ProgramRootValueName, programRoot);
+        return fixture;
     }
+
+    internal void WriteValue(string name, string value) =>
+        values[name] = new CurrentUserRegistrationValue(value, RegistryValueKind.String);
+
+    internal void WriteRawValue(string name, object value, RegistryValueKind kind) =>
+        values[name] = new CurrentUserRegistrationValue(value, kind);
 
     internal string[] ValueNames() => values.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
     IReadOnlyDictionary<string, CurrentUserRegistrationValue>? ICurrentUserRegistrationStore.ReadValues() =>
         exists ? new Dictionary<string, CurrentUserRegistrationValue>(values, StringComparer.Ordinal) : null;
-
-    void ICurrentUserRegistrationStore.SetString(string name, string value)
-    {
-        exists = true;
-        values[name] = new CurrentUserRegistrationValue(value, RegistryValueKind.String);
-    }
-
-    void ICurrentUserRegistrationStore.Delete()
-    {
-        exists = false;
-        values.Clear();
-    }
-
-    public void Dispose()
-    {
-        exists = false;
-        values.Clear();
-    }
 }

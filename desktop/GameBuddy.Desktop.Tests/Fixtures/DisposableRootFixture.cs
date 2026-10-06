@@ -16,17 +16,26 @@ internal sealed class DisposableRootFixture : IAsyncDisposable, ILocalApplicatio
 
     internal CurrentUserRootRegistrationRecord Registration { get; private set; }
 
+    // The mutable roots are derived, never registered. The fixture keeps the
+    // derivation in one place so tests can create and probe them directly.
+    internal string ProgramRoot => Registration.ProgramRoot;
+
+    internal string DataRoot => Path.Combine(LocalApplicationData, "GameBuddy", "data");
+
+    internal string OperationalRoot => Path.Combine(LocalApplicationData, "GameBuddy", "operational");
+
+    internal string PresentationRoot => Path.Combine(LocalApplicationData, "GameBuddy", "presentation");
+
+    internal string[] AllRoots => [ProgramRoot, DataRoot, OperationalRoot, PresentationRoot];
+
     internal static Task<DisposableRootFixture> CreateAsync()
     {
         var local = Path.Combine(Path.GetTempPath(), "GameBuddy.Desktop.Tests", Guid.NewGuid().ToString("N"));
         var registration = new CurrentUserRootRegistrationRecord(
             CurrentUserRootRegistration.SchemaVersion,
-            Path.Combine(local, "Programs", "GameBuddy"),
-            Path.Combine(local, "GameBuddy", "data"),
-            Path.Combine(local, "GameBuddy", "operational"),
-            Path.Combine(local, "GameBuddy", "presentation"));
+            Path.Combine(local, "Programs", "GameBuddy"));
         var fixture = new DisposableRootFixture(local, registration);
-        foreach (var root in new[] { registration.ProgramRoot, registration.DataRoot, registration.OperationalRoot, registration.PresentationRoot })
+        foreach (var root in fixture.AllRoots)
         {
             Directory.CreateDirectory(root);
         }
@@ -34,7 +43,7 @@ internal sealed class DisposableRootFixture : IAsyncDisposable, ILocalApplicatio
         return Task.FromResult(fixture);
     }
 
-    internal void ReplaceDataBoundaryWithReparsePoint() => ReplaceWithReparsePoint(Registration.DataRoot);
+    internal void ReplaceDataBoundaryWithReparsePoint() => ReplaceWithReparsePoint(DataRoot);
 
     internal void ReplaceProgramsAncestorWithReparsePoint() => ReplaceWithReparsePoint(Path.Combine(LocalApplicationData, "Programs"));
 
@@ -48,7 +57,7 @@ internal sealed class DisposableRootFixture : IAsyncDisposable, ILocalApplicatio
         Directory.Delete(boundary, recursive: true);
         reparseTarget = Path.Combine(Path.GetTempPath(), "GameBuddy.Desktop.Tests", $"reparse-{Guid.NewGuid():N}");
         Directory.CreateDirectory(reparseTarget);
-        foreach (var root in new[] { Registration.ProgramRoot, Registration.DataRoot, Registration.OperationalRoot, Registration.PresentationRoot })
+        foreach (var root in AllRoots)
         {
             if (root.StartsWith(boundary + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             {
@@ -78,7 +87,7 @@ internal sealed class DisposableRootFixture : IAsyncDisposable, ILocalApplicatio
         var reparseBoundary = FindReparseBoundary();
         Directory.Delete(reparseBoundary);
         Directory.Delete(reparseTarget, recursive: true);
-        foreach (var root in new[] { Registration.ProgramRoot, Registration.DataRoot, Registration.OperationalRoot, Registration.PresentationRoot })
+        foreach (var root in AllRoots)
         {
             Directory.CreateDirectory(root);
         }
@@ -86,14 +95,21 @@ internal sealed class DisposableRootFixture : IAsyncDisposable, ILocalApplicatio
         reparseTarget = null;
     }
 
-    internal void MakeDataEqualProgramRoot()
+    // The marker carries the program root. Redirecting it onto a mutable root is
+    // the "program root adoption" the layout must still refuse.
+    internal void AdoptDataRootAsProgramRoot()
     {
-        Registration = Registration with { DataRoot = Registration.ProgramRoot };
+        Registration = Registration with { ProgramRoot = DataRoot };
+    }
+
+    internal void ReplaceSchema(string schema)
+    {
+        Registration = Registration with { Schema = schema };
     }
 
     private string FindReparseBoundary()
     {
-        foreach (var candidate in new[] { Path.Combine(LocalApplicationData, "Programs"), Registration.DataRoot })
+        foreach (var candidate in new[] { Path.Combine(LocalApplicationData, "Programs"), DataRoot })
         {
             if (Directory.Exists(candidate) && (File.GetAttributes(candidate) & FileAttributes.ReparsePoint) != 0)
             {

@@ -17,8 +17,9 @@ public sealed class ProductionEntryBoundaryTests
         Assert.DoesNotContain("ILocalApplicationDataProvider", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("--root", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("GAMEBUDDY_ROOT", productionPath, StringComparison.Ordinal);
-        Assert.DoesNotContain("CreateForCurrentUser", productionPath, StringComparison.Ordinal);
-        Assert.DoesNotContain("RemoveForCurrentUserAfterCallerPolicy", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetValue", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateSubKey", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("DeleteSubKey", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("Process.", productionPath, StringComparison.Ordinal);
     }
 
@@ -66,14 +67,42 @@ public sealed class ProductionEntryBoundaryTests
     public void ProductionRegistration_owns_the_only_windows_registry_and_known_folder_implementations()
     {
         var source = File.ReadAllText(DesktopRegistrationSource());
+        var layoutSource = File.ReadAllText(DesktopLayoutSource());
 
         Assert.Contains("private sealed class WindowsCurrentUserRegistrationStore", source, StringComparison.Ordinal);
-        Assert.Contains("private sealed class WindowsLocalApplicationDataProvider", source, StringComparison.Ordinal);
+        Assert.Contains("private sealed class WindowsLocalApplicationDataProvider", layoutSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GameBuddy.Desktop.Tests", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Fixtures", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_has_no_registration_writer_only_Setup_and_the_uninstaller_write_it()
+    {
+        // The boundary this test protects was already "the production entry never
+        // creates or removes the registration". With the writer gone from the
+        // launcher entirely, the same boundary is asserted directly: the
+        // registration store is read-only and no production file can write the
+        // current-user registry at all.
+        var source = File.ReadAllText(DesktopRegistrationSource());
+
+        Assert.DoesNotContain("SetValue", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateSubKey", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DeleteSubKey", source, StringComparison.Ordinal);
+        Assert.Contains("IReadOnlyDictionary<string, CurrentUserRegistrationValue>? ReadValues();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("void SetString", source, StringComparison.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(DesktopRegistrationSource())!, "*.cs"))
+        {
+            var text = File.ReadAllText(file);
+            Assert.DoesNotContain("Registry.CurrentUser.CreateSubKey", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("Registry.CurrentUser.DeleteSubKey", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("Registry.CurrentUser.SetValue", text, StringComparison.Ordinal);
+        }
     }
 
     private static string DesktopProgramSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "Program.cs"));
 
     private static string DesktopRegistrationSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "CurrentUserRootRegistration.cs"));
+
+    private static string DesktopLayoutSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "CurrentUserRootLayout.cs"));
 }
