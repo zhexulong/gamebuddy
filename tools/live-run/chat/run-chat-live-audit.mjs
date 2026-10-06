@@ -577,6 +577,56 @@ export async function writeAuditTrace(path, trace) {
   return serialized;
 }
 
+/**
+ * Side-file transcript capture (option B — independent of the frozen trace).
+ *
+ * The trace must stay content-free; the naturalness question needs the words. Keeping them in a
+ * separate, bounded, redacted file satisfies both: an audit reader gets the reply text, and the trace
+ * contract is untouched. Macro residue and obvious secret shapes are redacted rather than dropped, so a
+ * reader can still see that the reply contained one.
+ */
+export const CHAT_TRANSCRIPT_SCHEMA = "chat_run_transcript/v1";
+export const CHAT_TRANSCRIPT_MAX_ENTRIES = 40;
+export const CHAT_TRANSCRIPT_MAX_CHARS = 600;
+const SECRET_SHAPES = /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{10,}|[A-Za-z0-9_-]{32,})/g;
+
+export function redactForTranscript(value) {
+  const raw = typeof value === "string" ? value : "";
+  return raw
+    .slice(0, CHAT_TRANSCRIPT_MAX_CHARS)
+    .replace(SECRET_SHAPES, "<REDACTED>")
+    .replace(/\{\{[^}]*\}\}/g, "<MACRO>");
+}
+
+export function buildTranscriptSideFile({ runId, entries }) {
+  return Object.freeze({
+    schema: CHAT_TRANSCRIPT_SCHEMA,
+    runId,
+    entryCount: entries.length,
+    entries: Object.freeze(
+      entries.slice(-CHAT_TRANSCRIPT_MAX_ENTRIES).map((entry) =>
+        Object.freeze({
+          turnIndex: entry.turnIndex,
+          role: entry.role,
+          chars: entry.text.length,
+          text: redactForTranscript(entry.text),
+        }),
+      ),
+    ),
+  });
+}
+
+/**
+ * Where the side file goes: beside the report, sharing its stem. A run without a report path has no
+ * durable location, so nothing is written (the trace still goes to stdout).
+ */
+export function transcriptSideFilePath(reportTarget) {
+  if (typeof reportTarget !== "string" || reportTarget.length === 0) return undefined;
+  return reportTarget.endsWith(".json")
+    ? `${reportTarget.slice(0, -".json".length)}-transcript.json`
+    : `${reportTarget}-transcript.json`;
+}
+
 export function buildAuditTrace({ runId, startedAt, completedAt, artifact, providerObserved, events }) {
   return Object.freeze({
     schema: AUDIT_SCHEMA,
@@ -1041,10 +1091,14 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
   if (projection.turnState === "completed") recorder.record("provider", "host", "settled", { state: "completed" });
   else if (projection.turnState === "failed" && projection.problemCode === "runtime_unavailable")
     recorder.record("provider", "host", "error", { problemCode: "runtime_unavailable" });
-  if (projection.committedCompanionMessages > projectionBefore.committedCompanionMessages)
+  if (projection.committedCompanionMessages > projectionBefore.committedCompanionMessages) {
     recorder.record("presentation", "host", "committed", {
       count: projection.committedCompanionMessages - projectionBefore.committedCompanionMessages,
     });
+    // The committed reply, in the side-file transcript only. The trace keeps its content-free shape.
+    if (typeof projection.committedCompanionText === "string" && projection.committedCompanionText.length > 0)
+      deliveredTurns.push(Object.freeze({ turnIndex: -1, role: "companion", text: projection.committedCompanionText }));
+  }
   // The durable committed-presentation delta is returned so a caller that needs
   // "was there a durable reply for THIS turn" can use the transcript authority
   // instead of the Class B stderr marker count. A marker only reports that the
@@ -1072,6 +1126,11 @@ function emitNewPresentationMarkers({ stderr, recorder, seen }) {
 async function collectRun({ root, recorder, nonceSha256, environment, attachChild, probeManifest }) {
   const artifact = await productionArtifactIdentity();
   environment.artifact = artifact;
+  // The words this run delivered (player input + committed companion replies), collected here so the
+  // side-file transcript can be written after the trace. Declared BEFORE its users on purpose: reading
+  // it earlier in this function would be a temporal dead zone error.
+  const deliveredTurns = [];
+  environment.deliveredTurns = deliveredTurns;
   const configPath = join(root, "chat-audit.json");
   await writeFile(
     configPath,
@@ -1241,6 +1300,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const runTurn = async ({ cancel, message = SUBMIT_PROMPT_TEXT }) => {
     activeTurnIndex += 1;
     const turnIndex = activeTurnIndex;
+    deliveredTurns.push(Object.freeze({ turnIndex, role: "player", text: typeof message === "string" ? message : "" }));
     const opened = await readStateSnapshot({ origin, client, recorder });
     if (!opened.ok) throw new Error(opened.reasonCode);
     noteMemoryProjection(opened.projection);
@@ -1556,6 +1616,13 @@ export async function main(argv = process.argv.slice(2)) {
       events: recorder.events(),
     });
     const serialized = await writeAuditTrace(reportTarget, trace);
+    // Option B: the bounded transcript travels BESIDE the trace, never inside it.
+    const transcriptPath = transcriptSideFilePath(reportTarget);
+    if (transcriptPath !== undefined) {
+      const side = buildTranscriptSideFile({ runId, entries: environment.deliveredTurns ?? [] });
+      await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
+      console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
+    }
     if (reportTarget === undefined) console.log(serialized.trimEnd());
     else console.log(JSON.stringify(trace));
     return 0;
