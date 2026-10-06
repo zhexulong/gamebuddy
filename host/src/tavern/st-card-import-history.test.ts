@@ -52,10 +52,23 @@ test("a confirmed import leaves one durable loss report counting fields by dispo
   assert.deepEqual(await reloaded.list(), [recorded]);
 
   // The evidence file carries the name, the identifiers and the counts only:
-  // no card body text ever reaches it.
+  // no card body text ever reaches it. Pinning the exact on-disk key set is the
+  // assertion that can actually fail - the input type cannot carry body text, so
+  // a search for a sentinel phrase would pass no matter what the writer did.
   const raw = await readFile(join(paths.playerRoot, "import-history", "import_history_01", "history.json"), "utf8");
   assert.equal(raw.includes("accepted_typed"), true);
-  assert.equal(raw.includes("anything the card body said"), false);
+  // The store wraps the record in its artifact envelope; the record itself is what
+  // must stay exactly this shape, so pin the envelope's payload keys.
+  const envelope = JSON.parse(raw) as { artifact: Record<string, unknown> };
+  assert.deepEqual(Object.keys(envelope.artifact).sort(), [
+    "cardName",
+    "companionId",
+    "counts",
+    "importId",
+    "occurredAtMs",
+    "revision",
+    "schemaVersion",
+  ]);
 });
 
 test("import history is append-only and ordered newest first", async () => {
