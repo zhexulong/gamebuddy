@@ -606,7 +606,6 @@ export function buildTranscriptSideFile({ runId, entries }) {
     entries: Object.freeze(
       entries.slice(-CHAT_TRANSCRIPT_MAX_ENTRIES).map((entry) =>
         Object.freeze({
-          turnIndex: entry.turnIndex,
           role: entry.role,
           chars: entry.text.length,
           text: redactForTranscript(entry.text),
@@ -620,6 +619,14 @@ export function buildTranscriptSideFile({ runId, entries }) {
  * Where the side file goes: beside the report, sharing its stem. A run without a report path has no
  * durable location, so nothing is written (the trace still goes to stdout).
  */
+/**
+ * The words this run delivered. Module-level because the two collectors live in different scopes: the
+ * player text is pushed inside `collectRun` and the committed reply inside the module-level
+ * `awaitTerminal`. A run-scoped buffer cannot be seen by both — declaring one inside `collectRun` is
+ * exactly what made a real run fail with `chat_audit_runner_internal_error`.
+ */
+const capturedTranscriptEntries = [];
+
 export function transcriptSideFilePath(reportTarget) {
   if (typeof reportTarget !== "string" || reportTarget.length === 0) return undefined;
   return reportTarget.endsWith(".json")
@@ -1097,7 +1104,9 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
     });
     // The committed reply, in the side-file transcript only. The trace keeps its content-free shape.
     if (typeof projection.committedCompanionText === "string" && projection.committedCompanionText.length > 0)
-      deliveredTurns.push(Object.freeze({ turnIndex: -1, role: "companion", text: projection.committedCompanionText }));
+      capturedTranscriptEntries.push(
+        Object.freeze({ role: "companion", text: projection.committedCompanionText }),
+      );
   }
   // The durable committed-presentation delta is returned so a caller that needs
   // "was there a durable reply for THIS turn" can use the transcript authority
@@ -1126,11 +1135,6 @@ function emitNewPresentationMarkers({ stderr, recorder, seen }) {
 async function collectRun({ root, recorder, nonceSha256, environment, attachChild, probeManifest }) {
   const artifact = await productionArtifactIdentity();
   environment.artifact = artifact;
-  // The words this run delivered (player input + committed companion replies), collected here so the
-  // side-file transcript can be written after the trace. Declared BEFORE its users on purpose: reading
-  // it earlier in this function would be a temporal dead zone error.
-  const deliveredTurns = [];
-  environment.deliveredTurns = deliveredTurns;
   const configPath = join(root, "chat-audit.json");
   await writeFile(
     configPath,
@@ -1300,7 +1304,9 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const runTurn = async ({ cancel, message = SUBMIT_PROMPT_TEXT }) => {
     activeTurnIndex += 1;
     const turnIndex = activeTurnIndex;
-    deliveredTurns.push(Object.freeze({ turnIndex, role: "player", text: typeof message === "string" ? message : "" }));
+    capturedTranscriptEntries.push(
+      Object.freeze({ role: "player", text: typeof message === "string" ? message : "" }),
+    );
     const opened = await readStateSnapshot({ origin, client, recorder });
     if (!opened.ok) throw new Error(opened.reasonCode);
     noteMemoryProjection(opened.projection);
@@ -1619,7 +1625,7 @@ export async function main(argv = process.argv.slice(2)) {
     // Option B: the bounded transcript travels BESIDE the trace, never inside it.
     const transcriptPath = transcriptSideFilePath(reportTarget);
     if (transcriptPath !== undefined) {
-      const side = buildTranscriptSideFile({ runId, entries: environment.deliveredTurns ?? [] });
+      const side = buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
     }
