@@ -604,8 +604,12 @@ public sealed record BridgeShopTarget(
     int OwnerTileX,
     int OwnerTileY,
     bool OwnerInReach,
-    string? ClosedMessage,
-    int StockCount);
+    int StockCount,
+    // The wire identities of what this shop can actually sell right now. Never null: the
+    // Mod's serializer omits null values (WhenWritingNull), and a snapshot contract whose
+    // field can be omitted is one the Host's exact-key check rejects — which is exactly how
+    // the first live attempt failed. An empty list is a legal value and is still written.
+    IReadOnlyList<string> StockItemIds);
 
 public sealed record BridgeExecutionRequest(
     string RequestId,

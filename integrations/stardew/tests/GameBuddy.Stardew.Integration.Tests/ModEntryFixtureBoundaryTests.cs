@@ -51,6 +51,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InstallWiaItemPickupInterruptionFixture", "IsFixtureWalkableFarmTile", "ChebyshevTileDistance",
         "InstallNativeLocalRideBusFixture", "TryFindBusTicketMachine",
         "InstallNativeLocalMineElevatorFixture",
+        "InstallNativeLocalShopPurchaseFixture",
     };
 
     /// <summary>

@@ -30,7 +30,10 @@ const SCENARIO = "native_shop_purchase_v1";
 const TERMINAL_REASON = "item_purchased";
 
 /** The item the fixture makes buyable and the runner asks for. */
-const TARGET_ITEM_ID = "(O)472"; // Parsnip seeds: a real SeedShop stock line, cheap, stackable.
+// Taken from the shop's own advertised stock, never guessed: discovery publishes what a
+// shop can sell right now, and asking for anything else is legitimately refused with
+// item_not_sold_here (which is exactly how the first successful dispatch ended).
+const TARGET_ITEM_ID = null;
 const QUANTITY = 1;
 
 export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 } = {}) {
@@ -40,17 +43,59 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
     validateNativeLocalFixtureConfig(config);
 
     const before = await observeFresh(client, { actionable: true });
+    // Record what was actually observed before any assertion can throw: an empty trace
+    // with a bare reasonCode cannot distinguish a missing capability from a dead pipe.
+    trace.push({
+      phase: "observed",
+      revision: before.revision,
+      location: before.location,
+      tile: before.tile ?? null,
+      actionable: before.actionable,
+      activeExecution: before.activeExecution ?? null,
+      capabilities: Array.isArray(before.capabilities) ? [...before.capabilities] : null,
+      shopTargetCount: Array.isArray(before.shopTargets) ? before.shopTargets.length : null,
+    });
+    if (!Array.isArray(before.capabilities?.slice?.() ?? before.capabilities)) {
+      throw new Error("shop_capabilities_not_an_array");
+    }
+    {
+      const missing = EXPECTED_CAPABILITIES.filter((c) => !before.capabilities.includes(c));
+      trace.push({ phase: "capability_check", missing, expected: [...EXPECTED_CAPABILITIES] });
+      if (missing.length > 0) throw new Error(`shop_missing_capabilities:${missing.join(",")}`);
+    }
     assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
 
     const shops = readShopTargets(before);
+    trace.push({
+      phase: "shop_target_shape",
+      // The raw keys the Mod actually sent, so a stale artifact or a renamed field is
+      // visible instead of presenting as an undefined property.
+      rawKeys: Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
+        ? Object.keys(before.shopTargets[0] ?? {}).sort()
+        : null,
+      sample: Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
+        ? Object.fromEntries(
+            Object.entries(before.shopTargets[0] ?? {}).map(([k, v]) => [
+              k,
+              Array.isArray(v) ? `array(${v.length})` : typeof v === "object" ? "object" : String(v),
+            ]),
+          )
+        : null,
+    });
     if (shops.length === 0)
       throw new Error(`shop_no_targets_advertised:location=${before.location}`);
-    const shop = shops.find((s) => s.ownerInReach) ?? null;
+    // Prefer a shop that can actually sell something: an advertised shop with empty stock
+    // cannot demonstrate a purchase, and that is a finding, not a failure of the action.
+    // Read defensively on purpose: a raw TypeError here would erase the very evidence
+    // needed to tell a stale artifact from a dropped field. The trace below carries the
+    // real keys either way.
+    const shop = shops.find((s) => s.ownerInReach && (s.stockItemIds?.length ?? 0) > 0) ?? null;
     if (!shop)
       throw new Error(
         `shop_owner_out_of_reach:${shops.map((s) => `${s.shopId}@${s.ownerTileX},${s.ownerTileY}`).join("/")}`,
       );
 
+    const targetItemId = TARGET_ITEM_ID ?? shop.stockItemIds[0];
     const requestId = `native_local_shop_purchase_${Date.now()}`;
     const receipt = await executeFresh(client, {
       requestId,
@@ -58,7 +103,7 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
       action: "shop_purchase",
       args: {
         expectedTargetId: shop.targetId,
-        expectedQualifiedItemId: TARGET_ITEM_ID,
+        expectedQualifiedItemId: targetItemId,
         quantity: QUANTITY,
       },
       snapshot: before,
@@ -91,6 +136,7 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
       moneyAfter,
       ownedBefore,
       ownedAfter,
+      targetItemId,
       gained: Number.parseInt(evidence.gained ?? "", 10),
       ownerTile: evidence.owner_tile ?? null,
       menuClosed: evidence.menu_closed === "true",
@@ -106,6 +152,9 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
     return {
       state: "blocked",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 512),
+      // The trace is the evidence: without it a bare reasonCode cannot say whether the
+      // capability was absent, the snapshot was empty, or the pipe really closed.
+      lastObservation: trace.filter((e) => e.phase === "observed").at(-1) ?? null,
       trace,
       durationMs: Date.now() - startedAt,
     };
@@ -192,6 +241,9 @@ function readShopTargets(snapshot) {
     ownerInReach: entry.ownerInReach === true,
     closedMessage: entry.closedMessage ?? null,
     stockCount: entry.stockCount,
+    // Present only when the running Mod build really carries it; the shape trace above
+    // is what distinguishes "old artifact" from "field dropped".
+    stockItemIds: Array.isArray(entry.stockItemIds) ? [...entry.stockItemIds] : undefined,
   }));
 }
 

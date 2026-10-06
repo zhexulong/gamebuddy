@@ -3057,9 +3057,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
     ///
     /// A play session is only auditable if there is more than one thing worth
     /// doing, so the fixture provisions an independent spread of REAL native
-    /// affordances on the Farm — weeds, a grass tuft, a breakable stone, a mature
-    /// crop, untilled soil, and the tools to work them (Hoe, filled Watering Can,
-    /// Scythe, cauliflower seeds) — and then gets out of the way. It performs no
+    /// affordances on the Farm — a few mature crops, weeds, a grass tuft, a
+    /// breakable stone, loose soil, and the tools to work them (Hoe, filled
+    /// Watering Can, Scythe, cauliflower seeds) — and then gets out of the way.
+    /// Deliberately SPARSE: an earlier version seeded the entire field, and a live
+    /// session then spent its whole turn inside that one field. It performs no
     /// action itself: production alone cuts, breaks, harvests, plants, waters and
     /// ships, exactly as the per-action fixtures do. Nothing here is tailored to a
     /// chain, which is the point: the rung measures what the companion chooses to
@@ -3103,10 +3105,12 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         try
         {
             Game1.currentLocation = farm;
+            // Loose soil only. The whole-field seeding this used to do (SpreadSeeds + GrowCrops)
+            // turned the farm into one enormous crop field: a live session then spent 36 dispatches
+            // and its entire turn inside it, which measures the field rather than the companion.
+            // The strawberry-covenant fixture in this same file records the same lesson.
             if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadSeeds 474", null)
-                || !Game1.game1.parseDebugInput("GrowCrops 12", null))
+                || !Game1.game1.parseDebugInput("SpreadDirt", null))
                 throw new InvalidOperationException("fixture_native_local_play_session_farm_setup_unavailable");
         }
         finally
@@ -3149,6 +3153,37 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             standingTile ??= spot.Value.StandingTile;
         }
+        // A few mature crops, placed explicitly (the scythe-crop fixture's recipe) rather than
+        // seeded across the field, so harvesting is one of several things to do instead of the only
+        // thing in sight. Each one is validated as harvestable here: a crop that is not ready would
+        // silently give the session a target the audit cannot explain.
+        int plantedCrops = 0;
+        for (int index = 0; index < 4; index += 1)
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            if (spot is null)
+                throw new InvalidOperationException("fixture_native_local_play_session_crop_spot_missing");
+            StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
+                ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
+                : new StardewValley.TerrainFeatures.HoeDirt();
+            if (!farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
+                farm.terrainFeatures.Add(spot.Value.TargetTile, dirt);
+            StardewValley.Crop crop = new("474", (int)spot.Value.TargetTile.X, (int)spot.Value.TargetTile.Y, farm);
+            dirt.crop = crop;
+            crop.growCompletely();
+            crop.currentPhase.Value = crop.phaseDays.Count - 1;
+            crop.dayOfCurrentPhase.Value = 0;
+            if (!dirt.readyForHarvest()
+                || crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                throw new InvalidOperationException("fixture_native_local_play_session_crop_not_ready");
+            farm.objects.Remove(spot.Value.TargetTile);
+            provisioned.Add($"crop={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            standingTile ??= spot.Value.StandingTile;
+            plantedCrops += 1;
+        }
+        if (plantedCrops != 4)
+            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_mismatch");
+
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
 
@@ -3163,7 +3198,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
 
         player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
         this.nativeLocalPlayerFixtureInitialized = true;
-        this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
+        this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; planted_crops=4; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)    {

@@ -539,8 +539,9 @@ activeExecution?: ActiveExecution | null;
     ownerTileX: number;
     ownerTileY: number;
     ownerInReach: boolean;
-    closedMessage: string | null;
     stockCount: number;
+    /** What the shop can sell right now, so callers do not have to guess an id. */
+    stockItemIds: readonly string[];
   }>[];
   mineElevatorFloorTargets?: readonly Readonly<{
     targetId: string;
@@ -2549,6 +2550,64 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     (!isRecord(value.activeExecution) || validateActiveExecution(value.activeExecution) !== null)
   )
     return "invalid_snapshot:activeExecution";
+  // These ten families were validated but never diagnosed, so a failure in any of them
+  // made this function return its success marker and the real culprit was erased from
+  // the close reason. Kept beside the checks above so the two validators cannot drift
+  // apart without this list going stale visibly.
+  // These families were validated but never diagnosed, so a failure in any of them made
+  // this function return its SUCCESS marker and the real culprit was erased from the close
+  // reason — which is exactly how a rejected snapshot surfaced as
+  // `bridge_disconnected:accepted`. They are checked here so the next one is named.
+  if (
+    value.woodFenceTargets !== undefined &&
+    (!Array.isArray(value.woodFenceTargets) || value.woodFenceTargets.length > 16 || !value.woodFenceTargets.every(isWoodFenceTargetFact))
+  )
+    return "invalid_snapshot:woodFenceTargets";
+  if (
+    value.woodFenceResultTargets !== undefined &&
+    (!Array.isArray(value.woodFenceResultTargets) || value.woodFenceResultTargets.length > 1 || !value.woodFenceResultTargets.every(isWoodFenceResultTargetFact))
+  )
+    return "invalid_snapshot:woodFenceResultTargets";
+  if (
+    value.crabPotTargets !== undefined &&
+    (!Array.isArray(value.crabPotTargets) || value.crabPotTargets.length > 16 || !value.crabPotTargets.every(isCrabPotTargetFact))
+  )
+    return "invalid_snapshot:crabPotTargets";
+  if (
+    value.crabPotResultTargets !== undefined &&
+    (!Array.isArray(value.crabPotResultTargets) || value.crabPotResultTargets.length > 1 || !value.crabPotResultTargets.every(isCrabPotResultTargetFact))
+  )
+    return "invalid_snapshot:crabPotResultTargets";
+  if (
+    value.crabPotCollectTargets !== undefined &&
+    (!Array.isArray(value.crabPotCollectTargets) || value.crabPotCollectTargets.length > 16 || !value.crabPotCollectTargets.every(isCrabPotCollectTargetFact))
+  )
+    return "invalid_snapshot:crabPotCollectTargets";
+  if (
+    value.baitCrabPotTargets !== undefined &&
+    (!Array.isArray(value.baitCrabPotTargets) || value.baitCrabPotTargets.length > 16 || !value.baitCrabPotTargets.every(isBaitCrabPotTargetFact))
+  )
+    return "invalid_snapshot:baitCrabPotTargets";
+  if (
+    value.baitCrabPotResultTargets !== undefined &&
+    (!Array.isArray(value.baitCrabPotResultTargets) || value.baitCrabPotResultTargets.length > 1 || !value.baitCrabPotResultTargets.every(isBaitCrabPotTargetFact))
+  )
+    return "invalid_snapshot:baitCrabPotResultTargets";
+  if (
+    value.shopTargets !== undefined &&
+    (!Array.isArray(value.shopTargets) || value.shopTargets.length > 32 || !value.shopTargets.every(isShopTargetFact))
+  )
+    return "invalid_snapshot:shopTargets";
+  if (
+    value.horseTargets !== undefined &&
+    (!Array.isArray(value.horseTargets) || value.horseTargets.length > 16 || !value.horseTargets.every(isHorseTargetFact))
+  )
+    return "invalid_snapshot:horseTargets";
+  if (
+    value.mineEntranceTargets !== undefined &&
+    (!Array.isArray(value.mineEntranceTargets) || value.mineEntranceTargets.length > 16 || !value.mineEntranceTargets.every(isMineEntranceTargetFact))
+  )
+    return "invalid_snapshot:mineEntranceTargets";
   return "accepted";
 }
 
@@ -4190,7 +4249,7 @@ function isMineEntranceTargetFact(value: unknown): boolean {
 function isShopTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "shopId", "ownerName", "location", "ownerTileX", "ownerTileY", "ownerInReach", "closedMessage", "stockCount"]) &&
+    hasExactKeys(value, ["targetId", "shopId", "ownerName", "location", "ownerTileX", "ownerTileY", "ownerInReach", "stockCount", "stockItemIds"]) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     typeof value.shopId === "string" &&
@@ -4201,10 +4260,11 @@ function isShopTargetFact(value: unknown): boolean {
     typeof value.ownerTileY === "number" &&
     Number.isSafeInteger(value.ownerTileY) &&
     typeof value.ownerInReach === "boolean" &&
-    (value.closedMessage === null || typeof value.closedMessage === "string") &&
     typeof value.stockCount === "number" &&
     Number.isSafeInteger(value.stockCount) &&
     value.stockCount >= 0
+    && isStringArray(value.stockItemIds)
+    && (value.stockItemIds as readonly string[]).length <= 16
   );
 }
 
