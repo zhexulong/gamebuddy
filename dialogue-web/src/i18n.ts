@@ -175,6 +175,9 @@ const en = {
   connectionEnvironmentManaged: "Managed by the operator environment; it has no editable credential here.",
   connectionBaseUrl: "Base URL",
   connectionBaseUrlHint: "For example http://127.0.0.1:11434/v1",
+  connectionApiShape: "API shape",
+  connectionApiShapeHint:
+    "The wire protocol this endpoint speaks. Only a shape the assistant runtime has an adapter for is accepted.",
   connectionApiKey: "API key",
   connectionApiKeyWriteOnly: "Write-only. It is stored for the assistant runtime and is never shown again.",
   connectionModel: "Model",
@@ -458,6 +461,8 @@ const zh: Messages = {
   connectionEnvironmentManaged: "由运行环境管理，此处没有可编辑的凭据。",
   connectionBaseUrl: "Base URL",
   connectionBaseUrlHint: "例如 http://127.0.0.1:11434/v1",
+  connectionApiShape: "API 协议",
+  connectionApiShapeHint: "该端点使用的接口协议。只接受助手运行时支持（有适配器）的协议。",
   connectionApiKey: "API Key",
   connectionApiKeyWriteOnly: "只写：它保存给助手运行时使用，之后不会再回显。",
   connectionModel: "模型",

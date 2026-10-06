@@ -390,7 +390,24 @@ export type TavernProblemV1 = Readonly<{
  * fact a player may read back. No credential, credential source or raw provider
  * error exists anywhere in these shapes.
  */
-export type TavernConnectionSetupFieldV1 = "apiKey" | "baseUrl" | "modelId";
+export type TavernConnectionSetupFieldV1 = "apiKey" | "apiShape" | "baseUrl" | "modelId";
+/**
+ * The exact `api` shapes the assistant runtime's provider adapters speak — the
+ * browser mirror of the Host's own list. The escape hatch is the one entry
+ * whose player record chooses one, and the chosen value is written verbatim
+ * into the runtime's provider entry.
+ */
+export const CONNECTION_API_SHAPES = [
+  "anthropic-messages",
+  "openai-completions",
+  "openai-responses",
+  "openai-codex-responses",
+  "google-generative-ai",
+  "google-vertex",
+  "bedrock-converse-stream",
+  "mistral-conversations",
+] as const;
+export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
 export type TavernConnectionThinkingLevelV1 = "low" | "medium" | "high" | "xhigh" | "max";
 export type TavernConnectionReadinessV1 = "unconfigured" | "configured" | "ready" | "failed";
 export type TavernConnectionFailureV1 =
@@ -460,6 +477,7 @@ export type TavernConnectionCreateCommandV1 = Readonly<{
   providerId: string;
   apiKey?: string;
   baseUrl?: string;
+  apiShape?: TavernConnectionApiShapeV1;
   modelId?: string;
 }>;
 
@@ -821,7 +839,7 @@ const CONNECTION_MODEL_KEYS = [
   "defaultThinkingLevel",
 ] as const;
 const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
-const CONNECTION_SETUP_FIELDS = ["apiKey", "baseUrl", "modelId"] as const;
+const CONNECTION_SETUP_FIELDS = ["apiKey", "apiShape", "baseUrl", "modelId"] as const;
 const CONNECTION_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const CONNECTION_READINESS = ["unconfigured", "configured", "ready", "failed"] as const;
 const CONNECTION_FAILURES = [
@@ -1571,7 +1589,7 @@ function isConnectionProvider(value: unknown): value is TavernConnectionProvider
     isLengthBoundedString(value.providerId, 1, 64) &&
     isLengthBoundedString(value.label, 1, 128) &&
     Array.isArray(value.setupFields) &&
-    value.setupFields.length <= 3 &&
+    value.setupFields.length <= 4 &&
     value.setupFields.every((field) => isOneOf(field, CONNECTION_SETUP_FIELDS)) &&
     new Set(value.setupFields).size === value.setupFields.length &&
     Array.isArray(value.allowedPlayerModels) &&
@@ -2188,11 +2206,14 @@ export function createManagementPipelineApi(
       csrfToken: string,
     ): Promise<TavernConnectionStateV1> {
       if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      if (command.apiShape !== undefined && !isOneOf(command.apiShape, CONNECTION_API_SHAPES))
+        throw new TavernProtocolError();
       // The browser sends only the fields the selected catalog entry declares.
       // The credential is a write-only request field and is never retained here.
       const body: Record<string, unknown> = { apiVersion: TAVERN_BROWSER_API_VERSION, providerId: command.providerId };
       if (command.apiKey !== undefined) body.apiKey = command.apiKey;
       if (command.baseUrl !== undefined) body.baseUrl = command.baseUrl;
+      if (command.apiShape !== undefined) body.apiShape = command.apiShape;
       if (command.modelId !== undefined) body.modelId = command.modelId;
       return exchange(
         fetchLike,

@@ -997,11 +997,31 @@ test("management browser creates a connection from the Host catalog and never re
     assert.deepEqual(providerIds, ["cpa-oai", "deepseek", "openai", "gamebuddy-openai-compatible"]);
     await expect(panel.locator("#connection-provider option")).toHaveCount(4);
 
-    // 2. Provider -> API key -> submit. The escape hatch is the catalog entry
-    // whose endpoint and model id the player supplies.
+    // 2. Provider -> endpoint -> API shape -> credential -> model -> submit. The
+    // escape hatch is the catalog entry whose endpoint, API shape and model id
+    // the player supplies.
     await panel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
     await expect(panel.locator("#connection-base-url")).toBeVisible();
+    await expect(panel.locator("#connection-api-shape")).toBeVisible();
     await expect(panel.locator("#connection-model-id")).toBeVisible();
+    // The offered shapes are the runtime's own adapter set, and the
+    // OpenAI-compatible shape the entry is named for is preselected.
+    assert.deepEqual(
+      await panel.locator("#connection-api-shape option").evaluateAll((options) =>
+        options.map((option) => (option as HTMLOptionElement).value),
+      ),
+      [
+        "anthropic-messages",
+        "openai-completions",
+        "openai-responses",
+        "openai-codex-responses",
+        "google-generative-ai",
+        "google-vertex",
+        "bedrock-converse-stream",
+        "mistral-conversations",
+      ],
+    );
+    await expect(panel.locator("#connection-api-shape")).toHaveValue("openai-completions");
     await panel.locator("#connection-base-url").fill(baseUrl);
     await panel.locator("#connection-api-key").fill(secret);
     await panel.locator("#connection-model-id").fill(modelId);
@@ -1127,7 +1147,9 @@ test("management browser tests connections with a closed outcome, activates a re
     await expect(deepseekRow.locator("select")).toHaveValue("high");
 
     // 8. Two player-supplied escape-hatch endpoints: one answers, one rejects.
+    // Both carry the shape the form preselected for this catalog entry.
     await panel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await expect(panel.locator("#connection-api-shape")).toHaveValue("openai-completions");
     await panel.locator("#connection-base-url").fill(readyBaseUrl);
     await panel.locator("#connection-api-key").fill("sk-synthetic-ready-key");
     await panel.locator("#connection-model-id").fill("qwen2.5-coder:7b");
@@ -1199,6 +1221,74 @@ test("management browser tests connections with a closed outcome, activates a re
     await expect(page.locator("[data-connection-settings]")).toBeVisible();
     const deepseekAfterReload = page.locator("[data-connection-row]", { hasText: "DeepSeek V4 Pro" });
     await expect(deepseekAfterReload.locator("select")).toHaveValue("max");
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+/**
+ * The two endpoint configurations that were impossible while the escape hatch's
+ * API shape was fixed to `openai-completions` and its base URL could not carry
+ * a query string: an endpoint that speaks Anthropic messages, and an
+ * Azure-style endpoint whose required `?api-version=` query is part of the
+ * route.
+ *
+ * NOTE (lane C3): this journey is authored but UNRUN here — the lane may not
+ * build a production generation, so there is no mounted surface to drive. It is
+ * the journey contract for the next generation that is built.
+ */
+test("management browser saves a non-default API shape with a query-string endpoint", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const created: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.method() === "POST" && url.pathname.endsWith("/settings/connections"))
+        created.push(request.postData() ?? "");
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-connection-settings]");
+    await expect(panel).toBeVisible();
+
+    const baseUrl = "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01";
+    const modelId = "claude-3-5-sonnet";
+    await panel.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await panel.locator("#connection-base-url").fill(baseUrl);
+    await panel.locator("#connection-api-shape").selectOption("anthropic-messages");
+    await panel.locator("#connection-api-key").fill("sk-synthetic-nondefault-shape");
+    await panel.locator("#connection-model-id").fill(modelId);
+    await panel.getByRole("button", { name: "Save connection" }).click();
+
+    // Both facts cross the authenticated boundary exactly as the player chose:
+    // the query-string endpoint and a shape that is not the fixed default.
+    await expect.poll(() => created.length).toBe(1);
+    const body = JSON.parse(created[0]!);
+    assert.equal(body.providerId, "gamebuddy-openai-compatible");
+    assert.equal(body.baseUrl, baseUrl);
+    assert.equal(body.apiShape, "anthropic-messages");
+    assert.equal(body.modelId, modelId);
+
+    const row = panel.locator("[data-connection-row]").filter({ hasText: modelId });
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute("data-readiness", "configured");
+    // The player's own endpoint, query and all, is the one endpoint fact that
+    // reads back; the API shape never renders as a document fact.
+    await expect(row.locator("[data-connection-base-url]")).toHaveText(baseUrl);
+
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    const reloaded = page.locator("[data-connection-settings]");
+    await expect(reloaded.locator("[data-connection-list]")).toBeVisible();
+    await expect(
+      reloaded.locator("[data-connection-row]").filter({ hasText: modelId }).locator("[data-connection-base-url]"),
+    ).toHaveText(baseUrl);
+    // The form's shape control is a fresh choice on every mount: the durable
+    // shape is not a document fact, so the entry's default is shown again.
+    await reloaded.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+    await expect(reloaded.locator("#connection-api-shape")).toHaveValue("openai-completions");
   } finally {
     await browser.close();
     await mounted.close();
