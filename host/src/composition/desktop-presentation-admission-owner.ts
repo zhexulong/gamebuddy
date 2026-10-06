@@ -25,6 +25,7 @@ import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/ne
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
 import { createScenarioManagementService } from "../tavern/scenario-management/scenario-management.js";
 import { StCardImportService } from "../tavern/st-card-import-service.js";
+import { createStCardImportHistoryService } from "../tavern/st-card-import-history.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
@@ -365,6 +366,11 @@ export async function startTavernManagementPresentationAdmission(
     // candidate and provisions it (profile + reviewed world book) into a NEW
     // Host-owned namespace through the same library threads.
     const stCardImportService = new StCardImportService(artifactStore, tavernPaths);
+    // Durable evidence for every confirmed import (design/28 Import/export row):
+    // the player-readable loss report a confirmed card leaves behind. It is
+    // written from the same artifacts the import already produced and is never
+    // consulted by any keep/drop decision.
+    const stCardImportHistoryService = createStCardImportHistoryService(artifactStore, tavernPaths.playerRoot);
     const confirmStCardImport = async (importId: string) => {
       const imported = await stCardImportService.read(importId);
       const review = await stCardImportService.confirmedReview(importId);
@@ -375,6 +381,13 @@ export async function startTavernManagementPresentationAdmission(
         review,
         libraryThreads,
       );
+      await stCardImportHistoryService.record({
+        importId,
+        occurredAtMs: Date.now(),
+        cardName: imported.candidate.artifact.name,
+        companionId: provision.companion.companionId,
+        dispositions: imported.report.artifact.dispositions,
+      });
       return Object.freeze({ name: provision.companion.name });
     };
     server = await startTavernManagementStaticShellComposition({
@@ -392,6 +405,7 @@ export async function startTavernManagementPresentationAdmission(
       scenarioService,
       greetingService,
       stCardImportService,
+      stCardImportHistoryService,
       confirmStCardImport,
       ...(input.listVoiceOutputDevices === undefined
         ? {}
@@ -569,6 +583,7 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.read",
       "character.import.review",
       "character.import.confirm",
+      "character.import.history",
     ],
     operationIds: [
       "draft.save",
@@ -603,6 +618,7 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.read",
       "character.import.review",
       "character.import.confirm",
+      "character.import.history",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

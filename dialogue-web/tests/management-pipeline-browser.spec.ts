@@ -53,6 +53,7 @@ async function loadGenerationModules(artifactRoot: string) {
     load("tavern/scenario-management/scenario-management.js"),
     load("tavern/greeting-management/greeting-management.js"),
     load("tavern/st-card-import-service.js"),
+    load("tavern/st-card-import-history.js"),
     load("tavern/library-service.js"),
     load("tavern/new-companion-service.js"),
     load("tavern/tavern-paths.js"),
@@ -109,6 +110,7 @@ async function startMountedManagementComposition(
     scenarioManagementModule,
     greetingManagementModule,
     stCardImportModule,
+    stCardImportHistoryModule,
     libraryServiceModule,
     newCompanionModule,
     tavernPathsModule,
@@ -179,6 +181,7 @@ async function startMountedManagementComposition(
             "character.import.read",
             "character.import.review",
             "character.import.confirm",
+            "character.import.history",
           ]
         : []),
     ],
@@ -217,6 +220,7 @@ async function startMountedManagementComposition(
             "character.import.read",
             "character.import.review",
             "character.import.confirm",
+            "character.import.history",
           ]
         : []),
     ],
@@ -246,6 +250,9 @@ async function startMountedManagementComposition(
   let greetingService: ReturnType<typeof greetingManagementModule.createGreetingManagementService> | undefined;
   let libraryService: Readonly<{ listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]> }> | undefined;
   let stCardImportService: InstanceType<typeof stCardImportModule.StCardImportService> | undefined;
+  let stCardImportHistoryService:
+    | ReturnType<typeof stCardImportHistoryModule.createStCardImportHistoryService>
+    | undefined;
   let confirmStCardImport: ((importId: string) => Promise<Readonly<{ name: string }>>) | undefined;
   let newCompanionProvisioner: Readonly<{ create(name: string): Promise<Readonly<{ name: string }>> }> | undefined;
   if (options.withCharacters === true) {
@@ -298,6 +305,13 @@ async function startMountedManagementComposition(
     // provisions it (profile plus the reviewed world book) into a new
     // Host-owned namespace through the same library threads.
     stCardImportService = new stCardImportModule.StCardImportService(artifactStore, tavernPaths);
+    // The same durable loss-report authority the production owner composes: the
+    // confirm path writes one immutable evidence record per confirmed import.
+    const importHistory = stCardImportHistoryModule.createStCardImportHistoryService(
+      artifactStore,
+      tavernPaths.playerRoot,
+    );
+    stCardImportHistoryService = importHistory;
     confirmStCardImport = async (importId: string) => {
       const imported = await stCardImportService!.read(importId);
       const review = await stCardImportService!.confirmedReview(importId);
@@ -308,6 +322,13 @@ async function startMountedManagementComposition(
         review,
         libraryThreads,
       );
+      await importHistory.record({
+        importId,
+        occurredAtMs: Date.now(),
+        cardName: imported.candidate.artifact.name,
+        companionId: provision.companion.companionId,
+        dispositions: imported.report.artifact.dispositions,
+      });
       return Object.freeze({ name: provision.companion.name });
     };
     newCompanionProvisioner = Object.freeze({
@@ -381,6 +402,7 @@ async function startMountedManagementComposition(
     ...(libraryService === undefined ? {} : { libraryService }),
     ...(newCompanionProvisioner === undefined ? {} : { newCompanionProvisioner }),
     ...(stCardImportService === undefined ? {} : { stCardImportService }),
+    ...(stCardImportHistoryService === undefined ? {} : { stCardImportHistoryService }),
     ...(confirmStCardImport === undefined ? {} : { confirmStCardImport }),
     profile,
     bootstrapToken,
@@ -1397,6 +1419,68 @@ test("management browser imports a reviewed character card and provisions the co
     assert.equal(calls.filter((entry) => entry === "POST /api/tavern/v1/imports").length, 1);
     assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/review$/u.test(entry)).length, 1);
     assert.equal(calls.filter((entry) => /^POST \/api\/tavern\/v1\/imports\/[^/]+\/confirm$/u.test(entry)).length, 1);
+  } finally {
+    await browser.close();
+    await mounted.close();
+  }
+});
+
+test("management browser shows a durable loss report for a confirmed card import and keeps it after reload", async () => {
+  test.setTimeout(120_000);
+  const mounted = await startMountedManagementComposition({ withCharacters: true });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    const calls: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith("/api/tavern/v1/")) calls.push(`${request.method()} ${url.pathname}`);
+    });
+    await page.goto(mounted.server.launchUrl, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    const panel = page.locator("[data-characters-panel]");
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+
+    // Nothing has been confirmed yet: the loss report says so plainly instead of
+    // showing a placeholder row that would read as a record.
+    const history = panel.locator("[data-card-import-history]");
+    await expect(history).toBeVisible();
+    await expect(history.locator("[data-import-history-entry]")).toHaveCount(0);
+
+    const cardImport = panel.locator("[data-card-import]");
+    await cardImport.locator("textarea").fill(JSON.stringify(IMPORTED_CARD));
+    await cardImport.getByRole("button", { name: "Review card" }).click();
+    await cardImport.getByRole("button", { name: "Confirm & create companion" }).click();
+    await expect(cardImport.getByRole("status")).toContainText("Imported companion created.");
+
+    // The record is durable evidence by the time confirm returns, so exactly one
+    // entry appears without a reload: the card name the import carried, when,
+    // and the per-class counts the Host wrote.
+    const entries = history.locator("[data-import-history-entry]");
+    await expect(entries).toHaveCount(1);
+    await expect(entries.first()).toContainText("Imported Rae");
+    const counts = entries.first().locator("[data-import-history-counts]");
+    for (const classification of [
+      "accepted_typed",
+      "preserved_opaque",
+      "dropped_unsupported",
+      "rejected_invalid",
+    ])
+      await expect(counts).toContainText(classification);
+    assert.equal(
+      await history.textContent().then((text) => (text ?? "").includes("Quiet, attentive, fond of the valley.")),
+      false,
+      "the loss report never renders card body text",
+    );
+
+    // A reload proves the entry is durable evidence rather than optimistic DOM.
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+    const reloaded = page.locator("[data-card-import-history]");
+    await expect(reloaded.locator("[data-import-history-entry]")).toHaveCount(1);
+    await expect(reloaded.locator("[data-import-history-entry]").first()).toContainText("Imported Rae");
+
+    // Initial hydration, the post-confirm refresh, and the reload: three reads,
+    // each through the one authenticated route.
+    assert.equal(calls.filter((entry) => entry === "GET /api/tavern/v1/import-history").length, 3);
   } finally {
     await browser.close();
     await mounted.close();

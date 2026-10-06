@@ -26,6 +26,7 @@ import {
   type ScenarioV1,
   type SetWorldInfoBindingCommandV1,
   type StageStCardImportCommandV1,
+  type StCardImportHistoryV1,
   type StCardImportReadResultV1,
   type StCardImportReviewResultV1,
   type StCardImportStageResultV1,
@@ -159,6 +160,7 @@ const MANAGEMENT_IMPORT_ROUTES = [
   "character.import.read",
   "character.import.review",
   "character.import.confirm",
+  "character.import.history",
 ] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
@@ -346,6 +348,26 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * route delegates here; the browser receives the safe confirmed name.
    */
   confirmStCardImport?: (importId: string) => Promise<Readonly<{ name: string }>>;
+  /**
+   * Durable evidence history for confirmed imports. Read-only from the browser's
+   * side: it is the projection of what each confirmed import kept or dropped,
+   * never an input to what an import does.
+   */
+  stCardImportHistoryService?: Readonly<{
+    list(): Promise<
+      readonly Readonly<{
+        importId: string;
+        occurredAtMs: number;
+        cardName: string;
+        counts: Readonly<{
+          accepted_typed: number;
+          preserved_opaque: number;
+          dropped_unsupported: number;
+          rejected_invalid: number;
+        }>;
+      }>[]
+    >;
+  }>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
   readonly [key: string]: unknown;
@@ -394,6 +416,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const greetingService = options.greetingService;
   const stCardImportService = options.stCardImportService;
   const confirmStCardImport = options.confirmStCardImport;
+  const stCardImportHistoryService = options.stCardImportHistoryService;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
   if (managementStateFacade === undefined || managementService === undefined)
@@ -461,11 +484,15 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
   }
-  // The reviewed ST-card import routes are mounted only when both the exact
-  // service and the composition-owned confirm provisioner are injected; a
-  // profile that advertises them without either fails closed before dispatch.
+  // The reviewed ST-card import routes are mounted only when the exact
+  // service, the composition-owned confirm provisioner and the durable history
+  // read are all injected; a profile that advertises them without any of them
+  // fails closed before dispatch.
   for (const routeId of MANAGEMENT_IMPORT_ROUTES) {
-    if (profile.routeIds.includes(routeId) && (stCardImportService === undefined || confirmStCardImport === undefined))
+    if (
+      profile.routeIds.includes(routeId) &&
+      (stCardImportService === undefined || confirmStCardImport === undefined || stCardImportHistoryService === undefined)
+    )
       throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
@@ -1040,6 +1067,35 @@ export function createTavernManagementDialogueWebRequestHandler(
             throw new Error("character_import_service_unavailable");
           return sendJson(response, 200, result);
         }
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/import-history") {
+        // character.import.history: the durable loss-report evidence for every
+        // confirmed import. A read projection only; it can never change what an
+        // import kept or dropped, and it never carries card body text.
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("character.import.history") || stCardImportHistoryService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const entries = await stCardImportHistoryService.list();
+        const result: StCardImportHistoryV1 = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          entries: entries.map((entry) =>
+            Object.freeze({
+              importId: entry.importId,
+              occurredAtMs: entry.occurredAtMs,
+              cardName: entry.cardName,
+              counts: Object.freeze({
+                accepted_typed: entry.counts.accepted_typed,
+                preserved_opaque: entry.counts.preserved_opaque,
+                dropped_unsupported: entry.counts.dropped_unsupported,
+                rejected_invalid: entry.counts.rejected_invalid,
+              }),
+            }),
+          ),
+        });
+        if (!TavernBrowserValidatorsV1.StCardImportHistoryV1Schema.Check(result))
+          throw new Error("character_import_history_service_unavailable");
+        return sendJson(response, 200, result);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/persona") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");

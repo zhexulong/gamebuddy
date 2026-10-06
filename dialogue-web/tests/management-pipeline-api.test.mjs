@@ -7,6 +7,7 @@ import {
   validateMemoryRead,
   validateSetWorldInfoBindingCommand,
   validateSnapshot,
+  validateStCardImportHistory,
   validateWorldInfoState,
   validateVoiceDevices,
   validateVoicePreference,
@@ -237,6 +238,58 @@ test("management Voice device enumeration and output-device selection use exact 
   // A non-endpoint device id and an unknown action both fail closed.
   await assert.rejects(api.updateVoicePreference({ ...command, outputDevice: "speakers" }, HANDLE), TavernProtocolError);
   await assert.rejects(api.updateVoicePreference({ ...command, action: "setOutputDeviceX" }, HANDLE), TavernProtocolError);
+});
+
+test("management import history validator and client use the exact session-read route", async () => {
+  // The loss report is durable evidence the Host already wrote: the mirror
+  // accepts exactly its shape and rejects anything a card body could smuggle
+  // into it, and it reads through the one session-authenticated route.
+  const history = {
+    apiVersion: 1,
+    entries: [
+      {
+        importId: HANDLE,
+        occurredAtMs: 1_700_000_000_000,
+        cardName: "Safe Rin",
+        counts: { accepted_typed: 2, preserved_opaque: 0, dropped_unsupported: 1, rejected_invalid: 0 },
+      },
+    ],
+  };
+  assert.deepEqual(validateStCardImportHistory(history), history);
+  assert.throws(() => validateStCardImportHistory({ ...history, extra: true }), TavernProtocolError);
+  assert.throws(
+    () => validateStCardImportHistory({ ...history, entries: [{ ...history.entries[0], body: "card body text" }] }),
+    TavernProtocolError,
+  );
+  assert.throws(
+    () => validateStCardImportHistory({
+      ...history,
+      entries: [{ ...history.entries[0], counts: { accepted_typed: 1, preserved_opaque: 0 } }],
+    }),
+    TavernProtocolError,
+  );
+  assert.throws(
+    () => validateStCardImportHistory({ ...history, entries: [{ ...history.entries[0], importId: "not-a-handle" }] }),
+    TavernProtocolError,
+  );
+  assert.throws(
+    () => validateStCardImportHistory({
+      ...history,
+      entries: [{ ...history.entries[0], counts: { ...history.entries[0].counts, accepted_typed: -1 } }],
+    }),
+    TavernProtocolError,
+  );
+
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(history);
+  });
+  assert.deepEqual(await api.readStCardImportHistory(), history);
+  assert.deepEqual(calls[0], {
+    path: "/api/tavern/v1/import-history",
+    init: { method: "GET", credentials: "same-origin" },
+  });
 });
 
 test("the hand-written client mirror covers the Host contract's whole operation, label and problem vocabulary", async () => {

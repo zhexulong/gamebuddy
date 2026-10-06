@@ -62,6 +62,26 @@ export type CandidateReviewRecord = ArtifactRevision &
     reviewedFields: readonly string[];
     approvedAtMs: number;
   }>;
+/**
+ * Immutable evidence for one confirmed reviewed-card import: when it happened,
+ * which card it came from, which companion it provisioned, and how many fields
+ * the decoder kept or dropped per disposition class. It carries no card body
+ * text, and no reader consults it to decide what an import keeps or drops.
+ */
+export type StCardImportHistoryDispositionCounts = Readonly<{
+  accepted_typed: number;
+  preserved_opaque: number;
+  dropped_unsupported: number;
+  rejected_invalid: number;
+}>;
+export type StCardImportHistoryRecord = ArtifactRevision &
+  Readonly<{
+    importId: string;
+    occurredAtMs: number;
+    cardName: string;
+    companionId: string;
+    counts: StCardImportHistoryDispositionCounts;
+  }>;
 export type UserPersona = ArtifactRevision & Readonly<{ personaId: string; name: string; description?: string }>;
 export type Scenario = ArtifactRevision &
   Readonly<{
@@ -100,6 +120,7 @@ export type TavernArtifact =
   | CharacterCandidate
   | StCardImportRecord
   | CandidateReviewRecord
+  | StCardImportHistoryRecord
   | TavernCompanion
   | UserPersona
   | Scenario
@@ -111,6 +132,9 @@ export function validateTavernArtifact(value: unknown): TavernArtifact {
   if (!record(value) || value.schemaVersion !== TAVERN_SCHEMA_VERSION || !revision(value.revision)) fail();
   if (typeof value.importId === "string" && typeof value.candidateId === "string") return candidateReview(value);
   if (typeof value.candidateId === "string") return candidate(value);
+  // A history record carries `importId` too, so it is discriminated by its own
+  // immutable `occurredAtMs` fact before the generic import record below.
+  if (typeof value.importId === "string" && typeof value.occurredAtMs === "number") return importHistory(value);
   if (typeof value.importId === "string") return importRecord(value);
   if (typeof value.companionId === "string" && typeof value.profileId === "string") return companion(value);
   if (typeof value.chatThreadId === "string") return thread(value);
@@ -248,6 +272,30 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
     ...(sourceFormat === undefined ? {} : { sourceFormat }),
     sourceHash,
     dispositions: freeze(dispositions),
+  });
+}
+function importHistory(v: Record<string, unknown>): StCardImportHistoryRecord {
+  if (!only(v, ["schemaVersion", "revision", "importId", "occurredAtMs", "cardName", "companionId", "counts"]))
+    fail();
+  const counts = v.counts;
+  if (
+    !record(counts) ||
+    !only(counts, ["accepted_typed", "preserved_opaque", "dropped_unsupported", "rejected_invalid"])
+  )
+    fail();
+  return freeze({
+    schemaVersion: TAVERN_SCHEMA_VERSION,
+    revision: requiredRevision(v.revision),
+    importId: requiredId(v.importId),
+    occurredAtMs: requiredTimestamp(v.occurredAtMs),
+    cardName: requiredSingleLine(v.cardName, 128),
+    companionId: requiredId(v.companionId),
+    counts: freeze({
+      accepted_typed: requiredCount(counts.accepted_typed),
+      preserved_opaque: requiredCount(counts.preserved_opaque),
+      dropped_unsupported: requiredCount(counts.dropped_unsupported),
+      rejected_invalid: requiredCount(counts.rejected_invalid),
+    }),
   });
 }
 function companion(v: Record<string, unknown>): TavernCompanion {
@@ -437,6 +485,10 @@ function requiredRevision(v: unknown): number {
   if (!revision(v)) fail();  return v;
 }
 function requiredTimestamp(v: unknown): number {
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) fail();
+  return v;
+}
+function requiredCount(v: unknown): number {
   if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) fail();
   return v;
 }

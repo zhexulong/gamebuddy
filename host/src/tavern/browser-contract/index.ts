@@ -276,6 +276,31 @@ export const StCardImportConfirmResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   name: Type.String({ minLength: 1, maxLength: 128 }),
 });
+/**
+ * Player-readable loss report per disposition class (design/28 Import/export
+ * row): how many raw card fields the decoder kept or dropped, by class.
+ */
+export const StCardImportDispositionCountsV1Schema = strictObject({
+  accepted_typed: Revision,
+  preserved_opaque: Revision,
+  dropped_unsupported: Revision,
+  rejected_invalid: Revision,
+});
+/**
+ * One durable evidence row for a confirmed import: when, which card it came
+ * from, and what it kept or dropped by class. It carries no card body text and
+ * grants no capability — it can never change what an import did.
+ */
+export const StCardImportHistoryEntryV1Schema = strictObject({
+  importId: OpaqueHandle,
+  occurredAtMs: Revision,
+  cardName: Type.String({ minLength: 1, maxLength: 128 }),
+  counts: StCardImportDispositionCountsV1Schema,
+});
+export const StCardImportHistoryV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  entries: Type.Array(StCardImportHistoryEntryV1Schema, { maxItems: 100 }),
+});
 
 /**
  * Player-facing connection and model catalog (design/28 §1, §5.1).
@@ -431,6 +456,7 @@ const OperationId = Type.Union([
   Type.Literal("character.import.read"),
   Type.Literal("character.import.review"),
   Type.Literal("character.import.confirm"),
+  Type.Literal("character.import.history"),
   Type.Literal("persona.read"),
   Type.Literal("persona.update"),
   Type.Literal("scenario.read"),
@@ -470,6 +496,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.character.import.read"),
   Type.Literal("tavern.operation.character.import.review"),
   Type.Literal("tavern.operation.character.import.confirm"),
+  Type.Literal("tavern.operation.character.import.history"),
   Type.Literal("tavern.operation.persona.read"),
   Type.Literal("tavern.operation.persona.update"),
   Type.Literal("tavern.operation.scenario.read"),
@@ -1419,6 +1446,20 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: StCardImportConfirmResultV1Schema },
   }),
   route({
+    routeId: "character.import.history",
+    method: "GET",
+    path: "/api/tavern/v1/import-history",
+    operationId: "character.import.history",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: StCardImportHistoryV1Schema },
+  }),
+  route({
     routeId: "persona.read",
     method: "GET",
     path: "/api/tavern/v1/persona",
@@ -1618,6 +1659,9 @@ export const TavernBrowserContractV1 = Object.freeze({
     StCardImportReviewResultV1Schema,
     ConfirmStCardImportCommandV1Schema,
     StCardImportConfirmResultV1Schema,
+    StCardImportDispositionCountsV1Schema,
+    StCardImportHistoryEntryV1Schema,
+    StCardImportHistoryV1Schema,
     PersonaV1Schema,
     PersonaUpdateCommandV1Schema,
     ScenarioV1Schema,
@@ -1659,6 +1703,9 @@ export type ReviewStCardImportCommandV1 = Static<typeof ReviewStCardImportComman
 export type StCardImportReviewResultV1 = Static<typeof StCardImportReviewResultV1Schema>;
 export type ConfirmStCardImportCommandV1 = Static<typeof ConfirmStCardImportCommandV1Schema>;
 export type StCardImportConfirmResultV1 = Static<typeof StCardImportConfirmResultV1Schema>;
+export type StCardImportDispositionCountsV1 = Static<typeof StCardImportDispositionCountsV1Schema>;
+export type StCardImportHistoryEntryV1 = Static<typeof StCardImportHistoryEntryV1Schema>;
+export type StCardImportHistoryV1 = Static<typeof StCardImportHistoryV1Schema>;
 export type TavernBrowserOperationV1 = Static<typeof TavernBrowserOperationV1Schema>;
 export type TavernStateEventStreamV1 = Static<typeof TavernStateEventStreamV1Schema>;
 export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;

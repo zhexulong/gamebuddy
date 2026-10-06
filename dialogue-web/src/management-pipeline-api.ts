@@ -194,6 +194,24 @@ export type StCardImportReviewResultV1 = Readonly<{
   approvedAtMs: number;
 }>;
 export type StCardImportConfirmResultV1 = Readonly<{ apiVersion: 1; name: string }>;
+/** How many raw card fields the decoder kept or dropped, per disposition class. */
+export type StCardImportDispositionCountsV1 = Readonly<{
+  accepted_typed: number;
+  preserved_opaque: number;
+  dropped_unsupported: number;
+  rejected_invalid: number;
+}>;
+/** Durable evidence row for one confirmed import; never a capability. */
+export type StCardImportHistoryEntryV1 = Readonly<{
+  importId: string;
+  occurredAtMs: number;
+  cardName: string;
+  counts: StCardImportDispositionCountsV1;
+}>;
+export type StCardImportHistoryV1 = Readonly<{
+  apiVersion: 1;
+  entries: readonly StCardImportHistoryEntryV1[];
+}>;
 /** Player persona projection: revision and safe display fields. */
 export type PersonaV1 = Readonly<{
   apiVersion: 1;
@@ -526,6 +544,7 @@ const OPERATION_IDS = [
   "character.import.read",
   "character.import.review",
   "character.import.confirm",
+  "character.import.history",
   "persona.read",
   "persona.update",
   "scenario.read",
@@ -565,6 +584,7 @@ const LABEL_KEYS = [
   "tavern.operation.character.import.read",
   "tavern.operation.character.import.review",
   "tavern.operation.character.import.confirm",
+  "tavern.operation.character.import.history",
   "tavern.operation.persona.read",
   "tavern.operation.persona.update",
   "tavern.operation.scenario.read",
@@ -973,6 +993,14 @@ const IMPORT_READ_KEYS = [
 ] as const;
 const IMPORT_REVIEW_KEYS = ["apiVersion", "importId", "reviewedFields", "approvedAtMs"] as const;
 const IMPORT_CONFIRM_KEYS = ["apiVersion", "name"] as const;
+const IMPORT_HISTORY_COUNTS_KEYS = [
+  "accepted_typed",
+  "preserved_opaque",
+  "dropped_unsupported",
+  "rejected_invalid",
+] as const;
+const IMPORT_HISTORY_ENTRY_KEYS = ["importId", "occurredAtMs", "cardName", "counts"] as const;
+const IMPORT_HISTORY_KEYS = ["apiVersion", "entries"] as const;
 const IMPORT_ELIGIBILITY = new Set([
   "candidate_only",
   "profile_eligible_after_explicit_review",
@@ -1068,6 +1096,31 @@ function isStCardImportConfirmResult(value: unknown): value is StCardImportConfi
     hasExactKeys(value, IMPORT_CONFIRM_KEYS) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isLengthBoundedString(value.name, 1, 128)
+  );
+}
+
+function isStCardImportHistory(value: unknown): value is StCardImportHistoryV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_HISTORY_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    Array.isArray(value.entries) &&
+    value.entries.length <= 100 &&
+    value.entries.every(isStCardImportHistoryEntry)
+  );
+}
+
+function isStCardImportHistoryEntry(value: unknown): value is StCardImportHistoryEntryV1 {
+  if (!isRecord(value)) return false;
+  const counts = value.counts;
+  return (
+    hasExactKeys(value, IMPORT_HISTORY_ENTRY_KEYS) &&
+    isOpaqueHandle(value.importId) &&
+    isNonNegativeSafeInteger(value.occurredAtMs) &&
+    isLengthBoundedString(value.cardName, 1, 128) &&
+    isRecord(counts) &&
+    hasExactKeys(counts, IMPORT_HISTORY_COUNTS_KEYS) &&
+    IMPORT_HISTORY_COUNTS_KEYS.every((key) => isNonNegativeSafeInteger(counts[key]))
   );
 }
 
@@ -1638,6 +1691,11 @@ export function validateStCardImportConfirmResult(value: unknown): StCardImportC
   return value;
 }
 
+export function validateStCardImportHistory(value: unknown): StCardImportHistoryV1 {
+  if (!isStCardImportHistory(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatList(value: unknown): ChatListV1 {
   if (!isChatList(value)) throw new TavernProtocolError();
   return value;
@@ -1803,6 +1861,8 @@ export type ManagementPipelineApi = Readonly<{
   ): Promise<StCardImportReviewResultV1>;
   /** POST /api/tavern/v1/imports/:importId/confirm: provision the reviewed companion. */
   confirmStCardImport(importId: string, csrfToken: string): Promise<StCardImportConfirmResultV1>;
+  /** GET /api/tavern/v1/import-history: the durable loss report for confirmed imports. */
+  readStCardImportHistory(): Promise<StCardImportHistoryV1>;
 }>;
 
 export type ManagementOperationObservation = Readonly<{
@@ -2264,6 +2324,15 @@ export function createManagementPipelineApi(
       );
       observe("character.import.confirm", "passed", result.name);
       return result;
+    },
+    async readStCardImportHistory(): Promise<StCardImportHistoryV1> {
+      return exchange(
+        fetchLike,
+        "GET",
+        "/api/tavern/v1/import-history",
+        200,
+        validateStCardImportHistory,
+      );
     },
   });
 }
