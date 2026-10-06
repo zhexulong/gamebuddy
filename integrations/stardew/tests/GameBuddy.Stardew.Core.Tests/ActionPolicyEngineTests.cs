@@ -78,40 +78,60 @@ public sealed class ActionPolicyEngineTests
     public void ComputeEnabledActions_WithExperimentalActions_IncludesOptedInExperimentalActions()
     {
         // Opting a name in is only meaningful for an action that is NOT already
-        // default-consent. dismiss_modal is still experimental; the loop-closure
-        // wave promoted its own fifteen actions to live_verified, so they are now
-        // default-consent and naming them would be rejected, not inert.
+        // default-consent, so the names to opt in are read from the live partition rather than
+        // hard-coded. Hard-coding is what broke this test when the partition emptied: it named
+        // dismiss_modal, which has since been promoted.
         string[] experimentalIds = FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
             .Select(registration => registration.ActionId)
             .ToArray();
-        experimentalIds.Should().Contain("dismiss_modal");
-        // The loop-closure wave promoted its own actions to live_verified, so they
-        // must no longer sit in the experimental partition.
-        experimentalIds.Should().NotContain(new[]
-        {
-            "cut_grass", "clear_cask", "dress_mannequin", "set_sign_display",
-            "deposit_silo_hay", "toggle_tool_light", "harvest_bush",
-            "harvest_fruit_tree", "shake_tree", "take_pedestal_item",
-            "toggle_fence_gate", "use_raft", "mount_transport", "enter_mine",
-        });
-        FarmhandActionCatalog.Registrations
+        string[] defaultEnabledIds = FarmhandActionCatalog.Registrations
             .Where(registration => registration.Lifecycle != FarmhandActionLifecycle.Experimental)
             .Select(registration => registration.ActionId)
-            .Should().OnlyContain(id => id != "dismiss_modal" && id != "dismiss_modal");
+            .ToArray();
+
         var options = new ActionPolicyOptions(
-            ExperimentalActions: new[] { "dismiss_modal", "ride_minecart", "non_existent_action" }
+            ExperimentalActions: experimentalIds.Concat(new[] { "ride_minecart", "non_existent_action" }).ToArray()
         );
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
+        var withoutOptIn = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions());
 
-        // An opted-in experimental action is enabled.
-        enabled.Should().Contain("dismiss_modal");
-        // A former experimental action that is now live_verified is already
-        // default-consent; naming it changes nothing.
+        // THE OPT-IN RULE, asserted against the partition rather than against names: an opted-in
+        // experimental action is enabled, and is NOT enabled without the opt-in. When the
+        // partition is empty — as it is today — this loop has no data and is vacuous; it is
+        // written this way so an action returning to the experimental rung starts exercising the
+        // rule again on its own, instead of the rule being lost with its data.
+        foreach (string id in experimentalIds)
+        {
+            enabled.Should().Contain(id);
+            withoutOptIn.Should().NotContain(id);
+        }
+
+        // The half that IS non-vacuous today: opting in cannot widen the default surface. A
+        // promoted name is already default-consent, so naming it changes nothing; an unknown
+        // name is inert; a retired one stays retired.
         enabled.Should().Contain("ride_minecart");
-        // An unknown name is inert: opting in cannot invent a capability.
+        withoutOptIn.Should().Contain("ride_minecart");
         enabled.Should().NotContain("non_existent_action");
         enabled.Should().NotContain("sop_composite_pipeline");
+        enabled.Should().BeEquivalentTo(withoutOptIn,
+            "with no experimental registrations the opt-in list can only ever be a no-op");
+
+        // The promotion recorded as a pin rather than as prose. Both were promoted because WIA's
+        // interrupt -> breakpoint -> continuation design DEADLOCKS an Agent that cannot answer or
+        // dismiss a modal, so a silent regression back to the experimental rung would take the
+        // companion's self-healing away. RUNBOOK 32 (dismiss chain) and 33 (answer question).
+        FarmhandActionCatalog.Registrations
+            .Where(registration => registration.ActionId is "dismiss_modal" or "answer_dialogue")
+            .Should().HaveCount(2)
+            .And.OnlyContain(registration => registration.Lifecycle != FarmhandActionLifecycle.Experimental);
+
+        // Every non-experimental action is on the default surface: the partition is asserted
+        // rather than assumed, so no action can go silently invisible.
+        foreach (string id in defaultEnabledIds)
+        {
+            withoutOptIn.Should().Contain(id);
+        }
     }
 
     [Fact]
