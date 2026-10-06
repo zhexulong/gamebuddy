@@ -461,14 +461,45 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
             // The wire's terminal positions are not this contract's outcomes:
             // `contained` is the only containment, and a role the native
             // classified as not contained is exactly as unproven as a
-            // conversation that failed outright. The gate's refusal is the one
-            // position carried through under its own name, because it is the
-            // only answer that reports on the lease instead of on the recovery:
-            // a held gate says a live handle exists at the lease name, so the
-            // holder was NOT proven gone - never that the owner is alive, since
-            // that handle may be the recovery gate this Host itself opened.
+            // conversation that failed outright - with ONE deliberate exception,
+            // the broker's player-role early return mapped below. The gate's
+            // refusal is the other position carried through under its own name,
+            // because it is the only answer that reports on the lease instead of
+            // on the recovery: a held gate says a live handle exists at the lease
+            // name, so the holder was NOT proven gone - never that the owner is
+            // alive, since that handle may be the recovery gate this Host itself
+            // opened.
             if (acknowledgement.outcome === "gate_held") {
               return Object.freeze({ status: "gate_held" as const });
+            }
+            // The broker's player-role early return, reported under its own name
+            // instead of as a generic failure.
+            //
+            // This mapping is exact, and it depends on the broker emitting
+            // `unavailable` at the PLAYER-role position ONLY for that deliberate
+            // path. The player classifier is a fixed `unavailable` by design
+            // (host/native/windows-bootstrap-guardian/WindowsJobRecoveryClassifier.cs:33-40:
+            // "Player world ownership is not an AI containment artifact.
+            // Recovery must leave it untouched"), so a recovery never adopts the
+            // player's world; and on that role the broker classifies the AI side
+            // internally - consuming its kill-on-close cleanup - and then
+            // acknowledges with the PLAYER's result and returns, emitting no
+            // player CAS, no contained acknowledgement and no release settlement
+            // for this path (desktop/GameBuddy.Desktop/DesktopHostBootstrapBroker.cs:198-215,
+            // the `role == "playerHost"` early return whose comment states exactly
+            // that). What the Host can establish from that reply is only that the
+            // AI side is settled and the player's world was deliberately
+            // preserved, so that - and only that - is what this outcome says.
+            //
+            // Every OTHER position keeps the generic `unavailable` below: any
+            // other player-role classification, and every aiClient role position,
+            // are exactly as unproven as a conversation that failed outright.
+            if (
+              acknowledgement.outcome === "role_classified" &&
+              acknowledgement.role === "playerHost" &&
+              acknowledgement.classification === "unavailable"
+            ) {
+              return Object.freeze({ status: "ai_settled_player_preserved" as const });
             }
             return Object.freeze({
               status: acknowledgement.outcome === "contained" ? "recovered" as const : "unavailable" as const,
