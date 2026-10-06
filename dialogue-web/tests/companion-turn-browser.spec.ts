@@ -8,11 +8,21 @@
 import assert from "node:assert/strict";
 import {
   assertAccessibilityBaseline,
+  assertCriteriaCoverage,
   assertKeyboardReachable,
   assertLayoutFloor,
   assertQuiet,
+  resetCriteriaLedger,
   watchSurface,
 } from "./frontend-criteria.js";
+
+/** The obligations the contract declares for the Chat surface. */
+const CHAT_CRITERIA_OBLIGATIONS = [
+  "frontend-accessibility-baseline",
+  "frontend-keyboard-reach",
+  "frontend-layout-floor",
+  "frontend-quiet-walk",
+] as const;
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -272,6 +282,7 @@ test("conformance: chat surface meets the frontend criteria", async () => {
     // Keyboard reach is measured from the document as loaded: no programmatic
     // focus, no pointer event, and before anything has been typed into the
     // composer (typing would leave focus there and Tab would walk away from it).
+    resetCriteriaLedger();
     await assertKeyboardReachable(page, composer, "the chat composer");
 
     // Real content first: an empty transcript never overflows, so a scrollable
@@ -292,6 +303,9 @@ test("conformance: chat surface meets the frontend criteria", async () => {
     await assertAccessibilityBaseline(page, "chat");
     await assertLayoutFloor(page);
     assertQuiet(noise, "chat");
+    // And the surface was judged by every criterion it declares: dropping one of
+    // the calls above stops being invisible here.
+    assertCriteriaCoverage("chat", CHAT_CRITERIA_OBLIGATIONS);
   } finally {
     await context.close();
     await browser.close();
