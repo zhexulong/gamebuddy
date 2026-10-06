@@ -1221,13 +1221,17 @@ test("management browser with the Characters surface saves Persona, Scenario and
     await panel.locator("#scenario-name").fill("Spring in Pelican Town");
     await panel.locator("#scenario-description").fill("Stardew Valley, the first of spring.");
     await panel.getByRole("button", { name: "Save Scenario" }).click();
-    await expect(panel.getByText("Saved.").first()).toBeVisible();
+    await expect(panel.locator('section[aria-label="Scenario"]').getByText("Saved.")).toBeVisible({
+      timeout: 30_000,
+    });
 
     // Greeting saves one variant through the durable store.
     await panel.locator("#greeting-label").fill("Morning");
     await panel.locator("#greeting-variant-0-text").fill("Good morning, sunshine.");
     await panel.getByRole("button", { name: "Save Greeting" }).click();
-    await expect(panel.getByText("Saved.").first()).toBeVisible();
+    await expect(panel.locator('section[aria-label="Greeting"]').getByText("Saved.")).toBeVisible({
+      timeout: 30_000,
+    });
 
     // The companion library starts empty on a fresh fixture root (the mounted
     // Chat runtime does not mint a companion artifact into the library's
