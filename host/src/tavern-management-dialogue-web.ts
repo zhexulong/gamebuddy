@@ -39,6 +39,8 @@ import {
   type TavernConnectionRevisionCommandV1,
   type TavernLanguagePreferenceCommandV1,
   type TavernLanguagePreferenceV1,
+  type TavernModelProfilesV1,
+  type TavernModelProfileUpdateCommandV1,
   type TavernProblemV1,
   type TavernStateSnapshotV1,
   type TavernVoicePreferenceConsentCommandV1,
@@ -46,6 +48,7 @@ import {
   type TavernVoiceDevicesV1,
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
+import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernConnectionService } from "./tavern/connection-service.js";
@@ -133,6 +136,10 @@ const MANAGEMENT_CONNECTION_ROUTES = [
   "settings.connection.model",
   "settings.connection.remove",
 ] as const;
+/** Optional model-profile extension: the Chat and Game model profiles a player
+ * reads and rewrites (design/28 §2.3). Mounted only when the exact Host store is
+ * injected; a profile that advertises a route without the store fails closed. */
+const MANAGEMENT_MODEL_PROFILE_ROUTES = ["settings.profiles.read", "settings.profiles.update"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY = ["chat", "characters"] as const;
 const MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY = ["chat", "memory", "characters"] as const;
 /** Legacy navigation variants before the Characters surface (no characters item). */
@@ -194,6 +201,27 @@ const chatRetentionValidator = Compile(TavernBrowserContractV1.schemas.ChatReten
 const stageStCardImportValidator = Compile(TavernBrowserContractV1.schemas.StageStCardImportCommandV1Schema);
 const reviewStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ReviewStCardImportCommandV1Schema);
 const confirmStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ConfirmStCardImportCommandV1Schema);
+const modelProfileUpdateValidator = Compile(TavernBrowserContractV1.schemas.TavernModelProfileUpdateCommandV1Schema);
+
+/**
+ * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
+ * is structurally the durable `ModelProfileStore`; the dispatcher never reads
+ * the file itself and never decides what a valid model id is.
+ */
+export type TavernModelProfileStorePort = Readonly<{
+  read(surface: "chat" | "game"): Promise<TavernModelProfileProjection>;
+  update(
+    surface: "chat" | "game",
+    expectedRevision: number,
+    update: Readonly<{ modelId: string; thinkingLevel: string }>,
+  ): Promise<TavernModelProfileProjection>;
+}>;
+export type TavernModelProfileProjection = Readonly<{
+  surface: "chat" | "game";
+  revision: number;
+  modelId: string;
+  thinkingLevel: string;
+}>;
 
 export type TavernManagementDialogueWebOptions = Readonly<{
   managementStateFacade?: TavernManagementStateFacade;
@@ -222,6 +250,12 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * stay unavailable otherwise.
    */
   connectionService?: TavernConnectionService;
+  /**
+   * Host-owned Chat/Game model profiles (design/28 §2.3). Both fields are the
+   * player's own input: the store bounds them (non-empty, length, shape) and
+   * never checks them against the recommended catalog, which is guidance only.
+   */
+  modelProfileStore?: TavernModelProfileStorePort;
   /**
    * Host-owned companion library / persona / scenario / greeting management
    * (design/28 §2 Character + Persona rows). Each service is bound exactly
@@ -407,6 +441,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const playerPreferenceStore = options.playerPreferenceStore;
   const listVoiceOutputDevices = options.listVoiceOutputDevices;
   const connectionService = options.connectionService;
+  const modelProfileStore = options.modelProfileStore;
   const libraryService = options.libraryService;
   const companionDetailService = options.companionDetailService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
@@ -455,6 +490,17 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (profile.routeIds.some((routeId) => (MANAGEMENT_CONNECTION_ROUTES as readonly string[]).includes(routeId))) {
     if (connectionService === undefined) throw new Error("tavern_management_composition_unavailable");
     for (const routeId of MANAGEMENT_CONNECTION_ROUTES) {
+      if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+        throw new Error("tavern_management_composition_unavailable");
+    }
+  }
+  // The model-profile routes are mounted only when the exact Host store is
+  // injected; a profile that advertises either route without it fails closed
+  // before any dispatch, so the browser is never shown a profile editor the
+  // Host cannot serve.
+  if (profile.routeIds.some((routeId) => (MANAGEMENT_MODEL_PROFILE_ROUTES as readonly string[]).includes(routeId))) {
+    if (modelProfileStore === undefined) throw new Error("tavern_management_composition_unavailable");
+    for (const routeId of MANAGEMENT_MODEL_PROFILE_ROUTES) {
       if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
         throw new Error("tavern_management_composition_unavailable");
     }
@@ -830,6 +876,52 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!connectionRevisionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const command = body as TavernConnectionRevisionCommandV1;
         return sendJson(response, 200, await connection.remove(connectionRoute.connectionId, command.expectedRevision));
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/profiles") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.profiles.read") ||
+          !profile.operationIds.includes("settings.profiles.read") ||
+          modelProfileStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const [chat, game] = await Promise.all([
+          modelProfileStore.read("chat"),
+          modelProfileStore.read("game"),
+        ]);
+        const profiles = projectModelProfiles(chat, game);
+        if (!TavernBrowserValidatorsV1.TavernModelProfilesV1Schema.Check(profiles))
+          throw new Error("model_profile_store_unavailable");
+        return sendJson(response, 200, profiles);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/profiles") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = authenticate(request, browser, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.profiles.update") ||
+          !profile.operationIds.includes("settings.profiles.update") ||
+          modelProfileStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!modelProfileUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernModelProfileUpdateCommandV1;
+        const updated = await modelProfileStore.update(command.surface, command.expectedRevision, {
+          modelId: command.modelId,
+          thinkingLevel: command.thinkingLevel,
+        });
+        const other = await modelProfileStore.read(command.surface === "chat" ? "game" : "chat");
+        const profiles = projectModelProfiles(
+          command.surface === "chat" ? updated : other,
+          command.surface === "chat" ? other : updated,
+        );
+        if (!TavernBrowserValidatorsV1.TavernModelProfilesV1Schema.Check(profiles))
+          throw new Error("model_profile_store_unavailable");
+        return sendJson(response, 200, profiles);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/companions") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -1479,6 +1571,7 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
         MANAGEMENT_VOICE_DEVICES,
         MANAGEMENT_LANGUAGE_ROUTES,
         MANAGEMENT_CONNECTION_ROUTES,
+        MANAGEMENT_MODEL_PROFILE_ROUTES,
         MANAGEMENT_P9_ROUTES,
         MANAGEMENT_IMPORT_ROUTES,
       ],
@@ -1491,6 +1584,7 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
         MANAGEMENT_VOICE_DEVICES,
         MANAGEMENT_LANGUAGE_ROUTES,
         MANAGEMENT_CONNECTION_ROUTES,
+        MANAGEMENT_MODEL_PROFILE_ROUTES,
         MANAGEMENT_P9_ROUTES,
         MANAGEMENT_IMPORT_ROUTES,
       ],
@@ -1643,6 +1737,33 @@ function languagePreference(preference: PlayerPreference): TavernLanguagePrefere
   return { revision: preference.revision, locale: preference.locale };
 }
 
+/**
+ * The player-readable model-profile projection (design/28 §2.3): the exact
+ * values the player saved for each surface, plus the shipped catalog offered as
+ * guidance. The guidance list is derived from the one provider catalog and
+ * never limits what a profile may hold — the store accepts any bounded model id.
+ */
+function projectModelProfiles(
+  chat: TavernModelProfileProjection,
+  game: TavernModelProfileProjection,
+): TavernModelProfilesV1 {
+  return {
+    apiVersion: TAVERN_BROWSER_API_VERSION,
+    chat: { revision: chat.revision, modelId: chat.modelId, thinkingLevel: chat.thinkingLevel },
+    game: { revision: game.revision, modelId: game.modelId, thinkingLevel: game.thinkingLevel },
+    recommendedModels: TAVERN_PROVIDER_CATALOG.flatMap((provider) =>
+      provider.allowedPlayerModels.map((model) => ({
+        providerId: provider.providerId,
+        providerLabel: provider.label,
+        modelId: model.modelId,
+        modelLabel: model.modelLabel,
+        allowedThinkingLevels: [...model.allowedThinkingLevels],
+        defaultThinkingLevel: model.defaultThinkingLevel,
+      })),
+    ),
+  };
+}
+
 function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {
   const message = error instanceof Error ? error.message : "";
   if (message === "payload_too_large") return { status: 413, code: "payload_too_large" };
@@ -1661,6 +1782,11 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "memory_read_storage_unavailable") return { status: 503, code: "storage_unavailable" };
+  if (message === "model_profile_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
+  if (message === "invalid_model_profile_update") return { status: 400, code: "invalid_request" };
+  if (message === "invalid_model_profile_store" || message === "model_profile_readback_mismatch")
+    return { status: 503, code: "storage_unavailable" };
+  if (message === "model_profile_store_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "player_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
   if (message === "invalid_player_preference_update") return { status: 400, code: "invalid_request" };
   if (message === "player_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };

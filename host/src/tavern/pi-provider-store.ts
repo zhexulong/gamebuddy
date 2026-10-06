@@ -2,7 +2,12 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
 import { atomicWriteFile } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime-identity.js";
 import { connectionDocumentPath } from "./connection-store.js";
-import { catalogProvider, TAVERN_ENVIRONMENT_PROVIDER_ID } from "./provider-catalog.js";
+import {
+  catalogModel,
+  catalogProvider,
+  type TavernModelReasoningDialect,
+  TAVERN_ENVIRONMENT_PROVIDER_ID,
+} from "./provider-catalog.js";
 
 /**
  * The exact `models.json` provider entry one runtime selection contributes to
@@ -32,9 +37,21 @@ import { catalogProvider, TAVERN_ENVIRONMENT_PROVIDER_ID } from "./provider-cata
 
 export type PiProviderEntry = Readonly<Record<string, unknown>>;
 
+/**
+ * The reasoning dialect the environment model is declared with. It is read from
+ * the model's catalog entry, never from its name: a player-typed model id the
+ * catalog does not describe keeps the neutral dialect, so a non-catalog model
+ * still gets a reasoning mapping instead of silently losing one (design/28
+ * §2.3.1).
+ */
+function environmentReasoningDialect(modelId: string): TavernModelReasoningDialect {
+  const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
+  return provider === null ? "native" : (catalogModel(provider, modelId)?.reasoningDialect ?? "native");
+}
+
 /** The frozen operator-managed Agent provider entry (zero-configuration default). */
 export function environmentProviderEntry(modelId: string): PiProviderEntry {
-  const deepSeekCompat = modelId === "deepseek-v4-flash";
+  const reasoningDialect = environmentReasoningDialect(modelId);
   return {
     name: "CPA OpenAI-compatible Agent",
     baseUrl: "http://127.0.0.1:8317/v1",
@@ -52,7 +69,7 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
         reasoning: true,
         // The configured CPA route is used with ordinary native `tools`; Pi
         // does not emit forced OpenAI `tool_choice` for this surface.
-        thinkingLevelMap: deepSeekCompat
+        thinkingLevelMap: reasoningDialect === "deepseek"
           ? {
               off: "none",
               minimal: "low",
@@ -85,7 +102,7 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
           supportsReasoningEffort: true,
           maxTokensField: "max_tokens",
           supportsStrictMode: true,
-          ...(deepSeekCompat
+          ...(reasoningDialect === "deepseek"
             ? {
                 thinkingFormat: "deepseek",
                 requiresReasoningContentOnAssistantMessages: true,

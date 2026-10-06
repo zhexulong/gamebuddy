@@ -8,6 +8,11 @@ export const TAVERN_BROWSER_API_VERSION = 1 as const;
 const MAX_TEXT_UTF8_BYTES = 16_384;
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const OPAQUE_HANDLE_PATTERN = "^[A-Za-z0-9_-]{22,128}$";
+// A model id and a thinking level are the player's own input (design/28 §2.3.1):
+// a general bounded string, never a closed union and never a catalog membership
+// test. The recommended catalog is guidance only.
+const MODEL_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:/\\-]{0,127}$";
+const THINKING_LEVEL_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,31}$";
 const IDEMPOTENCY_KEY_PATTERN = "^[A-Za-z0-9_-]{22}$";
 
 /** Pure validators registered once for schemas compiled by this module. */
@@ -438,6 +443,43 @@ export const TavernConnectionProbeV1Schema = strictObject({
   failure: ConnectionFailure,
   state: TavernConnectionStateV1Schema,
 });
+/**
+ * One shipped catalog model offered as guidance for a player-typed model id
+ * (design/28 §2.3.2). It is a suggestion the UI may show; the model profile
+ * accepts any bounded model id, so this list is never the upper bound.
+ */
+export const TavernRecommendedModelV1Schema = strictObject({
+  providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
+  providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  modelId: Type.String({ minLength: 1, maxLength: 128 }),
+  modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
+  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 5 }),
+  defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
+});
+/**
+ * One surface's active model profile (design/28 §2.3). `modelId` and
+ * `thinkingLevel` are exactly what the player typed and exactly what the next
+ * runtime construction reads.
+ */
+export const TavernModelProfileV1Schema = strictObject({
+  revision: Revision,
+  modelId: Type.String({ minLength: 1, maxLength: 128, pattern: MODEL_ID_PATTERN }),
+  thinkingLevel: Type.String({ minLength: 1, maxLength: 32, pattern: THINKING_LEVEL_PATTERN }),
+});
+/** `GET /settings/profiles`: the Chat and Game profiles plus the guidance catalog. */
+export const TavernModelProfilesV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  chat: TavernModelProfileV1Schema,
+  game: TavernModelProfileV1Schema,
+  recommendedModels: Type.Array(TavernRecommendedModelV1Schema, { maxItems: 64 }),
+});
+export const TavernModelProfileUpdateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  surface: Type.Union([Type.Literal("chat"), Type.Literal("game")]),
+  expectedRevision: Revision,
+  modelId: Type.String({ minLength: 1, maxLength: 128, pattern: MODEL_ID_PATTERN }),
+  thinkingLevel: Type.String({ minLength: 1, maxLength: 32, pattern: THINKING_LEVEL_PATTERN }),
+});
 const OperationId = Type.Union([
   Type.Literal("chat.submit"),
   Type.Literal("chat.cancel"),
@@ -474,6 +516,8 @@ const OperationId = Type.Union([
   Type.Literal("settings.connection.activate"),
   Type.Literal("settings.connection.model"),
   Type.Literal("settings.connection.remove"),
+  Type.Literal("settings.profiles.read"),
+  Type.Literal("settings.profiles.update"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -514,6 +558,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.connection.activate"),
   Type.Literal("tavern.operation.settings.connection.model"),
   Type.Literal("tavern.operation.settings.connection.remove"),
+  Type.Literal("tavern.operation.settings.profiles.read"),
+  Type.Literal("tavern.operation.settings.profiles.update"),
 ]);
 export const TavernBrowserOperationV1Schema = strictObject({
   operationId: OperationId,
@@ -1331,6 +1377,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernConnectionStateV1Schema },
   }),
   route({
+    routeId: "settings.profiles.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/profiles",
+    operationId: "settings.profiles.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernModelProfilesV1Schema },
+  }),
+  route({
+    routeId: "settings.profiles.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/profiles",
+    operationId: "settings.profiles.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernModelProfileUpdateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernModelProfilesV1Schema },
+  }),
+  route({
     routeId: "events",
     method: "GET",
     path: "/api/tavern/v1/events",
@@ -1644,6 +1719,10 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernConnectionRevisionCommandV1Schema,
     TavernConnectionModelCommandV1Schema,
     TavernConnectionProbeV1Schema,
+    TavernRecommendedModelV1Schema,
+    TavernModelProfileV1Schema,
+    TavernModelProfilesV1Schema,
+    TavernModelProfileUpdateCommandV1Schema,
     WorldInfoStateV1Schema,
     SetWorldInfoBindingCommandV1Schema,
     CompanionListEntryV1Schema,
@@ -1756,6 +1835,10 @@ export type TavernConnectionCreateCommandV1 = Static<typeof TavernConnectionCrea
 export type TavernConnectionRevisionCommandV1 = Static<typeof TavernConnectionRevisionCommandV1Schema>;
 export type TavernConnectionModelCommandV1 = Static<typeof TavernConnectionModelCommandV1Schema>;
 export type TavernConnectionProbeV1 = Static<typeof TavernConnectionProbeV1Schema>;
+export type TavernRecommendedModelV1 = Static<typeof TavernRecommendedModelV1Schema>;
+export type TavernModelProfileV1 = Static<typeof TavernModelProfileV1Schema>;
+export type TavernModelProfilesV1 = Static<typeof TavernModelProfilesV1Schema>;
+export type TavernModelProfileUpdateCommandV1 = Static<typeof TavernModelProfileUpdateCommandV1Schema>;
 export type TavernProblemV1 = Static<typeof TavernProblemV1Schema>;
 export type BrowserEventV1 = Static<typeof BrowserEventV1Schema>;
 export type TavernBrowserOperationIdV1 = Static<typeof OperationId>;

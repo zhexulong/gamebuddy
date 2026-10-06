@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   type AgentSession,
   createAgentSession,
+  type CreateAgentSessionOptions,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
@@ -246,6 +247,16 @@ export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig =
     modelId: "deepseek-v4-flash",
     thinkingLevel: "high",
   });
+
+/**
+ * The one boundary where a player-typed thinking level meets the embedded
+ * runtime's own vocabulary. The value is deliberately NOT clamped or rewritten
+ * here: the runtime resolves it against the selected model and falls back to a
+ * level that model advertises (pi-ai `clampThinkingLevel`).
+ */
+function piThinkingLevel(value: string): NonNullable<CreateAgentSessionOptions["thinkingLevel"]> {
+  return value as NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
+}
 
 /**
  * Internal-only test seam for bounded Magic Context gates. It is deliberately
@@ -1001,7 +1012,10 @@ export async function createRuntimeWithFixedToolsCore(
       noTools: "all",
       tools: allowedToolNames,
       customTools,
-      thinkingLevel: modelConfig?.thinkingLevel ?? "off",
+      // The player's own thinking level is forwarded verbatim: the embedded
+      // runtime clamps a level the selected model does not advertise instead of
+      // this Host narrowing a value the player typed (design/28 §2.3.1, §2.3.5).
+      thinkingLevel: piThinkingLevel(modelConfig?.thinkingLevel ?? "off"),
     }));
   } finally {
     if (loadMagicContextExtension) {

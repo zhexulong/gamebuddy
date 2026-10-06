@@ -31,20 +31,29 @@ export type RuntimePaths = Readonly<{
   surfaceSessionId?: string;
 }>;
 
+/** Thinking levels a Host-owned catalog model advertises for selection. */
 export type CompanionThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
+ * Bounded player-supplied model id. One spelling for every store that accepts a
+ * player's own model id: the connection record's endpoint model and the Chat /
+ * Game model profile both name a model the player typed, never a provider
+ * payload and never a closed catalog union (design/28 §2.3).
+ */
+export const PLAYER_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,127}$/;
+
+/**
  * The exact provider/model/thinking selection one runtime is constructed with.
- * `provider` and `modelId` are open strings because the player's own connection
- * selection decides them (
- * design/28 §5.3); the runtime still fails closed when the selected model is not
- * resolvable from the provider store, and every writer that does not come from a
- * player connection keeps using the frozen constants below.
+ * Every field is an open string because the player's own connection or model
+ * profile selection decides it (design/28 §5.3, §2.3); the runtime still fails
+ * closed when the selected model is not resolvable from the provider store. The
+ * thinking level is forwarded to the embedded runtime exactly as the player
+ * typed it — that runtime clamps a level the selected model does not advertise.
  */
 export type CompanionModelConfig = Readonly<{
   provider: string;
   modelId: string;
-  thinkingLevel: CompanionThinkingLevel;
+  thinkingLevel: string;
 }>;
 
 function requireOpaqueSegment(label: string, value: string): string {
