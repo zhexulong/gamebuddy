@@ -74,10 +74,53 @@ test("the marker requires a reason - a bare marker is not an exception", async (
 });
 
 test("the repository itself has no undocumented absence-as-pass branch", () => {
-  const findings = findAbsencePassBranches({ root: join(here, "live-run") });
+  const findings = findAbsencePassBranches({ root: join(here, "..", "tools") });
   assert.deepEqual(
     findings,
     [],
     `fix with evidence-verdict.mjs or declare the exception: ${findings.map((f) => `${f.file}:${f.line}`).join(", ")}`,
   );
+});
+
+test("the mirror spelling `A ? B : true` is caught, and an object field named true is not", async () => {
+  // The first version of this guard only matched `? true`, so it missed
+  // `worldBookPassed = gate.expected === true ? gate.assembled === true : true` -
+  // the canonical absence-as-pass form, which then stayed in the tree while the
+  // guard reported zero findings (measured 2026-10-06). Both spellings must be
+  // caught, and an object FIELD named `true` must not become a false positive.
+  const mirror = "const worldBookPassed = worldBookGate.expected === true ? worldBookGate.assembled === true : true;\n";
+  await withFixture(mirror, async (root) => {
+    const findings = findAbsencePassBranches({ root });
+    assert.equal(findings.length, 1, "the `: true` alternate must be reported");
+    assert.match(findings[0].snippet, /:\s*true/);
+  });
+
+  const named = `// absence-as-pass: the product has no world book configured at all\n${mirror}`;
+  await withFixture(named, async (root) => {
+    assert.deepEqual(findAbsencePassBranches({ root }), [], "a named absence is allowed");
+  });
+
+  const objectField = "const merged = { ...(assistantShell ? { assistantShell: true } : {}) };\n";
+  await withFixture(objectField, async (root) => {
+    assert.deepEqual(findAbsencePassBranches({ root }), [], "an object field named true is not a verdict");
+  });
+});
+
+test("a camelCase pass identifier is not skipped", async () => {
+  // The first version matched `\bpassed`, and camelCase has a word character before
+  // `Passed` (`ladderZeroPassed`), so real absence-as-pass branches were silently
+  // skipped while the guard reported zero findings - it missed exactly the two
+  // defects it was written for (measured 2026-10-06, found by mutation testing this
+  // guard against the tree). A guard that skips its targets is the disease.
+  const camel = [
+    "const worldBookPassed = worldBookGate.expected === true ? worldBookGate.assembled === true : true;",
+    "",
+  ].join("\n");
+  await withFixture(camel, async (root) => {
+    assert.equal(findAbsencePassBranches({ root }).length, 1, "camelCase `...Passed` must be examined");
+  });
+  const camelNoShape = "const ladderZeroPassed = computeSomethingElse();\n";
+  await withFixture(camelNoShape, async (root) => {
+    assert.deepEqual(findAbsencePassBranches({ root }), [], "a plain call is not an absence-as-pass branch");
+  });
 });

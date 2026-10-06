@@ -18,6 +18,12 @@
  * down and reviewable.
  *
  * Usage: node tools/check-live-run-verdict-guards.mjs [--root <dir>] [--json]
+ *
+ * The default root is all of `tools/` (not just `tools/live-run`): the same
+ * absence-as-pass shape lives in sibling gates such as
+ * `tools/lib/companion-interaction-gate.mjs` and `tools/lib/system-findings.mjs`, and a
+ * guard scoped to one directory only protects that directory (both are clean today -
+ * verified by scanning them).
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -25,10 +31,31 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Names whose value is consumed as "this part of the run is OK". */
-const PASS_SHAPED = /\b(passed|Passed|assembled|Assembled|verified|contentPassed|contextAssembled|worldBookAssembled)\b/;
+/**
+ * Names whose value is consumed as "this part of the run is OK".
+ *
+ * Matched case-insensitively and WITHOUT a leading word boundary: camelCase
+ * identifiers such as `ladderZeroPassed`, `worldBookPassed` and `covenantPassed` have
+ * a word character before `Passed`, so a `\bpassed` pattern silently skipped them -
+ * including two real absence-as-pass defects this guard failed to report while
+ * claiming zero findings (measured 2026-10-06). A guard that skips its targets is
+ * the same disease it exists to catch.
+ */
+const PASS_SHAPED = /(passed|assembled|verified)/i;
 /** A branch whose absence path is literally `true`. */
 const ABSENCE_PASS = /\?\s*true\b|\?\?\s*true\b/;
+/**
+ * The MIRROR spelling, which the first version of this guard missed.
+ *
+ * `A ? B : true` is the canonical absence-as-pass form - the vacuous value sits after
+ * the colon - and `? true` never appears in it. Found by auditing this guard itself
+ * against the tree: `worldBookPassed` was written exactly this way and passed the
+ * original rule untouched (measured 2026-10-06).
+ *
+ * Anchored to the END of the statement so an object FIELD named `true` (for example
+ * `...(shell ? { assistantShell: true } : {})`) is not mistaken for a verdict.
+ */
+const ALT_ABSENCE_PASS = /:\s*true\s*;?\s*(?:\/\/.*)?$/;
 /** The deliberate-exception marker, which requires a reason. */
 const MARKER = /absence-as-pass:\s*\S/;
 
@@ -52,7 +79,11 @@ export function findAbsencePassBranches({ root }) {
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, index) => {
       if (/^\s*(\/\/|\*)/.test(line)) return;
-      if (!ABSENCE_PASS.test(line)) return;
+      // Either spelling counts: `? true` / `?? true`, or `: true` as the alternate of
+      // a ternary (the mirror form the first version missed - it early-returned on the
+      // narrow rule, so the widened check was dead code until a mutation test caught
+      // it: removing a legitimately marked `: true` still reported zero findings).
+      if (!ABSENCE_PASS.test(line) && !ALT_ABSENCE_PASS.test(line)) return;
       // The exception must be declared ON the branch or the two lines above it,
       // and it must carry a reason on that same line: a bare marker is not an
       // exception (a reasonless exemption is the silent pass again).
@@ -79,7 +110,7 @@ function main() {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");
   const rootIndex = argv.indexOf("--root");
-  const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : join(repositoryRoot, "tools", "live-run");
+  const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : join(repositoryRoot, "tools");
   const findings = findAbsencePassBranches({ root });
   if (json) {
     process.stdout.write(`${JSON.stringify({ root, findings }, null, 2)}\n`);
