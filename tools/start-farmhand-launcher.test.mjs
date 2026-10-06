@@ -323,7 +323,7 @@ test("a helper failure without a known code names its real reason, and cleanup c
   // name the transaction holding it.
   assert.match(launcher, /\(:\[A-Za-z0-9_\.-\]\{1,96\}\)\?/);
   // Cleanup keeps the primary failure.
-  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,400}\$primaryFailure = \$_[\s\S]{0,300}throw\n\} finally \{/);
+  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,400}\$primaryFailure = \$_[\s\S]{0,1500}throw\n\} finally \{/);
   assert.match(launcher, /if \(\$null -eq \$primaryFailure\) \{ throw \}/);
   assert.match(launcher, /\[launcher-failure\] run failed: /);
 });
@@ -423,4 +423,29 @@ test("cleanup races are reported alongside the run's failure, never instead of i
   assert.ok(launcher.includes("$cleanupFailure"), "cleanup failures are collected");
   assert.ok(launcher.includes("[launcher-failure] cleanup also failed: "), "both failures are reported");
   assert.ok(launcher.includes("elseif ($null -ne $cleanupFailure) {\n        throw $cleanupFailure"), "a cleanup-only failure still fails the run");
+});
+
+test("each game instance's console log is captured, and its diagnostics survive a failed run", () => {
+  // The two instances otherwise share one SMAPI-latest.txt, so the farmhand's own
+  // view of why it dropped a preview connection is invisible (measured 2026-10-06:
+  // the disconnect carried an empty reason code and no second log existed).
+  assert.ok(launcher.includes('$hostStdoutPath = Join-Path $runRoot "host.stdout.log"'));
+  assert.ok(launcher.includes('$aiStdoutPath = Join-Path $runRoot "ai-client.stdout.log"'));
+  assert.ok(launcher.includes('-RedirectStandardOutput $hostStdoutPath'));
+  assert.ok(launcher.includes('-RedirectStandardOutput $aiStdoutPath'));
+  assert.ok(launcher.includes('[launcher-instance-diag] '));
+  assert.ok(launcher.includes("function Get-BoundedLogDiagnostics([string]$Path, [int]$MaxLines = 5)"));
+  // Privacy: the extractor keeps the same no-path/no-stack/bounded rule, and the
+  // diagnostics are printed BEFORE the rethrow so they survive the failure.
+  const extractor = launcher.slice(
+    launcher.indexOf("function Get-BoundedLogDiagnostics"),
+    launcher.indexOf("function Stop-OwnedProcess"),
+  );
+  assert.ok(extractor.split("\n").some((line) => line.includes("-match '") && line.includes("/]'")), "path-shaped lines are dropped");
+  assert.ok(extractor.includes("-gt 200"), "lines are bounded");
+  const catchStart = launcher.indexOf("$primaryFailure = $_");
+  const catchBlock = launcher.slice(catchStart, launcher.indexOf("} finally {", catchStart));
+  const diagIndex = catchBlock.indexOf("[launcher-instance-diag] ");
+  const throwIndex = catchBlock.lastIndexOf("throw");
+  assert.ok(diagIndex > 0 && diagIndex < throwIndex, "diagnostics are emitted before the rethrow");
 });

@@ -106,6 +106,33 @@ function Test-NamedPipeExists([string]$Name) {
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
     try { return [System.IO.Directory]::GetFiles("\\.\pipe\") -contains ("\\.\pipe\" + $Name) } catch { return $false }
 }
+function Get-BoundedLogDiagnostics([string]$Path, [int]$MaxLines = 5) {
+    # Bounded, reason-carrying diagnostics from one game instance's captured console
+    # log. Under the same privacy rule as Get-BoundedFailureDetail: no path-shaped or
+    # URL-shaped text, no stack frames, whitespace collapsed, 200 characters.
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+    try { $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch { return @() }
+    $preferred = New-Object System.Collections.Generic.List[string]
+    $other = New-Object System.Collections.Generic.List[string]
+    $scanned = 0
+    foreach ($line in ($content -split "`r?`n")) {
+        if ($scanned -ge 4000) { break }
+        $scanned++
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0) { continue }
+        if ($trimmed -match '[\\/]') { continue }
+        if ($trimmed -match '^at\s' -or $trimmed -match 'node:internal') { continue }
+        $collapsed = ($trimmed -replace '\s+', ' ')
+        if ($collapsed.Length -gt 200) { $collapsed = $collapsed.Substring(0, 200) }
+        if ($collapsed -match 'GameBuddy') {
+            if (-not $preferred.Contains($collapsed)) { $preferred.Add($collapsed) }
+        } elseif (-not $other.Contains($collapsed)) { $other.Add($collapsed) }
+    }
+    # Our own Mod's lines are the ones that name a reason; fall back to the tail.
+    $pool = if ($preferred.Count -gt 0) { $preferred } else { $other }
+    $count = [Math]::Min($MaxLines, $pool.Count)
+    return @($pool[$pool.Count - $count..($pool.Count - 1)])
+}
 function Stop-OwnedProcess($Process) {
     if ($null -eq $Process) { return }
     $Process.Refresh()
@@ -385,6 +412,11 @@ $previousLaunchGeneration = if ($previousLaunchGenerationPresent) { $env:GAMEBUD
 # both redirected-log paths to exist as explicit null values in that case.
 $previewStdoutPath = $null
 $previewStderrPath = $null
+# Each game instance's console output is captured separately. Without this the two
+# instances share one SMAPI-latest.txt, so the farmhand's own view of why it dropped
+# a preview connection is invisible (measured 2026-10-06).
+$hostStdoutPath = $null
+$aiStdoutPath = $null
 $sessionDirectory = $null
 $prepared = $false
 $nativeServerReadyAtUnixMs = 0
@@ -416,7 +448,8 @@ try {
     # this child, exactly like the launch-generation pattern below. Clear it
     # before the AI launch so neither role inherits the other's shape.
     $env:GAMEBUDDY_WINDOW_MODE = $HostWindowMode
-    $hostProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $hostModsPath)) -WorkingDirectory $GamePath -PassThru
+    $hostStdoutPath = Join-Path $runRoot "host.stdout.log"
+    $hostProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $hostModsPath)) -WorkingDirectory $GamePath -RedirectStandardOutput $hostStdoutPath -RedirectStandardError (Join-Path $runRoot "host.stderr.log") -PassThru
     Write-LauncherPhase "hostLaunched"
     $notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Invoke-NodeQuiet @("tools/await-stardew-fixture-readiness.mjs", "--session-directory", $sessionDirectory, "--host-config", $hostConfig, "--timeout-ms", ($StartupTimeoutSeconds * 1000), "--not-before-unix-ms", $notBefore) "host_fixture_readiness_failed"
@@ -457,7 +490,8 @@ try {
     # The AI-client role is the silent farmhand; refresh GAMEBUDDY_WINDOW_MODE
     # with its own validated mode so the host child's value cannot cross roles.
     $env:GAMEBUDDY_WINDOW_MODE = $FarmhandWindowMode
-    $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -PassThru
+    $aiStdoutPath = Join-Path $runRoot "ai-client.stdout.log"
+    $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -RedirectStandardOutput $aiStdoutPath -RedirectStandardError (Join-Path $runRoot "ai-client.stderr.log") -PassThru
     Write-LauncherPhase "aiClientLaunched"
     # The AI client is a FULL game instance: it needs its own startup (measured
     # 18-27s) before its Mod creates the bridge pipe. Starting the preview sooner
@@ -640,6 +674,13 @@ try {
     # of why the run stopped (measured 2026-10-06).
     $primaryFailure = $_
     Write-Output ("[launcher-failure] run failed: " + $_.Exception.Message)
+    # The instances' own diagnostics: the farmhand's view of why it dropped the
+    # preview is otherwise lost with the run root.
+    foreach ($instance in @(@("host", $hostStdoutPath), @("ai-client", $aiStdoutPath))) {
+        foreach ($line in (Get-BoundedLogDiagnostics $instance[1])) {
+            Write-Output ("[launcher-instance-diag] " + $instance[0] + ": " + $line)
+        }
+    }
     throw
 } finally {
     # Strict reverse ownership order. Restore only after every launched process
