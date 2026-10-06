@@ -87,7 +87,13 @@ const CANCEL_ARM_POLL_MS = 250;
 const STOP_TIMEOUT_MS = 5_000;
 const MARKER_DRAIN_MS = 50;
 /** Fixed non-content submit text; it never enters the trace. */
-const SUBMIT_PROMPT_TEXT = "Please respond naturally.";
+// The player's text. Overridable so a run can carry a REAL intent (something a player would actually
+// ask for) instead of a content-free one: with a content-free prompt only "did it say something" is
+// judgeable, never relevance, persona depth or consistency across a conversation.
+const SUBMIT_PROMPT_TEXT = process.env.GAMEBUDDY_CHAT_PROMPT ?? "Please respond naturally.";
+// How many COMPLETED conversation turns a default run drives. The cancel probe is separate and always
+// last (see below), so this number is exactly how many durable companion replies the run can produce.
+const CONVERSATION_TURNS = Math.max(1, Math.min(8, Number(process.env.GAMEBUDDY_CHAT_TURNS ?? 2)));
 
 const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "failed"]));
 
@@ -1415,8 +1421,14 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
       await runProbeScenario({ probe: probeManifest.probes[index] });
     }
   } else {
-    // Default (no manifest): the existing fixed two-turn sweep.
-    await runTurn({ cancel: false });
+    // Default (no manifest). Previously exactly one conversation turn plus the cancel probe, which
+    // capped a run at ONE companion utterance and made the naturalness question unanswerable no matter
+    // how often it was asked. Now: `CONVERSATION_TURNS` completed turns (default 2), then the cancel
+    // probe, which stays because the cancel route settling durably is a product fact of its own.
+    for (let index = 0; index < CONVERSATION_TURNS; index += 1) {
+      const turn = await runTurn({ cancel: false });
+      if (turn?.terminal !== true) environment.boundaryReason ??= "conversation_turn_not_terminal";
+    }
     await runTurn({ cancel: true });
   }
 
