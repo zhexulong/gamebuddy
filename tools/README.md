@@ -417,3 +417,46 @@ Host Memory API, or system `pi` CLI path. Output contains only counts and gate
 state, never
 model text or credentials. A failure is a bounded non-zero exit and does not
 change product configuration.
+
+## Scope-reference gate (a name used outside the scope that declares it)
+
+```powershell
+node tools/check-scope-references.mjs
+node tools/check-scope-references.mjs tools/live-run
+node tools/check-scope-references.mjs --json
+```
+
+This static gate catches the bug class that has cost this repo three live runs that
+wrote no result file at all: a name is used outside the scope that declares it, so the
+reference throws inside a failure or result path and destroys the evidence of the
+failure it was reporting. The three shapes it is built from are a `catch` block reading
+a binding declared inside its `try`, a function pushing into a buffer declared inside a
+sibling function, and a statement reading a `const` declared further down the same block
+(temporal dead zone). It parses each `tools/**/*.mjs` file with the already-pinned
+`web-tree-sitter` runtime and the `@vscode/tree-sitter-wasm` JavaScript grammar, builds
+a scope tree, and resolves every identifier reference against it.
+
+Two rules run: `out_of_scope_reference` (the reference resolves to no enclosing binding
+while a binding of that name exists elsewhere in the same file — the "declared somewhere
+else" qualifier is what keeps ordinary host globals out) and `read_before_declaration`
+(a lexical `let`/`const`/`class` binding read earlier in the same execution scope). A
+file that does not parse is reported as `parse_error` and its scope rules are skipped, so
+a parser recovery can never manufacture a finding. The gate is deterministic and exits
+non-zero on any finding.
+
+It deliberately does not do `no-undef` or type checking. A name that is not declared
+anywhere in the file is never reported; `var` and function declarations are hoisted
+before resolution; a closure defined before a later module-level `const`, and called
+after it, is not a temporal dead zone; and the fixed Node/ECMAScript host-global list is
+never reported even when a file shadows one of those names as a local parameter.
+`parse_error` is also not a `node --check` replacement: the grammar accepts a top-level
+`return` that V8 rejects as an early error.
+
+TypeScript (`--ext .ts`) is opt-in and advisory only. Type positions are not classified,
+so the current `host/src` output is entirely false positives (8 `NodeJS.Timeout`, 5
+`[key: string]` index signatures) plus two `parse_error`s on valid TS the grammar cannot
+parse; the CLI prints a warning whenever TypeScript is in scope. Do not gate on it.
+
+`node --test tools/check-scope-references.test.mjs` covers each rule, the three real
+shapes, the documented false-positive boundary, and proves each finding disappears when
+that one rule is disabled.

@@ -41,6 +41,8 @@
     "run:ci-snapshot": "node tools/run-ci-snapshot.mjs",
     "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs",
     "run:stardew-companion-fixture": "node tools/run-stardew-companion-fixture.mjs",
+    "check:scope-references": "node tools/check-scope-references.mjs",
+    "test:scope-references": "node --test tools/check-scope-references.test.mjs",
     "check:stardew-companion-production-admission": "node tools/check-stardew-companion-production-admission.mjs",
     "run:stardew-companion-live": "node tools/run-stardew-companion-live-scenarios.mjs",
     "test:stardew:core": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
