@@ -10,7 +10,7 @@ import {
   DEFAULT_TAVERN_RELEASE_PROFILE,
 } from "./check-tavern-release-prerequisites.mjs";
 
-import { prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
+import { NARRATIVE_RUN_FAILURE_CODES, prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
 import {
   MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
   readMountedTavernManagementProfile,
@@ -28,6 +28,55 @@ const OPAQUE_ID = /^[a-f0-9]{16,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const NARRATIVE_RUNNER = resolve(dirname(fileURLToPath(import.meta.url)), "run-tavern-narrative-gate.mjs");
 export const NARRATIVE_RUN_PLAN = Object.freeze(["main", "failure", "recovery"]);
+/**
+ * The observation-derived terminal position each planned kind must report. A
+ * caller cannot choose it: the runner derives it from what it observed, and the
+ * gate requires the derived value plus the facts behind it, so relabelling an
+ * attempt (`failure` on a happy path) reports the wrong position and blocks
+ * instead of passing.
+ *
+ * The failing kind is the exception that proves the rule: a designed failure
+ * completes nothing, so for `failure` the gate requires its own bounded failure
+ * facts instead of a completed position (see POSITION_EVIDENCE below).
+ */
+export const NARRATIVE_RUN_POSITIONS = Object.freeze({
+  main: "fresh_chat_completed_turn",
+  failure: "provider_rejected_turn_failed",
+  recovery: "resumed_existing_chat_completed_turn",
+});
+/**
+ * The exact facts each kind's position must be backed by. The gate projects and
+ * checks these keys itself (unknown keys are dropped, never trusted), so the
+ * requirement is mechanical and cannot be satisfied by restating a label.
+ *
+ * The COMPLETING kinds (`main`, `recovery`) are required to back a completed
+ * position. The failing kind has no completed position to report, so it is held
+ * to its own bounded failure facts instead: the durable `failed` terminal, the
+ * provider boundary having been crossed, and one of the problem codes the plan
+ * accepts (NARRATIVE_RUN_FAILURE_CODES). That is as strict as the other two -
+ * an incidental failure with some other code does not satisfy it.
+ */
+const POSITION_EVIDENCE = Object.freeze({
+  main: Object.freeze({
+    freshChat: "boolean",
+    turnTerminalState: "code",
+    providerBoundaryCrossed: "boolean",
+  }),
+  failure: Object.freeze({
+    turnTerminalState: "code",
+    providerBoundaryCrossed: "boolean",
+    problemCode: "code",
+  }),
+  recovery: Object.freeze({
+    freshChat: "boolean",
+    predecessorTurnTerminalState: "code",
+    predecessorTranscriptLength: "count",
+    resumedTranscriptLength: "count",
+    resumedTranscriptKeepsPredecessor: "boolean",
+    postResumeTurnTerminalState: "code",
+    postResumeTranscriptLength: "count",
+  }),
+});
 export const MOUNTED_PROFILE_MAPPING_BLOCKER = Object.freeze({
   id: "mounted_profile_operation_evidence",
   status: "blocked",
@@ -474,6 +523,26 @@ function contentFreeNarrativeSummary(role, value) {
     state,
     ...(typeof value.reasonCode === "string" ? { reasonCode: safeCode(value.reasonCode) } : {}),
   };
+  // The kind the attempt itself reports. It is never inferred from the role the
+  // orchestrator asked for: a runner that did not report a kind cannot pass, so
+  // the label and the behaviour stay separate facts.
+  if (NARRATIVE_RUN_PLAN.includes(value.kind)) summary.kind = value.kind;
+  // The observation-derived terminal position, and the bounded facts it stands
+  // on. Only the position may be restated; the facts are projected here from
+  // whatever the attempt reported and are checked against their own schema.
+  const position = Object.values(NARRATIVE_RUN_POSITIONS).includes(value.position) ? value.position : undefined;
+  if (position !== undefined) summary.position = position;
+  const evidence = projectPositionEvidence(summary.kind ?? role, value.positionEvidence);
+  if (evidence !== undefined) summary.positionEvidence = evidence;
+  // The durable problem code a failed turn carried. Read from either spelling so
+  // the two-stage normalization cannot drop it (see the disclosure note below).
+  const problemCode =
+    typeof value.problemCode === "string"
+      ? value.problemCode
+      : value.statuses && typeof value.statuses === "object" && typeof value.statuses.lastProblemCode === "string"
+        ? value.statuses.lastProblemCode
+        : undefined;
+  if (problemCode !== undefined && POSITION_EVIDENCE_CODE.test(problemCode)) summary.problemCode = problemCode;
   // Idempotent: an already-normalized run summary keeps its runner run ID.
   const runId = typeof value.runId === "string" ? value.runId : value.runnerRunId;
   if (typeof runId === "string" && OPAQUE_ID.test(runId)) summary.runnerRunId = runId;
@@ -534,17 +603,102 @@ function contentFreeNarrativeSummary(role, value) {
 }
 
 function genuineRunEvidence(summary) {
+  const role = summary?.role;
   return (
     summary?.state === "passed" &&
+    // The attempt must report the kind it was asked for, reach the position that
+    // kind is supposed to reach, and carry the facts that position is derived
+    // from. Any one of the three alone is a label; all three are the requirement.
+    typeof role === "string" &&
+    summary.kind === role &&
+    summary.position === NARRATIVE_RUN_POSITIONS[role] &&
+    positionEvidenceSatisfied(role, summary.positionEvidence, summary) &&
     summary.artifact?.generation !== undefined &&
     summary.artifact?.inventoryDigest !== undefined &&
     RUN_EVIDENCE_ASSERTIONS.every((key) => summary.assertions?.[key] === true)
   );
 }
 
-async function runNarrativeProcess({ role, reportPath, spawnProcess = spawn } = {}) {
+/** Bounded code accepted inside position evidence (never free text). */
+const POSITION_EVIDENCE_CODE = /^[a-z][a-z0-9_.:-]{0,79}$/;
+
+/**
+ * Project one position-evidence record to the exact bounded shape its kind
+ * declares. Unknown keys and wrongly typed values are dropped rather than
+ * trusted: this record is written to disk and printed, and its content guard
+ * only screens fixed phrases.
+ */
+function projectPositionEvidence(kind, value) {
+  const schema = POSITION_EVIDENCE[kind];
+  if (schema === undefined || !plainRecord(value)) return undefined;
+  const projected = {};
+  for (const [key, type] of Object.entries(schema)) {
+    const entry = value[key];
+    if (type === "boolean" && typeof entry === "boolean") projected[key] = entry;
+    else if (type === "count" && Number.isSafeInteger(entry) && entry >= 0) projected[key] = entry;
+    else if (type === "code" && typeof entry === "string" && POSITION_EVIDENCE_CODE.test(entry))
+      projected[key] = entry;
+  }
+  return Object.freeze(projected);
+}
+
+/**
+ * Does this record carry EXACTLY the facts its kind's position is derived from,
+ * with the required values? The counts are the part a label cannot fake: a
+ * recovery position requires a predecessor transcript that the resumed Chat
+ * still holds and that the further turn then grew.
+ */
+function positionEvidenceSatisfied(kind, evidence, summary) {
+  const schema = POSITION_EVIDENCE[kind];
+  if (schema === undefined || !plainRecord(evidence)) return false;
+  const keys = Reflect.ownKeys(evidence);
+  if (keys.length !== Object.keys(schema).length || !keys.every((key) => key in schema)) return false;
+  if (kind === "main")
+    return (
+      evidence.freshChat === true &&
+      evidence.turnTerminalState === "completed" &&
+      evidence.providerBoundaryCrossed === true
+    );
+  if (kind === "failure")
+    // The failing attempt is checked as strictly as the completing ones: the
+    // durable terminal must be `failed`, the provider boundary must have been
+    // crossed, and the bounded problem code must be one the plan accepts - so
+    // an incidental failure carrying some other code is refused. The summary's
+    // own code must be that same code, not a second, disagreeing one.
+    return (
+      evidence.turnTerminalState === "failed" &&
+      evidence.providerBoundaryCrossed === true &&
+      NARRATIVE_RUN_FAILURE_CODES.includes(evidence.problemCode) &&
+      summary?.problemCode === evidence.problemCode
+    );
+  if (kind === "recovery") {
+    const predecessor = evidence.predecessorTranscriptLength;
+    const resumed = evidence.resumedTranscriptLength;
+    const after = evidence.postResumeTranscriptLength;
+    return (
+      evidence.freshChat === true &&
+      evidence.predecessorTurnTerminalState === "completed" &&
+      evidence.resumedTranscriptKeepsPredecessor === true &&
+      evidence.postResumeTurnTerminalState === "completed" &&
+      Number.isSafeInteger(predecessor) &&
+      predecessor >= 1 &&
+      Number.isSafeInteger(resumed) &&
+      resumed >= predecessor &&
+      Number.isSafeInteger(after) &&
+      // The further turn in the RESUMED Chat committed at least one message.
+      after > resumed
+    );
+  }
+  return false;
+}
+
+export async function runNarrativeProcess({ role, reportPath, kind = role, spawnProcess = spawn } = {}) {
   if (typeof reportPath !== "string" || reportPath.length === 0)
     return { role, state: "blocked", reasonCode: "narrative_report_target_unavailable" };
+  // The kind is an INPUT to the child. Without it the three attempts are three
+  // repetitions of one path, and the report must not be able to say otherwise.
+  if (!NARRATIVE_RUN_PLAN.includes(kind))
+    return { role, state: "blocked", reasonCode: "narrative_run_kind_unavailable" };
   return new Promise((resolveRun) => {
     let settled = false;
     const settle = (summary) => {
@@ -554,7 +708,7 @@ async function runNarrativeProcess({ role, reportPath, spawnProcess = spawn } = 
     };
     let child;
     try {
-      child = spawnProcess(process.execPath, [NARRATIVE_RUNNER, "--report", reportPath], {
+      child = spawnProcess(process.execPath, [NARRATIVE_RUNNER, "--report", reportPath, "--kind", kind], {
         cwd: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
         env: { ...process.env },
         stdio: ["ignore", "ignore", "ignore"],
@@ -655,12 +809,32 @@ export async function runTavernReleaseLiveGate({
   const runsShareIdentity =
     runEvidence.length > 0 &&
     new Set(runEvidence.map((run) => `${run.artifact?.generation}\u0000${run.artifact?.inventoryDigest}`)).size === 1;
-  const runsComplete = runEvidence.every(genuineRunEvidence) && runsShareIdentity;
+  // Three attempts, three positions. Even if each attempt separately reported a
+  // kind and a position, three repetitions of one path would report one and the
+  // same position - so this is the second, independent statement of the same
+  // requirement, and it is the one a relabelling cannot produce.
+  const runPositions = new Set(runEvidence.map((run) => run.position));
+  const runsReportDistinctPositions =
+    runPositions.size === NARRATIVE_RUN_PLAN.length && !runPositions.has(undefined);
+  const runsReportTheirOwnKind = runEvidence.every((run) => run.kind === run.role);
+  const runsComplete =
+    runEvidence.every(genuineRunEvidence) && runsShareIdentity && runsReportDistinctPositions;
   if (runEvidence.every(genuineRunEvidence) && !runsShareIdentity) {
     checks.push({
       id: "narrative_run_artifact_identity",
       status: "blocked",
       detail: "narrative_run_evidence_spans_multiple_artifacts",
+    });
+  }
+  // Named whenever the planned kinds were not distinguished, not only when the
+  // verdict would otherwise pass: an artifact that reported three attempts without
+  // saying whether they were three paths or one relabelled three times leaves the
+  // reader unable to tell, which is the failure this check exists to name.
+  if (!runsReportTheirOwnKind || !runsReportDistinctPositions) {
+    checks.push({
+      id: "narrative_run_kinds",
+      status: "blocked",
+      detail: "narrative_run_kinds_not_distinguished_by_position",
     });
   }
   // When the prerequisites already fail, that blocker is the whole reason: no
@@ -726,7 +900,7 @@ export async function runTavernReleaseLiveOrchestrator({
       gate: ORCHESTRATOR_SCHEMA,
       profile,
       plannedRunKinds: [...NARRATIVE_RUN_PLAN],
-      runKindSemantics: "attempt_labels_not_exercised_distinctions",
+      runKindSemantics: "planned_kinds_require_their_own_observation_derived_position",
       prerequisite: { verdict: "not_attempted", checks: [{ id: "verdict_inputs", status: "blocked" }] },
       runs: [],
       mappedOperationIds: [],
@@ -759,7 +933,12 @@ export async function runTavernReleaseLiveOrchestrator({
       }
       for (const role of NARRATIVE_RUN_PLAN) {
         try {
-          runs.push(contentFreeNarrativeSummary(role, await runNarrative({ role, profile, reportPath: reportRoot(role) })));
+          runs.push(
+            contentFreeNarrativeSummary(
+              role,
+              await runNarrative({ role, kind: role, profile, reportPath: reportRoot(role) }),
+            ),
+          );
         } catch {
           runs.push({ role, state: "blocked", reasonCode: "narrative_runner_internal_error" });
         }
@@ -779,18 +958,35 @@ export async function runTavernReleaseLiveOrchestrator({
     prerequisites: async () => prerequisiteReport,
   });
 
-  // A narrative run never receives its role: `runNarrativeProcess` spawns
-  // [script, "--report", path] and the child accepts only `--report`. So `main`,
-  // `failure` and `recovery` are three repetitions of the SAME happy path, and the
-  // artifact must not imply otherwise. The planned kinds are recorded as unexercised
-  // distinctions rather than as evidence that failure/recovery behaviour occurred.
+  // Each planned kind is a REQUIRED observation: the runner is asked for it,
+  // reports the kind it ran, and the gate requires the observation-derived
+  // position that kind has to reach (plus the facts behind it) - so the three
+  // attempts can no longer be one happy path under three labels. What the kinds
+  // still do NOT prove is recorded here rather than implied away.
   return {
     gate: ORCHESTRATOR_SCHEMA,
     profile,
     plannedRunKinds: [...NARRATIVE_RUN_PLAN],
     // Stated in the artifact, not only in a code comment, because the artifact is
-    // what a reader has.
-    runKindSemantics: "attempt_labels_not_exercised_distinctions",
+    // what a reader has. The kinds are distinguished by the position each attempt
+    // was required to observe; the injection and the unchanged boundaries are
+    // named separately so nothing here reads as a broader claim.
+    runKindSemantics: "planned_kinds_require_their_own_observation_derived_position",
+    runKindLimits: {
+      // How the `failure` attempt is made to fail: a real provider rejection of a
+      // credential the endpoint refuses, induced by the harness (not a naturally
+      // occurring provider outage).
+      failureInducedBy: "rejected_provider_credential",
+      // The failure attempt is NOT exempt from being checked: its durable `failed`
+      // terminal must carry one of these bounded product codes. Named in the
+      // artifact so the requirement is readable without the source.
+      failureAcceptedProblemCodes: [...NARRATIVE_RUN_FAILURE_CODES],
+      // The `recovery` attempt resumes the durable Chat in a NEW authenticated
+      // session on the same root; it does not restore a provider session.
+      recoveryScope: "durable_chat_resumed_in_new_authenticated_session",
+      // Unchanged by this gate: no release-profile `must` flow runs here.
+      mountedMustFlowsExercised: false,
+    },
     prerequisite,
     runs,
     // The exact mapping this decision rests on, carried through from the gate so the
