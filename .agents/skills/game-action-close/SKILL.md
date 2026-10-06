@@ -26,7 +26,11 @@ request → admission → execution → receipt → fresh postcondition → tear
 ```
 
 Require exact request/execution correlation, one terminal outcome,
-action-specific evidence, and cleanup truth. Incomplete evidence never becomes
+action-specific evidence, and cleanup truth. Evidence also separates the failure
+modes the action can produce: the receipt carries the facts that tell a wrong
+target from a native refusal from a native call that completed without its final
+step. A lone terminal reason code cannot, so a gate failing against such a receipt
+names nothing the next reader can act on. Incomplete evidence never becomes
 passing evidence. A static check, setup, source audit, or successful launch does
 not close an action.
 
