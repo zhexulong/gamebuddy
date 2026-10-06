@@ -3,9 +3,11 @@ import { applyDocumentLocale, type Locale, messages, persistLocale, resolveLocal
 import {
   type BrowserDraftV1,
   type ChatTitleV1,
+  CONNECTION_API_SHAPES,
   createManagementPipelineApi,
   type MemoryItemV1,
   type MemoryReadV1,
+  type TavernConnectionApiShapeV1,
   type TavernConnectionProviderV1,
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
@@ -656,6 +658,7 @@ export function ManagementApp() {
           providerId: provider.providerId,
           ...(provider.setupFields.includes("apiKey") ? { apiKey: form.apiKey } : {}),
           ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
+          ...(provider.setupFields.includes("apiShape") ? { apiShape: form.apiShape } : {}),
           ...(form.catalogModelId === "" ? {} : { modelId: form.catalogModelId }),
           ...(provider.setupFields.includes("modelId") ? { modelId: form.modelId } : {}),
         },
@@ -974,6 +977,8 @@ type ConnectionForm = Readonly<{
   providerId: string;
   apiKey: string;
   baseUrl: string;
+  /** Player-supplied API shape, used only by the escape hatch. */
+  apiShape: TavernConnectionApiShapeV1;
   /** Player-supplied model id, used only by the escape hatch. */
   modelId: string;
   /** Catalog model selection for every other provider. */
@@ -1193,6 +1198,10 @@ function ConnectionSettingsPanel({
   const [providerId, setProviderId] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  // The escape hatch is the one entry whose API shape the player chooses. The
+  // OpenAI-compatible default is preselected because that is the entry's own
+  // name; the value is always sent, never inferred by the Host.
+  const [apiShape, setApiShape] = useState<TavernConnectionApiShapeV1>("openai-completions");
   const [modelId, setModelId] = useState("");
   const [catalogModelId, setCatalogModelId] = useState("");
 
@@ -1233,6 +1242,7 @@ function ConnectionSettingsPanel({
                 providerId: selected.providerId,
                 apiKey,
                 baseUrl,
+                apiShape,
                 modelId,
                 catalogModelId: chosenModel?.modelId ?? catalogModelId,
                 thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
@@ -1281,6 +1291,26 @@ function ConnectionSettingsPanel({
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.target.value)}
                 />
+              </>
+            )}
+
+            {selected?.setupFields.includes("apiShape") === true && (
+              <>
+                <label htmlFor="connection-api-shape">{labels.connectionApiShape}</label>
+                <select
+                  id="connection-api-shape"
+                  className="form-select"
+                  disabled={connectionView.pending}
+                  value={apiShape}
+                  onChange={(event) => setApiShape(event.target.value as TavernConnectionApiShapeV1)}
+                >
+                  {CONNECTION_API_SHAPES.map((shape) => (
+                    <option key={shape} value={shape}>
+                      {shape}
+                    </option>
+                  ))}
+                </select>
+                <p className="field-hint">{labels.connectionApiShapeHint}</p>
               </>
             )}
 

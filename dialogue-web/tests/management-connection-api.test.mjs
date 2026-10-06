@@ -65,7 +65,7 @@ function connectionState(overrides = {}) {
         {
           providerId: "gamebuddy-openai-compatible",
           label: "OpenAI-compatible endpoint",
-          setupFields: ["baseUrl", "apiKey", "modelId"],
+          setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"],
           allowedPlayerModels: [],
           escapeHatch: true,
           environmentManaged: false,
@@ -108,6 +108,23 @@ test("the connection projection is strictly validated and never invents a ready 
   // A setup field outside the Host allowlist cannot be rendered or sent.
   assert.throws(
     () => validateConnectionState({ ...state, providers: [{ ...state.providers[0], setupFields: ["script"] }] }),
+    TavernProtocolError,
+  );
+  // The API shape is a declared setup field, but the allowlist is still closed
+  // and bounded: no fifth field, no invented field name.
+  assert.equal(
+    validateConnectionState({
+      ...state,
+      providers: [{ ...state.providers[0], setupFields: ["baseUrl", "apiShape"] }],
+    }).providers[0].setupFields.length,
+    2,
+  );
+  assert.throws(
+    () =>
+      validateConnectionState({
+        ...state,
+        providers: [{ ...state.providers[0], setupFields: ["apiShape", "baseUrl", "apiKey", "modelId", "extra"] }],
+      }),
     TavernProtocolError,
   );
   // A thinking level the model does not offer cannot become a selection.
@@ -155,13 +172,14 @@ test("the connection client sends only catalog-declared fields, in exact wire sh
     init: { method: "GET", credentials: "same-origin" },
   });
 
-  // The escape hatch sends the player's endpoint, credential and model id.
+  // The escape hatch sends the player's endpoint, credential, API shape and model id.
   await api.createConnection(
     {
       apiVersion: 1,
       providerId: "gamebuddy-openai-compatible",
       apiKey: "sk-synthetic",
-      baseUrl: "http://127.0.0.1:11434/v1",
+      baseUrl: "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01",
+      apiShape: "anthropic-messages",
       modelId: "qwen2.5-coder:7b",
     },
     HANDLE,
@@ -176,13 +194,31 @@ test("the connection client sends only catalog-declared fields, in exact wire sh
         apiVersion: 1,
         providerId: "gamebuddy-openai-compatible",
         apiKey: "sk-synthetic",
-        baseUrl: "http://127.0.0.1:11434/v1",
+        baseUrl: "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01",
+        apiShape: "anthropic-messages",
         modelId: "qwen2.5-coder:7b",
       }),
     },
   });
 
-  // A catalog provider sends no endpoint and no model id.
+  // A shape the runtime cannot speak is refused before any request is made.
+  await assert.rejects(
+    api.createConnection(
+      {
+        apiVersion: 1,
+        providerId: "gamebuddy-openai-compatible",
+        apiKey: "sk-synthetic",
+        baseUrl: "https://gateway.example.com/v1",
+        apiShape: "invented-messages",
+        modelId: "m",
+      },
+      HANDLE,
+    ),
+    TavernProtocolError,
+  );
+  assert.equal(calls.length, 2);
+
+  // A catalog provider sends no endpoint, no shape and no model id.
   await api.createConnection({ apiVersion: 1, providerId: "deepseek", apiKey: "sk-synthetic" }, HANDLE);
   assert.equal(
     calls[2].init.body,
