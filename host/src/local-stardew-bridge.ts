@@ -48,6 +48,21 @@ export type LocalStardewBridgeFact = Extract<
   { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact" }
 >;
 /** Local transport facts never claim a Mod/world transition. */
+/**
+ * The reason a bridge drop is published with.
+ *
+ * A transport can close without a reason, and interpolating that verbatim produced
+ * a bare `bridge_disconnected` - a failure that names nothing, which is exactly how
+ * the two-process preview's only failure became unattributable (measured
+ * 2026-10-06). An absent or blank reason becomes an explicit code instead, so the
+ * gap is visible rather than silent. Non-empty reasons pass through unchanged.
+ */
+export function normalizeDisconnectReasonCode(reportedReasonCode: unknown): string {
+  return typeof reportedReasonCode === "string" && reportedReasonCode.trim().length > 0
+    ? reportedReasonCode
+    : "transport_closed_without_reason";
+}
+
 export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reasonCode: string }>;
 /** Fixed, content-free local diagnostic emitted immediately before a fail-closed inbound rejection. */
 export type LocalStardewBridgeDiagnostic = Readonly<{
@@ -157,7 +172,13 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "native_chat_pipe_data_received", reasonCode: "received" });
     });
-    transport.onClose((reasonCode) => {
+    transport.onClose((reportedReasonCode) => {
+      // A drop with NO reason names nothing: the preview's every attempt reported a
+      // bare `bridge_disconnected`, because the transport can close without a reason
+      // and this publisher interpolated it verbatim (measured 2026-10-06 - the
+      // launcher could not attribute the run's only failure at all). Publish an
+      // explicit code instead of an empty one, so the gap is visible and named.
+      const reasonCode = normalizeDisconnectReasonCode(reportedReasonCode);
       this.#authenticated = false;
       this.#initialSnapshotReceived = false;
       this.#sessionId = null;

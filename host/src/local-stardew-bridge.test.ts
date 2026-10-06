@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
-import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
+import { LocalStardewBridgeClient, normalizeDisconnectReasonCode } from "./local-stardew-bridge.js";
 import type { BridgeMessage, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
@@ -1842,4 +1842,18 @@ test("a pending observe rejects through the normal close path when a fact listen
     peer?.destroy();
     await close(server);
   }
+});
+
+test("a bridge drop with no reason is published with an explicit code", () => {
+  // Measured 2026-10-06: the two-process preview's every attempt reported a bare
+  // `bridge_disconnected`, because the transport can close without a reason and the
+  // publisher interpolated it verbatim - so the run's only failure named nothing and
+  // could not be attributed at all. Non-empty reasons must still pass through
+  // unchanged: this normalizes a gap, it does not relabel real reasons.
+  assert.equal(normalizeDisconnectReasonCode("invalid_snapshot"), "invalid_snapshot");
+  assert.equal(normalizeDisconnectReasonCode("fact_listener_failed"), "fact_listener_failed");
+  assert.equal(normalizeDisconnectReasonCode(undefined), "transport_closed_without_reason");
+  assert.equal(normalizeDisconnectReasonCode(null), "transport_closed_without_reason");
+  assert.equal(normalizeDisconnectReasonCode(""), "transport_closed_without_reason");
+  assert.equal(normalizeDisconnectReasonCode("   "), "transport_closed_without_reason");
 });
