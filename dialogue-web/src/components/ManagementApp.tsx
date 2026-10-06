@@ -1077,9 +1077,15 @@ function ModelProfileEditor({
       </datalist>
       <div className="model-profile-suggestions" data-model-profile-suggestions>
         <span>{labels.modelProfilesRecommended}</span>
-        {suggestions.map((model) => (
+        {/*
+         * One chip per model id. The catalog can list the same model under more
+         * than one provider, and the chip is about the id a player may type - a
+         * repeated chip is noise, and it makes the same suggestion ambiguous to a
+         * screen reader and to anything addressing buttons by name.
+         */}
+        {[...new Map(suggestions.map((model) => [model.modelId, model])).values()].map((model) => (
           <button
-            key={`${model.providerId}:${model.modelId}`}
+            key={model.modelId}
             type="button"
             className="small-button"
             disabled={busy}
@@ -1089,7 +1095,12 @@ function ModelProfileEditor({
           </button>
         ))}
       </div>
-      <button type="submit" className="small-button" disabled={!canSave}>
+      {/*
+       * Named after its surface. A bare "Save" here would collide with every other
+       * save on the management surface, which is ambiguous for a screen reader and
+       * for anything that addresses the control by name.
+       */}
+      <button type="submit" className="small-button" aria-label={`${labels.modelProfilesApply} ${surfaceLabel}`} disabled={!canSave}>
         {labels.modelProfilesApply}
       </button>
     </form>
