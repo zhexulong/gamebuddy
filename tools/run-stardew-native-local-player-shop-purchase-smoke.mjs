@@ -89,7 +89,13 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
     // Read defensively on purpose: a raw TypeError here would erase the very evidence
     // needed to tell a stale artifact from a dropped field. The trace below carries the
     // real keys either way.
-    const shop = shops.find((s) => s.ownerInReach && (s.stockItemIds?.length ?? 0) > 0) ?? null;
+    // Prefer a stall that can actually be bought from AND is not a seasonal one. Discovery
+    // advertises every shop whose owner entry is currently eligible, and the live run picked
+    // DesertFestival_Pierre — a festival stall — because the content data happens to list it
+    // first. Demonstrating "buy something" must not depend on that ordering.
+    const seasonal = (id) => /Festival|Fair|Carnival|NightMarket/i.test(id);
+    const buyable = shops.filter((s) => s.ownerInReach && (s.stockItemIds?.length ?? 0) > 0);
+    const shop = buyable.find((s) => !seasonal(s.shopId)) ?? buyable[0] ?? null;
     if (!shop)
       throw new Error(
         `shop_owner_out_of_reach:${shops.map((s) => `${s.shopId}@${s.ownerTileX},${s.ownerTileY}`).join("/")}`,
@@ -111,10 +117,34 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
     });
     trace.push({ phase: "purchase", requestId, receipt: summarizeReceipt(receipt) });
 
-    if (receipt.state !== "succeeded" || receipt.reasonCode !== TERMINAL_REASON)
-      throw new Error(`shop_terminal_mismatch:state=${receipt.state};reason=${receipt.reasonCode}`);
+    // Parse and record the evidence BEFORE judging the terminal. Otherwise a refusal throws
+    // first and the receipt's own facts — including the per-click diagnostics — never reach
+    // the report, which is how a real cause stays invisible across rounds.
+    let evidence = null;
+    let evidenceProblem = null;
+    try {
+      evidence = parseStrictEvidence(evidenceText(receipt));
+    } catch (error) {
+      evidenceProblem = String(error instanceof Error ? error.message : error);
+    }
+    trace.push({
+      phase: "receipt_evidence",
+      state: receipt.state,
+      reasonCode: receipt.reasonCode,
+      // The raw string as well as the parsed fields: a shape change would otherwise look
+      // like missing keys rather than a malformed payload.
+      raw: evidenceText(receipt),
+      fields: evidence,
+      problem: evidenceProblem,
+    });
 
-    const evidence = parseStrictEvidence(evidenceText(receipt));
+    if (receipt.state !== "succeeded" || receipt.reasonCode !== TERMINAL_REASON) {
+      throw new Error(
+        `shop_terminal_mismatch:state=${receipt.state};reason=${receipt.reasonCode}`
+          + (evidence ? `;evidence=${evidenceText(receipt)}` : ";evidence=unparseable"),
+      );
+    }
+    if (evidence === null) throw new Error(`shop_evidence_unparseable:${evidenceProblem}`);
     const after = await waitForFreshSnapshot(client, { minRevision: receipt.revision });
 
     const moneyBefore = Number.parseInt(evidence.money_before ?? "", 10);
@@ -155,6 +185,7 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
       // The trace is the evidence: without it a bare reasonCode cannot say whether the
       // capability was absent, the snapshot was empty, or the pipe really closed.
       lastObservation: trace.filter((e) => e.phase === "observed").at(-1) ?? null,
+      receiptEvidence: trace.filter((e) => e.phase === "receipt_evidence").at(-1) ?? null,
       trace,
       durationMs: Date.now() - startedAt,
     };

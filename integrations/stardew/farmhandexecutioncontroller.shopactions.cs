@@ -237,6 +237,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // Filled by the click loop below and reported in the receipt, so a swallowed click
         // is diagnosable from the evidence instead of requiring another live round.
         List<string> clickDiagnostics = new();
+        List<string> dropDiagnostics = new();
 
         Dictionary<ISalable, ItemStockInformation> stock;
         try
@@ -325,9 +326,21 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             // Match by wire identity, NOT by object reference: GetShopStock builds its own
             // items, so the instance that was priced is never the instance the menu holds.
             // IndexOf would therefore always miss (measured live: shop_offer_not_purchasable).
-            int FindOfferIndex(ShopMenu shop) =>
-                shop.forSale.FindIndex(candidate => string.Equals(
+            //
+            // The result is a BUTTON index, not a sale index. The game resolves a clicked
+            // button k as forSale[currentItemIndex + k] (ShopMenu.cs:1096-1102), so returning
+            // the raw sale index happens to work only while the view is scrolled to the top.
+            // Translating here keeps the coordinate and the item in agreement at any scroll.
+            int FindOfferIndex(ShopMenu shop)
+            {
+                int saleIndex = shop.forSale.FindIndex(candidate => string.Equals(
                     candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
+                if (saleIndex < 0)
+                    return -1;
+                int buttonIndex = saleIndex - shop.currentItemIndex;
+                // Scrolled past it: the native click handler cannot reach an off-screen row.
+                return buttonIndex >= 0 && buttonIndex < shop.forSaleButtons.Count ? buttonIndex : -1;
+            }
 
             int buttonIndex = FindOfferIndex(menu);
             if (buttonIndex < 0 || buttonIndex >= menu.forSaleButtons.Count)
@@ -379,12 +392,65 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // The native click handler, at the native click coordinates.
                 menu.receiveLeftClick(clickX, clickY, playSound: true);
 
+                // The purchase leaves the item ON THE CURSOR, not in the inventory:
+                // tryToPurchaseItem assigns heldItem = item.GetSalableInstance()
+                // (ShopMenu.cs:1352) and only clears it for items with
+                // actionWhenPurchased (:1369-1378). A real player then clicks an empty
+                // inventory slot to put it away; a scripted purchase must do the same or
+                // the money moves and the goods never arrive. Measured live: money 500->480
+                // with owned_before = owned_after = 0, i.e. purchase_partial.
+                //
+                // receiveLeftClick routes coordinates inside the inventory to
+                // inventory.leftClick (ShopMenu.cs:1094), which is the native drop.
+                string heldBeforeDrop = menu.heldItem?.QualifiedItemId ?? "none";
+                int emptySlotIndex = -1;
+                string dropAt = "none";
+                if (menu.heldItem is not null)
+                {
+                    List<ClickableComponent>? slots = menu.inventory?.inventory;
+                    IList<Item>? actual = menu.inventory?.actualInventory;
+                    if (slots is not null && actual is not null)
+                    {
+                        for (int slotIndex = 0; slotIndex < slots.Count && slotIndex < actual.Count; slotIndex++)
+                        {
+                            // Read the ITEM LIST, not ClickableComponent.item. The menu builds its
+                            // slots as `new ClickableComponent(bounds, j.ToString())`
+                            // (InventoryMenu.cs:103) — the string overload — and never assigns
+                            // `.item`, so `slot.item` is ALWAYS null. Selecting on it picked slot 0
+                            // every time; when slot 0 holds a tool, InventoryMenu.leftClick refuses
+                            // (InventoryMenu.cs:318 `actualInventory[num] != null && !canStackWith`)
+                            // and returns the held item unchanged. Measured live:
+                            // `drops=1[drop0:empty_slot=0;at=412,544;held=(O)472->(O)472]`.
+                            if (actual[slotIndex] is null && slots[slotIndex] is { bounds.Width: > 0 })
+                            {
+                                emptySlotIndex = slotIndex;
+                                dropAt = $"{slots[slotIndex].bounds.Center.X},{slots[slotIndex].bounds.Center.Y}";
+                                break;
+                            }
+                        }
+                    }
+                    if (emptySlotIndex >= 0)
+                    {
+                        // The native drop: ShopMenu.receiveLeftClick routes coordinates that
+                        // land in the inventory to inventory.leftClick with the held item
+                        // (ShopMenu.cs:1094), which is the game's own placement step.
+                        menu.receiveLeftClick(
+                            slots![emptySlotIndex].bounds.Center.X,
+                            slots![emptySlotIndex].bounds.Center.Y,
+                            playSound: true);
+                    }
+                }
+                string heldAfterDrop = menu.heldItem?.QualifiedItemId ?? "none";
+                dropDiagnostics.Add(
+                    $"drop{bought}:empty_slot={emptySlotIndex};at={dropAt};held={heldBeforeDrop}->{heldAfterDrop}");
+
                 long moneyAfterClick = actor.Money;
                 int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
                 clickDiagnostics.Add(
                     $"click{bought}:button={index};at={clickX},{clickY};addressed={addressedToButton};"
                     + $"safety_before={safetyBefore};held_null={heldNull};"
-                    + $"money={moneyBeforeClick}->{moneyAfterClick};stock={stockBeforeClick}->{stockAfterClick}");
+                    + $"money={moneyBeforeClick}->{moneyAfterClick};stock={stockBeforeClick}->{stockAfterClick};"
+                    + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
             }
         }
         catch (Exception nativeException)
@@ -425,7 +491,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
             + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
-            + $"clicks={clickDiagnostics.Count}[{string.Join("|", clickDiagnostics)}]";
+            + $"clicks={clickDiagnostics.Count}[{string.Join("|", clickDiagnostics)}];"
+            + $"drops={dropDiagnostics.Count}[{string.Join("|", dropDiagnostics)}]";
 
         // Success is the world fact: money left the purse AND the item entered the inventory.
         // A receipt that spent nothing and gained nothing is not a purchase.

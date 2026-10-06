@@ -1914,3 +1914,118 @@ Run M also exposed a hole in this rung's own verdict, now closed: it reported `p
 **fifteen minutes and 17 native actions with no player-facing line at all** (`presentedSummary: null`).
 A play session that never speaks is not a companion session, so silence is its own verdict
 (`sessionVerdict: "silent"` → `blocked`), and `spokeToPlayer` is published for every ladder.
+
+### 38.3 A session that finally left an artifact (run Q, same goal and world)
+
+Runs N, O and P each played a real session and wrote **no result artifact**: the failure path itself was
+broken (a try-scoped binding read from the catch, the root error logged only after assembling the
+partial result, and `sessionSpoken` read through a temporal dead zone), so nothing escaped to analyse.
+Fixed in `bdd2e5e`/`57d0307`, with a process-level guard so that whatever escapes the run's own
+try/catch still writes `{state: blocked, reason: runner_failed_before_reporting, error: …}`. Verified
+deterministically in ~2 s without a game: an unreachable runtime root now produces that artifact where
+three sessions previously produced nothing.
+
+Run Q is the first session since to leave a full artifact, and it closes this section's changes:
+
+| observation | run O (before) | run Q (after) |
+|---|---|---|
+| artifact written | **no** | **yes** (`state: passed`, `sessionVerdict: completed`) |
+| fixture scenario | (unknown) | `native_play_session_v1` |
+| `target_out_of_range` | **9** | **0** |
+| `approach=adjacent` (the walk-in leg) | 0 (feature absent for harvest) | **9** |
+| `stale_snapshot` / `bridge_response_timeout` / `no_native_path` | 0 / 0 / 0 | 0 / 0 / 0 |
+| `harvest_crop` | 9 refusals, 3 terminals | 2 accepted walks, 1 honest `target_out_of_reach` |
+
+Two honest readings from the same artifact: the session was **short** (63 s, 9 actions, one line
+"我到处转转看。") compared with run O's 36 dispatches over 480 s, so model behaviour varies far more than
+the harness does — a single run can measure a fix (as above) but cannot carry a product claim. And two
+`harvest_crop` approaches were still in flight when the turn ended (`disp=3, term=0`), which is the
+"session ended mid-walk" state rather than a refusal.
+## 37. shop_purchase live proof: buying from a shop the actor stands next to
+
+Scenario `native_shop_purchase_v1`, runner
+`run-stardew-native-local-player-shop-purchase-smoke.mjs`, 2026-10-06.
+
+```
+{"state":"passed","reasonCode":"item_purchased",
+ "shopId":"SeedShop","owner":"Pierre","item":"(O)472","quantity":1,
+ "purchased":1,"unitPrice":20,
+ "moneyBefore":500,"moneyAfter":480,
+ "ownedBefore":0,"ownedAfter":1,"gained":1,
+ "ownerTile":"1,6","menuClosed":true}
+```
+
+Scope (owner decision): the action BUYS and nothing else. It does not walk. The fixture
+establishes only the declared Given — the clock inside trading hours, Pierre present in the
+SeedShop one step from the actor — and emits no receipt. Shop identity, owner eligibility,
+stock and price are all read from the game at admission, and the transaction runs through
+the game's own `ShopMenu`, including the purchase itself (`tryToPurchaseItem` is private and
+is never re-implemented).
+
+The runner independently proves the three things a receipt cannot: the terminal is the
+native `item_purchased`; the purse really paid (`500 - 480 == 1 * 20`); and the goods
+really arrived (`ownedAfter - ownedBefore == 1`). It also requires the menu to be closed, so
+the body is free for the next action.
+
+### What this gate caught
+
+**Nine rounds, and the failure point moved one layer deeper every time.** Only the last
+three were in the game's own semantics; the first six were contract and tooling defects that
+made the real cause invisible:
+
+1. **The bridge's diagnostic could displace the real fault with its SUCCESS marker.** A
+   rejected snapshot surfaced as `bridge_disconnected:accepted`, because
+   `diagnoseBridgeMessage` returns the literal `"accepted"` when it has no rule for a field
+   and the caller used `diagnosis ?? fault`. Three rounds went into a wrong hypothesis (a
+   third-party pipe takeover, disproved by 574 samples showing the pipe instance count never
+   exceeding one). Fixed structurally, and `diagnoseSnapshot` now names the ten snapshot
+   families it had been silently skipping.
+2. **A nullable snapshot field the serializer omits.** `BridgeShopTarget.ClosedMessage` was
+   the only nullable member and `WhenWritingNull` dropped the key, so an OPEN shop failed the
+   Host's exact-key check. Removed: a refusal detail is not a snapshot fact.
+3. **Discovery did not say what a shop sells.** The first request the Mod actually accepted
+   was refused with `item_not_sold_here`, because a caller could learn a shop exists but not
+   what it offers. Real capability gap — any agent hits it. Shop targets now publish
+   `StockItemIds`, a never-null list.
+4. **The offer was matched by object reference.** `forSale.IndexOf(offer)` compares
+   instances, but `GetShopStock` builds its own, so it could only ever miss.
+5. **The button index is not the sale index.** The game resolves a clicked button k as
+   `forSale[currentItemIndex + k]` (ShopMenu.cs:1096-1102), so returning the raw sale index
+   desynchronises the coordinate and the item as soon as the view scrolls.
+6. **`staged artifact` ≠ `build succeeded`.** An incremental build reported success while
+   the staged Core.dll still lacked the new field. The live script now reads the staged bytes
+   and refuses to run on a stale bundle. (The first version of that probe searched UTF-8 in a
+   .NET assembly and gave a FALSE NEGATIVE, because .NET stores literals as UTF-16; it now
+   checks both encodings and probes a literal unique to this action.)
+7. **The runner threw before recording the evidence**, so the receipt's own facts never
+   reached the report — the per-click diagnostics existed for two rounds before they were
+   visible.
+8. **The native purchase is two-phase.** `tryToPurchaseItem` leaves the goods ON THE CURSOR
+   (`heldItem = item.GetSalableInstance()`, ShopMenu.cs:1352) and only clears it for items
+   with `actionWhenPurchased`. A real player then clicks an empty inventory slot.
+9. **`ClickableComponent.item` is ALWAYS null.** InventoryMenu builds its slots as
+   `new ClickableComponent(bounds, j.ToString())` (InventoryMenu.cs:103) — the string
+   overload — and never assigns `.item`. Selecting on `slot.item is null` therefore picked
+   **slot 0 every time**; when slot 0 held a tool, `InventoryMenu.leftClick` refused
+   (`actualInventory[num] != null && !canStackWith`, InventoryMenu.cs:318) and returned the
+   held item unchanged. The receipt said it plainly:
+   `drops=1[drop0:empty_slot=0;at=412,544;held=(O)472->(O)472]`. The fix reads
+   `menu.inventory.actualInventory` — the real item list — instead of the component.
+
+Items 1, 2, 6 and 7 are not defects in this action at all: they are defects in the harness
+that made this action's defects unobservable. The two that cost the most were the diagnostic
+alias (three rounds) and the always-null field (two rounds), and both were found by making
+the artefact report **what it actually did** rather than by reasoning about what it should do.
+
+### Deliberate deviations, stated
+
+- `menu.safetyTimer = 0` is cleared before clicking. `ShopMenu.receiveLeftClick` only reaches
+  its purchase branch when `safetyTimer <= 0` (ShopMenu.cs:1022) and the field starts at 250
+  (:264). It is a guard against a human double-clicking, not world state, so a scripted click
+  clears it rather than waiting. **Not proven to have been necessary** — the rounds that
+  followed showed the click was being processed anyway — but kept, with the reasoning
+  recorded.
+- The runner prefers a non-seasonal shop with stock. Discovery advertises every shop whose
+  owner entry is currently eligible, and a live run picked `DesertFestival_Pierre` — a
+  festival stall — because the content data lists it first. Demonstrating "buy something"
+  must not depend on that ordering.
