@@ -1967,6 +1967,25 @@ native `item_purchased`; the purse really paid (`500 - 480 == 1 * 20`); and the 
 really arrived (`ownedAfter - ownedBefore == 1`). It also requires the menu to be closed, so
 the body is free for the next action.
 
+### Repeat run
+
+The gate was re-run after the promotion to confirm the pass is not a one-off. Both runs:
+
+```
+attempt 1  15:04:17  PASS   (attempt 1 of 1)
+```
+
+```json
+{"state":"passed","reasonCode":"item_purchased","shopId":"SeedShop","owner":"Pierre",
+ "item":"(O)472","purchased":1,"unitPrice":20,
+ "moneyBefore":500,"moneyAfter":480,"ownedBefore":0,"ownedAfter":1,"gained":1,
+ "ownerTile":"1,6","menuClosed":true,"durationMs":397}
+```
+
+Identical to the first pass in every field. Note on evidence retention: the harness
+OVERWRITES `live-shop_purchase.out.txt` per run, so the earlier verdict is only recoverable
+from `live.log`; the run summary quoted above is the second one.
+
 ### What this gate caught
 
 **Nine rounds, and the failure point moved one layer deeper every time.** Only the last
