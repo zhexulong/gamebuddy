@@ -278,6 +278,35 @@ test("safe decoder preserves multiline formatting in description, personality, s
   assert.equal(preview.worldBookCandidates[0]?.content, "First line of lore.\r\nSecond line of lore with\ttabs.");
 });
 
+test("safe decoder carries a card's own trigger words and leaves an empty list absent", () => {
+  const report = decodeStCard(
+    JSON.stringify({
+      data: {
+        name: "Triggered Card",
+        character_book: {
+          entries: [
+            {
+              comment: "作者面向的标题",
+              content: "Keyword-gated lore.",
+              keys: ["  大肥鱼  ", "", "   ", 7, "大肥鱼"],
+            },
+            { comment: "No keys at all", content: "No trigger words declared." },
+            { comment: "Empty keys", content: "Declared an empty list.", keys: [] },
+          ],
+        },
+      },
+    }),
+  );
+  const entries = report.candidate?.worldBookCandidates ?? [];
+  // The card's own words travel, trimmed, with blanks and non-strings dropped.
+  assert.deepEqual(entries[0]?.keys, ["大肥鱼", "大肥鱼"]);
+  // A card that declares no trigger words has NO keys field. An empty array is not
+  // equivalent: the worldbook validator rejects an empty list, so a card carrying
+  // `keys: []` would fail validation instead of reading as "no trigger words".
+  assert.equal("keys" in (entries[1] ?? {}), false);
+  assert.equal("keys" in (entries[2] ?? {}), false);
+});
+
 test("safe decoder supports dictionary-form character book entries and expanded JSON node budgets", () => {
   const entries = Object.fromEntries(
     Array.from({ length: 256 }, (_, index) => [String(index), { comment: `Entry ${index}`, content: `Lore ${index}` }]),
