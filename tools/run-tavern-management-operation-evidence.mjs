@@ -379,6 +379,48 @@ async function exerciseOperations(origin, client) {
     if (devices.defaultSelectable !== true) throw new Error("voice_default_not_selectable");
   });
 
+  // settings.language.read / .update: the companion language the runtimes read
+  // at mount. It is a field group of the SAME one-revision player-preference
+  // record the Voice surface above writes, read through its own route and
+  // mutated with a revision-checked command. The read proves the surface is
+  // mounted; the update must read back through the read route, because a 2xx
+  // whose value never landed is exactly the hollow success this producer exists
+  // to rule out.
+  await attempt("settings.language.read", async () => {
+    const language = await readJson(origin, client, "/api/tavern/v1/settings/language");
+    if (language === null || typeof language !== "object") throw new Error("language_preference_unavailable");
+    // The declared projection (design/28 5.1), not just "some object came
+    // back": a revision and the closed locale set (null = never configured).
+    if (!Number.isInteger(language.revision) || language.revision < 0)
+      throw new Error("language_revision_unavailable");
+    if (language.locale !== null && language.locale !== "zh-CN" && language.locale !== "en-US")
+      throw new Error("language_locale_invalid");
+  });
+
+  await attempt("settings.language.update", async () => {
+    const before = await readJson(origin, client, "/api/tavern/v1/settings/language");
+    const expectedRevision = before?.revision;
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0)
+      throw new Error("language_revision_unavailable");
+    // Write the locale the record does not already carry, so the assertions
+    // below cannot pass on a value that was there before the write.
+    const locale = before?.locale === "en-US" ? "zh-CN" : "en-US";
+    const written = await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/language", {
+      expectedRevision,
+      locale,
+    });
+    if (written === null || typeof written !== "object") throw new Error("language_write_unavailable");
+    if (written.locale !== locale) throw new Error("language_locale_not_applied");
+    if (!Number.isInteger(written.revision) || written.revision <= expectedRevision)
+      throw new Error("language_revision_unadvanced");
+    // The reply is not the postcondition. A separate read through the read route
+    // is: it must report the locale that was written, still on the revision the
+    // write returned, or the mutation was never durable.
+    const after = await readJson(origin, client, "/api/tavern/v1/settings/language");
+    if (after?.locale !== locale) throw new Error("language_locale_not_durable");
+    if (after?.revision !== written.revision) throw new Error("language_readback_revision_mismatch");
+  });
+
   // settings.connection.*: the connection document is revisioned. The sequence
   // is read (surface mounted) -> create the environment connection (no key
   // accepted; it is the zero-configuration default) -> test it (the probe runs
@@ -495,6 +537,52 @@ async function exerciseOperations(origin, client) {
       apiVersion: 1,
       expectedRevision: revision,
     });
+  });
+
+  // design/28 §2.3: the player's own model choice. The read projects the two
+  // durable profiles plus the shipped guidance catalog; the update writes a
+  // model id the recommendation does NOT name, which is the whole point of the
+  // ruling, and it must read back exactly.
+  await attempt("settings.profiles.read", async () => {
+    const profiles = await readJson(origin, client, "/api/tavern/v1/settings/profiles");
+    if (profiles === null || typeof profiles !== "object") throw new Error("profiles_unavailable");
+    for (const surface of ["chat", "game"]) {
+      const profile = profiles[surface];
+      if (profile === null || typeof profile !== "object") throw new Error("profile_missing");
+      if (!Number.isInteger(profile.revision) || profile.revision < 0) throw new Error("profile_revision_missing");
+      if (typeof profile.modelId !== "string" || profile.modelId.length === 0) throw new Error("profile_model_missing");
+      if (typeof profile.thinkingLevel !== "string" || profile.thinkingLevel.length === 0)
+        throw new Error("profile_thinking_level_missing");
+    }
+    // The guidance catalog must be non-empty: an empty list would tell the player
+    // nothing while still claiming to ship a recommendation.
+    if (!Array.isArray(profiles.recommendedModels) || profiles.recommendedModels.length === 0)
+      throw new Error("recommended_models_missing");
+  });
+
+  await attempt("settings.profiles.update", async () => {
+    const before = await readJson(origin, client, "/api/tavern/v1/settings/profiles");
+    const surface = "game";
+    const expectedRevision = before?.[surface]?.revision;
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) throw new Error("profile_revision_unavailable");
+    const modelId = "qwen2.5-coder:7b";
+    const updated = await sendJson(origin, client, "PUT", "/api/tavern/v1/settings/profiles", {
+      apiVersion: 1,
+      surface,
+      expectedRevision,
+      modelId,
+      thinkingLevel: "xhigh",
+    });
+    const profile = updated?.[surface];
+    // A model id the shipped catalog does not list must be stored verbatim, not
+    // silently replaced with a recommended one, and the other surface's durable
+    // revision must not move.
+    if (profile?.modelId !== modelId) throw new Error("profile_model_not_applied");
+    if (profile?.thinkingLevel !== "xhigh") throw new Error("profile_thinking_level_not_applied");
+    if (!Number.isInteger(profile?.revision) || profile.revision <= expectedRevision)
+      throw new Error("profile_revision_unadvanced");
+    const other = surface === "chat" ? "game" : "chat";
+    if (updated?.[other]?.revision !== before?.[other]?.revision) throw new Error("profile_other_surface_changed");
   });
 
   // design/28 §2 Characters surface: companion library + persona / scenario /
@@ -770,6 +858,42 @@ async function exerciseOperations(origin, client) {
     const list = await readJson(origin, client, "/api/tavern/v1/companions");
     if (!Array.isArray(list?.companions) || !list.companions.some((entry) => entry?.name === "Imported Rae"))
       throw new Error("character_import_confirm_not_listed");
+  });
+
+  // character.import.history: the durable loss report every confirmed import
+  // leaves behind. The confirm above already wrote this run's record, so the
+  // read must project it back - keyed by the SAME opaque importId the stage step
+  // observed - with the per-class disposition counts the report carried. The
+  // projection is content-free by contract (no card body text is expressible in
+  // it) and this step keeps the evidence the same way: it compares an opaque
+  // handle and integer counts, and records neither a name nor any field text.
+  await attempt("character.import.history", async () => {
+    if (stagedImportId === null) throw new Error("character_import_history_importid_unavailable");
+    const history = await readJson(origin, client, "/api/tavern/v1/import-history");
+    if (history === null || typeof history !== "object") throw new Error("character_import_history_unavailable");
+    if (!Array.isArray(history.entries)) throw new Error("character_import_history_entries_missing");
+    const entry = history.entries.find((candidate) => candidate?.importId === stagedImportId);
+    if (entry === undefined) throw new Error("character_import_history_entry_missing");
+    if (!Number.isSafeInteger(entry.occurredAtMs) || entry.occurredAtMs <= 0)
+      throw new Error("character_import_history_timestamp_invalid");
+    const counts = entry.counts;
+    if (counts === null || typeof counts !== "object") throw new Error("character_import_history_counts_missing");
+    // Every class must be a real count, and at least one field must have been
+    // classified: a record written with an empty report would still be listed,
+    // so an all-zero row would report a pass for evidence that says nothing.
+    let classified = 0;
+    for (const classification of [
+      "accepted_typed",
+      "preserved_opaque",
+      "dropped_unsupported",
+      "rejected_invalid",
+    ]) {
+      const count = counts[classification];
+      if (!Number.isSafeInteger(count) || count < 0)
+        throw new Error("character_import_history_count_invalid");
+      classified += count;
+    }
+    if (classified <= 0) throw new Error("character_import_history_counts_empty");
   });
 
   return results;

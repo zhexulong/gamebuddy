@@ -42,12 +42,16 @@ const ALL_OPERATIONS = [
   "settings.voice.read",
   "settings.voice.consent",
   "settings.voice.devices",
+  "settings.language.read",
+  "settings.language.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
   "settings.connection.activate",
   "settings.connection.model",
   "settings.connection.remove",
+  "settings.profiles.read",
+  "settings.profiles.update",
   "companion.list",
   "companion.detail",
   "companion.create",
@@ -64,6 +68,7 @@ const ALL_OPERATIONS = [
   "character.import.read",
   "character.import.review",
   "character.import.confirm",
+  "character.import.history",
 ];
 
 test("the producer exercises every operation the mounted profile declares", async () => {
@@ -98,6 +103,8 @@ test("the writes assert their durable effect, not only the reply shape", () => {
     "settings.connection.create",
     "settings.connection.test",
     "settings.connection.model",
+    "settings.profiles.update",
+    "settings.language.update",
     "world-info.bind",
   ];
   for (const operationId of mustAdvanceRevision) {
