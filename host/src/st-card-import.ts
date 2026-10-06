@@ -348,6 +348,16 @@ function disposition(
 ): StCardImportDisposition {
   return Object.freeze({ field, classification, reason });
 }
+function playableKeys(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return Object.freeze(
+    value
+      .flatMap((key) => (typeof key === "string" ? [key.trim()] : []))
+      .filter((key) => key.length > 0 && key.length <= 64)
+      .slice(0, 16),
+  );
+}
+
 function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldBookEntry[] {
   if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
     return [];
@@ -379,6 +389,14 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldB
         // materializes into the m[0] lorebook_constant source. Keyword-gated
         // entries (constant false) stay behind the lookup tools.
         ...(raw.constant === true ? { constant: true } : {}),
+        // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
+        // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
+        // every keyword-gated entry unreachable no matter how correct the rest of the chain was.
+        //
+        // Carried only when the card actually supplied usable words: the worldbook validator treats an
+        // EMPTY key list as invalid, so a card declaring `keys: []` must read as "no trigger words"
+        // (the field stays absent) rather than as a malformed entry.
+        ...(playableKeys(raw.keys).length === 0 ? {} : { keys: playableKeys(raw.keys) }),
       }),
     ];
   });
