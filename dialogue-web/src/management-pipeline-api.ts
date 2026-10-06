@@ -446,6 +446,8 @@ export type TavernConnectionV1 = Readonly<{
   modelId: string;
   modelLabel: string;
   thinkingLevel: TavernConnectionThinkingLevelV1;
+  /** What this record's model accepts; the panel offers exactly these. */
+  allowedThinkingLevels: readonly TavernConnectionThinkingLevelV1[];
   baseUrl: string | null;
   failure: TavernConnectionFailureV1 | null;
   lastCheckedAtMs: number | null;
@@ -808,6 +810,7 @@ const CONNECTION_ROW_KEYS = [
   "modelId",
   "modelLabel",
   "thinkingLevel",
+  "allowedThinkingLevels",
   "baseUrl",
   "failure",
   "lastCheckedAtMs",
@@ -840,7 +843,10 @@ const CONNECTION_MODEL_KEYS = [
 ] as const;
 const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
 const CONNECTION_SETUP_FIELDS = ["apiKey", "apiShape", "baseUrl", "modelId"] as const;
-const CONNECTION_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+// The thinking levels the embedded runtime accepts, mirroring pi's own
+// VALID_THINKING_LEVELS (pi-coding-agent/dist/cli/args.js). Kept as a literal here
+// because this module is deliberately dependency-free.
+const CONNECTION_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const CONNECTION_READINESS = ["unconfigured", "configured", "ready", "failed"] as const;
 const CONNECTION_FAILURES = [
   "invalid_endpoint",
@@ -1575,7 +1581,7 @@ function isConnectionModel(value: unknown): value is TavernConnectionModelV1 {
     isLengthBoundedString(value.modelLabel, 1, 128) &&
     Array.isArray(value.allowedThinkingLevels) &&
     value.allowedThinkingLevels.length > 0 &&
-    value.allowedThinkingLevels.length <= 5 &&
+    value.allowedThinkingLevels.length <= 7 &&
     value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
     isOneOf(value.defaultThinkingLevel, CONNECTION_THINKING_LEVELS) &&
     value.allowedThinkingLevels.includes(value.defaultThinkingLevel as string)
@@ -1614,6 +1620,11 @@ function isConnectionRow(value: unknown): value is TavernConnectionV1 {
     isLengthBoundedString(value.modelId, 1, 128) &&
     isLengthBoundedString(value.modelLabel, 1, 128) &&
     isOneOf(value.thinkingLevel, CONNECTION_THINKING_LEVELS) &&
+    Array.isArray(value.allowedThinkingLevels) &&
+    value.allowedThinkingLevels.length > 0 &&
+    value.allowedThinkingLevels.length <= 7 &&
+    value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
+    value.allowedThinkingLevels.includes(value.thinkingLevel as string) &&
     // The player's own endpoint — the one endpoint fact they read back.
     (value.baseUrl === null || isLengthBoundedString(value.baseUrl, 1, 512)) &&
     isConnectionFailure(value.failure) &&
@@ -1706,7 +1717,7 @@ function isRecommendedModel(value: unknown): value is TavernRecommendedModelV1 {
     isLengthBoundedString(value.modelLabel, 1, 128) &&
     Array.isArray(value.allowedThinkingLevels) &&
     value.allowedThinkingLevels.length > 0 &&
-    value.allowedThinkingLevels.length <= 5 &&
+    value.allowedThinkingLevels.length <= 7 &&
     value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
     isOneOf(value.defaultThinkingLevel, CONNECTION_THINKING_LEVELS)
   );

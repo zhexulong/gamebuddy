@@ -348,7 +348,17 @@ export const TavernConnectionApiShapeV1Schema = Type.Union([
   Type.Literal("bedrock-converse-stream"),
   Type.Literal("mistral-conversations"),
 ]);
+/**
+ * The thinking levels the embedded runtime accepts, in pi's own order.
+ *
+ * The authority is pi's `VALID_THINKING_LEVELS` (pi-coding-agent/dist/cli/args.js); a
+ * level outside this set is not a preference the runtime can express. The union is
+ * spelled out here rather than imported because this contract must stay
+ * dependency-free: a dialogue-web test loads this module directly under Node.
+ */
 export const TavernConnectionThinkingLevelV1Schema = Type.Union([
+  Type.Literal("off"),
+  Type.Literal("minimal"),
   Type.Literal("low"),
   Type.Literal("medium"),
   Type.Literal("high"),
@@ -358,7 +368,7 @@ export const TavernConnectionThinkingLevelV1Schema = Type.Union([
 export const TavernConnectionModelV1Schema = strictObject({
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 5 }),
+    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
 export const TavernConnectionProviderV1Schema = strictObject({
@@ -404,8 +414,11 @@ export const TavernConnectionV1Schema = strictObject({
   active: Type.Boolean(),
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-  thinkingLevel: TavernConnectionThinkingLevelV1Schema,
-  baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+    thinkingLevel: TavernConnectionThinkingLevelV1Schema,
+    // What this record's model accepts. The panel offers exactly these, because the
+    // Host refuses a level the model does not advertise.
+    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
+    baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
   failure: ConnectionFailure,
   lastCheckedAtMs: Type.Union([Revision, Type.Null()]),
 });
@@ -480,7 +493,7 @@ export const TavernRecommendedModelV1Schema = strictObject({
   providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 5 }),
+    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
 /**

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 import type { CompanionThinkingLevel } from "../runtime-identity.js";
-import { PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
+import { COMPANION_THINKING_LEVELS, PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
 import {
   acceptsPlayerModel,
   catalogModel,
@@ -494,16 +494,13 @@ const EMPTY_DOCUMENT: TavernConnectionDocument = Object.freeze({
 
 /**
  * Thinking levels accepted for a player-supplied model id. The catalog cannot
- * describe an arbitrary compatible endpoint's model, so the bounded Host-owned
- * vocabulary is offered for it instead of any provider payload.
+ * describe an arbitrary compatible endpoint's model, so the vocabulary the embedded
+ * runtime itself accepts is offered for it instead of any provider payload.
+ *
+ * This is the SAME set a catalog model may declare: `off`/`minimal` are pi's own
+ * levels too, and a player-supplied endpoint is exactly where they are wanted.
  */
-const PLAYER_MODEL_THINKING_LEVELS: readonly CompanionThinkingLevel[] = Object.freeze([
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]);
+const PLAYER_MODEL_THINKING_LEVELS: readonly CompanionThinkingLevel[] = COMPANION_THINKING_LEVELS;
 
 function requireConnection(document: TavernConnectionDocument, connectionId: string): TavernConnectionRecord {
   const record = document.connections.find((entry) => entry.connectionId === connectionId);

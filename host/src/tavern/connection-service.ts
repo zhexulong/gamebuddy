@@ -1,4 +1,5 @@
 import type { CompanionThinkingLevel } from "../runtime-identity.js";
+import { COMPANION_THINKING_LEVELS } from "../runtime-identity.js";
 import {
   type TavernConnectionProbeResult,
   TavernConnectionStore,
@@ -235,6 +236,9 @@ function projectRecord(
     modelId: record.modelId,
     modelLabel: model?.modelLabel ?? record.modelId,
     thinkingLevel: record.thinkingLevel,
+    // The levels this record's model accepts: a catalog model declares its own, and a
+    // player-supplied endpoint gets the vocabulary the embedded runtime accepts.
+    allowedThinkingLevels: [...(model?.allowedThinkingLevels ?? COMPANION_THINKING_LEVELS)],
     // Non-null only for the escape hatch, whose URL the player typed.
     baseUrl: record.baseUrl,
     failure: record.failure,
