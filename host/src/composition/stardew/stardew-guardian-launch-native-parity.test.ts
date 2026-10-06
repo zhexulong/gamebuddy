@@ -14,10 +14,12 @@
  * thin stand-in that performs exactly the Desktop's own steps against the real
  * native child.
  *
- * No Host frame is re-implemented here: every byte the native parses comes out of a
- * production encoder, except the one explicitly-labelled ParseArm control body
- * documented at `parseArmControlBody` (the launch half cannot be reached without an
- * accepted arm, and the Host cannot emit one — see the FINDING below).
+ * Every byte the native parses in the arm/launch half comes out of a production
+ * encoder: `encodeArmAuthorization` and `encodeNativeRoleLaunchPlan` in
+ * `./stardew-guardian-platform.ts`. The one labelled exception is the control
+ * body documented at `parseArmControlBody`, used only by the (d1) falsification
+ * probes, which must write bytes the Host's own encoder would never emit (a
+ * tampered frame) to a fresh native.
  *
  * Route 1 was used (the real factory is reachable from a TypeScript test). The
  * companion `.mjs` harness cannot host it: it is plain JavaScript, and the Host
@@ -25,58 +27,51 @@
  * `.mjs` file cannot import them.
  *
  * ---------------------------------------------------------------------------
- * FINDING (recorded so it is not re-discovered in a live run)
+ * The arm body reaches the native arm parser exactly
  * ---------------------------------------------------------------------------
- * The native REFUSES every arm body the Host can emit, so the launch half can never
- * be reached in a real run today. `GuardianPrivateLaunchIngress.ParseArm`
- * (`native/windows-bootstrap-guardian/GuardianPrivateLaunchIngress.cs:126`)
+ * `GuardianPrivateLaunchIngress.ParseArm`
+ * (`native/windows-bootstrap-guardian/GuardianPrivateLaunchIngress.cs:122`)
  * requires the exact key set
  *
  *   token, guardianInstanceId, guardianEpoch, attemptId, revision, leaseName,
  *   playerJobName, aiJobName, approvedExecutable      (nine keys, token injected)
  *
- * and the Host's arm encoder cannot produce it, for two independent reasons:
- *
- *   (1) THE FACT BAG IS THE LAUNCH FACTS. The production arm body is
- *       `{"executable":…,"cwd":…,"arguments":[…],"environment":{…},"approvedExecutable":…}`
- *       (test (a) quotes the exact bytes). Seven of the required keys are absent and
- *       four keys the parser does not know (`executable`, `cwd`, `arguments`,
- *       `environment`) are present. The bag
- *       is the game layer's typed launch facts
- *       (`games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts:2120`
- *       and `:2294`), because the contained runtime hands the SAME authorization to
- *       `platform.arm` and `platform.launch`
- *       (`containment/runtime/core/contained-game-runtime.ts:157`/`:163`).
- *
- *   (2) THE ENCODER'S OWN `executable` KEY IS NEVER ACCEPTED. Even with the right
- *       bag — the arm binding facts the composition already mints — the frame is
- *       still refused, because `encodeArmAuthorization` spreads the whole fact bag
- *       and appends `approvedExecutable` while `ParseArm` accepts
- *       `approvedExecutable` and no `executable` key at all. That single fact makes
- *       the frame one key too wide (`executable` is a launch-plan key), and
- *       ParseArm's `RequireExactKeys` is a count AND membership check. Test (b)
- *       isolates this to that one key: the encoder-shaped body is refused, and the
- *       byte-equal body with only `executable` removed is accepted and arms the
- *       native. No fact bag can avoid it: the encoder requires `facts.executable`
- *       in order to mint `approvedExecutable`, and spreads the bag it was given.
- *
- * In every refusal the native answers nothing on the private pipe, exits 1, and
- * writes `windows_bootstrap_guardian_invalid_request`.
- *
- * The facts the native wants already exist in the composition:
- * `readStardewBootstrapGuardianNativeArmFrame` mints `revision, leaseName,
- * playerJobName, aiJobName` and `consumeStardewBootstrapGuardianOwnerBinding`
- * returns them, but `stardew-guardian-platform.ts:421` reads only the correlation
- * triple out of that arm frame; the frame's other four fields have no production
- * reader, and its `bootstrapId` has no ParseArm reader either (the native takes the
- * attempt identity from the public command).
- *
- * Nothing was weakened or mutated to make the passing halves pass: the arm
- * assertions record the native's own refusals and say what must change. When the
- * arm body is fixed, they must be flipped to the acceptance the launch half and the
- * control body already observe.
+ * and `GuardianProtocol.RequireExactKeys` is a COUNT and a membership check, so
+ * one extra key is as fatal as a missing one. The Host emits exactly the eight
+ * tokenless keys held by the constant `PARSE_ARM_BODY_KEYS` below, built from the
+ * composition's own arm frame — `readStardewBootstrapGuardianNativeArmFrame`'s
+ * `revision`, `leaseName`, `playerJobName` and `aiJobName`, read out of the
+ * durable owner record — plus the approved executable. That is why the arm facts
+ * and the launch facts are separated at the seam: `createContainedGameRuntime`'s
+ * runtime binding carries the arm frame as `armFacts` and forwards it to
+ * `ContainedGameRuntimePlatform.arm`, which builds the arm body key by key
+ * instead of spreading the launch facts bag. The launch authorization contributes
+ * ONLY its `executable`, the attested installation executable the native
+ * `ParseLaunch` enforces the plan's `executable` against.
  *
  * ---------------------------------------------------------------------------
+ * What this test first recorded, and what replaced it
+ * ---------------------------------------------------------------------------
+ * The first version of this test pinned a FINDING: the native REFUSED every arm
+ * body the Host could emit, for two independent reasons, so the launch half could
+ * not be reached at all.
+ *
+ *   (1) THE FACT BAG WAS THE LAUNCH FACTS. The arm encoder was handed the
+ *       game-level typed launch facts — `{executable, cwd, arguments,
+ *       environment}` — because the contained runtime handed the SAME
+ *       authorization to `platform.arm` and `platform.launch`.
+ *
+ *   (2) THE ENCODER SPREAD THAT BAG and appended `approvedExecutable`, so even a
+ *       correct fact bag produced a body one key too wide (the native parser
+ *       accepts `approvedExecutable` and no `executable` at all).
+ *
+ * Both are fixed: the arm body is no longer built from the launch bag, so the arm
+ * half now asserts the native's ACCEPTANCE instead of recording its refusal, and
+ * the launch half runs on the Host's own arm frame instead of a labelled control
+ * body. Nothing about the refusal shape was weakened to make the passing halves
+ * pass: the (d) falsification still shows the native refuses a tampered arm or
+ * launch frame, so the parity assertions are not vacuous.
+ *
  * What is replaced, and what stays unreachable
  * ---------------------------------------------------------------------------
  * Replaced by a stand-in: the whole Desktop half — `DesktopHostBootstrapBroker`
@@ -125,8 +120,9 @@ const winOnly = { skip: !isWindows ? "BLOCKED: the native launch parity test nee
 
 /**
  * The exact arm key set `GuardianPrivateLaunchIngress.ParseArm` requires, quoted
- * from the C# parser. `token` is the relay's injected prefix; the remaining eight
- * keys are what a Host arm body must carry exactly.
+ * from the C# parser. `token` is the relay's injected prefix; these eight keys are
+ * what the Host arm body must carry EXACTLY - `RequireExactKeys` compares the key
+ * count as well as the membership, so one extra key is refused.
  */
 const PARSE_ARM_BODY_KEYS = [
   "approvedExecutable",
@@ -138,15 +134,6 @@ const PARSE_ARM_BODY_KEYS = [
   "playerJobName",
   "revision",
 ] as const;
-
-/** The keys the native wants besides `approvedExecutable`: absent from the production bag. */
-const PARSE_ARM_BINDING_KEYS = PARSE_ARM_BODY_KEYS.filter((key) => key !== "approvedExecutable");
-
-/**
- * What the Host encoder emits for a ParseArm-shaped bag: every ParseArm body key
- * plus the fact bag's own `executable`.
- */
-const ENCODER_ARM_BODY_KEYS = [...PARSE_ARM_BODY_KEYS, "executable"].sort();
 
 /** The exact key set `GuardianPrivateLaunchIngress.ParseLaunch` requires. */
 const PARSE_LAUNCH_KEYS = [
@@ -181,7 +168,7 @@ const wireBinding: GuardianSessionBinding = Object.freeze({
   runtimeAdmissionSha256: "c".repeat(64),
 });
 
-test("the compiled native Guardian refuses both arm bodies the Host can emit while the Host's launch bodies are admitted for both roles", { ...winOnly, timeout: 180_000 }, async (t) => {
+test("the compiled native Guardian accepts the Host's own arm body for the exact ParseArm key set and admits the Host's launch plans for both roles", { ...winOnly, timeout: 180_000 }, async (t) => {
   for (const executable of [guardianExecutable, fixtureExecutable]) {
     try {
       await access(executable);
@@ -210,9 +197,10 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
       USERPROFILE: process.env.USERPROFILE ?? "C:\\Users\\Default",
       GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "launch-parity-generation",
     });
-    // The typed facts the game layer hands the contained runtime
-    // (`stardew-private-bootstrap-composer.core.ts:2120`/`:2294`). The SAME object
-    // reaches `platform.arm`, which is why the arm half below sends it there too.
+    // The typed launch facts the game layer hands the contained runtime
+    // (`stardew-private-bootstrap-composer.core.ts:2120`/`:2294`). They are the
+    // LAUNCH authorization: only their `executable` reaches the arm body, as the
+    // approved executable the native `ParseLaunch` later enforces the plan against.
     const productionFacts = (label: string): TypedPrivateGameFacts => Object.freeze({
       executable: fixtureExecutable,
       cwd: root,
@@ -221,148 +209,78 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
     });
 
     // ---------------------------------------------------------------------
-    // (a) the production arm body, exactly as the live path emits it.
+    // (a) the production arm body, exactly as the live path emits it: the
+    // composition's arm frame facts plus the approved executable, on a real
+    // native, whose acceptance is the whole point.
     // ---------------------------------------------------------------------
-    const productionBinding: Correlation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
-    const production = hostPlatformFor(openNative(), productionBinding);
-    const productionRejection = await rejectionOf(() => production.platform.arm({
-      ...productionBinding,
-      operationWaitBudgetMs: 60_000,
-      authorization: productionFacts("player"),
-    }));
-    const productionArmBody = production.standIn.hostArmBody;
-    assert.ok(productionArmBody !== undefined, "(a) the Host's arm encoder must have produced a body");
-    t.diagnostic(`(a) Host-encoded arm body: ${textOf(productionArmBody)}`);
-    t.diagnostic(`(a) native private answer: ${quoted(production.standIn.privateAnswer(0))}; public result: ${quoted(production.standIn.publicResults[0])}`);
-    assert.notEqual(productionRejection, undefined, "(a) the relay must report the native's refusal instead of accepting the arm");
-    assert.equal(
-      production.standIn.privateAnswer(0),
-      undefined,
-      `(a) THE FINDING: the native answered ${quoted(production.standIn.privateAnswer(0))} for the Host-encoded arm body, so the live arm is not admitted`,
-    );
-    assert.equal(production.standIn.publicResults[0], undefined, "(a) the native must never report its armed result for an arm body it refused");
-    assert.equal(production.standIn.acknowledgementCount(), 0, "(a) the stand-in must not have produced a broker acknowledgement for a refused arm");
-    assert.equal(await production.native.waitForExit(10_000), true, "(a) the native did not fail closed on the Host-encoded arm body");
-    assert.equal(production.native.exitCode, 1, `(a) the native exited ${String(production.native.exitCode)} instead of its fail-closed status`);
-    assert.equal(production.native.stderr, "windows_bootstrap_guardian_invalid_request\n", "(a) the native's fail-closed diagnostic is the observation that it refused the Host's arm body");
-    const productionArmKeys = Object.keys(JSON.parse(textOf(productionArmBody)) as Record<string, unknown>).sort();
-    assert.deepEqual(
-      productionArmKeys,
-      ["approvedExecutable", "arguments", "cwd", "environment", "executable"],
-      "(a) the production arm body is exactly the fact bag the contained runtime passes (`contained-game-runtime.ts:157`) plus the approved executable",
-    );
-    assert.equal(productionArmKeys.includes("approvedExecutable"), true, "(a) the encoder's own approved executable key IS present, so the refusal is about the key set, not about the executable rule");
-    for (const key of PARSE_ARM_BINDING_KEYS) {
-      assert.equal(
-        productionArmKeys.includes(key),
-        false,
-        `(a) the divergence's shape (1): the production arm body carries no ${key}, which ParseArm requires`,
-      );
+    const binding: Correlation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
+    const host = hostPlatformFor(openNative(), binding);
+    const armFacts = armBindingFacts();
+    await host.platform.arm({ ...binding, operationWaitBudgetMs: 60_000, armFacts, authorization: productionFacts("player") });
+    const hostArmBody = host.standIn.hostArmBody;
+    assert.ok(hostArmBody !== undefined, "(a) the Host's arm encoder must have produced a body");
+    t.diagnostic(`(a) Host-encoded arm body: ${textOf(hostArmBody)}`);
+    // The exact-key parity gate. `ParseArm`'s `RequireExactKeys` compares the key
+    // COUNT as well as the membership, so this list is checked against the native's
+    // own: a future extra or missing key fails HERE rather than only in a live run.
+    const hostArmKeys = Object.keys(JSON.parse(textOf(hostArmBody)) as Record<string, unknown>).sort();
+    assert.deepEqual([...hostArmKeys], [...PARSE_ARM_BODY_KEYS].sort(), "(a) the Host arm body must carry exactly the ParseArm key set: the correlation, the arm frame's four binding facts, and the approved executable");
+    const hostArmFrame = JSON.parse(textOf(hostArmBody)) as Record<string, unknown>;
+    assert.equal(hostArmFrame.guardianInstanceId, binding.guardianInstanceId, "(a) the arm body must carry the correlation it was armed with");
+    assert.equal(hostArmFrame.guardianEpoch, binding.guardianEpoch, "(a) the arm body must carry the correlation it was armed with");
+    assert.equal(hostArmFrame.attemptId, binding.attemptId, "(a) the arm body must carry the correlation it was armed with");
+    assert.equal(hostArmFrame.revision, armFacts.revision, "(a) the arm body's revision must be the arm frame's own binding revision");
+    assert.equal(hostArmFrame.leaseName, armFacts.leaseName, "(a) the arm body's leaseName must be the arm frame's own lease name");
+    assert.equal(hostArmFrame.playerJobName, armFacts.playerJobName, "(a) the arm body's playerJobName must be the arm frame's own Job name");
+    assert.equal(hostArmFrame.aiJobName, armFacts.aiJobName, "(a) the arm body's aiJobName must be the arm frame's own Job name");
+    assert.equal(hostArmFrame.approvedExecutable, fixtureExecutable, "(a) the arm body must carry the approved executable the launch plan is later enforced against");
+    for (const key of ["executable", "cwd", "arguments", "environment"]) {
+      assert.equal(hostArmKeys.includes(key), false, `(a) the launch facts bag's ${key} must never enter the arm body: the native parser refuses the extra key`);
     }
-
-    // ---------------------------------------------------------------------
-    // (b) divergence (2): with the fact bag corrected, the encoder's own
-    // `executable` mirror key still makes the frame one key too wide. Isolated to
-    // that single key.
-    // ---------------------------------------------------------------------
-    const encoderBinding: Correlation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
-    const encoded = hostPlatformFor(openNative(), encoderBinding);
-    const encodedRejection = await rejectionOf(() => encoded.platform.arm({
-      ...encoderBinding,
-      operationWaitBudgetMs: 60_000,
-      authorization: armFrameShapedFacts(encoderBinding),
-    }));
-    const encodedArmBody = encoded.standIn.hostArmBody;
-    assert.ok(encodedArmBody !== undefined, "(b) the Host's arm encoder must have produced a body");
-    t.diagnostic(`(b) encoder arm body for a ParseArm-shaped bag: ${textOf(encodedArmBody)}`);
-    t.diagnostic(`(b) native private answer: ${quoted(encoded.standIn.privateAnswer(0))}; public result: ${quoted(encoded.standIn.publicResults[0])}`);
-    assert.notEqual(encodedRejection, undefined, "(b) the relay must report the native's refusal of this body too");
+    assert.equal(host.standIn.armBodyWasTokenless, true, "(a) the Host's arm body must be tokenless: the supervisor owns the private token");
     assert.equal(
-      encoded.standIn.privateAnswer(0),
-      undefined,
-      `(b) THE FINDING: the native answered ${quoted(encoded.standIn.privateAnswer(0))} even for the arm binding facts it requires, because the encoder appends its own executable key next to the approved executable`,
-    );
-    assert.equal(await encoded.native.waitForExit(10_000), true, "(b) the native did not fail closed on the encoder-shaped arm body");
-    assert.equal(encoded.native.exitCode, 1, `(b) the native exited ${String(encoded.native.exitCode)} instead of its fail-closed status`);
-    assert.equal(encoded.native.stderr, "windows_bootstrap_guardian_invalid_request\n", "(b) the native's fail-closed diagnostic for the encoder-shaped arm body");
-    const encodedArmKeys = Object.keys(JSON.parse(textOf(encodedArmBody)) as Record<string, unknown>).sort();
-    assert.deepEqual(encodedArmKeys, ENCODER_ARM_BODY_KEYS, "(b) the encoder-shaped body carries every ParseArm body key plus its own executable fact");
-    for (const key of PARSE_ARM_BODY_KEYS) {
-      assert.equal(encodedArmKeys.includes(key), true, `(b) with the arm frame's facts the body does carry ${key}: the remaining divergence is the extra key, not a missing one`);
-    }
-    // The one-key isolation: the SAME bytes with only `executable` removed are
-    // accepted, so that single key is the whole of divergence (2).
-    const isolationNative = openNative();
-    isolationNative.writePublicCommand("arm_attempt", correlationOf(encodedArmBody));
-    await isolationNative.connectPrivate();
-    assert.equal(
-      await isolationNative.sendArm(withoutKey(encodedArmBody, "executable")),
+      host.standIn.privateAnswer(0),
       "accepted",
-      "(b) the byte-equal body minus only the executable key must be accepted: ParseArm's exact-key check is a count and a membership check, and both are satisfied once that key is gone",
+      `(a) the native answered ${quoted(host.standIn.privateAnswer(0))} for the Host-encoded arm body`,
     );
-    assert.equal(await isolationNative.nextPublicResult(), "armed", "(b) the isolated body must arm the native");
-    assert.equal(isolationNative.stderr, "", `(b) the native reported a diagnostic for the isolated body: ${isolationNative.stderr}`);
-    t.diagnostic("(b) isolation: same bytes minus the executable key -> accepted/armed; with it -> refused");
-    await isolationNative.destroy();
+    assert.equal(host.standIn.publicResults[0], "armed", "(a) the native must report its armed result for the Host-encoded arm body");
+    assert.equal(host.standIn.acknowledgementCount(), 1, "(a) the accepted arm must have produced exactly the broker's arm acknowledgement");
+    assert.equal(host.native.stderr, "", `(a) the native reported a diagnostic for the accepted arm body: ${host.native.stderr}`);
 
     // ---------------------------------------------------------------------
-    // (c) the launch half. The Host's launch bodies cannot be reached without an
-    // accepted arm and the Host cannot emit one ((a)+(b)), so the relay arms with
-    // the labelled control body: the exact ParseArm key set, whose fields are the
-    // composition's own arm frame less its bootstrapId (no ParseArm reader) plus the
-    // approved executable. Everything after the arm is the Host's own encoder
-    // output.
+    // (c) the launch half, on the SAME native the Host's own arm frame just
+    // armed. The arm facts and the launch facts are separate inputs, so every
+    // frame below is still the Host's own encoder output. (The arm-body probe
+    // that used to sit between them is what (a) replaced.)
     // ---------------------------------------------------------------------
-    const controlBinding: Correlation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
-    const control = hostPlatformFor(openNative(), controlBinding);
-    control.standIn.controlArmBody = parseArmControlBody(controlBinding);
-    await control.platform.arm({ ...controlBinding, operationWaitBudgetMs: 60_000, authorization: productionFacts("player") });
-    const controlArmBody = control.standIn.controlArmBody;
-    const controlEncodedArmBody = control.standIn.hostArmBody;
-    assert.ok(controlArmBody !== undefined, "(c) the labelled control body must exist");
-    assert.ok(controlEncodedArmBody !== undefined, "(c) the Host's arm encoder must have produced a body");
-    t.diagnostic(`(c) relayed control arm body: ${textOf(controlArmBody)}`);
-    t.diagnostic(`(c) the Host encoder's own arm body for this run: ${textOf(controlEncodedArmBody)}`);
-    assert.equal(control.standIn.armBodyWasTokenless, true, "(c) the Host's arm body must be tokenless: the supervisor owns the private token, and the token path is what the relay mirrors here");
-    assert.equal(
-      control.standIn.privateAnswer(0),
-      "accepted",
-      `(c) the native answered ${quoted(control.standIn.privateAnswer(0))} for the relayed control arm body`,
-    );
-    assert.equal(control.standIn.publicResults[0], "armed", "(c) the native must report its armed result for the control arm body");
-    assert.equal(
-      textOf(controlEncodedArmBody).includes('"cwd"'),
-      true,
-      "(c) the acceptance above belongs to the control body, NOT to the Host encoder's output, which is the production bag refused in (a)",
-    );
-
     const launchBodies: Array<Readonly<{ role: string; frame: Uint8Array }>> = [];
     for (const role of ["player_host", "ai_client"] as const) {
       const label = role === "player_host" ? "player" : "ai";
-      await control.platform.launch({
-        ...controlBinding,
+      await host.platform.launch({
+        ...binding,
         deadlineUnixMs: Date.now() + 60_000,
         role,
         authorization: productionFacts(label),
       });
-      const body = control.standIn.hostLaunchBodies.at(-1);
+      const body = host.standIn.hostLaunchBodies.at(-1);
       assert.ok(body !== undefined, `(c) the Host's launch encoder must have produced the ${role} frame`);
       launchBodies.push(Object.freeze({ role, frame: body }));
       t.diagnostic(`(c) ${role} Host-encoded launch body: ${textOf(body)}`);
       const decoded = JSON.parse(textOf(body)) as Record<string, unknown>;
       assert.deepEqual(Object.keys(decoded).sort(), [...PARSE_LAUNCH_KEYS], `(c) the ${role} launch frame must be exactly the ten ParseLaunch keys`);
       assert.match(String(decoded.planId), GUID_D, `(c) the ${role} launch frame must carry a GUID D planId`);
-      assert.equal(decoded.guardianInstanceId, controlBinding.guardianInstanceId, `(c) the ${role} launch frame must carry the Host's own correlation`);
+      assert.equal(decoded.guardianInstanceId, binding.guardianInstanceId, `(c) the ${role} launch frame must carry the Host's own correlation`);
       assert.equal(decoded.role, role, `(c) the ${role} launch frame must carry the role the Host launched`);
       assert.equal(decoded.executable, fixtureExecutable, `(c) the ${role} launch frame must carry the armed approved executable`);
+      assert.equal(decoded.executable, hostArmFrame.approvedExecutable, `(c) the ${role} launch frame's executable must equal the executable the Host armed`);
       assert.deepEqual(Object.keys(decoded.environment as Record<string, unknown>).sort(), Object.keys(environment).sort(), `(c) the ${role} launch frame must carry the exact seven-key role environment`);
       assert.equal(
-        control.standIn.nativeAnswers.at(-1),
+        host.standIn.nativeAnswers.at(-1),
         "accepted",
-        `(c) the native answered ${quoted(control.standIn.nativeAnswers.at(-1))} for the Host-encoded ${role} plan`,
+        `(c) the native answered ${quoted(host.standIn.nativeAnswers.at(-1))} for the Host-encoded ${role} plan`,
       );
       assert.equal(
-        control.standIn.publicResults.at(-1),
+        host.standIn.publicResults.at(-1),
         "role_active",
         `(c) the native must admit the Host-encoded ${role} plan and answer role_active; a rejected plan is not a pass`,
       );
@@ -375,10 +293,10 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
     // The roles are contained through the platform's own relay, so this test leaves
     // no fixture behind and covers the third command the stand-in serves.
     for (const role of ["player_host", "ai_client"] as const) {
-      await control.platform.contain({ ...controlBinding, operationWaitBudgetMs: 60_000, role });
+      await host.platform.contain({ ...binding, operationWaitBudgetMs: 60_000, role });
     }
-    assert.equal(control.standIn.publicResults.at(-2), "role_contained", "(c) the player containment must be the native's own role_contained result");
-    assert.equal(control.standIn.publicResults.at(-1), "role_contained", "(c) the AI containment must be the native's own role_contained result");
+    assert.equal(host.standIn.publicResults.at(-2), "role_contained", "(c) the player containment must be the native's own role_contained result");
+    assert.equal(host.standIn.publicResults.at(-1), "role_contained", "(c) the AI containment must be the native's own role_contained result");
 
     // ---------------------------------------------------------------------
     // (d) the falsification: one extra key, or one field mutated, is REFUSED. This
@@ -387,7 +305,9 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
     // (d1) the arm body. Every probe mints a FRESH control body: the native creates
     // the exact lease/Job names the body carries, so reusing one body across two
     // live natives would collide on those named objects and confound the refusal
-    // with a name collision instead of the tampering.
+    // with a name collision instead of the tampering. The body is built here rather
+    // than taken from (a) because it must be TAMPERED; (a) is what proves the Host's
+    // own untampered bytes are accepted.
     const armControlBody = parseArmControlBody(Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() }));
     const armControlNative = openNative();
     armControlNative.writePublicCommand("arm_attempt", correlationOf(armControlBody));
@@ -422,7 +342,7 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
     // and approved executable come from the captured Host frame, so the refusal can
     // only be the tampering: the untampered frame is proven acceptable first, and
     // every native owns its own consumed-plan set, so an identical planId is not a
-    // replay.
+    // replay. The arm is the Host's own arm body, exactly as in (a).
     const capturedLaunchBody = launchBodies[0]!.frame;
     const launchProbes = [
       { label: "the untampered frame", frame: capturedLaunchBody, refused: false },
@@ -433,10 +353,9 @@ test("the compiled native Guardian refuses both arm bodies the Host can emit whi
       const native = openNative();
       const correlation = correlationOf(capturedLaunchBody);
       const armed = hostPlatformFor(native, correlation);
-      armed.standIn.controlArmBody = parseArmControlBody(correlation);
       try {
-        await armed.platform.arm({ ...correlation, operationWaitBudgetMs: 60_000, authorization: productionFacts("player") });
-        assert.equal(armed.standIn.publicResults[0], "armed", `(d2) the native must be armed before the ${probe.label} probe`);
+        await armed.platform.arm({ ...correlation, operationWaitBudgetMs: 60_000, armFacts: armBindingFacts(), authorization: productionFacts("player") });
+        assert.equal(armed.standIn.publicResults[0], "armed", `(d2) the Host's own arm frame must arm a fresh native before the ${probe.label} probe`);
         // Written straight to the native pipe: the platform's encoder would never
         // emit a tampered frame, so this is the direct native probe the recovery
         // parity test also uses for its falsification.
@@ -480,49 +399,35 @@ function hostPlatformFor(native: NativeResidentGuardian, correlation: Correlatio
 }
 
 /**
- * The bag (b) uses: the arm binding facts the composition already mints
- * (`readStardewBootstrapGuardianNativeArmFrame`'s fields, less its `bootstrapId`,
- * which has no ParseArm reader) plus the installation executable the encoder needs
- * in order to mint `approvedExecutable`.
- *
- * Not taken from a live owner record: the field names and shapes mirror that
- * contract rather than projecting one. This bag is what makes divergence (2)
- * visible — the encoder turns it into one key ParseArm does not accept.
- */
-function armFrameShapedFacts(correlation: Correlation): TypedPrivateGameFacts {
-  return Object.freeze({
-    ...armBindingFacts(correlation),
-    executable: fixtureExecutable,
-  });
-}
-
-/**
- * The labelled control arm body: the exact eight-key ParseArm set, whose fields are
- * the same arm binding facts, plus the approved executable. It is built here, not
- * by the Host encoder, because the Host cannot emit a ParseArm body at all
- * (findings (a) and (b)); it exists so the launch half — which IS the Host's own
- * encoder output — can be observed. The relay's token prefix is added by
- * `injectArmToken`, exactly as the supervisor adds it.
+ * A valid arm body built here rather than by the Host: the exact eight-key ParseArm
+ * set - the correlation, the arm frame's four binding facts, and the approved
+ * executable. It exists only for the (d1) falsification probes, which need FRESH
+ * lease/Job names per native (the native creates those named objects itself, so two
+ * live natives must not carry the same names) and then TAMPER with the body. The
+ * Host's own arm body is proven acceptable against a real native in (a). The
+ * relay's token prefix is added by `injectArmToken`, exactly as the supervisor does.
  */
 function parseArmControlBody(correlation: Correlation): Uint8Array {
   return Buffer.from(JSON.stringify({
-    ...armBindingFacts(correlation),
+    ...correlation,
+    ...armBindingFacts(),
     approvedExecutable: fixtureExecutable,
   }), "utf8");
 }
 
-/** The arm-frame facts the native's ParseArm wants and the launch facts do not carry. */
-function armBindingFacts(correlation: Correlation): Readonly<{
-  guardianInstanceId: string;
-  guardianEpoch: number;
-  attemptId: string;
+/**
+ * The attempt's native arm binding facts: exactly the four fields
+ * `readStardewBootstrapGuardianNativeArmFrame` mints beyond the correlation, which
+ * the composition forwards to the platform as `armFacts`. Fresh lease/Job names
+ * every call, because the native creates those named objects itself.
+ */
+function armBindingFacts(): Readonly<{
   revision: string;
   leaseName: string;
   playerJobName: string;
   aiJobName: string;
 }> {
   return Object.freeze({
-    ...correlation,
     revision: randomUUID(),
     leaseName: `Local\\LaunchParity-Lease-${randomUUID()}`,
     playerJobName: `Local\\LaunchParity-Player-${randomUUID()}`,
@@ -556,8 +461,6 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
   public readonly hostLaunchBodies: Uint8Array[] = [];
   /** The broker's own arm-body rule: the Host's body must not carry a token. */
   public armBodyWasTokenless = false;
-  /** Set only by the labelled ParseArm control documented on `parseArmControlBody`. */
-  public controlArmBody: Uint8Array | undefined;
   /** The acknowledgements this stand-in wrote back to the Host, in order. */
   public readonly acknowledgements: GuardianAck[] = [];
 
@@ -584,8 +487,7 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
     // first, so this stand-in does too.
     this.native.writePublicCommand("arm_attempt", this.correlation);
     await this.native.connectPrivate();
-    const relayedBody = this.controlArmBody ?? body;
-    this.native.writePrivate(injectArmToken(relayedBody, this.native.token));
+    this.native.writePrivate(injectArmToken(body, this.native.token));
     const answer = await this.native.nextPrivateLine();
     this.nativeAnswers.push(answer);
     if (answer !== "accepted") throw new Error(`the native did not accept the relayed arm body: ${answer ?? "the native closed the private pipe"}`);
@@ -864,14 +766,6 @@ function withReplacedString(frame: Uint8Array, key: string, value: string): Uint
   return Buffer.from(JSON.stringify(parsed), "utf8");
 }
 
-/** The one-key isolation's mutation: remove exactly one key from a Host-encoded body. */
-function withoutKey(frame: Uint8Array, key: string): Uint8Array {
-  const parsed = JSON.parse(textOf(frame)) as Record<string, unknown>;
-  if (!Object.hasOwn(parsed, key)) throw new Error(`the Host encoder's frame has no ${key}`);
-  delete parsed[key];
-  return Buffer.from(JSON.stringify(parsed), "utf8");
-}
-
 /** Reads LF-delimited lines from one stream and reports the terminal disconnect. */
 function readLines(stream: Readable, onLine: (line: string) => void, onEnd: () => void): void {
   let buffered = "";
@@ -887,16 +781,6 @@ function readLines(stream: Readable, onLine: (line: string) => void, onEnd: () =
   });
   stream.once("end", onEnd);
   stream.once("error", onEnd);
-}
-
-/** Runs one Host operation and returns its rejection instead of throwing it. */
-async function rejectionOf(operation: () => Promise<unknown>): Promise<Error | undefined> {
-  try {
-    await operation();
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error));
-  }
 }
 
 function textOf(frame: Uint8Array): string { return Buffer.from(frame).toString("utf8"); }

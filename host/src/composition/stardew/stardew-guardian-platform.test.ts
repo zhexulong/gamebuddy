@@ -64,6 +64,20 @@ const launchFacts = (): TypedPrivateGameFacts => Object.freeze({
   revision: 7,
 });
 
+/**
+ * The attempt's native arm binding facts: the composition's own arm frame, whose
+ * fields come from the durable owner record
+ * (`readStardewBootstrapGuardianNativeArmFrame`). `revision` is GUID D, the three
+ * names are `Local\<leaf>` and distinct - exactly what the native arm parser
+ * requires and nothing else.
+ */
+const armFrameFacts = (): TypedPrivateGameFacts => Object.freeze({
+  revision: "11111111-1111-4111-8111-111111111111",
+  leaseName: "Local\\GameBuddy-Lease-1",
+  playerJobName: "Local\\GameBuddy-Player-1",
+  aiJobName: "Local\\GameBuddy-Ai-1",
+});
+
 const GUID_D = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PARSE_LAUNCH_KEYS = [
   "arguments",
@@ -110,7 +124,8 @@ test("composition-private platform relays arm facts and encodes launch exactly a
     guardianEpoch: 1,
     attemptId: "attempt",
     operationWaitBudgetMs: 1000,
-    authorization: Object.freeze({ role: "player_host", revision: 7, executable: "C:\\Stardew\\StardewModdingAPI.exe" }),
+    armFacts: armFrameFacts(),
+    authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe" }),
   });
   const deadlineUnixMs = Date.now() + 60_000;
   await platform.launch({
@@ -129,10 +144,20 @@ test("composition-private platform relays arm facts and encodes launch exactly a
     role: "player_host",
   });
 
-  // Arm stays a simple relay of the typed game facts (arm schema is game-owned)
-  // plus the fixed approved executable the native ParseArm must enforce at
-  // launch: the launch executable must equal the armed approved executable.
-  assert.deepEqual(JSON.parse(new TextDecoder().decode(calls[0]!.frame)), { role: "player_host", revision: 7, executable: "C:\\Stardew\\StardewModdingAPI.exe", approvedExecutable: "C:\\Stardew\\StardewModdingAPI.exe" });
+  // Arm is the exact ParseArm key set: the correlation triple, the arm frame's
+  // four binding facts, and the approved executable. The launch facts bag
+  // contributes ONLY that executable; it is never spread into the arm body, whose
+  // key count the native parser refuses to exceed.
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(calls[0]!.frame)), {
+    guardianInstanceId: "guardian",
+    guardianEpoch: 1,
+    attemptId: "attempt",
+    revision: "11111111-1111-4111-8111-111111111111",
+    leaseName: "Local\\GameBuddy-Lease-1",
+    playerJobName: "Local\\GameBuddy-Player-1",
+    aiJobName: "Local\\GameBuddy-Ai-1",
+    approvedExecutable: "C:\\Stardew\\StardewModdingAPI.exe",
+  });
 
   // Launch is the encoder output: exactly the ten ParseLaunch keys, GUID D
   // planId, fully qualified executable/cwd, and the exact seven-key allowlist.
@@ -197,20 +222,28 @@ test("launch and arm fail closed before the native session when facts violate th
   // never produce an arm_attempt frame. The ordinal-ignore-case equality gate
   // itself remains native-only (ParseLaunch).
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", revision: 7 }) }),
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", revision: 7 }) }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: "C:\\Stardew\\StardewModdingAPI.exe\0" }) }),
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: "C:\\Stardew\\StardewModdingAPI.exe\0" }) }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: "relative\\StardewModdingAPI.exe" }) }),
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: "relative\\StardewModdingAPI.exe" }) }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, authorization: Object.freeze({ role: "player_host", executable: `C:\\${`a`.repeat(32_768)}.exe` }) }),
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: `C:\\${"a".repeat(32_768)}.exe` }) }),
     /arm authorization missing approved executable/,
+  );
+  // The arm body is built from the arm binding facts, so a fact bag the native
+  // arm parser would refuse is refused here instead of reaching the session. The
+  // Launch-side rejection remains the only arm rejection above; this one is the
+  // arm binding's own.
+  await assert.rejects(
+    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: Object.freeze({}), authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe" }) }),
+    /arm authorization is missing revision/,
   );
   assert.equal(arms.length, 0);
   await assert.rejects(
