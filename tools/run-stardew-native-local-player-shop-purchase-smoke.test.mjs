@@ -29,8 +29,10 @@ const SHOP = {
   ownerTileX: 5,
   ownerTileY: 16,
   ownerInReach: true,
-  closedMessage: null,
   stockCount: 12,
+  // What the shop can sell right now. The Mod sends this, and the runner picks its target
+  // from it rather than guessing an item id.
+  stockItemIds: ["(O)472", "(O)473"],
 };
 
 /**

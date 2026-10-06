@@ -87,10 +87,23 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 bool inReach = Utility.tileWithinRadiusOfPlayer(
                     npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);
 
+                // What this shop can actually sell right now, so a caller does not have to
+                // guess an item id. Same call the purchase itself uses, so discovery and
+                // execution cannot disagree about what is on offer.
                 int stockCount = 0;
+                List<string> stockItemIds = new();
                 try
                 {
-                    stockCount = ShopBuilder.GetShopStock(shopId, shopData)?.Count ?? 0;
+                    Dictionary<ISalable, ItemStockInformation>? here = ShopBuilder.GetShopStock(shopId, shopData);
+                    if (here is not null)
+                    {
+                        stockCount = here.Count;
+                        foreach (ISalable item in here.Keys)
+                        {
+                            if (!string.IsNullOrEmpty(item.QualifiedItemId) && stockItemIds.Count < 16)
+                                stockItemIds.Add(item.QualifiedItemId);
+                        }
+                    }
                 }
                 catch (Exception)
                 {
@@ -105,11 +118,37 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     npc.TilePoint.X,
                     npc.TilePoint.Y,
                     inReach,
-                    owner.ClosedMessage,
-                    stockCount));
+                    stockCount,
+                    stockItemIds));
             }
         }
         return targets;
+    }
+
+    /// <summary>
+    /// The game's own "this shop is closed" text, read at refusal time rather than carried on
+    /// the discovered target. Carrying it meant the snapshot had a nullable field the Mod's
+    /// serializer omitted when null, which the Host's exact-key check then rejected — the
+    /// message belongs in the refusal evidence, not in a snapshot contract.
+    /// </summary>
+    private static string? GameStateQueryClosedMessageFor(string shopId, string ownerName)
+    {
+        try
+        {
+            if (!DataLoader.Shops(Game1.content).TryGetValue(shopId, out ShopData? shopData) || shopData is null)
+                return null;
+            foreach (ShopOwnerData owner in ShopBuilder.GetCurrentOwners(shopData))
+            {
+                if (owner.Type == ShopOwnerType.NamedNpc &&
+                    string.Equals(owner.Name, ownerName, StringComparison.Ordinal))
+                    return owner.ClosedMessage;
+            }
+        }
+        catch (Exception)
+        {
+            // A refusal must not fail because the message could not be read.
+        }
+        return null;
     }
 
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
@@ -191,10 +230,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "shop_counter_out_of_reach",
                 $"owner={target.OwnerName};owner_tile={target.OwnerTileX},{target.OwnerTileY};"
                     + $"actor_tile={actor.TilePoint.X},{actor.TilePoint.Y};radius={ShopOwnerInteractionRadius}"
-                    + (string.IsNullOrWhiteSpace(target.ClosedMessage) ? string.Empty : $";closed_message={target.ClosedMessage}"));
+                    + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
         }
 
         // The stock the game would actually offer right now.
+        // Filled by the click loop below and reported in the receipt, so a swallowed click
+        // is diagnosable from the evidence instead of requiring another live round.
+        List<string> clickDiagnostics = new();
+
         Dictionary<ISalable, ItemStockInformation> stock;
         try
         {
@@ -265,7 +308,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     ExecutionState.Rejected,
                     "shop_open_refused",
                     $"shop={target.ShopId};owner={target.OwnerName}"
-                        + (string.IsNullOrWhiteSpace(target.ClosedMessage) ? string.Empty : $";closed_message={target.ClosedMessage}"));
+                        + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
             }
 
             if (Game1.activeClickableMenu is not ShopMenu opened)
@@ -279,7 +322,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
             menu = opened;
 
-            int buttonIndex = menu.forSale.IndexOf(offer);
+            // Match by wire identity, NOT by object reference: GetShopStock builds its own
+            // items, so the instance that was priced is never the instance the menu holds.
+            // IndexOf would therefore always miss (measured live: shop_offer_not_purchasable).
+            int FindOfferIndex(ShopMenu shop) =>
+                shop.forSale.FindIndex(candidate => string.Equals(
+                    candidate?.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
+
+            int buttonIndex = FindOfferIndex(menu);
             if (buttonIndex < 0 || buttonIndex >= menu.forSaleButtons.Count)
             {
                 return this.RememberTerminal(
@@ -291,18 +341,50 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
 
             // One native click per unit; the game decrements stock and moves money itself.
+            // The menu's own anti-misclick delay must not swallow a programmatic click.
+            //
+            // ShopMenu.receiveLeftClick only reaches its purchase branch when
+            // `safetyTimer <= 0` (ShopMenu.cs:1022); the field STARTS at 250
+            // (ShopMenu.cs:264) and is decremented by the menu's own update
+            // (ShopMenu.cs:1751). A click issued in the same frame the menu opened is
+            // therefore silently ignored — measured live: money unchanged and inventory
+            // unchanged (purchase_not_effective) despite a perfectly valid offer.
+            //
+            // 250 ms guards against a human double-tapping the mouse. Waiting it out would
+            // only make a scripted purchase slower without changing any outcome, so the
+            // guard is cleared explicitly instead of simulated. It is a UI flap counter,
+            // not world state: no game fact depends on it.
+            menu.safetyTimer = 0;
+
             for (int bought = 0; bought < purchasable; bought++)
             {
                 if (Game1.activeClickableMenu is not ShopMenu stillOpen || !ReferenceEquals(stillOpen, menu))
                     break;
 
-                int index = menu.forSale.IndexOf(offer);
+                int index = FindOfferIndex(menu);
                 if (index < 0 || index >= menu.forSaleButtons.Count)
                     break;
 
                 ClickableComponent button = menu.forSaleButtons[index];
-                // The native click handler; playSound defaults to true as it does for a real click.
-                menu.receiveLeftClick(button.bounds.Center.X, button.bounds.Center.Y, playSound: true);
+                // Record the state the native handler will read, and what it did, instead of
+                // guessing which gate refused. These are all public members.
+                long moneyBeforeClick = actor.Money;
+                int stockBeforeClick = stock.TryGetValue(offer, out ItemStockInformation? s0) && s0 is not null ? s0.Stock : -1;
+                int safetyBefore = menu.safetyTimer;
+                bool heldNull = menu.heldItem is null;
+                int clickX = button.bounds.Center.X;
+                int clickY = button.bounds.Center.Y;
+                bool addressedToButton = button.containsPoint(clickX, clickY);
+
+                // The native click handler, at the native click coordinates.
+                menu.receiveLeftClick(clickX, clickY, playSound: true);
+
+                long moneyAfterClick = actor.Money;
+                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
+                clickDiagnostics.Add(
+                    $"click{bought}:button={index};at={clickX},{clickY};addressed={addressedToButton};"
+                    + $"safety_before={safetyBefore};held_null={heldNull};"
+                    + $"money={moneyBeforeClick}->{moneyAfterClick};stock={stockBeforeClick}->{stockAfterClick}");
             }
         }
         catch (Exception nativeException)
@@ -342,7 +424,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             + $"money_before={moneyBefore};money_after={moneyAfter};"
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
-            + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()}";
+            + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
+            + $"clicks={clickDiagnostics.Count}[{string.Join("|", clickDiagnostics)}]";
 
         // Success is the world fact: money left the purse AND the item entered the inventory.
         // A receipt that spent nothing and gained nothing is not a purchase.

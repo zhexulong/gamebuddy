@@ -71,6 +71,8 @@ public static class FarmhandExecutionAcceptance
         bool emote = args.Emote is not null;
         bool direction = args.Direction is not null;
         bool tool = args.Tool is not null;
+        bool responseKey = args.ResponseKey is not null;
+        bool quantity = args.Quantity.HasValue;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
@@ -80,7 +82,9 @@ public static class FarmhandExecutionAcceptance
             && destination == HasArgument(descriptor, "destination")
             && emote == HasArgument(descriptor, "emote")
             && direction == HasArgument(descriptor, "direction")
-            && tool == HasArgument(descriptor, "tool");
+            && tool == HasArgument(descriptor, "tool")
+            && responseKey == HasArgument(descriptor, "responseKey")
+            && quantity == HasArgument(descriptor, "quantity");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -107,6 +111,11 @@ public static class FarmhandExecutionAcceptance
             && directionEnum.Any(value => string.Equals(value, args.Direction, StringComparison.Ordinal)),
         "tool" => !string.IsNullOrWhiteSpace(args.Tool) && argument.Enum is { } toolEnum
             && toolEnum.Any(value => string.Equals(value, args.Tool, StringComparison.Ordinal)),
+        "responseKey" => !string.IsNullOrWhiteSpace(args.ResponseKey) && args.ResponseKey.Length <= 128,
+        // A declared quantity is a positive count. The descriptor decides whether an action
+        // takes one; this only bounds it. Mirroring Object.cs: no action may ask for zero or
+        // a negative amount, and the ceiling keeps a single request from being absurd.
+        "quantity" => args.Quantity is { } quantity && quantity >= 1 && quantity <= 9999,
         _ => false,
     };
 
