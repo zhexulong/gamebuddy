@@ -8,7 +8,9 @@ import {
   CHAT_TAVERN_LIVE_PROFILE,
   MOUNTED_PROFILE_MAPPING_BLOCKER,
   NARRATIVE_RUN_PLAN,
+  NARRATIVE_RUN_POSITIONS,
   parseArguments,
+  runNarrativeProcess,
   runTavernReleaseLiveGate,
   runTavernReleaseLiveOrchestrator,
   validateMountedProfileOperationEvidence,
@@ -43,9 +45,33 @@ function validMapping(overrides = {}) {
 // inventory digest to agree, so the helper gives all three roles the same pair.
 // A test that needs a run to differ passes its own `overrides`.
 const PASSED_ARTIFACT = Object.freeze({ generation: "generation_one_aaaaaaaaaaaa", inventoryDigest: "f".repeat(64) });
+// The observation-derived position and the facts behind it, per planned kind.
+// These are the NEW pass-gating evidence: a run that only restates its role no
+// longer qualifies (see the relabelling tests below).
+const POSITION_EVIDENCE_BY_KIND = Object.freeze({
+  main: Object.freeze({ freshChat: true, turnTerminalState: "completed", providerBoundaryCrossed: true }),
+  failure: Object.freeze({
+    turnTerminalState: "failed",
+    providerBoundaryCrossed: true,
+    problemCode: "runtime_unavailable",
+  }),
+  recovery: Object.freeze({
+    freshChat: true,
+    predecessorTurnTerminalState: "completed",
+    predecessorTranscriptLength: 2,
+    resumedTranscriptLength: 2,
+    resumedTranscriptKeepsPredecessor: true,
+    postResumeTurnTerminalState: "completed",
+    postResumeTranscriptLength: 4,
+  }),
+});
 function passedRun(role, overrides = {}) {
   return {
     role,
+    kind: role,
+    position: NARRATIVE_RUN_POSITIONS[role],
+    positionEvidence: { ...POSITION_EVIDENCE_BY_KIND[role] },
+    ...(role === "failure" ? { problemCode: "runtime_unavailable" } : {}),
     state: "passed",
     runId: token(20),
     artifact: { ...PASSED_ARTIFACT },
@@ -57,7 +83,7 @@ function passedRun(role, overrides = {}) {
       realTurnOutcomeObserved: true,
       privateText: "must not be copied",
     },
-    statuses: { turn: "completed", private: "removed" },
+    statuses: { turn: role === "failure" ? "failed" : "completed", private: "removed" },
     prompt: "must not be copied",
     ...overrides,
   };
@@ -288,6 +314,10 @@ test("the runner's own negative disclosure survives the real two-stage normaliza
     prerequisites: passingPrerequisites,
     runNarrative: async ({ role }) => ({
       role,
+      kind: role,
+      position: NARRATIVE_RUN_POSITIONS[role],
+      positionEvidence: { ...POSITION_EVIDENCE_BY_KIND[role] },
+      ...(role === "failure" ? { problemCode: "runtime_unavailable" } : {}),
       state: "passed",
       runId: token(20),
       artifact: { ...PASSED_ARTIFACT },
@@ -299,7 +329,7 @@ test("the runner's own negative disclosure survives the real two-stage normaliza
         realTurnOutcomeObserved: true,
       },
       disclosures: { providerAcceptedOrSemanticAnswer: false },
-      turn: "completed",
+      turn: role === "failure" ? "failed" : "completed",
     }),
     temporaryReportPath: (role) => `/tmp/${role}.json`,
   });
@@ -319,6 +349,9 @@ test("a raw runner report survives the whole normalization chain", async () => {
   // production pair does.
   const rawRun = (role) => ({
     role,
+    kind: role,
+    position: NARRATIVE_RUN_POSITIONS[role],
+    positionEvidence: { ...POSITION_EVIDENCE_BY_KIND[role] },
     state: "passed",
     runId: token(20),
     artifact: { ...PASSED_ARTIFACT },
@@ -332,7 +365,12 @@ test("a raw runner report survives the whole normalization chain", async () => {
       realTurnOutcomeObserved: true,
       providerAcceptedOrSemanticAnswer: false,
     },
-    statuses: { turn: "completed", lastState: "idle", p4Stages: [] },
+    statuses: {
+      turn: role === "failure" ? "failed" : "completed",
+      lastState: "idle",
+      p4Stages: [],
+      ...(role === "failure" ? { lastProblemCode: "runtime_unavailable" } : {}),
+    },
   });
 
   const once = await runTavernReleaseLiveOrchestrator({
@@ -454,6 +492,114 @@ test("a profile with the right tier and operation count but a forged identity is
   );
 });
 
+test("three attempts that only reached the happy position cannot pass as three kinds", async () => {
+  // The relabelling falsification. Each run reports its OWN role as its kind, so
+  // the label half is satisfied - what is not is the position: all three carry
+  // the same observed path (a fresh Chat that completed one turn). Only the
+  // derived position can expose that, and it must.
+  const roleLabelledOnePath = NARRATIVE_RUN_PLAN.map((role) =>
+    passedRun(role, {
+      position: NARRATIVE_RUN_POSITIONS.main,
+      positionEvidence: { ...POSITION_EVIDENCE_BY_KIND.main },
+    }),
+  );
+  const report = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs: roleLabelledOnePath,
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(report.verdict, "inconclusive");
+  assert.ok(
+    report.blockerIds.includes("narrative_run_kinds"),
+    "three attempts with one position must be named as indistinguishable",
+  );
+  assert.ok(report.blockerIds.includes("narrative_runs"));
+
+  // The mirror image: each run keeps the right position but reports a kind that
+  // is not the role it was asked for. The kind is read from the attempt's own
+  // report, never inferred from the role, so this is refused as well.
+  const kindMislabelled = NARRATIVE_RUN_PLAN.map((role) =>
+    passedRun(role, { kind: role === "failure" ? "main" : role }),
+  );
+  const second = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs: kindMislabelled,
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(second.verdict, "inconclusive");
+  assert.ok(second.blockerIds.includes("narrative_run_kinds"));
+});
+
+test("the failing attempt is held to its own bounded failure, not to any failure", async () => {
+  // The failure attempt is NOT exempt from being checked. It cannot report a
+  // completed position, so its position is its own durable failure facts - and
+  // claiming the position while the facts say otherwise must be refused. Each
+  // case below keeps the failure position label and breaks one fact behind it.
+  const blocked = async (override, label) => {
+    const report = await runTavernReleaseLiveGate({
+      mountedProfile,
+      operationEvidenceMapping: validMapping(),
+      runs: NARRATIVE_RUN_PLAN.map((role) => (role === "failure" ? passedRun(role, override) : passedRun(role))),
+      prerequisites: passingPrerequisites,
+    });
+    assert.notEqual(report.verdict, "passed", label);
+    assert.ok(report.blockerIds.includes("narrative_runs"), label);
+    return report;
+  };
+  // An incidental failure carrying a code the plan does not accept is a
+  // DIFFERENT failure, even when the summary and the evidence agree on it.
+  await blocked(
+    {
+      problemCode: "no_visible_presentation",
+      positionEvidence: { ...POSITION_EVIDENCE_BY_KIND.failure, problemCode: "no_visible_presentation" },
+    },
+    "an incidental failure code must not reach the failing position",
+  );
+  // The same, for the generic code the runner projects when a failure carried no
+  // usable product code at all.
+  await blocked(
+    {
+      problemCode: "unavailable",
+      positionEvidence: { ...POSITION_EVIDENCE_BY_KIND.failure, problemCode: "unavailable" },
+    },
+    "a failure without a usable code must not reach the failing position",
+  );
+  // A failure that never crossed the provider boundary is not a provider
+  // rejection: it is the product failing before the provider was ever called.
+  await blocked(
+    { positionEvidence: { ...POSITION_EVIDENCE_BY_KIND.failure, providerBoundaryCrossed: false } },
+    "a failure before the provider boundary must not reach the failing position",
+  );
+  // The evidence and the summary must name the SAME code; a second, disagreeing
+  // code is not the observed failure.
+  await blocked({ problemCode: "storage_unavailable" }, "a disagreeing problem code must not pass");
+  // The old, self-restating shape is projected away entirely rather than
+  // accepted: it carries no product problem code, so the facts are incomplete.
+  await blocked(
+    {
+      positionEvidence: {
+        turnTerminalState: "failed",
+        providerBoundaryCrossed: true,
+        providerRejectionPosition: "provider_error_after_presend",
+      },
+    },
+    "evidence without the bounded product code must not pass",
+  );
+
+  // Contrast: the same three runs with the designed failure - durable `failed`,
+  // boundary crossed, accepted bounded code - still pass, so this is a
+  // requirement and not an always-fail.
+  const designed = await runTavernReleaseLiveGate({
+    mountedProfile,
+    operationEvidenceMapping: validMapping(),
+    runs: passedRuns(),
+    prerequisites: passingPrerequisites,
+  });
+  assert.equal(designed.verdict, "passed");
+});
+
 test("runs against different artifacts cannot pass as one release", async () => {
   // Each run carried a generation and an inventory digest, but nothing required
   // them to agree: three runs against three different generations validated
@@ -468,6 +614,9 @@ test("runs against different artifacts cannot pass as one release", async () => 
   };
   const runs = ["main", "failure", "recovery"].map((role, index) => ({
     role,
+    kind: role,
+    position: NARRATIVE_RUN_POSITIONS[role],
+    positionEvidence: { ...POSITION_EVIDENCE_BY_KIND[role] },
     state: "passed",
     runnerRunId: String(index + 1).repeat(16),
     artifact: {
@@ -475,6 +624,7 @@ test("runs against different artifacts cannot pass as one release", async () => 
       inventoryDigest: String(index + 1).repeat(64),
     },
     assertions,
+    ...(role === "failure" ? { problemCode: "runtime_unavailable" } : {}),
   }));
 
   const report = await runTavernReleaseLiveGate({

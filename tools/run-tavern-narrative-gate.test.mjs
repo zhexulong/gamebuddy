@@ -6,13 +6,22 @@ import test from "node:test";
 import {
   classifyNarrativeStartupFailure,
   classifyNarrativeStartupStderr,
+  classifyNarrativeTurnBlock,
   classifyNarrativeTurnOutcome,
   createNarrativeGateDeploymentManifest,
+  deriveAttemptPosition,
+  deriveAuthenticatedReferenceChatApi,
   evaluateNarrativeGateMarker,
   evaluateNarrativeGateRuntime,
+  NARRATIVE_RUN_KINDS,
+  NARRATIVE_RUN_FAILURE_CODES,
+  NARRATIVE_RUN_POSITIONS,
+  narrativeTurnDurableState,
+  observedTurnFailure,
   parseArguments,
   prepareReportTarget,
   projectGuardSafeFailureCode,
+  projectTranscriptShape,
   reportBase,
   writeReport,
 } from "./run-tavern-narrative-gate.mjs";
@@ -26,10 +35,174 @@ async function withRoot(run) {
   }
 }
 
-test("narrative gate accepts only its optional report argument", () => {
-  assert.deepEqual(parseArguments([]), { reportPath: undefined });
+test("narrative gate accepts only its optional report argument and a bounded attempt kind", () => {
+  assert.deepEqual(parseArguments([]), { reportPath: undefined, kind: "main" });
+  for (const kind of NARRATIVE_RUN_KINDS)
+    assert.equal(parseArguments(["--report", "report.json", "--kind", kind]).kind, kind);
   assert.throws(() => parseArguments(["--report"]), /usage:/);
   assert.throws(() => parseArguments(["--unknown", "report.json"]), /usage:/);
+  // The kind is a closed vocabulary: a free-text label can never be an attempt.
+  assert.throws(() => parseArguments(["--kind", "attempt_labels_not_exercised_distinctions"]), /usage:/);
+  assert.throws(() => parseArguments(["--kind"]), /usage:/);
+  assert.throws(() => parseArguments(["--kind", "failure", "--kind", "main"]), /duplicate_kind/);
+});
+
+test("narrative gate derives each kind's position from observations, never from the requested kind", () => {
+  // The three kinds report three different positions...
+  assert.equal(NARRATIVE_RUN_POSITIONS.main, "fresh_chat_completed_turn");
+  assert.equal(NARRATIVE_RUN_POSITIONS.failure, "provider_rejected_turn_failed");
+  assert.equal(NARRATIVE_RUN_POSITIONS.recovery, "resumed_existing_chat_completed_turn");
+  const happyPath = {
+    freshChat: true,
+    turnTerminalState: "completed",
+    providerBoundaryCrossed: true,
+  };
+  assert.equal(deriveAttemptPosition("main", happyPath), NARRATIVE_RUN_POSITIONS.main);
+  // ...and a happy path asked to be the failure or recovery attempt derives
+  // NOTHING, which is what makes relabelling alone unsatisfiable.
+  assert.equal(deriveAttemptPosition("failure", happyPath), undefined);
+  assert.equal(deriveAttemptPosition("recovery", happyPath), undefined);
+  const realFailure = {
+    turnTerminalState: "failed",
+    providerBoundaryCrossed: true,
+    problemCode: "runtime_unavailable",
+  };
+  assert.equal(deriveAttemptPosition("failure", realFailure), NARRATIVE_RUN_POSITIONS.failure);
+  assert.equal(deriveAttemptPosition("main", realFailure), undefined);
+  // "Some failure happened" is NOT the failing position. The same durable
+  // `failed` terminal with a code this plan does not accept derives nothing...
+  assert.deepEqual(NARRATIVE_RUN_FAILURE_CODES, ["runtime_unavailable"]);
+  assert.equal(
+    deriveAttemptPosition("failure", { ...realFailure, problemCode: "no_visible_presentation" }),
+    undefined,
+  );
+  assert.equal(
+    deriveAttemptPosition("failure", { ...realFailure, problemCode: "unavailable" }),
+    undefined,
+  );
+  // ...and neither does a failure that never reached the provider, or one whose
+  // evidence carries no bounded code at all.
+  assert.equal(
+    deriveAttemptPosition("failure", { ...realFailure, providerBoundaryCrossed: false }),
+    undefined,
+  );
+  assert.equal(
+    deriveAttemptPosition("failure", { turnTerminalState: "failed", providerBoundaryCrossed: true }),
+    undefined,
+  );
+  // A recovered Chat that did not keep the predecessor transcript is not a
+  // recovery, and a resumed-but-idle Chat (no further committed turn) is not one
+  // either: the counts must actually grow.
+  const recovery = {
+    freshChat: true,
+    predecessorTurnTerminalState: "completed",
+    predecessorTranscriptLength: 2,
+    resumedTranscriptLength: 2,
+    resumedTranscriptKeepsPredecessor: true,
+    postResumeTurnTerminalState: "completed",
+    postResumeTranscriptLength: 4,
+  };
+  assert.equal(deriveAttemptPosition("recovery", recovery), NARRATIVE_RUN_POSITIONS.recovery);
+  assert.equal(
+    deriveAttemptPosition("recovery", { ...recovery, resumedTranscriptKeepsPredecessor: false }),
+    undefined,
+  );
+  assert.equal(
+    deriveAttemptPosition("recovery", { ...recovery, postResumeTranscriptLength: 2 }),
+    undefined,
+  );
+  assert.equal(deriveAttemptPosition("recovery", { ...recovery, resumedTranscriptLength: 0 }), undefined);
+});
+
+test("the failing attempt's evidence is derived from the product's own durable failure observation", () => {
+  // The exact shape a real failing attempt produced: Pi's prompt rejected after
+  // the request crossed the provider boundary and the durable turn failed with
+  // this bounded product code. The runner's observation KIND is `turn_failed`
+  // while the durable state the product reports is `failed`; comparing the kind
+  // against the durable name is what made a genuinely failed live attempt
+  // unsatisfiable, so this pins the mapping between them.
+  const observed = Object.freeze({ kind: "turn_failed", problemCode: "runtime_unavailable" });
+  assert.equal(narrativeTurnDurableState(observed), "failed");
+  assert.deepEqual(observedTurnFailure(observed), {
+    turnTerminalState: "failed",
+    problemCode: "runtime_unavailable",
+  });
+  // What the runner puts in the position evidence for that observation reaches
+  // the failing position...
+  assert.equal(
+    deriveAttemptPosition("failure", {
+      turnTerminalState: narrativeTurnDurableState(observed),
+      providerBoundaryCrossed: true,
+      problemCode: observedTurnFailure(observed).problemCode,
+    }),
+    NARRATIVE_RUN_POSITIONS.failure,
+  );
+  // ...while a completed turn, a code-less failure, and a failure we never saw
+  // terminal facts for do not.
+  assert.equal(narrativeTurnDurableState("completed"), "completed");
+  assert.equal(observedTurnFailure("completed"), undefined);
+  assert.equal(narrativeTurnDurableState("timeout"), "timeout");
+  assert.equal(observedTurnFailure({ kind: "turn_failed" }).problemCode, "unavailable");
+  assert.equal(observedTurnFailure("turn_failed").problemCode, "unavailable");
+  assert.equal(
+    deriveAttemptPosition(
+      "failure",
+      observedTurnFailure({ kind: "turn_failed" }) === undefined
+        ? {}
+        : {
+            turnTerminalState: "failed",
+            providerBoundaryCrossed: true,
+            problemCode: observedTurnFailure({ kind: "turn_failed" }).problemCode,
+          },
+    ),
+    undefined,
+  );
+});
+
+test("authenticatedReferenceChatApi reports the authenticated operations that were observed", () => {
+  assert.equal(
+    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: true }),
+    true,
+  );
+  // Each observed half can independently make it false, so it is an observation
+  // and not the literal it used to be.
+  assert.equal(
+    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: false, submissionAccepted: true }),
+    false,
+  );
+  assert.equal(
+    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: false }),
+    false,
+  );
+  assert.equal(deriveAuthenticatedReferenceChatApi(undefined), false);
+});
+
+test("the runner keeps only the transcript's structure, never its text", () => {
+  assert.deepEqual(
+    projectTranscriptShape([
+      { role: "player", text: "private prompt", order: 0 },
+      { role: "companion", text: "private dialogue", order: 1 },
+      { text: "no role", order: 2 },
+    ]),
+    [
+      { role: "player", order: 0 },
+      { role: "companion", order: 1 },
+      { role: "unknown", order: 2 },
+    ],
+  );
+  assert.deepEqual(projectTranscriptShape(undefined), []);
+});
+
+test("a refused submission is a bounded block code, never an unbounded message", () => {
+  assert.equal(
+    classifyNarrativeTurnBlock({ kind: "turn_failed", problemCode: "runtime_unavailable" }),
+    "turn_failed:runtime_unavailable",
+  );
+  assert.equal(
+    classifyNarrativeTurnBlock({ kind: "submission_refused", status: 409, problemCode: "turn_busy" }),
+    "message_failed:409:turn_busy",
+  );
+  assert.equal(classifyNarrativeTurnBlock("completed"), undefined);
 });
 
 test("narrative gate creates the exact schema-v2 independent-surface deployment manifest", () => {
@@ -218,7 +391,16 @@ test("Reference live runner stays on the composition bootstrap and authenticated
   assert.match(source, /from "\.\/desktop-composition-launch\.mjs"/);
   assert.match(source, /launchDesktopCompositionGateChild\(/);
   assert.match(source, /surface: "chat-only"/);
-  assert.match(source, /outputRoot: join\(HOST_ROOT, "dist"\)/);
+  // The launcher is given the runner's own gate output root, whose default is
+  // the repository `host/dist` pointer root. The previous spelling pinned a
+  // literal `outputRoot: join(HOST_ROOT, "dist")` call site that had already
+  // stopped existing, so the assertion failed while the guarantee held; this
+  // pins the constant AND the call that consumes it.
+  assert.match(source, /outputRoot: OUTPUT_ROOT,/);
+  assert.match(
+    source,
+    /const OUTPUT_ROOT = process\.env\.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT[\s\S]{0,120}join\(HOST_ROOT, "dist"\)/,
+  );
   assert.doesNotMatch(source, /start-production-artifact\.mjs|dialogue-web-main/);
   assert.doesNotMatch(source, /chat-tavern-live|CHAT_LIVE_ARTIFACT|GAMEBUDDY_CHAT_LIVE_ARTIFACT/);
   assert.doesNotMatch(source, /--tavern-narrative-gate-nonce-sha256=/);
@@ -247,4 +429,18 @@ test("Reference live runner stays on the composition bootstrap and authenticated
     /evaluateNarrativeGateMarker\(\r?\n      marker,\r?\n      nonceSha256,\r?\n      runtimeSession\.observed \? runtimeSession\.piSessionId : undefined,/,
   );
   assert.doesNotMatch(source, /markerSessionId = typeof marker\?\.sessionId/);
+  // The attempt kind is a CLOSED vocabulary and the only place a position is
+  // produced is the derivation from observations.
+  assert.match(source, /NARRATIVE_RUN_KINDS\.includes\(value\)/);
+  assert.match(source, /deriveAttemptPosition\(kind, evidence\)/);
+  // The failing kind's requirement is named beside the kinds - the one bounded
+  // product code an acceptable failure may carry - and the failing attempt's
+  // evidence is derived from the durable state (not the observation kind) plus
+  // that code. The self-restating `providerRejectionPosition` field is gone: it
+  // only restated the other two keys and could never be produced by a real
+  // attempt that compared the observation kind against the durable state name.
+  assert.match(source, /NARRATIVE_RUN_FAILURE_CODES = Object\.freeze\(\["runtime_unavailable"\]\)/);
+  assert.match(source, /NARRATIVE_RUN_FAILURE_CODES\.includes\(evidence\?\.problemCode\)/);
+  assert.match(source, /const turnTerminalState = narrativeTurnDurableState\(turn\.outcome\)/);
+  assert.doesNotMatch(source, /providerRejectionPosition/);
 });
