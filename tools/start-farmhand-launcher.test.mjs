@@ -167,7 +167,12 @@ test("cleanup terminates owned children in reverse order then restores transacti
   const restore = launcher.indexOf("restore-stardew-fixture-profile.mjs");
   assert.ok(preview >= 0 && preview < ai && ai < host && host < restore);
   assert.match(launcher, /fixture_restore_failed/);
-  assert.match(launcher, /\$taskkillOutput = & .*taskkill\.exe.*2>&1/);
+  // The owned-tree kill must tolerate its own expected race without letting native
+  // stderr become terminating: measured 2026-10-06, a taskkill "could not be
+  // terminated" for an already-exiting descendant aborted cleanup and destroyed
+  // the run's real failure. The bounded HasExited check below still decides.
+  assert.match(launcher, /try \{ \$null = & .*taskkill\.exe.*2>&1 \} catch \{ \}/);
+  assert.doesNotMatch(launcher, /\$taskkillOutput =/);
   assert.match(launcher, /if \(-not \$Process\.HasExited\) \{ throw "owned_process_stop_timeout" \}/);
 });
 
@@ -318,7 +323,7 @@ test("a helper failure without a known code names its real reason, and cleanup c
   // name the transaction holding it.
   assert.match(launcher, /\(:\[A-Za-z0-9_\.-\]\{1,96\}\)\?/);
   // Cleanup keeps the primary failure.
-  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,200}\$primaryFailure = \$_\n\s+throw\n\} finally \{/);
+  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,400}\$primaryFailure = \$_[\s\S]{0,300}throw\n\} finally \{/);
   assert.match(launcher, /if \(\$null -eq \$primaryFailure\) \{ throw \}/);
   assert.match(launcher, /\[launcher-failure\] run failed: /);
 });
@@ -403,4 +408,19 @@ test("a headless preview never puts windows on the operator's desktop", () => {
   // preview failed is lost (measured 2026-10-06: every attempt unreadable).
   assert.ok(launcher.includes("Get-Content -LiteralPath $Path -Raw -ErrorAction Stop"), "the preview log is read through the redirect-compatible reader");
   assert.ok(!launcher.includes("[IO.File]::ReadAllText($Path)"), "the exclusive reader is gone");
+});
+
+test("cleanup races are reported alongside the run's failure, never instead of it", () => {
+  // Measured 2026-10-06: `taskkill` reported "could not be terminated" for a
+  // descendant that was already exiting, and under $ErrorActionPreference = "Stop"
+  // that native stderr aborted the launcher - destroying the only record of why the
+  // run actually stopped. The run's failure is now reported immediately, cleanup
+  // failures are collected, and a cleanup-only failure still throws.
+  assert.ok(launcher.includes("try { $null = & \"$env:SystemRoot\\System32\\taskkill.exe\" /PID $Process.Id /T /F 2>&1 } catch { }"),
+    "the taskkill race must not be terminating");
+  assert.ok(!launcher.includes("$taskkillOutput ="), "the captured-stderr form is what made it terminating");
+  assert.ok(launcher.includes("[launcher-failure] run failed: "), "the run's failure is reported immediately");
+  assert.ok(launcher.includes("$cleanupFailure"), "cleanup failures are collected");
+  assert.ok(launcher.includes("[launcher-failure] cleanup also failed: "), "both failures are reported");
+  assert.ok(launcher.includes("elseif ($null -ne $cleanupFailure) {\n        throw $cleanupFailure"), "a cleanup-only failure still fails the run");
 });
