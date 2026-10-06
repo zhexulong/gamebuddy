@@ -1,25 +1,39 @@
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime.js";
+import { PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 
-const MODEL_PROFILE_MODEL_ID = "deepseek-v4-flash" as const;
+/**
+ * The one active model profile per surface (design/28 §2.3): the Chat profile
+ * and the Game profile each name their own model id and thinking level.
+ *
+ * Both fields are the player's own input. A model id is a general bounded
+ * string — any vendor name, a local server's model, a third-party gateway's
+ * spelling — and a thinking level is the exact string the embedded runtime
+ * receives. Neither is a closed union and neither is validated against the
+ * shipped catalog: the recommended catalog is guidance, never the upper bound
+ * of what a player may save (design/28 §2.3.1, §2.3.2, §2.3.7).
+ */
+
+/** Bound for a player-typed thinking level: a short token, never arbitrary text. */
+const THINKING_LEVEL_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+
 export type ModelProfileSurface = "chat" | "game";
-type ModelThinkingLevel = "high";
 export type ModelProfile = Readonly<{
   surface: ModelProfileSurface;
   revision: number;
-  modelId: typeof MODEL_PROFILE_MODEL_ID;
-  thinkingLevel: ModelThinkingLevel;
+  modelId: string;
+  thinkingLevel: string;
 }>;
 export type ModelProfileUpdate = Readonly<{
-  modelId: typeof MODEL_PROFILE_MODEL_ID;
-  thinkingLevel: ModelThinkingLevel;
+  modelId: string;
+  thinkingLevel: string;
 }>;
 type StoredProfiles = Readonly<{ schemaVersion: 1; chat: StoredProfile; game: StoredProfile }>;
 type StoredProfile = Readonly<{
   revision: number;
-  modelId: typeof MODEL_PROFILE_MODEL_ID;
-  thinkingLevel: ModelThinkingLevel;
+  modelId: string;
+  thinkingLevel: string;
 }>;
 
 export class ModelProfileRevisionConflict extends Error {
@@ -79,9 +93,10 @@ export class ModelProfileStore {
   }
 }
 
+/** The shipped recommendation a root starts from; a player may replace either field. */
 const DEFAULT_PROFILE: StoredProfile = Object.freeze({
   revision: 0,
-  modelId: MODEL_PROFILE_MODEL_ID,
+  modelId: "deepseek-v4-flash",
   thinkingLevel: "high",
 });
 const DEFAULT_PROFILES: StoredProfiles = Object.freeze({
@@ -91,8 +106,10 @@ const DEFAULT_PROFILES: StoredProfiles = Object.freeze({
 });
 
 /**
- * Resolves the sole approved preference into the runtime's approved model shape.
- * A preference makes no credential, connection, or liveness claim.
+ * Resolves the player's saved preference into the runtime's model shape. The
+ * profile makes no credential, connection, or liveness claim, and its model id
+ * is never checked against the recommended catalog: a profile that saves is a
+ * profile the runtime is constructed with (design/28 §2.3.1).
  */
 export function resolveModelProfileConfig(profile: ModelProfile): CompanionModelConfig | null {
   if (!validPublicProfile(profile)) return null;
@@ -111,8 +128,8 @@ function validateStored(value: unknown): StoredProfiles {
   if (
     !record(value) ||
     value.schemaVersion !== 1 ||
-    !validProfile(value.chat) ||
-    !validProfile(value.game) ||
+    !validStoredProfile(value.chat) ||
+    !validStoredProfile(value.game) ||
     !hasExactKeys(value, ["schemaVersion", "chat", "game"])
   )
     throw new Error("invalid_model_profile_store");
@@ -121,16 +138,16 @@ function validateStored(value: unknown): StoredProfiles {
 function freezeProfile(value: Record<string, unknown>): StoredProfile {
   return Object.freeze({
     revision: value.revision as number,
-    modelId: value.modelId as typeof MODEL_PROFILE_MODEL_ID,
-    thinkingLevel: value.thinkingLevel as ModelThinkingLevel,
+    modelId: value.modelId as string,
+    thinkingLevel: value.thinkingLevel as string,
   });
 }
-function validProfile(value: unknown): value is Record<string, unknown> {
+function validStoredProfile(value: unknown): value is Record<string, unknown> {
   return (
     record(value) &&
     isRevision(value.revision) &&
-    value.modelId === MODEL_PROFILE_MODEL_ID &&
-    value.thinkingLevel === "high" &&
+    isModelId(value.modelId) &&
+    isThinkingLevel(value.thinkingLevel) &&
     hasExactKeys(value, ["revision", "modelId", "thinkingLevel"])
   );
 }
@@ -139,18 +156,24 @@ function validPublicProfile(value: unknown): value is ModelProfile {
     record(value) &&
     isSurface(value.surface) &&
     isRevision(value.revision) &&
-    value.modelId === MODEL_PROFILE_MODEL_ID &&
-    value.thinkingLevel === "high" &&
+    isModelId(value.modelId) &&
+    isThinkingLevel(value.thinkingLevel) &&
     Object.keys(value).length === 4
   );
 }
 function isUpdate(value: unknown): value is ModelProfileUpdate {
   return (
     record(value) &&
-    value.modelId === MODEL_PROFILE_MODEL_ID &&
-    value.thinkingLevel === "high" &&
+    isModelId(value.modelId) &&
+    isThinkingLevel(value.thinkingLevel) &&
     Object.keys(value).length === 2
   );
+}
+function isModelId(value: unknown): value is string {
+  return typeof value === "string" && PLAYER_MODEL_ID_PATTERN.test(value);
+}
+function isThinkingLevel(value: unknown): value is string {
+  return typeof value === "string" && THINKING_LEVEL_PATTERN.test(value);
 }
 function isSurface(value: unknown): value is ModelProfileSurface {
   return value === "chat" || value === "game";

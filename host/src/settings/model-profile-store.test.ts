@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
   type ModelProfile,
   ModelProfileRevisionConflict,
@@ -17,6 +19,16 @@ async function canonicalTemporaryRoot(): Promise<string> {
   return realpath(root);
 }
 
+// A profile update takes the durable path lock, so these tests need the same
+// test-only reclaimer binding every other path-lock consumer's test uses.
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
+
 async function withStore(run: (path: string, store: ModelProfileStore) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-model-profiles-"));
   try {
@@ -29,7 +41,7 @@ async function withStore(run: (path: string, store: ModelProfileStore) => Promis
   }
 }
 
-test("model profiles expose the sole approved preference without activation state and survive store re-opening", async () => {
+test("model profiles start from the shipped recommendation without activation state and survive store re-opening", async () => {
   await withStore(async (path, store) => {
     const chat = await store.read("chat");
     const game = await store.read("game");
@@ -48,13 +60,58 @@ test("model profiles expose the sole approved preference without activation stat
   });
 });
 
-test("the sole approved profile always resolves to an immutable runtime-compatible model configuration", async () => {
+/**
+ * The defect this slice fixes: a model id the shipped recommendation does not
+ * name is the player's own input, so it saves, reads back byte for byte, and is
+ * the exact model the next runtime is constructed with. Nothing consults a
+ * catalog (design/28 §2.3.1: `host/src/settings/model-profile-store.ts` used to
+ * pin `deepseek-v4-flash` and `"high"` as frozen literals).
+ */
+test("a model id outside the recommended catalog round-trips through the profile and into the runtime configuration", async () => {
+  await withStore(async (path, store) => {
+    const localModelId = "qwen2.5-coder:7b";
+    const updated = await store.update("chat", 0, { modelId: localModelId, thinkingLevel: "xhigh" });
+    assert.deepEqual(updated, {
+      surface: "chat",
+      revision: 1,
+      modelId: localModelId,
+      thinkingLevel: "xhigh",
+    } satisfies ModelProfile);
+
+    // Durable read-back through a fresh store instance: the file is the authority.
+    const reopened = await new ModelProfileStore(path).read("chat");
+    assert.equal(reopened.modelId, localModelId);
+    assert.equal(reopened.thinkingLevel, "xhigh");
+    assert.deepEqual(resolveModelProfileConfig(reopened), {
+      provider: "cpa-oai",
+      modelId: localModelId,
+      thinkingLevel: "xhigh",
+    } satisfies CompanionModelConfig);
+
+    // The other surface keeps its own model; one profile never overrides the other.
+    assert.equal((await store.read("game")).modelId, "deepseek-v4-flash");
+  });
+});
+
+test("every bounded model id and thinking level resolves to an immutable runtime-compatible model configuration", async () => {
   await withStore(async (_path, store) => {
     const profile = await store.read("chat");
     const config: CompanionModelConfig | null = resolveModelProfileConfig(profile);
     assert.deepEqual(config, { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" });
     assert.equal(Object.isFrozen(config), true);
-    assert.equal(resolveModelProfileConfig({ ...profile, modelId: "unapproved/model" } as never), null);
+    // A third-party gateway spelling and a local server's tag are both usable.
+    for (const modelId of ["openrouter/anthropic.claude-3", "llama3.2:latest", "my-model_v2"]) {
+      assert.deepEqual(resolveModelProfileConfig({ ...profile, modelId } as never), {
+        provider: "cpa-oai",
+        modelId,
+        thinkingLevel: "high",
+      });
+    }
+    // Only the bounded shape is refused, never catalog membership.
+    assert.equal(resolveModelProfileConfig({ ...profile, modelId: "" } as never), null);
+    assert.equal(resolveModelProfileConfig({ ...profile, modelId: " spaced" } as never), null);
+    assert.equal(resolveModelProfileConfig({ ...profile, thinkingLevel: "" } as never), null);
+    assert.equal(resolveModelProfileConfig({ ...profile, thinkingLevel: "high level" } as never), null);
     assert.equal(resolveModelProfileConfig({ ...profile, provider: "cpa-oai" } as never), null);
   });
 });
@@ -87,11 +144,19 @@ test("stale revisions are rejected deterministically without changing a profile"
 test("invalid profile updates and persisted profiles are rejected", async () => {
   await withStore(async (path, store) => {
     await assert.rejects(
-      store.update("chat", 0, { modelId: "unapproved/model", thinkingLevel: "high" } as never),
+      store.update("chat", 0, { modelId: "", thinkingLevel: "high" } as never),
       /invalid_model_profile_update/,
     );
     await assert.rejects(
-      store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "low" } as never),
+      store.update("chat", 0, { modelId: "has space", thinkingLevel: "high" } as never),
+      /invalid_model_profile_update/,
+    );
+    await assert.rejects(
+      store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "" } as never),
+      /invalid_model_profile_update/,
+    );
+    await assert.rejects(
+      store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "3 high" } as never),
       /invalid_model_profile_update/,
     );
     assert.equal((await store.read("chat")).revision, 0);
@@ -101,7 +166,7 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       path,
       JSON.stringify({
         schemaVersion: 1,
-        chat: { revision: 0, modelId: "cpa-oai/deepseek-v4-flash", thinkingLevel: "high" },
+        chat: { revision: 0, modelId: " cpa-oai/deepseek-v4-flash", thinkingLevel: "high" },
         game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
       }),
     );

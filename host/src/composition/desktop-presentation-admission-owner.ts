@@ -9,6 +9,7 @@ import type { MountedChatRuntimeLease } from "../continuity-semantic-production-
 import { settleMountedAuthoredContext } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
+import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
@@ -250,6 +251,13 @@ export async function startTavernManagementPresentationAdmission(
       },
     });
     createdServices.push(connectionService);
+    // The one Host-owned Chat/Game model profile record (design/28 §2.3). It is
+    // the same durable `settings/model-profiles.json` the Chat and Game runtime
+    // construction reads at mount, so a profile saved here is the exact profile
+    // the next runtime for that surface is built with.
+    const modelProfileStore = new ModelProfileStore(
+      resolve(input.manifest.runtimeRoot, "settings", "model-profiles.json"),
+    );
     // The one Host-owned player preference record: the companion language the
     // runtimes read at mount and the cloud TTS consent/output, at the one
     // root-level path every settings surface reads and writes. Without this the
@@ -391,6 +399,7 @@ export async function startTavernManagementPresentationAdmission(
       worldInfoService,
       playerPreferenceStore,
       connectionService,
+      modelProfileStore,
       libraryService,
       companionDetailService,
       newCompanionProvisioner,
@@ -560,6 +569,8 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "settings.profiles.read",
+      "settings.profiles.update",
       "companion.list",
       "companion.detail",
       "companion.create",
@@ -595,6 +606,8 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.connection.activate",
       "settings.connection.model",
       "settings.connection.remove",
+      "settings.profiles.read",
+      "settings.profiles.update",
       "companion.list",
       "companion.detail",
       "companion.create",

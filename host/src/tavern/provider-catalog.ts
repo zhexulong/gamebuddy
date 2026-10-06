@@ -16,6 +16,16 @@ import type { CompanionThinkingLevel } from "../runtime-identity.js";
 /** Pi API shape a catalog entry pins for its `models.json` provider block. */
 export type TavernPiApi = "openai-completions" | "openai-responses";
 
+/**
+ * The reasoning dialect one model speaks through an `openai-completions`
+ * provider entry. It is the model's own declared property and is never inferred
+ * from its name: `deepseek` collapses every requested effort onto the
+ * provider's `none|low|high|max` vocabulary and returns the assistant's
+ * reasoning content, while `native` forwards Pi's own level names unchanged.
+ * A model the catalog does not describe keeps `native` (design/28 §2.3.1).
+ */
+export type TavernModelReasoningDialect = "deepseek" | "native";
+
 /** The one catalog entry whose endpoint the player supplies (design/28 §1). */
 export const TAVERN_ESCAPE_HATCH_PROVIDER_ID = "gamebuddy-openai-compatible" as const;
 /** Pi provider id of the operator-managed environment connection (design/28 §5.2). */
@@ -34,6 +44,8 @@ export type TavernCatalogModel = Readonly<{
   /** Thinking levels this exact model advertises to the provider. */
   allowedThinkingLevels: readonly CompanionThinkingLevel[];
   defaultThinkingLevel: CompanionThinkingLevel;
+  /** The reasoning dialect this exact model speaks (see above). */
+  reasoningDialect: TavernModelReasoningDialect;
 }>;
 
 export type TavernCatalogProvider = Readonly<{
@@ -58,12 +70,14 @@ const defineModel = (
   modelLabel: string,
   allowedThinkingLevels: readonly CompanionThinkingLevel[],
   defaultThinkingLevel: CompanionThinkingLevel,
+  reasoningDialect: TavernModelReasoningDialect,
 ): TavernCatalogModel =>
   Object.freeze({
     modelId,
     modelLabel,
     allowedThinkingLevels: Object.freeze([...allowedThinkingLevels]),
     defaultThinkingLevel,
+    reasoningDialect,
   });
 
 const defineProvider = (provider: TavernCatalogProvider): TavernCatalogProvider =>
@@ -86,7 +100,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: TAVERN_ENVIRONMENT_VARIABLE,
     setupFields: [],
     allowedPlayerModels: [
-      defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high"),
+      defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high", "deepseek"),
     ],
     escapeHatch: false,
     authHeader: true,
@@ -100,8 +114,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: null,
     setupFields: ["apiKey"],
     allowedPlayerModels: [
-      defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high"),
-      defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high"),
+      defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high", "deepseek"),
+      defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek"),
     ],
     escapeHatch: false,
     authHeader: false,
@@ -115,8 +129,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: null,
     setupFields: ["apiKey"],
     allowedPlayerModels: [
-      defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high"),
-      defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high"),
+      defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high", "native"),
+      defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native"),
     ],
     escapeHatch: false,
     authHeader: false,
@@ -154,6 +168,3 @@ export function acceptsPlayerModel(provider: TavernCatalogProvider): boolean {
 export function isAllowedThinkingLevel(model: TavernCatalogModel, level: string): boolean {
   return (model.allowedThinkingLevels as readonly string[]).includes(level);
 }
-
-/** Player-supplied model ids are bounded endpoint facts, never provider payloads. */
-export const PLAYER_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,127}$/;

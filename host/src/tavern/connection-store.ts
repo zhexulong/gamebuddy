@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 import type { CompanionThinkingLevel } from "../runtime-identity.js";
+import { PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
 import {
   acceptsPlayerModel,
   catalogModel,
   catalogProvider,
   isAllowedThinkingLevel,
-  PLAYER_MODEL_ID_PATTERN,
   type TavernCatalogProvider,
 } from "./provider-catalog.js";
 
