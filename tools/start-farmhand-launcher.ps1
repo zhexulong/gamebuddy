@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)] [string]$GamePath,
     [Parameter(Mandatory = $true)] [string]$ExpectedFarmhandId,
     [Parameter(Mandatory = $true)] [string]$HostRuntimeRoot,
-    [ValidateSet("zh-CN", "en-US")] [string]$PresentationLocale = "zh-CN",
+    # The companion language the fixture requires. Bounded BCP-47, not a closed pair: the
+  # language is the player's choice and the Host's preference store accepts any tag.
+  [ValidatePattern('^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,16}){0,3}$')] [string]$PresentationLocale = "zh-CN",
     [ValidateRange(10, 300)] [int]$StartupTimeoutSeconds = 90,
     # The Mod reads only GAMEBUDDY_WINDOW_MODE in the child environment, and the
     # exact mode (plus validation authority) comes from the single shared

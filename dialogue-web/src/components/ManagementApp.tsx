@@ -88,13 +88,20 @@ type LanguageView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "error" }>
-  | Readonly<{ kind: "ready"; locale: "zh-CN" | "en-US" | null; pending: boolean }>;
+  | Readonly<{ kind: "ready"; locale: string | null; pending: boolean }>;
 
-/** The UI's locale and the Host's companion locale are the same choice, spelled differently. */
-function companionLocaleToUi(locale: "zh-CN" | "en-US"): Locale {
-  return locale === "en-US" ? "en" : "zh-CN";
-}
-function uiLocaleToCompanion(locale: Locale): "zh-CN" | "en-US" {
+/**
+ * The languages the panel suggests for the companion. Suggestions only: the companion
+ * language is the player's own BCP-47 tag, and the Host accepts any bounded tag. These
+ * two are the ones this UI is itself localized for, so they are the useful starting
+ * points. */
+const COMPANION_LANGUAGE_SUGGESTIONS = ["zh-CN", "en-US"] as const;
+
+/**
+ * The companion tag that corresponds to the UI's own language, used only to seed the
+ * preference the first time (so the companion speaks what the player already sees).
+ * Not a mapping the panel keeps applying: the two languages are separate choices. */
+function companionLocaleForUiLocale(locale: Locale): string {
   return locale === "en" ? "en-US" : "zh-CN";
 }
 
@@ -230,39 +237,33 @@ export function ManagementApp() {
         }
         if (!languageLoadedRef.current) {
           languageLoadedRef.current = true;
-          try {
-            const preference = await api.readLanguagePreference();
-            if (!active) return;
-            // The durable preference is the authority for what the companion
-            // speaks, so the panel adopts it as the UI language too - one choice,
-            // not a browser guess beside a Host setting. When the player has never
-            // chosen, the UI records the language it is already showing, so the
-            // companion speaks what the player sees from the first reply on.
-            if (preference.locale === null) {
-              settingsRevisionRef.current = preference.revision;
-              try {
-                const written = await api.updateLanguagePreference(
-                  { expectedRevision: settingsRevisionRef.current, locale: uiLocaleToCompanion(localeRef.current) },
-                  snapshot.csrfToken,
-                );
-                settingsRevisionRef.current = written.revision;
-                setLanguageView({ kind: "ready", locale: written.locale, pending: false });
-              } catch {
-                // A lost race (another tab chose first) is not a panel failure: the
-                // read-back on the next load carries the winner.
+            try {
+              const preference = await api.readLanguagePreference();
+              if (!active) return;
+              // The durable preference is the authority for what the companion speaks.
+              // When the player has never chosen, the panel records the language it is
+              // already showing, so the companion speaks what the player sees from the
+              // first reply on. Once a choice exists it is taken as-is: the companion
+              // language and the UI's own language are separate choices, so reading one
+              // never rewrites the other.
+              if (preference.locale === null) {
+                settingsRevisionRef.current = preference.revision;
+                try {
+                  const written = await api.updateLanguagePreference(
+                    { expectedRevision: settingsRevisionRef.current, locale: companionLocaleForUiLocale(localeRef.current) },
+                    snapshot.csrfToken,
+                  );
+                  settingsRevisionRef.current = written.revision;
+                  setLanguageView({ kind: "ready", locale: written.locale, pending: false });
+                } catch {
+                  // A lost race (another tab chose first) is not a panel failure: the
+                  // read-back on the next load carries the winner.
+                  setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
+                }
+              } else {
+                settingsRevisionRef.current = preference.revision;
                 setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
               }
-            } else {
-              settingsRevisionRef.current = preference.revision;
-              setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
-              const adopted = companionLocaleToUi(preference.locale);
-              if (adopted !== localeRef.current) {
-                localeRef.current = adopted;
-                persistLocale(adopted);
-                applyDocumentLocale(adopted);
-                commit({ kind: "ready", session, draft, locale: adopted, notice: null });
-              }
-            }
           } catch {
             // A management profile without the language extension group does not
             // publish these routes at all.
@@ -312,52 +313,55 @@ export function ManagementApp() {
     return current.session.withChatList(list);
   };
 
-  const handleLanguageMutation = async (locale: Locale): Promise<void> => {
-    const current = viewRef.current;
-    const language = languageView;
-    if (current.kind !== "ready" || language.kind !== "ready" || language.pending) return;
-    const previous = localeRef.current;
-    // The choice is applied locally first so the panel answers the player
-    // immediately, then confirmed against the durable store; a rejected write
-    // reverts both the labels and the recorded preference.
-    localeRef.current = locale;
-    persistLocale(locale);
-    applyDocumentLocale(locale);
-    setLanguageView({ ...language, pending: true });
-    commit({ ...current, locale, notice: null });
+  /**
+ * Writes the companion language. It is the player's own BCP-47 tag, so nothing here
+ * maps it onto the UI's language: the panel shows the tag, confirms it against the
+ * durable record, and the UI keeps whatever display language the player chose.
+ */
+const handleLanguageMutation = async (tag: string): Promise<void> => {
+  const current = viewRef.current;
+  const language = languageView;
+  if (current.kind !== "ready" || language.kind !== "ready" || language.pending) return;
+  setLanguageView({ ...language, pending: true });
+  try {
+    // The validated response IS the durable read-back, so the control always
+    // shows what the store holds.
+    const written = await apiRef.current.updateLanguagePreference(
+      { expectedRevision: settingsRevisionRef.current, locale: tag },
+      current.session.snapshot.csrfToken,
+    );
+    settingsRevisionRef.current = written.revision;
+    setLanguageView({ kind: "ready", locale: written.locale, pending: false });
+    commit({ ...current, notice: { kind: "success", text: labels().success } });
+  } catch {
+    // A rejection can still hide a committed change (a same-cookie stale tab
+    // hits the revision conflict), so re-read the authority before reverting.
     try {
-      // The validated response IS the durable read-back, so the control always
-      // shows what the store holds.
-      const written = await apiRef.current.updateLanguagePreference(
-        { expectedRevision: settingsRevisionRef.current, locale: uiLocaleToCompanion(locale) },
-        current.session.snapshot.csrfToken,
-      );
-      const adopted = companionLocaleToUi(written.locale ?? uiLocaleToCompanion(locale));
-      localeRef.current = adopted;
-      persistLocale(adopted);
-      applyDocumentLocale(adopted);
-      settingsRevisionRef.current = written.revision;
-      setLanguageView({ kind: "ready", locale: written.locale, pending: false });
-      commit({ ...current, locale: adopted, notice: { kind: "success", text: labels().success } });
+      const preference = await apiRef.current.readLanguagePreference();
+      settingsRevisionRef.current = preference.revision;
+      setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
     } catch {
-      // A rejection can still hide a committed change (a same-cookie stale tab
-      // hits the revision conflict), so re-read the authority before reverting.
-      let restored: "zh-CN" | "en-US" | null = uiLocaleToCompanion(previous);
-      try {
-        const preference = await apiRef.current.readLanguagePreference();
-        restored = preference.locale;
-        settingsRevisionRef.current = preference.revision;
-        setLanguageView({ kind: "ready", locale: restored, pending: false });
-      } catch {
-        setLanguageView({ kind: "error" });
-      }
-      const reverted = restored === null ? previous : companionLocaleToUi(restored);
-      localeRef.current = reverted;
-      persistLocale(reverted);
-      applyDocumentLocale(reverted);
-      commit({ ...current, locale: reverted, notice: { kind: "failure", text: labels().failure } });
+      setLanguageView({ kind: "error" });
     }
-  };
+    commit({ ...current, notice: { kind: "failure", text: labels().failure } });
+  }
+};
+
+/**
+ * Writes the UI's own display language. This is the interface's language, not the
+ * companion's: it changes what the player reads here (and the document locale). The
+ * companion language keeps its own choice, seeded once if the player never made one.
+ */
+const handleUiLanguageMutation = async (locale: Locale): Promise<void> => {
+  const current = viewRef.current;
+  if (current.kind !== "ready") return;
+  localeRef.current = locale;
+  persistLocale(locale);
+  applyDocumentLocale(locale);
+  commit({ ...current, locale, notice: null });
+  const language = languageView;
+  if (language.kind === "ready" && language.locale === null) await handleLanguageMutation(companionLocaleForUiLocale(locale));
+};
 
   const handleVoiceMutation = async (action: "accept" | "revoke" | "setOutputDevice", outputDevice: string | null = null): Promise<void> => {
     const current = viewRef.current;
@@ -861,10 +865,12 @@ export function ManagementApp() {
                 {view.notice.text}
               </div>
             )}
-            <LanguageSettingsPanel
+              <LanguageSettingsPanel
               languageView={languageView}
+              uiLocale={view.locale}
               labels={labels()}
-              onSelect={(locale) => void handleLanguageMutation(locale)}
+              onSelectLanguage={(locale) => void handleLanguageMutation(locale)}
+              onSelectUiLanguage={(locale) => void handleUiLanguageMutation(locale)}
             />
             <VoiceSettingsPanel
               voiceView={voiceView}
@@ -1508,16 +1514,38 @@ function ConnectionRow({
   );
 }
 
+/**
+ * Human-readable name for a companion language tag. Tags this UI has a name for get it;
+ * any other bounded tag is shown as the tag itself, because the panel must not claim a
+ * language is one of two when the player chose something else.
+ */
+function companionLanguageLabel(tag: string, labels: ReturnType<typeof messages>): string {
+  const normalized = tag.toLowerCase();
+  if (normalized === "zh-cn" || normalized === "zh") return labels.languageChinese;
+  if (normalized === "en-us" || normalized === "en") return labels.languageEnglish;
+  return tag;
+}
+
 function LanguageSettingsPanel({
   languageView,
+  uiLocale,
   labels,
-  onSelect,
+  onSelectLanguage,
+  onSelectUiLanguage,
 }: Readonly<{
   languageView: LanguageView;
+  uiLocale: Locale;
   labels: ReturnType<typeof messages>;
-  onSelect: (locale: Locale) => void;
+  onSelectLanguage: (locale: string) => void;
+  onSelectUiLanguage: (locale: Locale) => void;
 }>): ReactElement {
-  const selected = languageView.kind === "ready" && languageView.locale !== null ? languageView.locale : "zh-CN";
+  const companionTag = languageView.kind === "ready" ? languageView.locale : null;
+  const [draft, setDraft] = useState<string | null>(null);
+  const submit = (): void => {
+    const next = draft?.trim();
+    setDraft(null);
+    if (next !== undefined && next.length > 0 && next !== companionTag) onSelectLanguage(next);
+  };
   return (
     <section
       className="management-settings-section"
@@ -1531,19 +1559,56 @@ function LanguageSettingsPanel({
       {languageView.kind === "error" && <p>{labels.failure}</p>}
       {languageView.kind === "ready" && (
         <div className="voice-device-selector">
-          <label htmlFor="companion-language">{labels.languageSettings}</label>
-          <select
+          <label htmlFor="companion-language">{labels.languageCompanionField}</label>
+          {/*
+           * A tag the player can type, not a two-option list. The suggestions name the
+           * two languages this UI is itself localized for; any other bounded BCP-47 tag
+           * saves just as well, and the committed value is shown as the tag itself.
+           */}
+          <input
             id="companion-language"
-            className="form-select"
+            className="form-input"
+            list="companion-language-suggestions"
             disabled={languageView.pending}
-            value={selected}
-            onChange={(event) => onSelect(event.target.value === "en-US" ? "en" : "zh-CN")}
-          >
-            <option value="zh-CN">{labels.languageChinese}</option>
-            <option value="en-US">{labels.languageEnglish}</option>
-          </select>
+            value={draft ?? companionTag ?? ""}
+            placeholder={labels.languageCompanionPlaceholder}
+            data-companion-language-value={companionTag ?? ""}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={submit}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              submit();
+            }}
+          />
+          <datalist id="companion-language-suggestions">
+            {COMPANION_LANGUAGE_SUGGESTIONS.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag === "zh-CN" ? labels.languageChinese : labels.languageEnglish}
+              </option>
+            ))}
+          </datalist>
+          {companionTag !== null && (
+            <p className="management-settings-hint" data-companion-language-current>
+              {companionLanguageLabel(companionTag, labels)}
+            </p>
+          )}
         </div>
       )}
+      {/* The interface's own display language: a separate choice from the companion's. */}
+      <div className="voice-device-selector">
+        <label htmlFor="ui-language">{labels.languageUiField}</label>
+        <select
+          id="ui-language"
+          className="form-select"
+          value={uiLocale}
+          onChange={(event) => onSelectUiLanguage(event.target.value === "en" ? "en" : "zh-CN")}
+        >
+          <option value="zh-CN">{labels.languageChinese}</option>
+          <option value="en">{labels.languageEnglish}</option>
+        </select>
+        <p className="management-settings-hint">{labels.languageUiHint}</p>
+      </div>
     </section>
   );
 }

@@ -170,14 +170,17 @@ test("output device selection round-trips and rejects malformed endpoints", asyn
   });
 });
 
-test("unapproved disclosure versions, unknown fields and unapproved locales are rejected", async () => {
+test("unapproved disclosure versions, unknown fields and malformed locales are rejected", async () => {
   await withStore(async (_path, store) => {
     await assert.rejects(
       store.update(0, { action: "accept", disclosureVersion: "other-version" } as never),
       /invalid_player_preference_update/u,
     );
     await assert.rejects(store.update(-1, { action: "revoke" } as never), /invalid_player_preference_update/u);
-    await assert.rejects(store.update(0, { action: "setLocale", locale: "ja-JP" } as never), /invalid_player_preference_update/u);
+    // The shape is what is bounded here, not the language: `ja-JP` is the player's own
+    // choice and saves (see the locale test below), while a string that is not a tag at
+    // all is refused.
+    await assert.rejects(store.update(0, { action: "setLocale", locale: "not a locale" } as never), /invalid_player_preference_update/u);
     await assert.rejects(store.update(0, { action: "setLocale", locale: null } as never), /invalid_player_preference_update/u);
     await assert.rejects(store.update(0, { action: "setLocale" } as never), /invalid_player_preference_update/u);
     await assert.rejects(store.update(0, {} as never), /invalid_player_preference_update/u);
@@ -198,11 +201,11 @@ test("the persisted record requires the exact schema and rejects malformed files
       outputDevice: null,
     };
 
-    // An unknown key, an unapproved locale and an unapproved disclosure all fail.
-    await writeFile(path, JSON.stringify({ ...valid, extra: true }));
-    await assert.rejects(store.read(), /invalid_player_preference_store/u);
-    await writeFile(path, JSON.stringify({ ...valid, locale: "fr-FR" }));
-    await assert.rejects(store.read(), /invalid_player_preference_store/u);
+    // An unknown key, a malformed locale and an unapproved disclosure all fail.
+  await writeFile(path, JSON.stringify({ ...valid, extra: true }));
+  await assert.rejects(store.read(), /invalid_player_preference_store/u);
+  await writeFile(path, JSON.stringify({ ...valid, locale: "not a locale" }));
+  await assert.rejects(store.read(), /invalid_player_preference_store/u);
     await writeFile(path, JSON.stringify({ ...valid, disclosureVersion: "not-approved" }));
     await assert.rejects(store.read(), /invalid_player_preference_store/u);
     // A consent state and its evidence may never disagree.
@@ -243,8 +246,41 @@ test("the runtime-facing reader resolves the player's choice from the one root p
   assert.equal(await resolveCompanionLocale(root), "en-US");
 
   // A corrupt record is not a "no preference": the runtime must refuse rather
-  // than speak a language the player did not choose.
-  await writeFile(playerPreferencePath(root), "{\"schemaVersion\":1,\"revision\":0,\"locale\":\"fr-FR\"}");
+  // than speak a language the player did not choose. The tag itself is malformed here
+  // (a valid tag outside the two the panel suggests is legal, so it must not be what
+  // this refuses).
+  await writeFile(playerPreferencePath(root), "{\"schemaVersion\":1,\"revision\":0,\"locale\":\"not a locale\"}");
+  await assert.rejects(readStoredCompanionLocale(root), /invalid_player_preference_store/u);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("the companion language is the player's own bounded tag, not a closed pair", async () => {
+  const root = await mkdtemp(join(tmpdir(), "player-preference-locale-"));
+  await mkdir(root, { recursive: true });
+  const store = new PlayerPreferenceStore(playerPreferencePath(root));
+
+  // A language the panel does not suggest is still the player's choice: it saves,
+  // reads back, and resolves exactly.
+  await store.update(0, { action: "setLocale", locale: "ja-JP" });
+  assert.equal(await readStoredCompanionLocale(root), "ja-JP");
+  const changed = await store.update(1, { action: "setLocale", locale: "pt-BR" });
+  assert.equal(changed.locale, "pt-BR");
+  assert.equal(await resolveCompanionLocale(root), "pt-BR");
+
+  // Bounded, not closed: the guards reject shapes that are not language tags at all.
+  for (const invalid of ["", "x", "!!!", "ja_JP", "ja-JP-x-private-extra-tag", "a".repeat(70)]) {
+    await assert.rejects(
+      store.update(2, { action: "setLocale", locale: invalid }),
+      /invalid_player_preference_update/u,
+      `expected ${JSON.stringify(invalid)} to be refused`,
+    );
+  }
+
+  // A malformed record on disk is still refused, and still leaves the write path closed.
+  await writeFile(
+    playerPreferencePath(root),
+    JSON.stringify({ schemaVersion: 1, revision: 0, locale: "!!", disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+  );
   await assert.rejects(readStoredCompanionLocale(root), /invalid_player_preference_store/u);
   await rm(root, { recursive: true, force: true });
 });

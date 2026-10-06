@@ -3,6 +3,11 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "./stardew-fixture-roots.mjs";
 
+// The same bounded BCP-47 shape the Host stores for the companion language
+// (settings/player-preference-store.ts): the shape is bounded, the language set is the
+// player's choice, so a fixture may require any tag the store would accept.
+const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+
 const PROFILE_NAMES = Object.freeze(["A-host", "A-ai-client", "A-ai-probe"]);
 const ALLOWED_FIXTURE_SCENARIOS = Object.freeze([
   // HostAutomation is a separate Farmhand fixture topology. Native-local
@@ -599,11 +604,13 @@ function assertFixtureBridgeOverride(value) {
   return Object.freeze({ ...value });
 }
 
-function normalizeFixtureLiveLocaleRequirement(value) {
-  if (value === undefined || value === "") return "";
-  if (value !== "zh-CN" && value !== "en-US") throw new Error("invalid_fixture_live_locale_requirement");
-  return value;
-}
+  function normalizeFixtureLiveLocaleRequirement(value) {
+    if (value === undefined || value === "") return "";
+    // Bounded BCP-47 tag: the companion language is the player's choice, so a fixture
+    // requirement is any tag the Host's preference store would accept.
+    if (!COMPANION_LOCALE_PATTERN.test(value)) throw new Error("invalid_fixture_live_locale_requirement");
+    return value;
+  }
 
 function isOpaque(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);

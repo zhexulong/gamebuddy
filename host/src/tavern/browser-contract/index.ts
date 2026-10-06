@@ -807,13 +807,19 @@ export const TavernVoiceDevicesV1Schema = strictObject({
  * language, companion presentation locale and fixture required-live-locale all
  * derive from it instead of each side hard-coding its own.
  */
+export const TavernCompanionLocaleV1Schema = Type.String({
+  minLength: 2,
+  maxLength: 64,
+  pattern: "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$",
+});
+
 export const TavernLanguagePreferenceV1Schema = strictObject({
   revision: Revision,
-  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US"), Type.Null()]),
+  locale: Type.Union([TavernCompanionLocaleV1Schema, Type.Null()]),
 });
 export const TavernLanguagePreferenceCommandV1Schema = strictObject({
   expectedRevision: Revision,
-  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US")]),
+  locale: TavernCompanionLocaleV1Schema,
 });
 
 const MemoryStateSnapshotV1Schema = Type.Union([
