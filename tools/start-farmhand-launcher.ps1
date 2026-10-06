@@ -110,12 +110,15 @@ function Stop-OwnedProcess($Process) {
     if ($null -eq $Process) { return }
     $Process.Refresh()
     if ($Process.HasExited) { return }
-    # /T kills only this launcher-owned process tree. Never discover/kill an
-    # unrelated existing game process after the preflight guard. `taskkill`
-    # can report a race while a descendant is already exiting; keep stderr
-    # private and rely on the owned root's bounded exit observation instead of
-    # allowing PowerShell 5.1 to turn that noise into cleanup failure.
-    $taskkillOutput = & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.Id /T /F 2>&1
+    # Tolerate the expected race: taskkill reports "could not be terminated" while a
+    # descendant is already exiting, and under $ErrorActionPreference = "Stop" that
+    # native stderr becomes a terminating error which aborts cleanup and replaces
+    # the run's real failure (measured 2026-10-06: the actual stop was lost this
+    # way). It kills only this launcher-owned process tree - never an unrelated
+    # existing game process after the preflight guard. This call's diagnostic text
+    # stays private; the bounded HasExited check below decides, and a real failure
+    # still throws owned_process_stop_timeout.
+    try { $null = & "$env:SystemRoot\System32\taskkill.exe" /PID $Process.Id /T /F 2>&1 } catch { }
     $Process.Refresh()
     if (-not $Process.HasExited) {
         $Process.WaitForExit(10000) | Out-Null
@@ -633,14 +636,24 @@ try {
 } catch {
     # Keep the run's own failure so the cleanup path cannot replace it: an error
     # thrown from `finally` masks the exception that actually stopped the run.
+    # Report it immediately, too - a cleanup race used to destroy the only record
+    # of why the run stopped (measured 2026-10-06).
     $primaryFailure = $_
+    Write-Output ("[launcher-failure] run failed: " + $_.Exception.Message)
     throw
 } finally {
     # Strict reverse ownership order. Restore only after every launched process
-    # ended; a failed restore deliberately preserves its backup and lock.
-    Stop-OwnedProcess $previewProcess
-    Stop-OwnedProcess $aiProcess
-    Stop-OwnedProcess $hostProcess
+    # ended; a failed restore deliberately preserves its backup and lock. Cleanup
+    # failures are reported ALONGSIDE the run's failure, never instead of it.
+    $cleanupFailure = $null
+    try { Stop-OwnedProcess $previewProcess } catch { if ($null -eq $cleanupFailure) { $cleanupFailure = $_ } }
+    try { Stop-OwnedProcess $aiProcess } catch { if ($null -eq $cleanupFailure) { $cleanupFailure = $_ } }
+    try { Stop-OwnedProcess $hostProcess } catch { if ($null -eq $cleanupFailure) { $cleanupFailure = $_ } }
+    if ($null -ne $cleanupFailure -and $null -ne $primaryFailure) {
+        Write-Output ("[launcher-failure] cleanup also failed: " + $cleanupFailure.Exception.Message)
+    } elseif ($null -ne $cleanupFailure) {
+        throw $cleanupFailure
+    }
     if ($previousLaunchGenerationPresent) {
         $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $previousLaunchGeneration
     } else {
