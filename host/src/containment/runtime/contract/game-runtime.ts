@@ -83,9 +83,23 @@ export type RecoveryOperation = Readonly<{
  * exactly as `unavailable` refuses it - a consumer that only asks "did the
  * recovery run" may read the two alike, and one that consumes this verdict as a
  * lease probe must not.
+ *
+ * `ai_settled_player_preserved` is what the conversation reports when the AI
+ * side is settled and the PLAYER'S WORLD was deliberately left alone. The
+ * player's world is not an AI containment artifact, so a recovery never adopts
+ * it: the native's player classifier answers `unavailable` by design, and the
+ * broker acknowledges with exactly that player result after it has internally
+ * classified and cleaned up the AI side. What this literal ESTABLISHES is only
+ * that the AI side is done and that the player's world was deliberately
+ * preserved. It does NOT mean the player's world was contained, it is NOT proof
+ * that the world's holder is dead, and it is NOT a lease verdict the way
+ * `gate_held` is: a consumer must never read it as `recovered` nor invert it
+ * into a liveness or death verdict about the player. It is named for what it
+ * establishes precisely so that reading it cannot imply containment of the
+ * player's world.
  */
 export type RedactedRecoveryOutcome = Readonly<{
-  readonly status: "recovered" | "unavailable" | "gate_held";
+  readonly status: "recovered" | "unavailable" | "gate_held" | "ai_settled_player_preserved";
 }>;
 
 export type ContainedGameRuntime = Readonly<{

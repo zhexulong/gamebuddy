@@ -85,10 +85,6 @@ import type {
   ProductionGameSessionWorldBindingSlotReleaseInput,
   ProductionGameSessionWorldBindingTerminalInput,
 } from "./continuity-semantic-store/continuity-semantic-production-store.js";
-import {
-  mintGameSessionWorldBindingSlotLeaseVerdict,
-  productionGameSessionWorldBindingSlotLeaseVerdict,
-} from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RedactedRecoveryOutcome, RoleLaunchOperation } from "./containment/runtime/contract/game-runtime.js";
 import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime/contract/game-runtime.js";
 import {
@@ -165,6 +161,12 @@ export type StardewGameSessionCreationAuthority = Readonly<{
    * terminal shape. It takes the holder's own handle plus the native-lease
    * verdict correlated to that handle; the store refuses every weaker proof, so
    * this member is not a way to free a slot whose holder was not proven gone.
+   *
+   * It is a CAPABILITY of the store slice, not part of crash healing: the world
+   * slot binds the player's world, and the ruling makes that slot the player's to
+   * keep, so the create path no longer calls this member at all. It stays on the
+   * seam (and on the store) because an explicit operation, such as an explicit
+   * endgame, may still need it.
    */
   releaseGameSessionWorldBindingSlot(
     input: ProductionGameSessionWorldBindingSlotReleaseInput,
@@ -623,6 +625,37 @@ export function containedRuntimeTeardownFromCollaborator(
 export const STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL = "stardew_owner_recovery_gate_held";
 
 /**
+ * The drive's own bounded refusal for the AI-side recovery terminal.
+ *
+ * It is a distinct code rather than the drive's generic unavailable because the
+ * two answer different questions, exactly like the held-gate verdict above:
+ * `stardew_owner_recovery_unavailable` says the recovery did not reach
+ * containment AND nothing about the two sides is settled, while this one says
+ * the AI side IS settled - the broker classified it and cleaned its Job up on
+ * its kill-on-close path - and the PLAYER'S WORLD was deliberately preserved,
+ * because the player's world is not an AI containment artifact and recovery
+ * must leave it untouched.
+ *
+ * It is never `recovered`: the player's world was not contained and is not
+ * proven gone, so nothing here establishes a containment of the player's world.
+ * It is never `gate_held` either: the gate DID open (the conversation reached
+ * the role classification), so this is not a lease verdict about the holder.
+ *
+ * The AI-side terminal does not finalize the attempt here. Finalizing a
+ * recovered attempt requires BOTH roles to be durably `contained`
+ * (`stardew-private-bootstrap-composer.core.ts` `finalizeRecoveredContained`),
+ * and on this path no role ever is - the conversation returns before any role
+ * CAS. Calling the finalize on this outcome would therefore make the durable
+ * engine QUARANTINE the attempt as a side effect of its own refusal, which would
+ * fabricate a terminal state for a world that was deliberately preserved. So
+ * the drive refuses under its own bounded code and leaves the attempt exactly as
+ * the deliberate terminal left it; the finalize step that releases this
+ * attempt's registration pointer is blocked on the durable-engine decision that
+ * gives the AI-side terminal a terminal state of its own.
+ */
+export const STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED = "stardew_owner_recovery_ai_settled_player_preserved";
+
+/**
  * The create's own bounded refusal for a world slot whose leftover holder was
  * NOT proven gone.
  *
@@ -644,6 +677,25 @@ export const STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL = "stardew_owner_recovery_
 export const STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE = "stardew_game_create_slot_holder_not_proven_gone";
 
 /**
+ * The create's own bounded refusal for a world this create must not take over.
+ *
+ * It is the create-side reading of the drive's `ai_settled_player_preserved`
+ * terminal (and of a recovery that reached containment): the recovery settled
+ * the AI side, the player's world was deliberately preserved, and this create
+ * must NOT release the world slot to register its own world on it. The world
+ * belongs to the player, so the product answer is `resumeGameSession`, never a
+ * fresh create: after a crash the world is still there and only the session
+ * needs resuming.
+ *
+ * This is why the create path no longer releases the world slot at all. The
+ * store's slot-release capability stays (it keeps its own tests), but it is not
+ * part of crash healing any more: releasing a slot whose holder was not proven
+ * gone - or whose world is the player's to keep - was the untruth this code
+ * replaces.
+ */
+export const STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED = "stardew_game_create_world_held_by_player_resume_required";
+
+/**
  * One bounded recovery of an attempt whose durable record is not terminal,
  * closed out in the same step: drive the existing per-owner recovery seam, and
  * only when that recovery actually reached containment, finalize it so the
@@ -655,15 +707,18 @@ export const STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE = "stardew_game_cre
  * must match cannot drift apart, and a caller cannot close out a recovery under
  * an actor it never drove.
  *
- * Nothing short of `recovered` is ever finalized, and the two failing outcomes are
+ * Nothing short of `recovered` is ever finalized, and the failing outcomes are
  * deliberately NOT folded into one code. A recovery that did not reach
  * containment reports `stardew_owner_recovery_unavailable`: the native position
  * stays unproven, an uncertain native recovery is neither closed out as if it had
  * succeeded nor re-driven here, and nothing is finalized. A recovery whose gate
  * was held reports `STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL` instead, the lease
- * verdict rather than a recovery result. Everything else this can fail with is
- * likewise bounded: a missing seam, and whatever the finalization itself refuses
- * with.
+ * verdict rather than a recovery result. The AI-side terminal reports
+ * `STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED`, checked BEFORE that
+ * generic non-recovered refusal so it takes its own path: it is checked after
+ * the held-gate verdict, and it is never reached through a default arm.
+ * Everything else this can fail with is likewise bounded: a missing seam, and
+ * whatever the finalization itself refuses with.
  */
 export async function driveStardewOwnedPlayerHostRecovery(
   teardown: StardewContainedRuntimeTeardown | undefined,
@@ -673,6 +728,10 @@ export async function driveStardewOwnedPlayerHostRecovery(
   if (teardown === undefined) throw new Error("stardew_owner_recovery_seam_unavailable");
   const outcome = await teardown.recover(owner, request);
   if (outcome.status === "gate_held") throw new Error(STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL);
+  // Before the generic non-recovered refusal below: the AI-side terminal is not
+  // an uncertainty, so it must not be reported as one. See the constant's doc for
+  // why this path does not (yet) finalize.
+  if (outcome.status === "ai_settled_player_preserved") throw new Error(STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED);
   if (outcome.status !== "recovered") throw new Error("stardew_owner_recovery_unavailable");
   await teardown.finalizeRecovered(owner, request);
 }
@@ -1177,21 +1236,31 @@ function createCoordinator(
    *   same teardown seam, the same consumed one-shot owner binding, one attempt,
    *   one recovery. A recovery that did not reach containment is never retried,
    *   and nothing short of `recovered` is ever finalized.
-   * - Only after that recovery finalized - which releases the crashed attempt's
-   *   own registration pointer and consumes its transaction - is the slot
-   *   released, with the handle READ FROM THE SLOT and a holder-gone verdict
-   *   minted from that same drive result. One attempt, one verdict, one release.
+   * - The WORLD SLOT is never released by this create. The slot binds the
+   *   PLAYER'S WORLD, and the player's world does not die with the AI attempt, so
+   *   the ruling makes the slot the player's to keep: after a crash the next stop
+   *   is `resumeGameSession`, never a fresh create on the same world. The store's
+   *   slot-release capability keeps its own tests, but it is not part of crash
+   *   healing any more, so no path here calls it.
    * - A HELD gate is refused under this create's own bounded code: the holder
    *   was NOT proven gone, so nothing is finalized, nothing is released, and the
    *   leftover attempt's durable state is left exactly as it was found.
+   * - The AI-side terminal - the broker settled and cleaned up the AI side and
+   *   deliberately preserved the player's world - is refused under its own
+   *   bounded code, whose meaning is that the world is still the player's and the
+   *   session must be RESUMED rather than created again.
+   * - A recovery that did reach containment is finalized (its own registration
+   *   pointer released, its transaction consumed) and then this create is refused
+   *   under the SAME resume-instead code, because the world slot is still the
+   *   previous session's and this create must not free it either.
    */
   const recoverLeftoverWorldBindingSlotHolder = async (
     authority: StardewGameSessionCreationAuthority,
     integrationId: string,
     bindingRef: string,
   ): Promise<void> => {
-    // Closing stops a create before it does new durable work, so the two new
-    // authority members below are never reached once the lifecycle is closing -
+    // Closing stops a create before it does new durable work, so the one
+    // authority member below is never reached once the lifecycle is closing -
     // neither before the read nor after any await that observed closing.
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     const holder = await authority.readGameSessionWorldBindingSlotHolder({ integrationId, bindingRef });
@@ -1242,28 +1311,29 @@ function createCoordinator(
       // under is what tells the two apart.
       if (error instanceof Error && error.message === STARDEW_OWNER_RECOVERY_GATE_HELD_REFUSAL)
         throw new Error(STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE, { cause: error });
+      // The AI-side terminal is the create-side reading of the ruling: the AI
+      // side is settled and the player's world was deliberately preserved, so
+      // this create must not take that world over. It is refused under its own
+      // code - never folded into the held-gate verdict above, which would claim
+      // a lease fact that was never observed, and never into the generic
+      // unavailable one, which would hide the product answer (resume the
+      // session). The create's own single failure closure still settles its own
+      // intent, and nothing here releases the world slot.
+      if (error instanceof Error && error.message === STARDEW_OWNER_RECOVERY_AI_SETTLED_PLAYER_PRESERVED)
+        throw new Error(STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED, { cause: error });
       // Everything else keeps its own bounded identity and is not folded into
-      // the code above; nothing here mints a verdict or releases anything.
+      // the codes above; nothing here mints a verdict or releases anything.
       throw error;
     }
     // Reachable only after the drive reported `recovered` AND finalized the
-    // attempt: the recovery's own gate proved the holder's lease gone, so the
-    // verdict for THIS drive result is `holderGone` - minted from that result,
-    // not from an independent probe - and the handle released is the one read
-    // from the slot.
+    // attempt: its recovery's own gate proved the holder's lease gone, its
+    // registration pointer is released and its transaction consumed. The world
+    // SLOT is deliberately NOT released even here. The slot binds the player's
+    // world, and this create must not free the player's world to register its own
+    // - so this create refuses under the same resume-instead code rather than
+    // registering on a slot the previous session still holds.
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
-    await authority.releaseGameSessionWorldBindingSlot({
-      integrationId,
-      bindingRef,
-      holderHandle: holder.holderHandle,
-      proof: Object.freeze({
-        verdict: mintGameSessionWorldBindingSlotLeaseVerdict(
-          productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
-        ),
-        holderHandle: holder.holderHandle,
-      }),
-    });
-    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    throw new Error(STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED);
   };
 
   const registerInstallationLocator = async (locator: string): Promise<StardewInstallationSelectionResult> => {
@@ -2106,8 +2176,9 @@ function createCoordinator(
         // is about to register on may still be held by an attempt that never
         // closed out. No holder changes nothing - this create then behaves
         // exactly as it did before this seam existed - while a holder is driven
-        // through the existing recovery seam and released only if that recovery
-        // proved it gone. See `recoverLeftoverWorldBindingSlotHolder`.
+        // through the existing recovery seam and refused under this create's own
+        // bounded code. The world slot is never released here: it is the
+        // player's to keep. See `recoverLeftoverWorldBindingSlotHolder`.
         await recoverLeftoverWorldBindingSlotHolder(creationAuthority, command.integrationId, world.bindingRef);
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         // Phase 2c: register the world binding under the coordinator-minted
@@ -2197,14 +2268,18 @@ function createCoordinator(
         // The close that interrupted this create still reaches its caller; the
         // durable state above is already settled.
         if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
-        // The trigger's own bounded refusal is the one create failure that is
-        // reported as itself rather than as the generic unavailable outcome: a
-        // live holder occupying the slot is a known, expected product state
-        // (someone else's attempt still owns that world), and folding it into
-        // the same shape as an arbitrary internal failure would hide which one
-        // happened. The durable rows above are already settled by the closure,
-        // so this cannot leave an inconsistent row behind.
-        if (error instanceof Error && error.message === STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE)
+        // The trigger's own bounded refusals are the create failures that are
+        // reported as themselves rather than as the generic unavailable outcome:
+        // a live holder occupying the slot, and a world that is still the
+        // player's to keep, are known, expected product states, and folding them
+        // into the same shape as an arbitrary internal failure would hide which
+        // one happened. The durable rows above are already settled by the
+        // closure, so this cannot leave an inconsistent row behind.
+        if (
+          error instanceof Error &&
+          (error.message === STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE ||
+            error.message === STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED)
+        )
           throw error;
         return Object.freeze({ apiVersion: 1, status: "unavailable", gameSessionId: null });
       } finally {

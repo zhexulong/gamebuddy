@@ -21,14 +21,20 @@
  *   ("the settle closure could not be applied"): every durable row is written by
  *   the real store, and the attempt record / registration pointer are the real
  *   ones the real composition persisted. Nothing is inserted or hand-written.
- * - The recovery, the finalization, the registration release and the slot release
- *   are the real production components: `openRecoverableStardewBootstrapOwner`,
+ * - The recovery, the finalization and the registration release are the real
+ *   production components: `openRecoverableStardewBootstrapOwner`,
  *   `driveStardewOwnedPlayerHostRecovery`, the composed recovery drive
  *   (`createStardewPlayerHostRuntimeLaunchCollaboratorFactory` +
  *   `containedRuntimeTeardownFromCollaborator`), the real durable v4 CAS engine,
  *   `mintGameSessionWorldBindingSlotLeaseVerdict` and the real store's release.
- * - Both failure paths of the create-side trigger (a held native gate, and a
- *   release the store refuses) are driven and read back.
+ *   The store's slot release is NOT a create-side step any more - the ruling makes
+ *   the world slot the player's to keep - so the tests here present it themselves,
+ *   exactly as an explicit product operation would have to.
+ * - Every terminal of the create-side trigger is driven and read back: a held
+ *   native gate, the broker's AI-side terminal, and a recovery that reached
+ *   containment over an already-settled slot. Their shared consequence is recorded
+ *   too: the trigger never releases the world slot, so a create over a leftover
+ *   never registers on it, and it is refused under its own bounded code.
  *
  * WHAT IT DOES NOT COVER (and must not be read as covered)
  *
@@ -84,6 +90,7 @@ import {
   containedRuntimeTeardownFromCollaborator,
   driveStardewOwnedPlayerHostRecovery,
   STARDEW_GAME_CREATE_SLOT_HOLDER_NOT_PROVEN_GONE,
+  STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED,
   type StardewGameSessionCreationAuthority,
   type StardewProductionLifecycleCoordinator,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
@@ -576,14 +583,15 @@ function connectedSemanticGameLeaseFixture(onIngressActivated?: () => void) {
 /**
  * The scripted Desktop stand-in. `arm`/`launch`/`contain` acknowledge the exact
  * correlation they were handed; `recover` answers the one native position this
- * file needs, and - when it answers `contained` - drives the REAL durable steps
- * the platform conversation drives (`beginRecovery` while the gate is held, then
- * one containment CAS per role). It is NOT a named-mutex probe and establishes
- * no mutex ownership: see this file's header.
+ * file needs, and - for both durable answers - drives the REAL durable steps the
+ * platform conversation drives (`beginRecovery` while the gate is held, and then
+ * either one containment CAS per role for `contained`, or none at all for the
+ * broker's player-role early return, `ai_settled_player_preserved`). It is NOT a
+ * named-mutex probe and establishes no mutex ownership: see this file's header.
  */
 function createScriptedGuardianSession(input: Readonly<{
   bootstrapId: string;
-  recoveryAnswer: "contained" | "gate_held";
+  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
   steps: { hook?: () => Promise<void> };
   operations: string[];
 }>): DesktopGuardianSession {
@@ -605,6 +613,13 @@ function createScriptedGuardianSession(input: Readonly<{
       await input.steps.hook?.();
       if (input.recoveryAnswer === "gate_held") return Object.freeze({ outcome: "gate_held" as const });
       await recovery.beginRecovery();
+      if (input.recoveryAnswer === "ai_settled_player_preserved") {
+        // The broker's player-role early return: the gate opened and the durable
+        // `recovering` CAS ran, but the native never adopts the player's world, so
+        // NO role is recorded contained and the conversation stops at the player
+        // position. The AI side is settled and cleaned up by the broker itself.
+        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+      }
       await recovery.roleContained("playerHost");
       await recovery.roleContained("aiClient");
       return Object.freeze({ outcome: "contained" as const });
@@ -647,7 +662,7 @@ async function createIntegrationFixture(input: Readonly<{
   slotRef: string;
   store: BoundRealStore;
   crashPolicy: { unappliableSettleClosure: boolean };
-  recoveryAnswer: "contained" | "gate_held";
+  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
 }>): Promise<IntegrationFixture> {
   const { runtimeRoot, bootstrapId } = input;
   const stagingRoot = join(runtimeRoot, "package");
@@ -795,6 +810,7 @@ async function readOwnerRecord(
   guardianState: string;
   playerHostState: string;
   aiClientState: string;
+  cleanupDisposition: string;
   ownerRecordRevision: number;
   recoveryInstanceId: string | null;
 }> | null> {
@@ -892,7 +908,7 @@ const laterAttemptId = "bootstrap-integration-attempt-c";
 /** One shared root + one shared real store + one fixture, in that order. */
 async function integrationHarness(input: Readonly<{
   bootstrapId: string;
-  recoveryAnswer: "contained" | "gate_held";
+  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
 }>): Promise<Readonly<{
   runtimeRoot: string;
   store: BoundRealStore;
@@ -1108,21 +1124,26 @@ test("the create-side trigger refuses a held native gate as its own bounded outc
 });
 
 /**
- * Property 2, second failure path - a release the store REFUSES.
+ * A create over an already-settled leftover never touches the store's release at
+ * all.
  *
- * A successor settles the slot while this create's own recovery is in flight, so
- * when the trigger reaches its release the row it is about has already settled
- * and the store refuses with `holderTerminal` (a bounded refusal, never a silent
- * no-op). Everything read back afterwards is a legal state for that moment: the
- * leftover landed on the canonical terminal pair (binding terminal rev2 +
- * metadata failed rev3), the attempt's record reached its terminal `contained`
- * successor and was consumed, the pointer is released, and this create's own
- * intent is failed rev2 with NO binding row - nothing half-written.
+ * This test used to pin the trigger's own release being refused as
+ * `holderTerminal` after a concurrent settle. The ruling removed that release from
+ * the create path - the world slot binds the PLAYER'S world and a create must not
+ * free it - so no production create can produce that refusal any more. Keeping the
+ * test (rather than deleting it) preserves the real-store evidence that survives:
+ * this create refuses under its own resume-instead code, presents NO release at
+ * all, and its own durable intent still lands on the store's one legal failure
+ * shape with nothing half-written. The store's own bounded `holderTerminal`
+ * refusal keeps its evidence here too, now asserted from a SECOND explicit release
+ * performed by the test - which is where that half lives once no production create
+ * path calls it.
  *
- * The concurrent release is performed through the real store with a verdict
- * minted by the store's own mint function: no named-mutex probe ran for it.
+ * The concurrent settle is performed through the real store with a verdict minted
+ * by the store's own mint function: no named-mutex probe ran for it, and no
+ * production create performs one either.
  */
-test("a release the store refuses leaves the leftover and this create's own rows in a legal state, with nothing half-written", async () => {
+test("a create over an already-settled leftover refuses without presenting any release, and nothing is half-written", async () => {
   const harness = await integrationHarness({ bootstrapId: crashedAttemptId, recoveryAnswer: "contained" });
   const { runtimeRoot, store, fixture, control } = harness;
   try {
@@ -1133,8 +1154,7 @@ test("a release the store refuses leaves the leftover and this create's own rows
     assert.notEqual(leftover, null);
     assert.equal(leftover!.holder.status, "registered");
     // The concurrent settle: the same store release, for the same slot and the
-    // same holder, landing the canonical terminal pair before the trigger's own
-    // release runs.
+    // same holder, landing the canonical terminal pair before the trigger runs.
     fixture.setRecoveryHook(async () => {
       await store.releaseGameSessionWorldBindingSlot({
         integrationId: "stardew",
@@ -1146,14 +1166,19 @@ test("a release the store refuses leaves the leftover and this create's own rows
     const membersBefore = fixture.authorityMembers().length;
 
     const outcome = await driveAdmittedCreate(fixture, "integration-refused-release-create");
-    assert.equal(outcome.kind, "result");
-    const result = (outcome as Readonly<{ result: unknown }>).result;
-    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result), true);
-    assert.deepEqual(result, { apiVersion: 1, status: "unavailable", gameSessionId: null });
-    // The trigger's release was refused as `holderTerminal`: it did not report a
-    // release it never performed, and it did not retry.
-    assert.deepEqual(fixture.authorityErrorsOf("releaseGameSessionWorldBindingSlot"), [
-      productionGameSessionWorldBindingSlotRelease.holderTerminal,
+    // The create's own bounded refusal, never the generic unavailable outcome: the
+    // attempt was recovered and finalized, the world slot is still the previous
+    // session's, and the product answer is to resume rather than to create.
+    assert.equal(outcome.kind, "refusal");
+    assert.equal(
+      (outcome as Readonly<{ message: string }>).message,
+      STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED,
+    );
+    // The coordinator presented NO release at all: the only members this create
+    // reached are its own intent and its own failure closure.
+    assert.deepEqual(fixture.authorityMembers().slice(membersBefore), [
+      "createGameSessionMetadata",
+      "failGameSessionCreation",
     ]);
     assert.equal(fixture.sessionOperations().filter((operation) => operation.startsWith("recover:")).length, 1);
     // The leftover's two rows are the canonical terminal pair the store's own
@@ -1174,19 +1199,26 @@ test("a release the store refuses leaves the leftover and this create's own rows
       status: "failed",
       revision: 3,
     });
+    // The store's OWN bounded refusal for a release whose holder is already
+    // terminal: a refusal, never a silent no-op, and no half-write. No production
+    // create path presents one any more, so the test presents it itself.
+    await assert.rejects(
+      async () => await store.releaseGameSessionWorldBindingSlot({
+        integrationId: "stardew",
+        bindingRef: runtimeSlotRef,
+        holderHandle: leftover!.holder.holderHandle,
+        proof: slotReleaseProof(leftover!.holder.holderHandle, productionGameSessionWorldBindingSlotLeaseVerdict.holderGone),
+      }),
+      { message: productionGameSessionWorldBindingSlotRelease.holderTerminal },
+    );
     // The attempt record reached the terminal `contained` successor (which the
     // release's own settle re-reads and validates) and the cleanup then consumed
     // it, and the attempt stopped occupying the registration.
     assert.equal(await readOwnerRecord(runtimeRoot, crashedAttemptId), null);
     assert.equal(await readRegistrationPointer(runtimeRoot), null);
-    // This create's own rows: intent, the refused release, then its failure
-    // closure. Its metadata is failed with NO binding row, which the store's own
-    // materialization rules accept.
-    assert.deepEqual(fixture.authorityMembers().slice(membersBefore), [
-      "createGameSessionMetadata",
-      "releaseGameSessionWorldBindingSlot",
-      "failGameSessionCreation",
-    ]);
+    // This create's own rows: intent, then its failure closure - no release step in
+    // between any more. Its metadata is failed with NO binding row, which the
+    // store's own materialization rules accept.
     const own = lastCreatedMetadata(fixture);
     assert.deepEqual(await store.readGameSessionMetadata({ gameSessionId: own.gameSessionId }), {
       gameSessionId: own.gameSessionId,
@@ -1212,6 +1244,120 @@ test("a release the store refuses leaves the leftover and this create's own rows
       (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );
     assert.equal(closeOutcome, "stardew_lifecycle_close_incomplete");
+    await fixture.broker.close();
+    control.close();
+  }
+});
+
+/**
+ * Property 2, third path - the broker's PLAYER-ROLE EARLY RETURN, end to end over
+ * the real store, the real composer and the real installation registration.
+ *
+ * The native never adopts the player's world, so the broker classifies the AI side
+ * internally - cleaning it up on its kill-on-close path - and acknowledges with the
+ * player's own `unavailable`. The Host calls that the AI-side terminal, and the
+ * ruling makes it a refusal of this create, not a recovery of the player's world:
+ * the world slot is the player's to keep, so the create refuses under its own
+ * resume-instead code and presents NO release at all.
+ *
+ * WHAT THIS TEST ALSO RECORDS, because it must not read as resolved: the durable
+ * finalize is deliberately NOT driven on this terminal. It requires BOTH roles
+ * durably contained, which this path never records, so driving it would make the
+ * engine quarantine the attempt as a side effect of its own refusal - burning the
+ * very recoverability the follow-up change needs. So today a crash like this leaves
+ * the session BLOCKED: the create is refused with "this world is the player's,
+ * resume it", and the resume is itself refused, because the crashed attempt's
+ * registration pointer is still bound to its reservation. The attempt record
+ * itself is untouched, still non-terminal, and still openable by the sanctioned
+ * opener - so the gap is exactly the pointer release that the durable-engine
+ * change exists to land, and nothing else. This is asserted below rather than
+ * described, so the gap stays visible instead of silently reading as healed.
+ */
+test("the create-side trigger refuses a world whose recovery settled the AI side, and the still-bound pointer blocks its own resume", async () => {
+  const harness = await integrationHarness({ bootstrapId: crashedAttemptId, recoveryAnswer: "ai_settled_player_preserved" });
+  const { runtimeRoot, store, fixture, control } = harness;
+  let blockedFixture: IntegrationFixture | undefined;
+  try {
+    await prepareLaunchedPlayerHost(fixture);
+    await crashCreate(fixture, "integration-ai-side-terminal-crash");
+
+    const leftover = await readSlotLeftover(fixture);
+    assert.notEqual(leftover, null);
+    const registrationBytes = JSON.stringify(await readStardewInstallationRegistration(runtimeRoot));
+    const membersBefore = fixture.authorityMembers().length;
+
+    const outcome = await driveAdmittedCreate(fixture, "integration-ai-side-terminal-create");
+    // The create's OWN bounded refusal - not the generic unavailable outcome, and
+    // not the held-gate verdict, which would claim a lease fact that was never
+    // observed (the gate DID open here).
+    assert.equal(outcome.kind, "refusal");
+    assert.equal(
+      (outcome as Readonly<{ message: string }>).message,
+      STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED,
+    );
+    // The drive ran ONCE, for this create's own world ref.
+    const recoveries = fixture.sessionOperations().filter((operation) => operation.startsWith("recover:"));
+    assert.equal(recoveries.length, 1);
+    // The coordinator presented NO release at all: the world slot is the player's,
+    // so the only members this create reached are its own intent and its own
+    // failure closure.
+    assert.deepEqual(fixture.authorityMembers().slice(membersBefore), [
+      "createGameSessionMetadata",
+      "failGameSessionCreation",
+    ]);
+    // The leftover's own rows are exactly what the crash left: it still holds the
+    // world slot, with its own handle, and the pointer still names it.
+    assert.deepEqual(await readSlotLeftover(fixture), leftover);
+    assert.equal(await readRegistrationPointer(runtimeRoot), crashedAttemptId);
+    assert.equal(JSON.stringify(await readStardewInstallationRegistration(runtimeRoot)), registrationBytes);
+
+    // The attempt record is exactly the shape the deliberate terminal leaves: the
+    // durable `recovering` CAS ran (the gate opened), the recorded actor is the one
+    // the drive adopted, NO role is recorded contained, and nothing claims a pending
+    // cleanup retry - so nothing was fabricated and nothing was quarantined.
+    const record = await readCrashedAttemptRecord(fixture);
+    assert.equal(record.state, "recovering");
+    assert.equal(record.guardianState, "recovering");
+    assert.equal(record.playerHostState, "reserved");
+    assert.equal(record.aiClientState, "reserved");
+    assert.equal(record.cleanupDisposition, "pending");
+    assert.notEqual(record.recoveryInstanceId, null);
+
+    // Still openable by the sanctioned opener: the refusal did not burn the
+    // attempt's recoverability, and no terminal or quarantined state was invented
+    // for a world that was deliberately preserved.
+    const opened = await openRecoverableStardewBootstrapOwner({
+      transactionRoot: runtimeRoot,
+      bootstrapFacts: { bootstrapId: crashedAttemptId, playerId: principal.playerId, companionId: principal.companionId },
+    });
+    assert.equal(opened.ownerRecordRevision, record.ownerRecordRevision);
+
+    // THE RESIDUAL, asserted rather than described: with the finalize half still
+    // blocked, the crashed attempt keeps its registration pointer, and a fresh
+    // lifecycle cannot even reserve - so the resume this refusal points at is
+    // refused too, with the registration refusal as its cause.
+    blockedFixture = await createIntegrationFixture({
+      runtimeRoot,
+      bootstrapId: successorAttemptId,
+      slotRef: runtimeSlotRef,
+      store,
+      crashPolicy: { unappliableSettleClosure: false },
+      recoveryAnswer: "contained",
+    });
+    await expectActivationRefused(blockedFixture, "stardew_bootstrap_registration_unavailable");
+    assert.equal(await readRegistrationPointer(runtimeRoot), crashedAttemptId);
+  } finally {
+    // The same-attempt consequence this file's report names: a recovery driven from
+    // inside this create's own lifecycle leaves the attempt in a position its own
+    // close cannot settle, so the close reports `stardew_lifecycle_close_incomplete`
+    // rather than silently succeeding. It is recorded, not hidden, and the admission
+    // servers are released unconditionally so the run can exit.
+    const closeOutcome = await fixture.coordinator.close().then(
+      () => "closed",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    assert.equal(closeOutcome, "stardew_lifecycle_close_incomplete");
+    await blockedFixture?.close();
     await fixture.broker.close();
     control.close();
   }

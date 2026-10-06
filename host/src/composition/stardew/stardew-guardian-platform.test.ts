@@ -1040,12 +1040,15 @@ test("a recovery that does not reach terminal containment fails closed and is ne
       expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
     },
     {
-      name: "a classified role is not contained",
+      name: "a non-player role is not contained",
       recover: async (input) => {
         // The recovery ran, so the durable `recovering` CAS legitimately ran too;
-        // only the role classification failed.
+        // only the role classification failed. The role is the AI-client one on
+        // purpose: the PLAYER position's `unavailable` is its own deliberate
+        // terminal (pinned by the mapping test below) and is NOT a failure, so the
+        // generic failure has to be shown at the other role position.
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "unavailable" as const });
       },
       expectedOutcome: { status: "unavailable" },
       expectedRecord: { state: "recovering", revision: 2, recovery: actor, playerHost: "reserved", aiClient: "reserved" },
@@ -1134,13 +1137,15 @@ test("the native gate verdict is reported as its own outcome and no other failur
       // The sharpest case: the wire's status text at this position is the very
       // `unavailable` the held gate answers with, and only the position tells
       // them apart. Reporting this as `gate_held` would invent a lease verdict
-      // the native side never gave.
-      name: "a role was classified unavailable after the recovery ran",
+      // the native side never gave. It is also the AI-side terminal: the broker
+      // classified the AI side internally and preserved the player's world, so it
+      // reports under its own name rather than as a generic failure.
+      name: "the player role was classified unavailable after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
         return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
       },
-      expectedOutcome: { status: "unavailable" },
+      expectedOutcome: { status: "ai_settled_player_preserved" },
     },
     {
       name: "a role was quarantined after the recovery ran",
@@ -1201,6 +1206,146 @@ test("the native gate verdict is reported as its own outcome and no other failur
     });
     assert.deepEqual(outcome, scenario.expectedOutcome, scenario.name);
     assert.equal(calls.length, 1, `${scenario.name}: the native conversation is driven exactly once`);
+  }
+});
+
+/**
+ * The broker's player-role early return, mapped in BOTH directions at the seam a
+ * crash-recovery trigger consumes.
+ *
+ * The native player classifier is a fixed `unavailable` by design
+ * (`WindowsJobRecoveryClassifier.cs`: "Player world ownership is not an AI
+ * containment artifact"), so a recovery never adopts the player's world; on that
+ * role the broker classifies the AI side internally (consuming its kill-on-close
+ * cleanup) and acknowledges with the PLAYER's result, emitting no player CAS, no
+ * contained acknowledgement and no release settlement for that path
+ * (`DesktopHostBootstrapBroker.cs:198-215`). The Host cannot see the AI result,
+ * so what it can establish is only that the AI side is settled and the player's
+ * world was deliberately preserved - and that exact fact is reported under its
+ * own outcome rather than as a generic failure.
+ *
+ * The mapping is deliberately narrow, so the converse direction is pinned too:
+ * a held gate, any other player-role classification, every AI-client role
+ * position and an outright session rejection all keep the existing outcomes and
+ * must NOT be reported as the AI-side terminal. A wire position that never
+ * reached the gate is pinned here as well, because the terminal may only be read
+ * from a conversation that actually passed the gate.
+ */
+test("the broker's player-role early return is its own outcome and no other wire position is", async () => {
+  const actor = "3f7b2c4e-9d16-4a58-8b0f-6c1e5a9d2b73";
+  const guardianRevision = "c2a8f4b6-1d30-4e75-9c62-8b5a0e7f3d14";
+  const scenarios: readonly Readonly<{
+    name: string;
+    recover: (input: DesktopGuardianRecovery) => Promise<GuardianRecoveryAck>;
+    expectedOutcome: Readonly<{ status: string }>;
+    /** Whether the conversation must have passed the gate (the `recovering` CAS ran). */
+    passedGate: boolean;
+  }>[] = [
+    {
+      name: "the player role is unavailable after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+      },
+      expectedOutcome: { status: "ai_settled_player_preserved" },
+      passedGate: true,
+    },
+    {
+      name: "the gate refused to open",
+      recover: async () => Object.freeze({ outcome: "gate_held" as const }),
+      expectedOutcome: { status: "gate_held" },
+      passedGate: false,
+    },
+    {
+      // The player position CAN carry `quarantined` on the wire, and that is NOT
+      // the deliberate path: only the fixed `unavailable` is, so this stays a
+      // generic failure rather than being read as a settled AI side.
+      name: "the player role is quarantined after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "quarantined" as const });
+      },
+      expectedOutcome: { status: "unavailable" },
+      passedGate: true,
+    },
+    {
+      name: "the AI-client role is unavailable after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "unavailable" as const });
+      },
+      expectedOutcome: { status: "unavailable" },
+      passedGate: true,
+    },
+    {
+      name: "the AI-client role is quarantined after the recovery ran",
+      recover: async (input) => {
+        await input.beginRecovery();
+        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "quarantined" as const });
+      },
+      expectedOutcome: { status: "unavailable" },
+      passedGate: true,
+    },
+    {
+      name: "the authenticated session rejected the conversation",
+      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      expectedOutcome: { status: "unavailable" },
+      passedGate: false,
+    },
+    {
+      name: "the recovery reached containment",
+      recover: async (input) => {
+        await input.beginRecovery();
+        await input.roleContained("playerHost");
+        await input.roleContained("aiClient");
+        return Object.freeze({ outcome: "contained" as const });
+      },
+      expectedOutcome: { status: "recovered" },
+      passedGate: true,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const harness = createHarness({ guardianRevisions: [guardianRevision] });
+    const root = await createRoot();
+    const triple = mintOwnedTriple(harness.composition);
+    const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
+    );
+    const calls: string[] = [];
+    const session: DesktopGuardianSession = Object.freeze({
+      arm: async () => ack("arm"),
+      launch: async (input) => ack("launch", input.role),
+      contain: async (input) => ack("contain", input.role),
+      recover: (input) => {
+        calls.push("recover");
+        return scenario.recover(input);
+      },
+      close: async () => {},
+    });
+    const drive = readStardewOwnerRecoveryDriver(
+      createStardewPlayerHostRuntimeLaunchCollaboratorFactory(createDesktopGuardianGameRuntimePlatform(session)),
+    );
+    assert.notEqual(drive, undefined, scenario.name);
+    const outcome = await drive!.recover(owner, {
+      recoveryInstanceId: actor,
+      readRecoveryBinding: async () =>
+        recoveryBindingFacts(JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>),
+    });
+    assert.deepEqual(outcome, scenario.expectedOutcome, scenario.name);
+    assert.equal(calls.length, 1, `${scenario.name}: the native conversation is driven exactly once`);
+    // The terminal may only be read off a conversation that passed the gate: no
+    // scenario above is silently dropping the `recovering` CAS and still being
+    // read as the AI-side terminal.
+    const record = JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
+    assert.equal(
+      record.state,
+      scenario.passedGate ? "recovering" : "reserved",
+      `${scenario.name}: the durable position must match whether the gate opened`,
+    );
   }
 });
 
