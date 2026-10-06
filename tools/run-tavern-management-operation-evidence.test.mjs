@@ -95,31 +95,82 @@ test("no operation is reported as passed on the strength of a 2xx alone", () => 
 });
 
 test("the writes assert their durable effect, not only the reply shape", () => {
-  // Revision advance proves a mutation really happened; a write that asserts
-  // only the shape of the reply would pass against a server that returned the
-  // input unchanged.
-  const mustAdvanceRevision = [
-    "settings.voice.consent",
-    "settings.connection.create",
-    "settings.connection.test",
-    "settings.connection.model",
-    "settings.profiles.update",
-    "settings.language.update",
-    "world-info.bind",
-  ];
-  for (const operationId of mustAdvanceRevision) {
+  // Revision advance proves a mutation really happened. The property that makes
+  // the advance meaningful is WHERE it is checked: a write whose only revision
+  // message comes from the read it CASed against passes against a server that
+  // stored nothing, because that guard runs before the request is sent.
+  // `settings.voice.consent` was exactly that - it read `revision`, sent the
+  // PUT, and never looked at the reply - yet the previous version of this test
+  // accepted it, because a body-wide match for `revision` and `unadvanced` was
+  // satisfied by its PRE-write guard (`voice_revision_unavailable`).
+  //
+  // So every check below is scoped to what the operation asserts AFTER its
+  // mutation request: `postWriteAssertions` names, per write, the codes that
+  // may only be emitted once the write has answered - the applied value on the
+  // reply and/or a read-back through the read route. Deleting any one of those
+  // assertions (the usual way a write decays back into a 2xx check) fails here.
+  const postWriteAssertions = {
+    "settings.voice.consent": [
+      "voice_consent_not_applied",
+      "voice_consent_revision_unadvanced",
+      "voice_consent_not_durable",
+    ],
+    "settings.connection.create": ["connection_create_not_stored", "connection_create_revision_unadvanced"],
+    "settings.connection.test": ["connection_probe_revision_unadvanced"],
+    "settings.connection.model": ["connection_model_not_applied", "connection_model_revision_unadvanced"],
+    "settings.connection.remove": [
+      "connection_remove_record_retained",
+      "connection_remove_revision_unadvanced",
+      "connection_remove_not_durable",
+    ],
+    "settings.profiles.update": ["profile_model_not_applied", "profile_revision_unadvanced"],
+    "settings.language.update": [
+      "language_locale_not_applied",
+      "language_revision_unadvanced",
+      "language_locale_not_durable",
+    ],
+    "world-info.bind": ["world_info_revision_unadvanced"],
+  };
+  for (const [operationId, codes] of Object.entries(postWriteAssertions)) {
     const body = attemptBody(operationId);
+    // The mutation is the LAST request the block sends: everything the block
+    // asserts after it is a statement about the state the write produced.
+    const mutation = body.lastIndexOf("await sendJson(");
+    assert.notEqual(mutation, -1, `${operationId} must issue its mutation through sendJson`);
+    const afterMutation = body.slice(mutation);
+    for (const code of codes) {
+      assert.ok(
+        afterMutation.includes(`throw new Error("${code}")`),
+        `${operationId} must assert ${code} against the state after its write; guarding the revision it read before the write is not evidence it stored anything`,
+      );
+    }
+    assert.match(afterMutation, /revision/, `${operationId} must assert the revision it advanced`);
     assert.match(
-      body,
-      /revision/,
-      `${operationId} must assert the revision it advanced`,
-    );
-    assert.match(
-      body,
-      /(unadvanced|revision_unavailable|revision_missing)/,
+      afterMutation,
+      /unadvanced/,
       `${operationId} must fail when the revision did not advance`,
     );
   }
+});
+
+test("the companion detail read asserts identity, not just a non-empty name", () => {
+  // The detail route projects `apiVersion` + `name` only (CompanionDetailV1Schema:
+  // "name only (companion-detail boundary)"), so the projected name is what has
+  // to match the name the LIST attributed to the exact handle that was asked
+  // for. A `name.length > 0` check passes for whatever companion the route felt
+  // like answering with - a hollow pass for the read whose whole point is
+  // resolving one exact companion.
+  const body = attemptBody("companion.detail");
+  assert.match(
+    body,
+    /companion_detail_identity_mismatch/,
+    "companion.detail must reject a detail that is not the asked-for companion",
+  );
+  assert.match(
+    body,
+    /detail\.name !== current\.name/,
+    "companion.detail must compare the name the list projected for that exact handle",
+  );
 });
 
 test("the probe refuses a not-configured outcome as evidence", () => {
