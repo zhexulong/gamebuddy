@@ -21,7 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +37,7 @@ import {
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 // The registered terminal reason code per action is the only authority that can
 // tell a receipt that FINISHED an action from one that only progressed it. Read it
@@ -108,6 +109,41 @@ const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
 // item (O)400. The judgement runs on real Mod receipts, never transcript
 // text. The runner is a single evolving live carrier; later ladders add their
 // own acceptance on top instead of new runners.
+/**
+ * Last-resort evidence: whatever escapes the run's own try/catch — an unhandled rejection, a
+ * synchronous throw in setup, a transport failure at connect — the artifact is still written, so a
+ * failed session is analysable instead of leaving nothing behind. Three real runs (N, O, P) died
+ * with no artifact at all; this is the floor that makes that impossible.
+ */
+function writeFailureArtifact(reason) {
+  try {
+    const path = process.env.GAMEBUDDY_RESULT_FILE;
+    if (typeof path !== "string" || path.length === 0) return;
+    const payload = {
+      state: "blocked",
+      ladder: process.env.GAMEBUDDY_AGENT_LADDER ?? null,
+      reason: "runner_failed_before_reporting",
+      error: String(reason instanceof Error ? reason.message : reason),
+      stack: reason instanceof Error ? reason.stack : null,
+      at: new Date().toISOString(),
+    };
+    writeFileSync(path, JSON.stringify(payload, null, 2), "utf8");
+    console.error(`RUNNER_FAILED artifact written to ${path}`);
+  } catch (error) {
+    console.error("RUNNER_FAILED artifact could not be written", error);
+  }
+}
+process.on("uncaughtException", (error) => {
+  writeFailureArtifact(error);
+  process.exitCode = 1;
+  process.exit(1);
+});
+process.on("unhandledRejection", (error) => {
+  writeFailureArtifact(error);
+  process.exitCode = 1;
+  process.exit(1);
+});
+
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 // Ladder 6 (self-directed play session): instead of a scripted chain, the Agent
 // is handed an open play goal in a real save and decides what to do itself. The
@@ -691,10 +727,6 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
 const actionTrace = [];
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
-  // Declared OUTSIDE (and before) the try on purpose: the catch below reports the assembled
-  // context evidence too, and a `let` inside a try is scoped to the try — which is how this file's
-  // failure path came to throw a ReferenceError and destroy the artifact of a real failed session.
-  let personaWorldBook = null;
 
   try {
     const receipt = await originalExecute(request);
@@ -729,6 +761,18 @@ const usesDisposableRoot = configuredRuntimeRoot === undefined || configuredRunt
 const root = usesDisposableRoot ? await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
 const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
+// The reviewed live-run persona, provisioned by the product's own file convention
+// (<runtimeRoot>/card.json + worldbook.json), byte for byte and with no preprocessing, and then
+// ASSERTED: this ladder's content gate used to concede that "a disposable root legitimately has
+// neither file", but a run whose companion has no persona cannot support a claim about how it plays
+// or talks. Absence is a failure now, and the log names the persona that spoke.
+const provisionedPersona = await provisionLiveRunPersona(runtimeRoot);
+const personaMounted = await assertLiveRunPersonaMounted(runtimeRoot);
+if (!personaMounted.ok)
+  throw new Error(`live_run_persona_not_mounted:${personaMounted.problems.join(",")}`);
+process.stderr.write(
+  `[ladder] persona mounted: ${String(personaMounted.name)} (${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens) from ${provisionedPersona.identity.dir}\n`,
+);
 // The model profile is configuration, not a script constant: an existing
 // product profile is reused as-is; only a disposable root gets the local
 // development profile so the Agent turn can run at all.
@@ -943,7 +987,7 @@ try {
   // the canonical files the product placed under this runtime root, so the gate
   // proves the persona/world book reached the Game surface rather than trusting
   // a script-side claim. A disposable root legitimately has neither file.
-  personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
+  const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
   // Content gate over the SAME canonical profile the assembly gate hashes: an
   // empty default card (no persona) or unrendered SillyTavern macros is a
   // content defect that assembly-only gates cannot see. A disposable root
@@ -1230,7 +1274,10 @@ try {
       contextAssembled: null,
       worldBookAssembled: null,
       presentedSummary: presentedSummary ?? null,
-      runManifestModel: personaWorldBook?.model,
+      // A failed run has no assembled-context evidence to report, and the catch must not read a
+      // binding that only the try can see: doing so threw a ReferenceError inside the failure
+      // path and destroyed the artifact of a real failed session (runs N, O and P produced none).
+      runManifestModel: null,
     }),
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
