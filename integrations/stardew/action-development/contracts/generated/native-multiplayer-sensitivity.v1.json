@@ -112,6 +112,7 @@
     "craft_item",
     "cook_recipe",
     "collect_crab_pot_output",
+    "shop_purchase",
     "ship_item",
     "dismiss_modal",
     "answer_dialogue",
@@ -1164,6 +1165,37 @@
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
           "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "shop_purchase",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Utility.cs",
+          "signature": "public static bool TryOpenShopMenu(string shopId, string ownerName, bool playOpenSound = true)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "Resolves the named owner, evaluates the shop's owner game-state query, and assigns Game1.activeClickableMenu for the local player; the stock it reads comes from shared Data/Shops content the action never writes."
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/ShopMenu.cs",
+          "signature": "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "Charges the local player and inserts the good into the local inventory; the only shared effect is the per-player stock decrement the native client already synchronises, identical to a real player click."
+        },
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/InventoryMenu.cs",
+          "signature": "public Item leftClick(int x, int y, Item toPlace, bool playSound = true)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "Places the held item into the LOCAL player inventory slots."
         }
       ],
       "admission": {

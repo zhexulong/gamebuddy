@@ -2407,6 +2407,43 @@
         "handlerGroup": null
       },
       {
+        "actionId": "shop_purchase",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "shop_purchase",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "quantity": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "item_purchased"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "ship_item",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2596,6 +2633,7 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
+      "shop_purchase",
       "ship_item",
       "advance_day"
     ],
@@ -2648,6 +2686,7 @@
       "craft_item",
       "cook_recipe",
       "collect_crab_pot_output",
+      "shop_purchase",
       "ship_item",
       "advance_day"
     ],
@@ -2714,6 +2753,7 @@
       "scythe_crop",
       "select_mine_elevator_floor",
       "ship_item",
+      "shop_purchase",
       "till_soil",
       "travel",
       "use_item",
@@ -2776,6 +2816,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -2842,6 +2883,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -2908,6 +2950,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -2974,6 +3017,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -3040,6 +3084,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -3200,6 +3245,7 @@
       "set_sign_display",
       "shake_tree",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "till_soil",
       "toggle_fence_gate",
@@ -3276,6 +3322,7 @@
       "npc_relationship",
       "pet_animal",
       "ship_item",
+      "shop_purchase",
       "take_pedestal_item",
       "use_item",
       "water_pet_bowl",
@@ -3533,6 +3580,11 @@
         "actionId": "ride_bus",
         "runner": "run-stardew-native-local-player-ride-bus-smoke.mjs",
         "fixtureScenario": "native_ride_bus_v1"
+      },
+      {
+        "actionId": "shop_purchase",
+        "runner": "run-stardew-native-local-player-shop-purchase-smoke.mjs",
+        "fixtureScenario": "native_shop_purchase_v1"
       },
       {
         "actionId": "select_mine_elevator_floor",

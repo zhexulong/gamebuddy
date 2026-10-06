@@ -325,6 +325,29 @@ const TABLE = {
   // interaction that raises the game's own question, and the dispatcher that
   // consumes the answer. Neither is re-implemented by the Mod (see
   // farmhandexecutioncontroller.busactions.cs), so both seams are recorded.
+  // shop_purchase opens the game's own ShopMenu and dispatches the purchase through its
+  // public click handler. Both act on the LOCAL player's inventory and purse, and the
+  // stock it reads comes from shared content data that the action never writes.
+  shop_purchase: [
+    [
+      "StardewValley/Utility.cs",
+      "public static bool TryOpenShopMenu(string shopId, string ownerName, bool playOpenSound = true)",
+      "mp-insensitive",
+      "Resolves the named owner, evaluates the shop's owner game-state query, and assigns Game1.activeClickableMenu for the local player; the stock it reads comes from shared Data/Shops content the action never writes.",
+    ],
+    [
+      "StardewValley.Menus/ShopMenu.cs",
+      "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+      "mp-insensitive",
+      "Charges the local player and inserts the good into the local inventory; the only shared effect is the per-player stock decrement the native client already synchronises, identical to a real player click.",
+    ],
+    [
+      "StardewValley.Menus/InventoryMenu.cs",
+      "public Item leftClick(int x, int y, Item toPlace, bool playSound = true)",
+      "mp-insensitive",
+      "Places the held item into the LOCAL player inventory slots.",
+    ],
+  ],
   ride_bus: [
     [
       "StardewValley.Locations/BusStop.cs",

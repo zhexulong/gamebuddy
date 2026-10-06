@@ -173,7 +173,7 @@ public static class FarmhandActionCatalog
         // declared shape is (expectedTargetId, expectedQualifiedItemId, quantity): the
         // target is an opaque shop identity, the item is the wire identity of the good,
         // and quantity is clamped against live stock and the purse on the game thread.
-        E("shop_purchase", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, ShopPurchase(), FarmhandActionLifecycle.Experimental),
+        E("shop_purchase", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, ShopPurchase(), FarmhandActionLifecycle.LiveVerified),
         E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
     // WIA §4.2 modal-handling family: the ONE action that may run while the
     // world holds a modal. `dismiss_modal` only closes an informational native

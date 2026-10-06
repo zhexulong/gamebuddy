@@ -112,6 +112,8 @@
     "tools/run-stardew-native-local-player-plant-seed-smoke.mjs",
     "tools/run-stardew-native-local-player-refill-watering-can-smoke.mjs",
     "tools/run-stardew-native-local-player-refill-watering-can-smoke.test.mjs",
+    "tools/run-stardew-native-local-player-ride-minecart-smoke.mjs",
+    "tools/run-stardew-native-local-player-ride-minecart-smoke.test.mjs",
     "tools/run-stardew-native-local-player-scythe-crop-smoke.mjs",
     "tools/run-stardew-native-local-player-ship-item-smoke.mjs",
     "tools/run-stardew-native-local-player-till-soil-smoke.mjs",
@@ -877,6 +879,18 @@
       "classification": "canonical-scenario",
       "disposition": "keep-project-local",
       "futureProjectPath": "scenarios/run-stardew-shared-world-action.ps1"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-ride-minecart-smoke.mjs",
+      "classification": "canonical-scenario",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "scenarios/run-stardew-native-local-player-ride-minecart-smoke.mjs"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-ride-minecart-smoke.test.mjs",
+      "classification": "conformance-test",
+      "disposition": "keep-project-local",
+      "futureProjectPath": "tests/legacy/run-stardew-native-local-player-ride-minecart-smoke.test.mjs"
     }
   ],
   "pilotLegacyClosure": [
