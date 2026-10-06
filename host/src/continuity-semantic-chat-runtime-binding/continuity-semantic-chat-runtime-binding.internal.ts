@@ -295,7 +295,17 @@ function assertOwnerProof(value: unknown): asserts value is Readonly<{ processId
 }
 const OWNER_IDENTITY_QUERY_TIMEOUT_MS = 15_000;
 
-async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
+/**
+ * Reads this process's own creation time as an owner proof.
+ *
+ * The proof stays strict: stdout must be exactly `<pid>|<ticks>` and stderr must be
+ * empty. The only concession is one retry, because a loaded Windows host can lose
+ * the ephemeral PowerShell handshake while the process being attested is perfectly
+ * healthy - and that spurious failure reads to the player as the companion runtime
+ * dying. A retry re-queries the same facts, so a successful retry produces a fresh
+ * exact proof and nothing about the validation is relaxed.
+ */
+async function queryCurrentOwnerProof(attempt = 0): Promise<OwnerProofRecord> {
   const run = promisify(execFile);
   const processId = process.pid;
   const script = [
@@ -321,6 +331,7 @@ async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
     assertOwnerProof(proof);
     return proof;
   } catch {
+    if (attempt === 0) return queryCurrentOwnerProof(1);
     throw new Error("windows_runtime_owner_identity_query_failed");
   }
 }
