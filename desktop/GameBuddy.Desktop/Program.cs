@@ -11,9 +11,17 @@ internal enum DesktopLaunchResult
     GuardianStarted,
     RootRegistrationUnavailable,
     RootLayoutUnavailable,
+    // The launcher-owned pre-launch provisioning step could not establish the
+    // layout's mutable roots. It is named apart from RootLayoutUnavailable because
+    // the event is different: creating the roots failed, not deriving a layout.
+    MutableRootsUnavailable,
     HostGenerationUnavailable,
     GenerationAdmissionRefused,
     GuardianLaunchUnavailable,
+    // The operational deployment manifest is absent or unusable: the launch can
+    // never enter Host composition. Its own member, because the launcher neither
+    // supplies that identity nor may it treat a missing one as a layout problem.
+    DeploymentIdentityUnavailable,
     HostSessionFailed,
 }
 
@@ -47,14 +55,16 @@ internal static class Program
     /// always accompanied by a non-zero exit status, and the line carries no path,
     /// no secret and no stack.
     /// </summary>
-    private static string? OutcomeCode(DesktopLaunchResult result) => result switch
+    internal static string? OutcomeCode(DesktopLaunchResult result) => result switch
     {
         DesktopLaunchResult.Unavailable => null,
         DesktopLaunchResult.RootRegistrationUnavailable => "root_registration_unavailable",
         DesktopLaunchResult.RootLayoutUnavailable => "root_layout_unavailable",
+        DesktopLaunchResult.MutableRootsUnavailable => "mutable_roots_unavailable",
         DesktopLaunchResult.HostGenerationUnavailable => "host_generation_unavailable",
         DesktopLaunchResult.GenerationAdmissionRefused => "generation_admission_refused",
         DesktopLaunchResult.GuardianLaunchUnavailable => "guardian_launch_unavailable",
+        DesktopLaunchResult.DeploymentIdentityUnavailable => "deployment_identity_unavailable",
         DesktopLaunchResult.HostSessionFailed => "host_session_failed",
         _ => UnattributedLaunchFailureCode,
     };
@@ -109,6 +119,13 @@ internal static class Program
         var stage = LaunchStage.GenerationSelection;
         try
         {
+            // The launcher owns this step, before anything is launched and before the
+            // generation is admitted. The data, operational and presentation roots are
+            // derived rather than registered and no product component creates them, so
+            // the first launch must or the layout read below fails closed. It is
+            // idempotent, it creates only those directories, and it never creates the
+            // program root (Setup installs that).
+            CurrentUserRootLayout.ProvisionMutableRootsForCurrentUser();
             var layout = CurrentUserRootLayout.DeriveForCurrentUser();
             await using var selection = InstalledGenerationSelection.Acquire(layout.ProgramRoot);
             stage = LaunchStage.GenerationAdmission;
@@ -116,6 +133,13 @@ internal static class Program
             await using var image = await new InstalledGenerationAdmission(layout).AdmitGuardianAsync(selection, cancellationToken).ConfigureAwait(false);
             await using var runtimeSupervisor = new RuntimeSupervisor();
             await using var guardianSupervisor = new GuardianSupervisor();
+
+            // The operational deployment manifest is the admitted Host child's
+            // deployment identity. The launcher only refuses here - it neither
+            // supplies nor repairs that identity - so an absent or unusable manifest
+            // is named before any child is launched instead of surfacing later as an
+            // opaque launch failure.
+            OperationalDeploymentManifest.Require(layout);
 
             // From here the admitted children are launched: Voice first (the Host
             // child is handed its port/token pair), then the Host runtime and the
@@ -197,5 +221,7 @@ internal static class Program
         }
         catch (RootRegistrationUnavailableException) { return DesktopLaunchResult.RootRegistrationUnavailable; }
         catch (RootLayoutUnavailableException) { return DesktopLaunchResult.RootLayoutUnavailable; }
+        catch (MutableRootsUnavailableException) { return DesktopLaunchResult.MutableRootsUnavailable; }
+        catch (DeploymentIdentityUnavailableException) { return DesktopLaunchResult.DeploymentIdentityUnavailable; }
     }
 }
