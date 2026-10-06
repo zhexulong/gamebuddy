@@ -37,6 +37,7 @@ import {
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 // The registered terminal reason code per action is the only authority that can
@@ -986,28 +987,60 @@ try {
   // identity profile and world book it actually mounted. Compare that against
   // the canonical files the product placed under this runtime root, so the gate
   // proves the persona/world book reached the Game surface rather than trusting
-  // a script-side claim. A disposable root legitimately has neither file.
+  // a script-side claim.
+  //
+  // These judgements go through the evidence-verdict vocabulary because a boolean
+  // here used to default to PASS when there was nothing to look at: on a disposable
+  // root the expected profile and world book are absent BY CONSTRUCTION, so
+  // `expectation === null ? true : check` reported "assembly passed" for a companion
+  // that had no persona at all (measured 2026-10-06, commit a58a4386). "Nothing to
+  // look at" is `unobserved` now, and `unobserved` cannot be a pass.
   const personaWorldBook = await readAssembledContextEvidence(gameSessionPaths);
-  // Content gate over the SAME canonical profile the assembly gate hashes: an
-  // empty default card (no persona) or unrendered SillyTavern macros is a
-  // content defect that assembly-only gates cannot see. A disposable root
-  // (expectedProfile null) stays a gap, never an assertion.
+  const expectedProfile = personaWorldBook.expectedProfile ?? null;
+  const expectedWorldBook = personaWorldBook.expectedWorldBook ?? null;
+  // Content gate over the SAME canonical profile the assembly gate hashes: an empty
+  // default card (no persona) or unrendered SillyTavern macros is a content defect
+  // that assembly-only gates cannot see.
   const contentGate = personaWorldBook.contentGate ?? null;
-  const contentPassed =
-    contentGate === null || contentGate.profileRead !== true
-      ? true
-      : contentGate.personaPresent && contentGate.macroResidue.length === 0;
-  const contextAssembled = personaWorldBook.expectedProfile === null
-    ? true
-    : personaWorldBook.mountedProfileId === personaWorldBook.expectedProfile.profileId
-      && personaWorldBook.mountedProfileRevision === personaWorldBook.expectedProfile.revision;
-  const worldBookAssembled = personaWorldBook.expectedWorldBook === null
-    ? true
-    : personaWorldBook.mountedWorldBookId === personaWorldBook.expectedWorldBook.worldBookId;
+  const contentVerdict = judgeExpectation({
+    expectation: expectedProfile,
+    observed: contentGate?.profileRead === true,
+    ok: contentGate?.personaPresent === true && (contentGate?.macroResidue?.length ?? 0) === 0,
+    reason: "companion_persona_absent_or_macro_residue",
+  });
+  const contextVerdict = judgeExpectation({
+    expectation: expectedProfile,
+    observed: personaWorldBook.mountedProfileId !== null && personaWorldBook.mountedProfileId !== undefined,
+    ok:
+      personaWorldBook.mountedProfileId === expectedProfile?.profileId &&
+      personaWorldBook.mountedProfileRevision === expectedProfile?.revision,
+    reason: "mounted_profile_mismatch",
+  });
+  const worldBookVerdict = judgeExpectation({
+    expectation: expectedWorldBook,
+    observed: personaWorldBook.mountedWorldBookId !== null && personaWorldBook.mountedWorldBookId !== undefined,
+    ok: personaWorldBook.mountedWorldBookId === expectedWorldBook?.worldBookId,
+    reason: "mounted_world_book_mismatch",
+  });
+  const contentPassed = isPass(contentVerdict);
+  const contextAssembled = isPass(contextVerdict);
+  const worldBookAssembled = isPass(worldBookVerdict);
+  // WHICH outcome each gate reached (verified / failed / unobserved) is published,
+  // so a reader can tell an assertion that passed from one that never had evidence.
+  const assemblyEvidence = Object.freeze({
+    content: contentVerdict,
+    context: contextVerdict,
+    worldBook: worldBookVerdict,
+  });
+  // absence-as-pass: only the active rung is judged; the other rungs' clauses are
+  // intentionally true so the single verdict line can AND them all.
   const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
+  // absence-as-pass: only the active rung is judged (see the line above).
   const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
+  // absence-as-pass: only the active rung is judged (see the line above).
   const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && (voiceResult?.state === "completed" || voiceResult?.state === "disabled") : true;
-  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  // absence-as-pass: only the active rung is judged (see the rung guards above).
+  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
   // Ladder 4: the Agent must harvest the real mature crop and then offer it to
   // the villager. Either an ordinary recorded gift or a native quest delivery is
   // an accepted terminal for the offer — the point under test is the physical
@@ -1026,8 +1059,10 @@ try {
   // offer: the point under test is the harvest→don't-ship decision itself.
   const covenantReceipt = findProtectedCovenantShipment(receipts, PROTECTED_COVENANT_ITEM_ID);
   const covenantPassed = LADDER === "5" && covenantSeed !== null ? covenantReceipt === undefined && covenantSeed.durable : LADDER === "5" ? covenantReceipt === undefined : true;
-  const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
-  const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : true) : true;
+  // absence-as-pass: only the active rung is judged (see the rung guards above).
+  const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
+  // absence-as-pass: only the active rung is judged (see the rung guards above).
+  const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
   // Ladder 6 (self-directed play session): the rung measures capability, not a
   // scripted chain, so there is no expected receipt to look for. It passes only when
   // the session produced at least one REAL action attempt AND every delivered turn
@@ -1196,6 +1231,9 @@ try {
     capabilityAudit,
     presentation,
     presenceProjection,
+    // The three assembly/content gates publish their OUTCOME vocabulary, not just a
+    // boolean, so a reviewer can tell "verified" from "nobody looked".
+    assemblyEvidence,
     programStatus: status,
     walkReceipt: walkReceipt ?? null,
     inspectReceipt: inspectReceipt ?? null,
