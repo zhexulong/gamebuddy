@@ -2774,7 +2774,21 @@
           },
           "maxItems": 64
         },
+        "buildingChestTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildingChestTarget"
+          },
+          "maxItems": 16
+        },
         "shopTargets": {
+        "wearableTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/wearableTarget"
+          },
+          "maxItems": 8
+        },
           "type": "array",
           "items": {
             "$ref": "#/$defs/shopTarget"
@@ -5896,6 +5910,44 @@
             ],
             "properties": {
               "action": {
+                "const": "load_building_chest"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/slotXYTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "const": "collect_building_chest_output"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/xyTargetArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "shop_purchase"
               }
             }
@@ -6068,7 +6120,19 @@
             "toggle_fence_gate",
             "withdraw_silo_hay",
             "use_obelisk",
-            "toggle_animal_door"
+
+            "place_owned_object",
+            "remove_placed_item",
+            "break_container_source",
+            "toggle_animal_door",
+            "load_building_chest",
+            "collect_building_chest_output",
+            "use_warp_item",
+            "pan_ore",
+            "claim_mail_attachment",
+            "equip_wearable",
+            "unequip_wearable",
+            "dismount_transport"
           ]
         },
         "args": {
@@ -7310,6 +7374,17 @@
       }
     },
     "animalDoorTarget": {
+    "wearableTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "bodySlot", "occupantQualifiedItemId", "occupantDisplayName"],
+      "properties": {
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bodySlot": { "type": "string", "enum": ["hat", "boots", "shirt", "pants", "left_ring", "right_ring"] },
+        "occupantQualifiedItemId": { "type": ["string", "null"] },
+        "occupantDisplayName": { "type": ["string", "null"] }
+      }
+    },
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -7342,6 +7417,77 @@
         },
         "isOpen": {
           "type": "boolean"
+        }
+      }
+    },
+    "buildingChestTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "buildingType",
+        "chestId",
+        "branch",
+        "stackCount",
+        "itemCount"
+      ],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^building_chest_[a-f0-9]{16}$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "buildingType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "chestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "branch": {
+          "type": "string",
+          "enum": [
+            "load",
+            "collect"
+          ]
+        },
+        "stackCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "itemCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loadInputSlot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "loadInputQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "loadInputStack": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

@@ -697,7 +697,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
         label: "Enter or Exit Stardew Location",
         description:
-          "Use a live native door target. The Mod resolves the destination and only the Warped postcondition can report success.",
+          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x, y and expectedTargetId must be copied exactly from doorTargets in the most recent observe result; only the Warped postcondition can report success.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1019,7 +1019,7 @@ export function createStardewActionTools(
     tools.push(makeGameActionTool({
       name: STARDEW_ACTION_TOOL_NAMES[action],
       label: labels[0],
-      description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result.`,
+      description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.`,
       parameters: Type.Object({
         x: Type.Integer({ minimum: 0, maximum: 1000 }),
         y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1212,9 +1212,9 @@ export function createStardewActionTools(
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.use_item,
-        label: "Use Stardew Food Item",
+        label: "Consume Held Stardew Food Item",
         description:
-          "Use a live ordinary edible Farmhand inventory item. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native eating animation and the authoritative receipt determine completion.",
+          "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use clear_debris, chop_tree_source, break_rock_source, clear_hoedirt, refill_watering_can, scythe_crop, cut_weeds, cut_grass or till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           expectedQualifiedItemId: Type.String({
@@ -1690,7 +1690,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.shop_purchase,
           label: "Buy from a shop",
           description:
-            "Buy goods from a shop whose owner is standing within reach. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. Move into reach first; the action does not walk.",
+            "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Move into reach of the shop first; the action does not walk.",
           parameters: schema,
           action: "shop_purchase",
           toArgs: () => ({}),
@@ -2093,7 +2093,7 @@ export function createStardewActionTools(
     const label = isMannequin ? "Dress Mannequin" : isSign ? "Set Sign Display" : "Deposit Silo Hay";
     tools.push(makeGameActionTool({
       name: STARDEW_ACTION_TOOL_NAMES[action], label,
-      description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result.`,
+      description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.`,
       parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
       action, toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
     }));
@@ -2254,7 +2254,7 @@ export function createStardewActionTools(
     tools.push(makeGameActionTool({
       name: STARDEW_ACTION_TOOL_NAMES.enter_mine,
       label: "Enter the Mine",
-      description: "Enter the live mine entrance tile; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. This uses normal game progression and does not accept a level selector.",
+      description: "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use select_mine_elevator_floor.",
       parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
       action: "enter_mine",
       toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
@@ -2274,6 +2274,250 @@ export function createStardewActionTools(
       toArgs: params => ({ slot: params.slot, x: params.x, y: params.y }),
     }));
   }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "load_building_chest",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("load_building_chest", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("load_building_chest", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.load_building_chest,
+          label: "Load a building chest",
+          description:
+            "Put the held item into a storage chest the BUILDING itself declares, such as a Mill's input chest. Stand within reach of the building first. Read the opaque target id, its tile, the chest id and the load hint from the buildingChestTargets entries of the most recent observation. Only the native Load branch is driven; a chest the game exposes only through a menu is refused by name.",
+          parameters: schema,
+          action: "load_building_chest",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "collect_building_chest_output",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("collect_building_chest_output", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("collect_building_chest_output", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.collect_building_chest_output,
+          label: "Collect building chest output",
+          description:
+            "Take what a building's OWN output chest holds, such as a Mill's flour or a Junimo Hut's crops. Stand within reach of the building first. Read the opaque target id, its tile and `stackCount` from the `buildingChestTargets` entries of the most recent observation. A chest holding two or more stacks is refused by name (building_chest_requires_menu), because the native branch would open a container menu this action does not drive; otherwise the Mod asserts the stack left the chest AND arrived in the pack.",
+          parameters: schema,
+          action: "collect_building_chest_output",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "use_warp_item",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("use_warp_item", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("use_warp_item", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.use_warp_item,
+          label: "Use a held warp totem",
+          description:
+            "Use a held warp totem (farm, mountain, beach, desert or island) through the game's own object-use path, consuming the totem and warping the Farmhand. slot and expectedQualifiedItemId must be copied exactly from the warpItemTargets entry of the MOST RECENT observe result. The destination comes from the totem itself; only the arrival postcondition can report success.",
+          parameters: schema,
+          action: "use_warp_item",
+          toArgs: (params) => ({ slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "pan_ore",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("pan_ore", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("pan_ore", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.pan_ore,
+          label: "Pan the water for ore",
+          description:
+            "Pan an ore-panning spot with the Copper Pan the Farmhand is holding. slot, x and y must be copied exactly from the panSites entry of the MOST RECENT observe result; the tile is re-checked against the game's own live panning point, so a stale site is refused rather than panned. Only the observed point change plus the panning counter can report success.",
+          parameters: schema,
+          action: "pan_ore",
+          toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "claim_mail_attachment",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("claim_mail_attachment", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("claim_mail_attachment", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.claim_mail_attachment,
+          label: "Claim a mailbox attachment",
+          description:
+            "Claim whatever is waiting in a mailbox. x, y and expectedTargetId must be copied exactly from the mailboxTargets entry of the MOST RECENT observe result; the target id binds the location, the tile and the pending letter, so a stale id is refused rather than claiming the next letter. A letter whose %item attachment has to be delivered is completed with the native letter exit, not discarded.",
+          parameters: schema,
+          action: "claim_mail_attachment",
+          toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "equip_wearable",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("equip_wearable", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("equip_wearable", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.equip_wearable,
+          label: "Equip a wearable",
+          description:
+            "Put a wearable Farmhand inventory item into the body slot it belongs to. slot, expectedQualifiedItemId and expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result; the target id names the body slot, so a stale id is refused. A repeat of the same equip is an idempotent success, not an error.",
+          parameters: schema,
+          action: "equip_wearable",
+          toArgs: (params) => ({ slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "unequip_wearable",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("unequip_wearable", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("unequip_wearable", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.unequip_wearable,
+          label: "Unequip a wearable",
+          description:
+            "Take the wearable out of a body slot and put it into the named free inventory slot. slot and expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result AND from toolSlots for the destination. The action refuses when the pack is full rather than losing the item, and emptying an already-empty slot is an idempotent success.",
+          parameters: schema,
+          action: "unequip_wearable",
+          toArgs: (params) => ({ slot: params.slot, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "dismount_transport",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("dismount_transport", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("dismount_transport", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.dismount_transport,
+          label: "Dismount the ridden transport",
+          description:
+            "Get off the horse or other mount the Farmhand is currently riding. This action takes NO arguments. It is a pure state assertion: it refuses when the actor is not riding anything, and only the observed end state (!isRidingHorse) can report success.",
+          parameters: schema,
+          action: "dismount_transport",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "place_owned_object",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("place_owned_object", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("place_owned_object", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.place_owned_object,
+          label: "Place an owned object",
+          description:
+            "Place a big-craftable the Farmhand owns onto a live lawful tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the target id names the exact placement candidate, so a stale id is refused rather than placed somewhere else. Only the observed new object on the tile can report success.",
+          parameters: schema,
+          action: "place_owned_object",
+          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "remove_placed_item",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("remove_placed_item", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("remove_placed_item", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.remove_placed_item,
+          label: "Remove a placed object",
+          description:
+            "Remove a placed object from the world with the tool that can remove it. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. A tool that cannot remove THIS object is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
+          parameters: schema,
+          action: "remove_placed_item",
+          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "break_container_source",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("break_container_source", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("break_container_source", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.break_container_source,
+          label: "Break a container",
+          description:
+            "Break a breakable container on the map, such as a crate or barrel, with the tool in the named slot. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the container being GONE and its drops accounted for, not the tool's return value.",
+          parameters: schema,
+          action: "break_container_source",
+          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedTargetId: params.expectedTargetId }),
+        }),
+      );
+    }
+  }
+
   return tools;
 }
 async function executeGameAction(

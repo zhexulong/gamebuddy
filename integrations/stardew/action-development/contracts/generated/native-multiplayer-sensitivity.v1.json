@@ -83,6 +83,9 @@
     "place_wood_fence",
     "place_crab_pot",
     "bait_crab_pot",
+    "place_owned_object",
+    "remove_placed_item",
+    "break_container_source",
     "chop_tree_source",
     "break_rock_source",
     "clear_hoedirt",
@@ -115,6 +118,11 @@
     "withdraw_silo_hay",
     "use_obelisk",
     "toggle_animal_door",
+    "use_warp_item",
+    "pan_ore",
+    "claim_mail_attachment",
+    "load_building_chest",
+    "collect_building_chest_output",
     "scythe_crop",
     "harvest_bush",
     "harvest_fruit_tree",
@@ -126,6 +134,9 @@
     "collect_crab_pot_output",
     "shop_purchase",
     "ship_item",
+    "equip_wearable",
+    "unequip_wearable",
+    "dismount_transport",
     "dismiss_modal",
     "answer_dialogue",
     "advance_day"
@@ -567,6 +578,57 @@
           "signature": "public virtual bool checkAction",
           "sensitivity": "mp-observational",
           "observedEffect": "IsLocalPlayer only gates pickup sound/animation"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "place_owned_object",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool placementAction",
+          "sensitivity": "mp-observational",
+          "observedEffect": "owner.Value records the ACTING player's own id (who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite; the decisive writes are mode-independent (location.objects.Add for a bigCraftable, the tapper branch's tree.tapped.Value = true plus Tree.UpdateTapperProduct which touches only the container's own heldObject, and location.objects[vector] = obj4 for the replace case)"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "remove_placed_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pickaxe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "Game1.multiplayer.broadcastSprites mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) uses the id only for getFarmer(id).getStandingPosition() as the debris origin, while the object removal (performRemoveAction then Objects.Remove) is mode-independent; the action also drives Axe.DoFunction, whose body is mp-insensitive on its own, so this seam dominates"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "break_container_source",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Axe.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "Game1.multiplayer.broadcastSprites in the break branch mirrors chip sprites for a container the SAME method has already removed from location.objects, so the read is collateral; the removal and the releaseContents drop creation are mode-independent, and the method returns false in every path"
         }
       ],
       "admission": {
@@ -1100,6 +1162,91 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "use_warp_item",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Object.cs",
+          "signature": "public virtual bool performUseAction(GameLocation location)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the body reads a multiplayer token (Game1.multiplayer / IsMultiplayer) for presentation or broadcast only; the outcome is decided by this actor's own item and state, so the effect is observation, not shared-world authority"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "pan_ore",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Tools/Pan.cs",
+          "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "reads the location's own orePanPoint and the acting farmer's stats; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "claim_mail_attachment",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public void mailbox()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "drains the LOCAL player's own mailbox queue and opens that player's letter viewer; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "load_building_chest",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Buildings/Building.cs",
+          "signature": "public bool PerformBuildingChestAction(string name, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "consumes a RequiredCount quantum of the held item into the building's own chest and plays the chest's sound; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "collect_building_chest_output",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Buildings/Building.cs",
+          "signature": "public bool PerformBuildingChestAction(string name, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "delegates to Utility.CollectSingleItemOrShowChestMenu, which moves the chest's single stack into the local player's inventory; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "scythe_crop",
       "lifecycle": "live_verified",
       "seams": [
@@ -1305,6 +1452,57 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "equip_wearable",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Farmer.cs",
+          "signature": "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "writes only this actor's own NetRef body slots and calls this actor's onEquip/onUnequip; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "unequip_wearable",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Farmer.cs",
+          "signature": "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the null-item form of the same method: it moves the actor's own item out of its own NetRef slot; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "dismount_transport",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Characters/Horse.cs",
+          "signature": "public void dismount(bool from_demolish = false)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the body reads no multiplayer token, which is the checker's own test for this class; what IS shared is the per-horse NetMutex it releases (Horse.cs:510), which serialises cross-player mounts on the same horse. That lock is not a read in this body, so the classification stays mp-insensitive while the shared-world consequence is recorded here for the next reader."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     },
     {
       "actionId": "dismiss_modal",

@@ -23,7 +23,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // discovery-only radius lets the snapshot expose planning targets before the
     // Agent walks there, matching Item/NPC/Chest discovery. Execution
     // preconditions never read this constant.
-    private const int TargetDiscoveryRadius = 6;
+    internal const int TargetDiscoveryRadius = 6;
     // Animal-product discovery is the one place where the ACTING range is wider
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
@@ -1872,6 +1872,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
             advertisedCapabilities.Contains("take_pedestal_item", StringComparer.Ordinal) ? DiscoverPedestalTargets(player) : null,
             advertisedCapabilities.Contains("toggle_fence_gate", StringComparer.Ordinal) ? DiscoverFenceGateTargets(player) : null,
+
             // Macro time context. Game1.Date/Game1.timeOfDay are the same values the
             // native behaviour code reads, so publishing them lets the companion
             // reason about time without the Mod interpreting it for them.
@@ -1887,7 +1888,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // Last parameter, defaulted, so it can be named here without disturbing the
             // positional arguments above it (CS1744 if the declaration moves earlier).
             ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null,
-                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player) : null);
+                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player) : null,
+            // Item/tile lane projections, each published only while its own action is advertised.
+            WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
+            PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? DiscoverPanSites(player) : null,
+            MailboxTargets: advertisedCapabilities.Contains("claim_mail_attachment", StringComparer.Ordinal) ? DiscoverMailboxTargets(player) : null,
+
+            // The actor's OWN wearable body slots. Published when EITHER wearable action is
+            // advertised, because both name the same body-slot targets.
+            WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
+            BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player) : null,
+            // The world-object lane's single shared projection: placement candidates, removable and
+            // non-removable objects, and breakable containers, published while ANY of the three
+            // actions is advertised because all three name targets from this one array.
+            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container_source", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null);
     }
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
@@ -1912,7 +1926,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null);
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)

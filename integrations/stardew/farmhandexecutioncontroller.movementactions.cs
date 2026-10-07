@@ -552,6 +552,10 @@ internal sealed partial class ExecutionManager
             // is chosen inside the game's own delayed callback (WarpTotemEntry, else the whichFarm
             // fallback). Only "the actor reached the destination location" can be asserted.
             "use_obelisk" => locationMatches,
+            // A warp totem's landing tile is also chosen inside the game's own delayed
+            // callback (Object.totemWarpForReal), and Game1.warpFarmer may nudge it, so the
+            // destination LOCATION is the only legal postcondition here too.
+            "use_warp_item" => locationMatches,
             _ => Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY,
         };
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
@@ -566,7 +570,9 @@ internal sealed partial class ExecutionManager
                             ? "mine_elevator_floor_selected"
                             : specification.Action == "use_obelisk"
                                 ? "obelisk_arrived"
-                                : "travel_completed"
+                                : specification.Action == "use_warp_item"
+                                    ? "warp_item_arrived"
+                                    : "travel_completed"
             : specification.Action == "enter_exit"
                 ? "enter_exit_postcondition_mismatch"
                 : specification.Action == "ride_minecart"
@@ -577,7 +583,9 @@ internal sealed partial class ExecutionManager
                             ? "mine_elevator_floor_postcondition_mismatch"
                             : specification.Action == "use_obelisk"
                                 ? "obelisk_postcondition_mismatch"
-                                : "travel_postcondition_mismatch";
+                                : specification.Action == "use_warp_item"
+                                    ? "warp_item_arrival_mismatch"
+                                    : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.

@@ -493,7 +493,30 @@ public sealed record BridgeSnapshot(
     // Defaulted and LAST on purpose: the three siblings above already end the positional list, so
     // inserting anywhere earlier silently re-binds their existing positional arguments.
     IReadOnlyList<BridgeObeliskTarget>? ObeliskTargets = null,
-    IReadOnlyList<BridgeAnimalDoorTarget>? AnimalDoorTargets = null
+    IReadOnlyList<BridgeAnimalDoorTarget>? AnimalDoorTargets = null,
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is
+    // already closed by the parameters before it.
+    IReadOnlyList<BridgeBuildingChestTarget>? BuildingChestTargets = null
+,
+    // The world-object lane's projection. ONE array, four kinds: a placement candidate names the
+    // tile and the backpack slot a placeable item would take (the object does not exist yet),
+    // and the objects already on world tiles name the slot an axe, a pickaxe or a heavy hitter
+    // would act through. See BridgeWorldObjectTarget in WorldObjectTargetModels.cs.
+    IReadOnlyList<BridgeWorldObjectTarget>? WorldObjectTargets = null
+    // Item/tile lane projections. Defaulted and LAST for the same reason as the siblings
+    // above: the positional list is already closed by the parameters before them.
+    ,IReadOnlyList<BridgeWarpItemTarget>? WarpItemTargets = null
+    ,IReadOnlyList<BridgePanSiteTarget>? PanSites = null
+    ,IReadOnlyList<BridgeMailboxTarget>? MailboxTargets = null
+
+        ,
+        // The actor's OWN wearable body slots (hat/boots/shirt/pants/left_ring/right_ring): the
+        // discovery projection the two wearable actions' expectedTargetId is taken from. Every slot
+        // is published, empty or not, because an EMPTY slot is exactly the target an equip into a
+        // free slot names; the occupant fields say which are filled. Defaulted and LAST for the same
+        // reason as its siblings above: the positional list is already closed by the parameters
+        // before it.
+        IReadOnlyList<BridgeWearableTarget>? WearableTargets = null
     );
 
 public sealed record BridgeActiveExecution(
@@ -605,6 +628,52 @@ public sealed class BridgeExecutionArgs
 /// postcondition is that the state FLIPS, and a target whose identity ignores its state cannot be
 /// verified.</summary>
 public sealed record BridgeAnimalDoorTarget(string TargetId, string Location, int X, int Y, string BuildingType, bool IsOpen);
+
+/// <summary>One named inventory a BUILDING declares in its own data (Data/Buildings ->
+/// BuildingData.Chests), reached from a tile on the building's exterior. `ChestId` and `Branch`
+/// are the declared identity and the native branch the chest takes (`load` or `collect`); the
+/// Chest-type branch is never published because it can only open a container menu.
+/// `StackCount` is the number of occupied slots and `ItemCount` the number of items, both read
+/// from the live chest: they are published because the two branches' own preconditions are
+/// stated in those terms, so an Agent that could not see them would have to guess whether a
+/// call can succeed. A Load chest additionally publishes the inventory slot holding an item its
+/// own conversion accepts (`LoadInputSlot`/`LoadInputQualifiedItemId`/`LoadInputStack`, the
+/// `slot` argument `load_building_chest` requires) or omits all three when the actor holds
+/// nothing loadable; the Mod's serializer omits null members, so the Host accepts their
+/// absence exactly as it does for `machineTargets`.</summary>
+public sealed record BridgeBuildingChestTarget(
+    string TargetId,
+    string Location,
+    int X,
+    int Y,
+    string BuildingType,
+    string ChestId,
+    string Branch,
+    int StackCount,
+    int ItemCount,
+    int? LoadInputSlot = null,
+    string? LoadInputQualifiedItemId = null,
+    int? LoadInputStack = null);
+
+/// <summary>One owned warp totem the actor can activate right now. `Slot` and
+/// `QualifiedItemId` are exactly the action's arguments, and `Destination` is derived by the
+/// same helper the action executes with, so the projection and the execution cannot
+/// disagree. `Stack` is published because the native pair consumes one unit, which the
+/// receipt must be able to show.</summary>
+public sealed record BridgeWarpItemTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, string Destination, int DestinationX, int DestinationY);
+
+/// <summary>The current location's live ore-pan site. The game owns at most one per location
+/// (`GameLocation.orePanPoint`) and `performOrePanTenMinuteUpdate` is its only creator, so
+/// nothing is published while the point is unset. There is no target id: the tile IS the
+/// identity the request names, re-resolved against that live state.</summary>
+public sealed record BridgePanSiteTarget(int X, int Y);
+
+/// <summary>One mailbox tile in the current location, identified opaquely. `TargetId` binds
+/// the location, the tile, the pending count AND the head letter, so a request that has
+/// already been served is refused instead of claiming the NEXT letter; the head letter id is
+/// hashed INTO the id and never published, so the projection carries the mail count without
+/// carrying mailbox content.</summary>
+public sealed record BridgeMailboxTarget(string TargetId, string Location, int X, int Y, int PendingCount);
 
 public sealed record BridgeObeliskTarget(
     string TargetId,

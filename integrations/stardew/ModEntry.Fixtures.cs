@@ -308,7 +308,8 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_talk_to_npc_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or
+ "native_world_object_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_talk_to_npc_v1" or "native_equip_wearable_v1" or "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1" or "native_dismount_transport_v1" or "native_building_chest_v1" or "native_building_chest_multistack_v1" or "native_use_warp_item_v1" or "native_pan_ore_v1" or "native_claim_mail_attachment_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1949,6 +1950,46 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             InitializeNativeLocalToggleAnimalDoorFixture(player, farm);
             return;
         }
+        if (fixture.FixtureScenario == "native_world_object_v1")
+        {
+            InstallNativeLocalWorldObjectFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_use_warp_item_v1")
+        {
+            InitializeNativeLocalUseWarpItemFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_pan_ore_v1")
+        {
+            InitializeNativeLocalPanOreFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_claim_mail_attachment_v1")
+        {
+            InitializeNativeLocalClaimMailAttachmentFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_building_chest_v1")
+        {
+            // Establish only the declared Given: a building whose data declares a Load and a
+            // Collect chest, the Load chest empty, one stack in the Collect chest, and the actor
+            // holding an item the Load chest accepts. Production alone loads and collects.
+            InitializeNativeLocalBuildingChestFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_building_chest_multistack_v1")
+        {
+            // The same Given with TWO stacks in the Collect chest: the state the owner ruled must
+            // be refused by name rather than handed to the container menu the native branch opens.
+            InitializeNativeLocalBuildingChestMultiStackFixture(player, farm);
+            return;
+        }
 
         if (fixture.FixtureScenario == "native_withdraw_silo_hay_v1")
             {
@@ -2768,7 +2809,22 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             }
 
             if (fixture.FixtureScenario != "native_water_crop_v1")
-                throw new InvalidOperationException("fixture_native_local_scenario_dispatch_invalid");
+            if (fixture.FixtureScenario == "native_equip_wearable_v1")
+            {
+                InitializeNativeLocalEquipWearableFixture(player, farm);
+                return;
+            }
+            if (fixture.FixtureScenario is "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1")
+            {
+                InitializeNativeLocalUnequipWearableFixture(player, farm, fixture.FixtureScenario == "native_unequip_wearable_inventory_full_v1");
+                return;
+            }
+            if (fixture.FixtureScenario == "native_dismount_transport_v1")
+            {
+                InitializeNativeLocalDismountTransportFixture(player, farm);
+                return;
+            }
+
 
             WateringCan? availableCan = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
             if (availableCan is null)

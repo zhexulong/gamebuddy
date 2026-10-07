@@ -529,6 +529,84 @@ const TABLE = {
     "mp-insensitive",
     "flips the building's own animalDoorOpen NetBool and plays the open/close sound; the body reads no multiplayer token",
   ],
+
+  // The world-object lane: three actions, three natives on objects that occupy world tiles.
+  place_owned_object: [
+    "StardewValley/Object.cs",
+    "public virtual bool placementAction",
+    "mp-observational",
+    "owner.Value records the ACTING player's own id (who?.UniqueMultiplayerID ?? Game1.player.UniqueMultiplayerID), so it is the same value in both world modes; Game1.multiplayer.broadcastSprites mirrors an already-applied local sprite; the decisive writes are mode-independent (location.objects.Add for a bigCraftable, the tapper branch's tree.tapped.Value = true plus Tree.UpdateTapperProduct which touches only the container's own heldObject, and location.objects[vector] = obj4 for the replace case)",
+  ],
+  remove_placed_item: [
+    "StardewValley.Tools/Pickaxe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-observational",
+    "Game1.multiplayer.broadcastSprites mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) uses the id only for getFarmer(id).getStandingPosition() as the debris origin, while the object removal (performRemoveAction then Objects.Remove) is mode-independent; the action also drives Axe.DoFunction, whose body is mp-insensitive on its own, so this seam dominates",
+  ],
+  break_container_source: [
+    "StardewValley.Tools/Axe.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+    "Game1.multiplayer.broadcastSprites in the break branch mirrors chip sprites for a container the SAME method has already removed from location.objects, so the read is collateral; the removal and the releaseContents drop creation are mode-independent, and the method returns false in every path",
+"the handler calls the TOOL's DoFunction, which delegates: Axe.DoFunction reaches value2.performToolAction(this) then value2.performRemoveAction() (Axe.cs:88-94), and that is where the container is actually removed. The register cites the entry point the Mod calls; the delegation is recorded here so the terminal is still named.",
+    "the body reads no multiplayer token, which is this checker's own test for mp-insensitive. The removal itself happens one level deeper: Axe.DoFunction reaches value2.performToolAction(this) and then value2.performRemoveAction() (Axe.cs:88-94), which is where the container leaves the map.",
+  ],
+  use_warp_item: [
+    "StardewValley/Object.cs",
+    "public virtual bool performUseAction(GameLocation location)",
+    "mp-observational",
+    "the body reads a multiplayer token (Game1.multiplayer / IsMultiplayer) for presentation or broadcast only; the outcome is decided by this actor's own item and state, so the effect is observation, not shared-world authority",
+  ],
+  pan_ore: [
+    "StardewValley.Tools/Pan.cs",
+    "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
+    "mp-insensitive",
+    "reads the location's own orePanPoint and the acting farmer's stats; the body reads no multiplayer token",
+  ],
+  claim_mail_attachment: [
+    "StardewValley/GameLocation.cs",
+    "public void mailbox()",
+    "mp-insensitive",
+    "drains the LOCAL player's own mailbox queue and opens that player's letter viewer; the body reads no multiplayer token",
+  ],
+  equip_wearable: [
+    "StardewValley/Farmer.cs",
+    "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
+    "mp-insensitive",
+    "writes only this actor's own NetRef body slots and calls this actor's onEquip/onUnequip; the body reads no multiplayer token",
+"the registered name is the method the handler calls (Farmer.Equip); the generic parameter is omitted from the citation because the checker matches on the identifier before the parameter list",
+  ],
+  unequip_wearable: [
+    "StardewValley/Farmer.cs",
+    "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
+    "mp-insensitive",
+    "the null-item form of the same method: it moves the actor's own item out of its own NetRef slot; the body reads no multiplayer token",
+"the same seam as equip_wearable, called with a null item; the generic parameter is omitted for the same reason",
+  ],
+  dismount_transport: [
+    "StardewValley.Characters/Horse.cs",
+    "public void dismount(bool from_demolish = false)",
+    "mp-insensitive",
+    "the body reads no multiplayer token, which is the checker's own test for this class; what IS shared is the per-horse NetMutex it releases (Horse.cs:510), which serialises cross-player mounts on the same horse. That lock is not a read in this body, so the classification stays mp-insensitive while the shared-world consequence is recorded here for the next reader.",
+  ],
+  // The building-chest pair. Both drive the terminal public method the native click path ends in
+  // (GameLocation.performAction's BuildingChest case -> Building.PerformBuildingChestAction), and
+  // both branches act on the building's OWN chest plus the LOCAL player's inventory. The method
+  // reads no multiplayer token: the Load branch reads who.ActiveObject and the chest's own data,
+  // and the Collect branch delegates to Utility.CollectSingleItemOrShowChestMenu, which reads
+  // Game1.player's inventory. Its refusals are the game's own red messages.
+  load_building_chest: [
+    "StardewValley.Buildings/Building.cs",
+    "public bool PerformBuildingChestAction(string name, Farmer who)",
+    "mp-insensitive",
+    "consumes a RequiredCount quantum of the held item into the building's own chest and plays the chest's sound; the body reads no multiplayer token",
+  ],
+  collect_building_chest_output: [
+    "StardewValley.Buildings/Building.cs",
+    "public bool PerformBuildingChestAction(string name, Farmer who)",
+    "mp-insensitive",
+    "delegates to Utility.CollectSingleItemOrShowChestMenu, which moves the chest's single stack into the local player's inventory; the body reads no multiplayer token",
+  ],
   withdraw_silo_hay: [
     "StardewValley/GameLocation.cs",
     "public static Object GetHayFromAnySilo(GameLocation currentLocation)",

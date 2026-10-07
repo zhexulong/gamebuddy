@@ -80,7 +80,20 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "deposit_silo_hay" => this.executions.RequestLocalDepositSiloHay(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "withdraw_silo_hay" => this.executions.RequestLocalWithdrawSiloHay(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
                 "toggle_animal_door" => this.executions.RequestLocalToggleAnimalDoor(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "break_container_source" => this.executions.RequestLocalBreakContainerSource(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "remove_placed_item" => this.executions.RequestLocalRemovePlacedItem(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "place_owned_object" => this.executions.RequestLocalPlaceOwnedObject(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "pan_ore" => this.executions.RequestLocalPanOre(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.DeadlineMs),
+            "claim_mail_attachment" => this.executions.RequestLocalClaimMailAttachment(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "load_building_chest" => this.executions.RequestLocalLoadBuildingChest(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.Slot ?? 0, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "collect_building_chest_output" => this.executions.RequestLocalCollectBuildingChestOutput(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "toggle_tool_light" => this.executions.RequestLocalToggleToolLight(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.DeadlineMs),
+
+            "equip_wearable" => this.executions.RequestLocalEquipWearable(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "unequip_wearable" => this.executions.RequestLocalUnequipWearable(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "break_rock_source" => this.executions.RequestLocalBreakRockSource(
                 request.RequestId,

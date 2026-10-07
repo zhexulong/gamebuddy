@@ -91,6 +91,14 @@ const SEAM_DELEGATION_TARGETS = Object.freeze([
   // `ItemPedestal.checkForAction` calls `DropObject(who)`; the register cites
   // DropObject, and the handler invokes the native checkForAction entry.
   ["checkForAction", "DropObject"],
+  // The two wearable handlers delegate to a MOD-LOCAL method whose arms are the real calls:
+  // RequestLocalEquipWearable -> EquipIntoWearableBodySlot (actorstateactions.cs:235), and that
+  // helper's arms are `"hat" => player.Equip((Hat)item, player.hat)` for each body slot. The
+  // register cites Farmer.Equip, so the hop is recorded rather than the citation weakened.
+  ["EquipIntoWearableBodySlot", "Equip"],
+  // The unequip handler delegates through its OWN helper (actorstateactions.cs:346), which calls the
+  // same seam with a null item - Farmer.Equip's documented removal form.
+  ["UnequipFromWearableBodySlot", "Equip"],
 ]);
 
 /**
@@ -223,6 +231,11 @@ async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) 
     /** Follow one recorded delegation hop: `eatHeldObject()` → `eatObject(..)` */
     const reached = new Set(called);
     if (NATIVE_DELEGATING_CALL.test(body)) reached.add("eatHeldObject");
+  // A hop whose source is a MOD-LOCAL method appears in the body as a bare call (no receiver), which
+  // the native detector above cannot see. Seed those from the table itself, one enumerated name each.
+  for (const [from] of SEAM_DELEGATION_TARGETS) {
+    if (new RegExp("\\b" + from + "\\s*\\(").test(body)) reached.add(from);
+  }
     for (const [from, to] of SEAM_DELEGATION_TARGETS) if (reached.has(from)) reached.add(to);
     /**
      * The tool animation owns the native seam on a later frame. When the handler
@@ -253,9 +266,14 @@ async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) 
  * form falls back to the final identifier.
  */
 function nativeMemberOf(signature) {
-  const withParens = signature.match(/([A-Za-z_]\w*)\s*\(/g);
+  // A generic member (`Equip<TItem>(`) has no bare ident( match, so strip the generic parameter
+  // list first. Otherwise the fallback below returns the TYPE of the first parameter - it returned
+  // `Item` for Farmer.Equip - and the seam-call axis then asks whether the handler calls
+  // something named `Item`, which no handler ever does.
+  const withoutGenerics = signature.replace(/<[^<>]*>/g, "");
+  const withParens = withoutGenerics.match(/([A-Za-z_]\w*)\s*\(/g);
   if (withParens) return withParens[withParens.length - 1].replace(/\s*\($/, "");
-  const tokens = signature.trim().split(/\s+/);
+  const tokens = withoutGenerics.trim().split(/\s+/);
   return tokens[tokens.length - 1].replace(/\(.*$/, "");
 }
 

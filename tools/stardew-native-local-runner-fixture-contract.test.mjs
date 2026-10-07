@@ -49,6 +49,9 @@ const TOOLS = resolve(fileURLToPath(new URL(".", import.meta.url)));
  */
 const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs": "craft_item",
+  "run-stardew-native-local-player-place-owned-object-smoke.mjs": "place_owned_object",
+  "run-stardew-native-local-player-remove-placed-item-smoke.mjs": "remove_placed_item",
+  "run-stardew-native-local-player-break-container-source-smoke.mjs": "break_container_source",
   "run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs": "harvest_crop",
   "run-stardew-native-local-player-machine-ab-smoke.mjs": "machine_inspect",
   "run-stardew-native-local-player-navigation-mutation-smoke.mjs": "navigation_mutation",
@@ -68,6 +71,15 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
   "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
+  // 2026-10-07 item/tile lane. Same rule as the wave above -- keyed on the action the
+  // runner exercises.
+  "run-stardew-native-local-player-use-warp-item-smoke.mjs": "use_warp_item",
+  "run-stardew-native-local-player-pan-ore-smoke.mjs": "pan_ore",
+  "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs": "claim_mail_attachment",
+  // 2026-10-07: the building-chest pair. Same rule as the wave above — keyed on the action the
+  // runner exercises.
+  "run-stardew-native-local-player-load-building-chest-smoke.mjs": "load_building_chest",
+  "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs": "collect_building_chest_output",
   "run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs": "enter_exit_warp_action",
   "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs": "enter_mine_ladder",
   "run-stardew-native-local-player-talk-to-npc-smoke.mjs": "talk_to_npc",
@@ -77,6 +89,9 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-harvest-bush-smoke.mjs": "harvest_bush",
   "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs": "harvest_fruit_tree",
   "run-stardew-native-local-player-mount-transport-smoke.mjs": "mount_transport",
+  "run-stardew-native-local-player-equip-wearable-smoke.mjs": "equip_wearable",
+  "run-stardew-native-local-player-unequip-wearable-smoke.mjs": "unequip_wearable",
+  "run-stardew-native-local-player-dismount-transport-smoke.mjs": "dismount_transport",
   "run-stardew-native-local-player-set-sign-display-smoke.mjs": "set_sign_display",
   "run-stardew-native-local-player-shake-tree-smoke.mjs": "shake_tree",
   "run-stardew-native-local-player-take-pedestal-item-smoke.mjs": "take_pedestal_item",
