@@ -1035,8 +1035,41 @@ export async function verifyArtifact({ artifactRoot, hostRoot, config, expectedI
     ? config.entryRoots.filter(r => expectedInventory.entries.some(e => e.path === r))
     : config.entryRoots;
   for (const entry of entriesToCheck) if (!inventory.entries.some((item) => item.path === entry)) throw new Error(`production_entry_missing:${entry}`);
-  if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory ?? inventory)) throw new Error("production_inventory_mismatch_or_orphan");
+  if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory ?? inventory))
+    // Name the cause. This used to say only "mismatch or orphan", which cannot tell a tampered artifact from a
+    // published one that predates a config change -- and the second case is ordinary: the bundled runtime
+    // archive's `origin.archiveSha256` lives in `production-artifact.config.json`, so updating that config
+    // makes every already-published generation fail its own re-verification, and every run that needs the
+    // production Host fails with it, until a new generation is published.
+    throw new Error(`production_inventory_mismatch_or_orphan:${describeInventoryDifference(inventory, expectedInventory)}`);
   return inventory;
+}
+
+export function describeInventoryDifference(actual, expected) {
+  if (expected === undefined) return "no-expected-inventory";
+  const expectedByPath = new Map((expected.entries ?? []).map((entry) => [entry.path, entry]));
+  const actualByPath = new Map((actual.entries ?? []).map((entry) => [entry.path, entry]));
+  const onlyActual = [...actualByPath.keys()].filter((path) => !expectedByPath.has(path));
+  const onlyExpected = [...expectedByPath.keys()].filter((path) => !actualByPath.has(path));
+  if (onlyActual.length > 0) return `unexpected-entry:${onlyActual[0]}`;
+  if (onlyExpected.length > 0) return `missing-entry:${onlyExpected[0]}`;
+  for (const [path, entry] of actualByPath) {
+    const other = expectedByPath.get(path);
+    if (JSON.stringify(entry) === JSON.stringify(other)) continue;
+    const fields = [...new Set([...Object.keys(entry), ...Object.keys(other)])].filter(
+      (field) => JSON.stringify(entry[field]) !== JSON.stringify(other[field]),
+    );
+    // A bundled-runtime archive hash is the one difference that means "the config moved on", not "the artifact
+    // changed", so it gets its own name.
+    const runtimeArchiveSuperseded = fields.every((field) => field === "origin")
+      && entry.origin?.archiveSha256 !== other.origin?.archiveSha256
+      && (entry.path === "runtime" || entry.path.startsWith("runtime/"));
+    const detail = fields
+      .map((field) => `${field}: published=${JSON.stringify(other[field]).slice(0, 80)} current=${JSON.stringify(entry[field]).slice(0, 80)}`)
+      .join(" | ");
+    return `${runtimeArchiveSuperseded ? "published-runtime-archive-superseded" : "changed-entry"}:${path} (${detail})`;
+  }
+  return `closure:${JSON.stringify(actual.externalRuntimeClosure ?? null).slice(0, 120)}`;
 }
 
 /** Parse every emitted production module's static import/export-from/require closure.
