@@ -15,7 +15,15 @@ import type {
   GuardianRecoveryRole,
 } from "../../auth/desktop-guardian-session.internal.js";
 
-type RuntimeBinding = ContainmentCorrelation & ContainmentOperationWaitBudget;
+type RuntimeBinding = ContainmentCorrelation & ContainmentOperationWaitBudget & Readonly<{
+  /**
+   * The attempt's native arm binding facts, read from the composition's own arm
+   * frame. They are the arm operation's own input and deliberately NOT the launch
+   * authorization: the arm body is built from these facts (plus the approved
+   * executable), so the launch facts bag never becomes the arm body.
+   */
+  readonly armFacts: TypedPrivateGameFacts;
+}>;
 
 /**
  * Composition-owned platform port. It receives typed game facts and owns the
@@ -27,6 +35,14 @@ export type ContainedGameRuntimePlatform = Readonly<{
     readonly guardianEpoch: number;
     readonly attemptId: string;
     readonly operationWaitBudgetMs: number;
+    /** The attempt's native arm binding facts; the arm body is built from these. */
+    readonly armFacts: TypedPrivateGameFacts;
+    /**
+     * The launch authorization produced for this attempt. The arm body takes
+     * ONLY its approved executable from it: the attested installation executable
+     * is the one fact the native arm parser needs that is not an arm binding
+     * fact, and no other launch fact may enter the arm body.
+     */
     readonly authorization: TypedPrivateGameFacts;
   }>): Promise<void>;
   launch(input: Readonly<{
@@ -154,7 +170,7 @@ export function createContainedGameRuntime(
         ensureOpen(deadlineUnixMs);
         if (!armed) {
           armAttempted = true;
-          await platform.arm({ ...bindingSnapshot, operationWaitBudgetMs: binding.operationWaitBudgetMs, authorization: authorizedValue });
+          await platform.arm({ ...bindingSnapshot, operationWaitBudgetMs: binding.operationWaitBudgetMs, armFacts: binding.armFacts, authorization: authorizedValue });
           armed = true;
         }
         ensureOpen(deadlineUnixMs);
