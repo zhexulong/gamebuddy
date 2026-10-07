@@ -58,7 +58,7 @@ type TavernAlwaysOnWorldBookSource = Readonly<{
   /** Reviewed always-on entries (card `constant: true`); ride the stable source. */
   constantEntries?: readonly Readonly<{ entryId: string; title: string; content: string }>[];
   /** Keyword-gated entries; stay out of the stable prefix, become volatile candidates. */
-  keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string }>[];
+  keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string; keys?: readonly string[] }>[];
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
 type TavernManagedWorldInfoSource = Readonly<{ binding: TavernStableManagedWorldInfoBinding; content: string }>;
@@ -293,40 +293,54 @@ function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, parentSourceId: string): TavernAuthoredContextCatalog["volatileSources"] {
+  // NATIVE WorldBook first: a companion's own book IS parseable JSON, so a JSON-parse-first order would
+  // send it down the managed-World-Info branch and never reach the keyword entries at all. That ordering
+  // was the reason keyword-gated facts could not reach the context no matter how correct the rest of the
+  // chain was (and why the historical note read "per-session catalog makes every turn refuse").
+  if (
+    "keywordEntries" in sourceValue &&
+    sourceValue.keywordEntries !== undefined &&
+    sourceValue.keywordEntries.length > 0
+  ) {
+    const revision = sourceValue.binding.revision;
+    const canonical = sourceValue.binding.canonicalHash;
+    return Object.freeze(
+      sourceValue.keywordEntries.flatMap((entry, index) => {
+        const content = entry.content;
+        if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
+        const sourceId = `${parentSourceId}_entry_${index + 1}`;
+        return [
+          Object.freeze({
+            sourceId,
+            kind: "lorebook_entry" as const,
+            revision: String(revision),
+            canonicalHash: hash(content),
+            content,
+            budgetTokens: Math.ceil(content.length / 4),
+            totalOrderKey: String(index + 1).padStart(4, "0"),
+            provenance: `tavern-world-book-entry/${sourceId}/revision/${revision}/canonical/${canonical}`,
+            // The card's own trigger words when it has them; the title is only a fallback.
+            selectionKeys: Object.freeze(
+              entry.keys !== undefined && entry.keys.length > 0 ? [...entry.keys] : [entry.title],
+            ),
+          }),
+        ];
+      }),
+    );
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(worldInfoContent(sourceValue));
   } catch {
-    // Native WorldBook with explicit keyword-gated entries: they become volatile
-    // lorebook_entry selection candidates (keyed by title) so the Chat surface —
-    // which has no lookup tools — can still surface them selectively.
-    if ("keywordEntries" in sourceValue && sourceValue.keywordEntries !== undefined && sourceValue.keywordEntries.length > 0) {
-      const revision = sourceValue.binding.revision;
-      const canonical = sourceValue.binding.canonicalHash;
-      return Object.freeze(
-        sourceValue.keywordEntries.flatMap((entry, index) => {
-          const content = entry.content;
-          if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
-          const sourceId = `${parentSourceId}_entry_${index + 1}`;
-          return [
-            Object.freeze({
-              sourceId,
-              kind: "lorebook_entry" as const,
-              revision: String(revision),
-              canonicalHash: hash(content),
-              content,
-              budgetTokens: Math.ceil(content.length / 4),
-              totalOrderKey: String(index + 1).padStart(4, "0"),
-              provenance: `tavern-world-book-entry/${sourceId}/revision/${revision}/canonical/${canonical}`,
-              selectionKeys: Object.freeze([entry.title]),
-            }),
-          ];
-        }),
-      );
-    }
+    // A native WorldBook that could not be parsed as managed World Info carries no keyword entries here.
     return Object.freeze([]);
   }
   if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return Object.freeze([]);
+  // A NATIVE book is JSON too (it has `entries`), but its entries are `{entryId,title,content,…}`, not
+  // `{publicTitle,summary,…}`. Without this shape test the managed branch below would THROW on a native book
+  // and the throw would be swallowed into "no volatile sources" — the silent half of this defect.
+  if (parsed.entries.some((entry: unknown) => !isRecord(entry) || typeof entry.publicTitle !== "string" || typeof entry.summary !== "string"))
+    return Object.freeze([]);
   const revision = sourceValue.binding.revision;
   const canonical = sourceValue.binding.canonicalHash;
   return Object.freeze(parsed.entries.flatMap((entry, index) => {
