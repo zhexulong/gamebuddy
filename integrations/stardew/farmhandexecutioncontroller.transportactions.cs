@@ -52,10 +52,28 @@ internal sealed partial class ExecutionManager
     private static string BuildHorseTargetId(GameLocation location, Horse horse) =>
         $"horse_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{horse.HorseId}"))).ToLowerInvariant()[..16]}";
 
+    /// <summary>The mine entrance map's own <c>Action</c> selector.</summary>
+    internal const string MineEntranceSelector = "Mine";
+    /// <summary>The ladder-down selector of this same opaque id family.</summary>
+    internal const string MineLadderSelector = "MineLadder";
+    /// <summary>The descending ladder's Buildings-layer tile index in a mine level (MineShaft.cs:3083).</summary>
+    private const int MineLadderTileIndex = 173;
+
     private static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
-        if (location?.map is null || location is MineShaft) return Array.Empty<BridgeMineEntranceTarget>();
+        if (location?.map is null) return Array.Empty<BridgeMineEntranceTarget>();
+
+        // Inside a mine level the way down is that level's own ladder tile, whose
+        // native terminal is the same public `Game1.enterMine` this action already
+        // owns (MineShaft.checkAction case 173, MineShaft.cs:3083-3086). A shaft has
+        // no `Mine` Action tile, so reporting the entrance scan here would report
+        // nothing at all.
+        if (location is MineShaft shaft)
+            return TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)
+                ? new[] { new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), ladderX, ladderY) }
+                : Array.Empty<BridgeMineEntranceTarget>();
+
         int width = location.map.Layers[0].LayerWidth;
         int height = location.map.Layers[0].LayerHeight;
         List<BridgeMineEntranceTarget> result = new();
@@ -63,16 +81,51 @@ internal sealed partial class ExecutionManager
         for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(height - 1, player.TilePoint.Y + TargetDiscoveryRadius); y++)
         {
             string? action = location.doesTileHaveProperty(x, y, "Action", "Buildings");
-            if (action is null || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), "Mine", StringComparison.Ordinal))
+            if (action is null || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), MineEntranceSelector, StringComparison.Ordinal))
                 continue;
-            result.Add(new BridgeMineEntranceTarget(BuildMineEntranceTargetId(location, x, y), x, y));
+            result.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(location.NameOrUniqueName, x, y, MineEntranceSelector), x, y));
             if (result.Count == 16) return result;
         }
         return result;
     }
 
-    private static string BuildMineEntranceTargetId(GameLocation location, int x, int y) =>
-        $"mine_entrance_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:Mine"))).ToLowerInvariant()[..16]}";
+    /// <summary>
+    /// The descent tile of a mine level, found the same way the elevator tile is: a
+    /// live scan of the level's own Buildings layer, never a client coordinate.
+    /// </summary>
+    internal static bool TryFindMineLadderTile(GameLocation? location, out int tileX, out int tileY)
+    {
+        tileX = 0;
+        tileY = 0;
+        if (location is not MineShaft shaft)
+            return false;
+        xTile.Layers.Layer? buildings = shaft.map?.GetLayer("Buildings");
+        if (buildings is null)
+            return false;
+        for (int y = 0; y < buildings.LayerHeight; y++)
+        {
+            for (int x = 0; x < buildings.LayerWidth; x++)
+            {
+                if (buildings.Tiles[x, y]?.TileIndex == MineLadderTileIndex)
+                {
+                    tileX = x;
+                    tileY = y;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The opaque id of one live mine-entry object. Two kinds share the family: a
+    /// <c>Mine</c> Action tile on the mine entrance map, and the descending ladder
+    /// tile inside a mine level. Both keep the published <c>mine_entrance_&lt;16 hex&gt;</c>
+    /// wire shape (the Host validates exactly that prefix and length), and the hash
+    /// input names the kind, so the two can never collide.
+    /// </summary>
+    internal static string BuildMineEntryTargetId(string locationName, int x, int y, string selector) =>
+        $"mine_entrance_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{locationName}:{x},{y}:{selector}"))).ToLowerInvariant()[..16]}";
 
 
     public LocalExecutionReceipt RequestLocalMountTransport(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -117,10 +170,39 @@ internal sealed partial class ExecutionManager
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
         GameLocation location = Game1.player.currentLocation;
-        if (location is MineShaft) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "already_in_mine", null);
+
+        // Inside a mine the way down is that level's own ladder tile, not the
+        // entrance map's `Mine` Action. The native branch it mirrors is
+        // `MineShaft.checkAction` case 173 -> `Game1.enterMine(mineLevel + 1)`
+        // (MineShaft.cs:3083-3086), so the target level is native state (the level
+        // the actor is already on, plus one) and never a client-supplied value; the
+        // ladder itself is re-read from the live layer, so a stale coordinate or an
+        // old target id cannot pick a level.
+        if (location is MineShaft shaft)
+        {
+            if (!TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)
+                || ladderX != targetX || ladderY != targetY
+                || !string.Equals(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_ladder_target_unavailable",
+                    $"target={expectedTargetId};tile={targetX},{targetY};ladder={ladderX},{ladderY};level={shaft.mineLevel}");
+            if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_ladder_out_of_range", $"tile={targetX},{targetY};ladder={ladderX},{ladderY}");
+
+            int descentLevel = shaft.mineLevel + 1;
+            Game1.enterMine(descentLevel);
+            if (Game1.player.currentLocation is MineShaft descended && descended.mineLevel == descentLevel)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={descended.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};from_level={shaft.mineLevel}");
+            LocalTravelSpec descentSpecification = new(executionId, requestId, "enter_mine", shaft.NameOrUniqueName, ladderX, ladderY, MineShaft.GetLevelName(descentLevel), 6, 6, this.revision, requestedDeadlineMs);
+            this.activeTravel = descentSpecification;
+            LocalExecutionReceipt descentAccepted = new(executionId, requestId, ExecutionState.Accepted, "mine_entry_pending", this.revision, $"source={shaft.NameOrUniqueName}:{ladderX},{ladderY};target={descentSpecification.TargetLocation}:6,6;level={descentLevel}");
+            this.Remember(descentAccepted);
+            this.AddTrace(descentAccepted);
+            return descentAccepted;
+        }
+
         string? action = location.doesTileHaveProperty(targetX, targetY, "Action", "Buildings");
         if (action is null
-            || !string.Equals(BuildMineEntranceTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            || !string.Equals(BuildMineEntryTargetId(location.NameOrUniqueName, targetX, targetY, MineEntranceSelector), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_entrance_target_unavailable", $"tile={targetX},{targetY}");
         // The entrance tile declares its own target level in the Action string.
         // This reads it exactly the way the native click path does

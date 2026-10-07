@@ -12,6 +12,7 @@ import {
   waitForTerminal,
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_chop_tree_source_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
@@ -173,7 +174,9 @@ export async function runChopTreeSourceApproachSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await // The production Host generation is not available in this environment; the test loader is the
+  // same precedent the newer gates use.
+  connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runChopTreeSourceApproachSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

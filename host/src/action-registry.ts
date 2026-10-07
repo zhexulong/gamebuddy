@@ -74,6 +74,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["silo"],
   ),
   actionAdapter(
+    "toggle_animal_door",
+    "Toggle an animal door",
+    "Open or close a barn or coop animal door. The Mod re-resolves the building from the opaque target id and asserts the door STATE FLIPPED, reading it from the world after the call rather than trusting the native void return.",
+    ["animal_door"],
+  ),
+  actionAdapter(
     "use_obelisk",
     "Use a warp obelisk",
     "Activate a discovered warp obelisk. The Mod chooses the destination from the target itself (a Data/Buildings obelisk, or the island farm obelisk tile), so the caller names the structure and never a destination.",
@@ -457,6 +463,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   take_pedestal_item: "stardew_take_pedestal_item",
   toggle_fence_gate: "stardew_toggle_fence_gate",
   withdraw_silo_hay: "stardew_withdraw_silo_hay",
+  toggle_animal_door: "stardew_toggle_animal_door",
   use_obelisk: "stardew_use_obelisk",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
@@ -591,6 +598,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "select_mine_elevator_floor",
   "withdraw_silo_hay",
   "use_obelisk",
+  "toggle_animal_door",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -729,6 +737,15 @@ export function isModDescriptorComplete(
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "silo_hay_taken") return false;
+    return true;
+  }
+  if (actionId === "toggle_animal_door") {
+    // Same {x,y,expectedTargetId} shape as its siblings: the building's interaction tile plus the
+    // opaque door selector, both mandatory, because the Agent names the structure and never the
+    // door's internal rectangle.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "animal_door_toggled") return false;
     return true;
   }
   if (actionId === "use_obelisk") {

@@ -13,6 +13,7 @@ import {
   summarizeSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "enter_exit", "inspect_self", "move_to_tile"];
 
@@ -44,8 +45,24 @@ export async function runEnterExitSmoke(
       if (moveTerminal.state !== "succeeded" || moveTerminal.reasonCode !== "target_reached")
         throw new Error(`move_to_door_source_failed:${moveTerminal.reasonCode}`);
       snapshot = await observeEnterExitActionable(client);
-      if (snapshot.revision < moveTerminal.revision || !adjacent(snapshot.tile, { x: door.sourceX, y: door.sourceY }))
-        throw new Error("move_to_door_source_postcondition_missing");
+      // The requested tile is usually not walkable, so the Mod substitutes the nearest
+      // standable neighbour and the receipt names it in `target=`. Measure the arrival against
+      // that declared destination, not against the tile we asked to walk to.
+      const effective = (() => {
+        const m = /(?:^|;)target=(\d+),(\d+)(?:;|$)/.exec(moveTerminal.evidence?.detail ?? "");
+        return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: door.sourceX, y: door.sourceY };
+      })();
+      if (snapshot.revision < moveTerminal.revision || !adjacent(snapshot.tile, effective))
+        throw new Error(
+          "move_to_door_source_postcondition_missing" +
+            ";observedTile=" + JSON.stringify(snapshot.tile) +
+            ";requestedTile=" + door.sourceX + "," + door.sourceY +
+            ";effectiveTarget=" + effective.x + "," + effective.y +
+            ";observedRevision=" + snapshot.revision +
+            ";terminalRevision=" + moveTerminal.revision +
+            ";location=" + (snapshot.location ?? "(none)") +
+            ";evidence=" + JSON.stringify(moveTerminal.evidence ?? null),
+        );
     }
 
     // Re-discover an opaque, Mod-published door immediately before the request.
@@ -118,7 +135,9 @@ export async function runEnterExitSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  // The production Host generation is not available in this environment; the test loader is the
+  // same precedent the newer gates use.
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runEnterExitSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

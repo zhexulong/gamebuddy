@@ -6036,7 +6036,8 @@
             "take_pedestal_item",
             "toggle_fence_gate",
             "withdraw_silo_hay",
-            "use_obelisk"
+            "use_obelisk",
+            "toggle_animal_door"
           ]
         },
         "args": {

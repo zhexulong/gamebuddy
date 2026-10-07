@@ -105,6 +105,7 @@
     "toggle_tool_light",
     "withdraw_silo_hay",
     "use_obelisk",
+    "toggle_animal_door",
     "scythe_crop",
     "harvest_bush",
     "harvest_fruit_tree",
@@ -1048,6 +1049,23 @@
           "signature": "public static void PerformObeliskWarp(string destination, int warp_x, int warp_y, bool force_dismount, Farmer who)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "warps the local player to a fixed destination via obeliskWarpForReal, which also force-dismounts; warping is per-actor and the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "toggle_animal_door",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Buildings/Building.cs",
+          "signature": "public virtual void ToggleAnimalDoor(Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "flips the building's own animalDoorOpen NetBool and plays the open/close sound; the body reads no multiplayer token"
         }
       ],
       "admission": {

@@ -166,6 +166,90 @@ public sealed class EnterExitDoorGateTests
         dialogueBox[226 - 1].Should().Contain("Game1.player.CanMove = true;");
     }
 
+    /// <summary>
+    /// The admission predicate is updateDoors' own "the Action contains Warp", so a
+    /// single-token gated warp tile is admitted even though the door table never holds
+    /// it. WarpGreenhouse (GameLocation.cs:9415) is that tile: one token, and a
+    /// ccPantry gate a real click runs before warping.
+    /// </summary>
+    [Fact]
+    public void SingleTokenGatedWarpTile_IsAdmittedByTheUpdateDoorsPredicate()
+    {
+        ExecutionManager.IsNativeWarpAction("WarpGreenhouse").Should().BeTrue(
+            "a one-token Warp-family Action is exactly what updateDoors considers and then discards");
+        ExecutionManager.IsNativeWarpAction("Warp").Should().BeTrue();
+        ExecutionManager.IsNativeWarpAction("Warp 10 4 Farm").Should().BeTrue();
+        ExecutionManager.IsNativeWarpAction("LockedDoorWarp 10 4 SeedShop 900 1900").Should().BeTrue();
+        ExecutionManager.IsNativeWarpAction("Warp_Sunroom_Door").Should().BeTrue();
+    }
+
+    /// <summary>
+    /// ⛔ The negative half: the widening must NOT admit non-warp ActionTiles. Reading
+    /// the property unconditionally would run "Kitchen", the animal-door Actions and any
+    /// generic ActionTile through performAction from a door request.
+    /// </summary>
+    [Fact]
+    public void NonWarpActionTiles_AreNotAdmitted()
+    {
+        ExecutionManager.IsNativeWarpAction("Kitchen").Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction("Door 12 3").Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction("AnimalDoor 12 3 Barn").Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction("OpenShop SeedShop").Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction("Mailbox").Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction(string.Empty).Should().BeFalse();
+        ExecutionManager.IsNativeWarpAction(null).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The off-map read must answer null rather than throw, because the door path reads
+    /// the tile BEFORE any radius/bounds guard the rest of the handler applies.
+    /// </summary>
+    [Fact]
+    public void BuildingsLayerActionRead_RefusesOffMapTiles()
+    {
+        ExecutionManager.ReadBuildingsLayerAction(null, -1, 0).Should().BeNull();
+        ExecutionManager.ReadBuildingsLayerAction(null, 0, -1).Should().BeNull();
+        ExecutionManager.ReadBuildingsLayerAction(null, 0, 0).Should().BeNull();
+    }
+
+    /// <summary>
+    /// The production guard itself: the door path must gate on the Action predicate and
+    /// must not fall back to door-table membership, which is the bypass this change
+    /// closes. This is the assertion the mutation test breaks.
+    /// </summary>
+    [Fact]
+    public void DispatchNativeDoor_GatesOnTheActionPredicate_NotOnTheDoorTable()
+    {
+        string? path = TryFindRepoFile(ImplementationRelativePath);
+        path.Should().NotBeNull();
+        string text = File.ReadAllText(path!);
+
+        text.Should().Contain("IsNativeWarpAction(warpAction)");
+        text.Should().Contain("ReadBuildingsLayerAction(location, source)");
+        text.Should().NotContain("location.doors.ContainsKey(source)",
+            "door-table membership is the set that EXCLUDES a one-token gated warp tile");
+        // The refusal/fallback discipline the widening must not disturb.
+        text.Should().Contain("\"door_gate_refused\"");
+        text.Should().Contain("entry = \"resolved_warp_fallback\";");
+    }
+
+    /// <summary>Drift anchor for the premise: updateDoors is both the predicate the door
+    /// path now mirrors and the set that drops the one-token tile.</summary>
+    [Fact]
+    public void DriftAnchor_UpdateDoorsDropsTheOneTokenWarpTile()
+    {
+        string? gameLocationPath = TryFindRepoFile(DecompiledGameLocationRelativePath);
+        gameLocationPath.Should().NotBeNull();
+        string[] gameLocation = File.ReadAllLines(gameLocationPath!);
+
+        gameLocation[17601 - 1].Should().Contain("value.Contains(\"Warp\")");
+        gameLocation[17633 - 1].Should().Contain("string text2 = ArgUtility.Get(array, 3);");
+        // The gated one-token tile, whose gate the click path runs and the resolver does not.
+        gameLocation[9415 - 1].Should().Contain("case \"WarpGreenhouse\":");
+        gameLocation[9416 - 1].Should().Contain("Game1.MasterPlayer.mailReceived.Contains(\"ccPantry\")");
+        gameLocation[9439 - 1].Should().Contain("Farm_GreenhouseRuins");
+    }
+
     [Theory]
     [InlineData("native_gate_refuses_and_reports_the_games_dialogue")]
     [InlineData("native_gate_passes_and_warp_completes")]

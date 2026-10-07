@@ -83,7 +83,13 @@ internal sealed partial class ExecutionManager
             if (approach is not null)
             {
                 effectiveTarget = approach.Value;
-                adjacentArrival = true;
+                // Exact arrival on the substitute, NOT adjacency to it. The substitute is standable by
+                // construction (that is the predicate it was chosen by) and exists precisely to bring
+                // the actor within INTERACTION RANGE of the requested tile; allowing adjacency lets
+                // the actor stop one tile farther out, which is where the range it was chosen for
+                // ends. Live evidence: move_to_tile(3,12) reported target_reached with the actor two
+                // tiles away, too far to act on the door it was asked to approach.
+                adjacentArrival = false;
                 approachSubstituted = true;
             }
         }
@@ -444,18 +450,22 @@ internal sealed partial class ExecutionManager
             }
         }
 
-        if (!handled && location.doors.ContainsKey(source))
+        // The admission predicate is updateDoors' own -- "the Action string
+        // contains Warp" (GameLocation.cs:17601) -- and NOT membership of
+        // location.doors. Those are different sets, and the difference is a door
+        // gate that enter_exit could walk through: updateDoors builds the table
+        // from the FOURTH token of the Action string (:17631-17638), so a
+        // Warp-family Action with fewer than four tokens is considered and then
+        // DISCARDED. WarpGreenhouse is exactly that shape -- one token, and a
+        // `ccPantry` gate a real click runs before warping (:9415-9440) -- so
+        // door-table membership sent the tile to the resolver's ungated warp.
+        // Reading the Action unconditionally would be worse: it would also run
+        // "Kitchen", animal-door and generic ActionTiles.
+        string? warpAction = ReadBuildingsLayerAction(location, source);
+        if (!handled && IsNativeWarpAction(warpAction))
         {
-            // location.doors holds exactly the warp-family Buildings-layer Actions
-            // (updateDoors, GameLocation.cs:17586-17638). Reading the Action
-            // property directly would also admit non-warp actions such as
-            // "Kitchen", so the door table is the gate.
-            string? action = location.doesTileHaveProperty(source.X, source.Y, "Action", "Buildings");
-            if (!string.IsNullOrWhiteSpace(action))
-            {
-                entry = "perform_action";
-                handled = location.performAction(action, Game1.player, new xTile.Dimensions.Location(source.X, source.Y));
-            }
+            entry = "perform_action";
+            handled = location.performAction(warpAction!, Game1.player, new xTile.Dimensions.Location(source.X, source.Y));
         }
 
         if (Game1.isWarping)
@@ -474,6 +484,43 @@ internal sealed partial class ExecutionManager
             entry = "resolved_warp_fallback";
         return handled ? NativeDoorOutcome.NoEffect : NativeDoorOutcome.NotNative;
     }
+
+    /// <summary>
+    /// The Buildings-layer <c>Action</c> property of one tile, read exactly the way
+    /// <c>GameLocation.updateDoors</c> reads it: the raw map layer's own tile
+    /// property (GameLocation.cs:17600-17601). Deliberately not
+    /// <c>doesTileHaveProperty</c>, which also answers for tiles a Building or a
+    /// Furniture owns (:13153-13185) and would therefore admit a tile the door table
+    /// never sees. An off-map tile answers null instead of throwing.
+    /// </summary>
+    internal static string? ReadBuildingsLayerAction(
+        StardewValley.GameLocation location, Microsoft.Xna.Framework.Point source) =>
+        ReadBuildingsLayerAction(location.map?.GetLayer("Buildings"), source.X, source.Y);
+
+    /// <summary>The same read for a caller that already holds the Buildings layer (the
+    /// tile scans hoist it once instead of re-resolving it per tile).</summary>
+    internal static string? ReadBuildingsLayerAction(xTile.Layers.Layer? buildings, int x, int y)
+    {
+        if (buildings is null || x < 0 || y < 0 || x >= buildings.LayerWidth || y >= buildings.LayerHeight)
+            return null;
+
+        var tile = buildings.Tiles[x, y];
+        if (tile is null || !tile.Properties.TryGetValue("Action", out var action))
+            return null;
+        return action.ToString();
+    }
+
+    /// <summary>
+    /// Whether a Buildings-layer Action belongs to the warp family. This is
+    /// <c>value.Contains("Warp")</c> -- the same test <c>GameLocation.updateDoors</c>
+    /// applies to admit a tile (GameLocation.cs:17601) and the same one
+    /// <c>getWarpFromDoor</c>'s default arm reapplies when resolving it (:2238). Every
+    /// door the table does hold passes it, and the gates the Mod must not bypass
+    /// (ccPantry, ccDoorUnlock, Caroline's hearts, locked-door hours) all live behind
+    /// it, so it is the only safe admission predicate here.
+    /// </summary>
+    internal static bool IsNativeWarpAction(string? actionProperty) =>
+        actionProperty is not null && actionProperty.Contains("Warp", StringComparison.Ordinal);
 
     public void CompleteTravelAfterWarp()
     {

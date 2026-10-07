@@ -492,7 +492,8 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null,
     // Defaulted and LAST on purpose: the three siblings above already end the positional list, so
     // inserting anywhere earlier silently re-binds their existing positional arguments.
-    IReadOnlyList<BridgeObeliskTarget>? ObeliskTargets = null
+    IReadOnlyList<BridgeObeliskTarget>? ObeliskTargets = null,
+    IReadOnlyList<BridgeAnimalDoorTarget>? AnimalDoorTargets = null
     );
 
 public sealed record BridgeActiveExecution(
@@ -599,6 +600,12 @@ public sealed class BridgeExecutionArgs
 /// quote the game rather than invent a reason.
 /// </para>
 /// </summary>
+/// <summary>A building's animal door, identified opaquely so the caller names the structure and
+/// never the door's internal rectangle. `IsOpen` is part of the published fact because the action's
+/// postcondition is that the state FLIPS, and a target whose identity ignores its state cannot be
+/// verified.</summary>
+public sealed record BridgeAnimalDoorTarget(string TargetId, string Location, int X, int Y, string BuildingType, bool IsOpen);
+
 public sealed record BridgeObeliskTarget(
     string TargetId,
     string Route,

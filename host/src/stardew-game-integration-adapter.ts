@@ -226,6 +226,34 @@ function hasStardewCompletionEvidence(
             e.after === e.expected,
         )
       );
+    case "toggle_animal_door":
+      // Evidence literal: farmhandexecutioncontroller.animaldooractions.cs:194-197 —
+      // target;tile;building_type;animal_door_open_before;animal_door_open_after;
+      // animal_door_open_changed;animal_door_amount_before;animal_door_amount_after.
+      // The native seam returns void, so the ONLY proof the door moved is the observed flip; the
+      // rule therefore requires the before/after pair AND the derived flag to agree.
+      return (
+        receipt.reasonCode === "animal_door_toggled" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "building_type",
+            "animal_door_open_before",
+            "animal_door_open_after",
+            "animal_door_open_changed",
+            "animal_door_amount_before",
+            "animal_door_amount_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            (e.animal_door_open_before === "true" || e.animal_door_open_before === "false") &&
+            (e.animal_door_open_after === "true" || e.animal_door_open_after === "false") &&
+            e.animal_door_open_before !== e.animal_door_open_after &&
+            e.animal_door_open_changed === "true",
+        )
+      );
     case "withdraw_silo_hay":
       // Evidence literal: farmhandexecutioncontroller.silohaywithdrawactions.cs:96 —
       // target;item;silo_hay_before;silo_hay_after;silo_hay_decreased;carried_before;
