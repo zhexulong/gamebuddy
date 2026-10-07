@@ -219,6 +219,22 @@ internal static class WindowsNative
 
 internal sealed class GuardianLaunchUnavailableException : Exception
 {
-    internal GuardianLaunchUnavailableException(string category = "guardian_launch_unavailable", Exception? innerException = null)
+    /// <summary>
+    /// The category every throw that names no reason of its own carries. The
+    /// production entry reports a specific category beside its primary outcome code
+    /// and does not report this one, because it names no reason beyond the failure
+    /// the primary code already names.
+    /// </summary>
+    internal const string DefaultCategory = "guardian_launch_unavailable";
+
+    internal GuardianLaunchUnavailableException(string category = DefaultCategory, Exception? innerException = null)
         : base(category, innerException) { }
+
+    /// <summary>
+    /// The specific reason this launch step refused, as one bounded code. It is the
+    /// exception's own reason rather than the entry's classification: callers that
+    /// need to name which blocker was hit read it here instead of replacing it with
+    /// a single generic code.
+    /// </summary>
+    internal string Category => Message;
 }

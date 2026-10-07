@@ -61,12 +61,40 @@ internal static class Program
     }
 
     /// <summary>
+    /// The production entry's full result: the bounded failure it names, and the
+    /// reason the failing step itself reported when it reported one. The reason is
+    /// never a substitute for the named failure - a consumer matching on the primary
+    /// code keeps matching - so it is carried beside it and only appended to the
+    /// line.
+    /// </summary>
+    private readonly record struct LaunchOutcome(DesktopLaunchResult Result, string? Reason)
+    {
+        /// <summary>The no-claim value: the admitted session ran to its end unnamed.</summary>
+        internal static readonly LaunchOutcome NoClaim = new(DesktopLaunchResult.Unavailable, null);
+
+        internal static LaunchOutcome Of(DesktopLaunchResult result) => new(result, null);
+    }
+
+    /// <summary>
     /// The entry's entire observable result: the exit status, and at most one
     /// bounded outcome-code line on stderr naming how the launch ended. A code is
     /// always accompanied by a non-zero exit status, and the line carries no path,
-    /// no secret and no stack.
+    /// no secret and no stack. A step that reported its own specific reason appends
+    /// it after the primary code (`primary:reason`) so the reason is recoverable
+    /// without changing what the primary code already said.
     /// </summary>
-    internal static string? OutcomeCode(DesktopLaunchResult result) => result switch
+    internal static string? OutcomeCode(DesktopLaunchResult result) => OutcomeCode(result, reason: null);
+
+    private static string? OutcomeCode(LaunchOutcome outcome) => OutcomeCode(outcome.Result, outcome.Reason);
+
+    internal static string? OutcomeCode(DesktopLaunchResult result, string? reason)
+    {
+        var primary = PrimaryOutcomeCode(result);
+        if (primary is null || !IsReportableReason(reason, primary)) return primary;
+        return $"{primary}:{reason}";
+    }
+
+    private static string? PrimaryOutcomeCode(DesktopLaunchResult result) => result switch
     {
         DesktopLaunchResult.Unavailable => null,
         DesktopLaunchResult.RootRegistrationUnavailable => "root_registration_unavailable",
@@ -82,6 +110,24 @@ internal static class Program
         DesktopLaunchResult.HostSessionFailed => "host_session_failed",
         _ => UnattributedLaunchFailureCode,
     };
+
+    /// <summary>
+    /// Whether a step's own reported reason may go onto the line. The default
+    /// category is withheld because it names no reason beyond the failure the
+    /// primary code already names - reporting it would read as a second, specific
+    /// fact. Anything that is not one bounded lowercase code is withheld too, so the
+    /// one channel the launcher reads keeps carrying no path, secret or prose.
+    /// </summary>
+    private static bool IsReportableReason(string? reason, string primary)
+    {
+        if (string.IsNullOrEmpty(reason)) return false;
+        if (StringComparer.Ordinal.Equals(reason, GuardianLaunchUnavailableException.DefaultCategory)) return false;
+        if (StringComparer.Ordinal.Equals(reason, primary)) return false;
+        if (reason[0] is < 'a' or > 'z') return false;
+        foreach (var character in reason)
+            if (character is not (>= 'a' and <= 'z') and not (>= '0' and <= '9') and not '_') return false;
+        return true;
+    }
 
     internal static async Task<DesktopLaunchResult> RunForTestingAsync(ICurrentUserRootRegistrationReader registrationReader, ILocalApplicationDataProvider localApplicationDataProvider, GuardianSupervisor supervisor, CancellationToken cancellationToken)
     {
@@ -128,7 +174,7 @@ internal static class Program
     /// </summary>
     private enum LaunchStage { GenerationSelection, GenerationAdmission, ChildLaunch, HostSession }
 
-    private static async Task<DesktopLaunchResult> RunProductionAsync(CancellationToken cancellationToken)
+    private static async Task<LaunchOutcome> RunProductionAsync(CancellationToken cancellationToken)
     {
         var stage = LaunchStage.GenerationSelection;
         try
@@ -232,25 +278,29 @@ internal static class Program
             // The Host child owns the session: the entry is done when that exact
             // child has exited. A wait that could not reap it is a failed session
             // rather than one more silent success.
-            if (!await host.WaitForExitAsync(cancellationToken).ConfigureAwait(false)) return DesktopLaunchResult.HostSessionFailed;
-            return DesktopLaunchResult.Unavailable;
+            if (!await host.WaitForExitAsync(cancellationToken).ConfigureAwait(false)) return LaunchOutcome.Of(DesktopLaunchResult.HostSessionFailed);
+            return LaunchOutcome.NoClaim;
         }
-        catch (GuardianLaunchUnavailableException)
+        catch (GuardianLaunchUnavailableException exception)
         {
-            return stage switch
+            var named = stage switch
             {
                 LaunchStage.GenerationSelection => DesktopLaunchResult.HostGenerationUnavailable,
                 LaunchStage.GenerationAdmission => DesktopLaunchResult.GenerationAdmissionRefused,
                 LaunchStage.ChildLaunch => DesktopLaunchResult.GuardianLaunchUnavailable,
                 _ => DesktopLaunchResult.HostSessionFailed,
             };
+            // The launch stage names where the launch was; the exception's own
+            // category names which blocker refused there. Both survive: the stage
+            // is the primary code, the category is appended beside it.
+            return new LaunchOutcome(named, exception.Category);
         }
-        catch (RootRegistrationUnavailableException) { return DesktopLaunchResult.RootRegistrationUnavailable; }
-        catch (RootLayoutUnavailableException) { return DesktopLaunchResult.RootLayoutUnavailable; }
-        catch (MutableRootsUnavailableException) { return DesktopLaunchResult.MutableRootsUnavailable; }
-        catch (DeploymentIdentityUnavailableException) { return DesktopLaunchResult.DeploymentIdentityUnavailable; }
-        catch (DeploymentIdentityMintUnavailableException) { return DesktopLaunchResult.DeploymentIdentityMintUnavailable; }
-        catch (DeploymentIdentityEstablishUnavailableException) { return DesktopLaunchResult.DeploymentIdentityEstablishUnavailable; }
-        catch (DeploymentIdentityConflictException) { return DesktopLaunchResult.DeploymentIdentityConflict; }
+        catch (RootRegistrationUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootRegistrationUnavailable); }
+        catch (RootLayoutUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootLayoutUnavailable); }
+        catch (MutableRootsUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.MutableRootsUnavailable); }
+        catch (DeploymentIdentityUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.DeploymentIdentityUnavailable); }
+        catch (DeploymentIdentityMintUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.DeploymentIdentityMintUnavailable); }
+        catch (DeploymentIdentityEstablishUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.DeploymentIdentityEstablishUnavailable); }
+        catch (DeploymentIdentityConflictException) { return LaunchOutcome.Of(DesktopLaunchResult.DeploymentIdentityConflict); }
     }
 }
