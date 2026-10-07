@@ -140,7 +140,7 @@ public sealed class WindowsNativeAbiTests
 
         Assert.Contains("cb = (uint)Marshal.SizeOf<WindowsNative.StartupInfoEx>()", source, StringComparison.Ordinal);
         Assert.Contains("var runtimePath = WindowsNative.ToExtendedLengthPath(runtime.RuntimePath)", source, StringComparison.Ordinal);
-        Assert.Contains("new StringBuilder(Quote(WindowsNative.ToExtendedLengthPath(runtime.BootstrapPath)))", source, StringComparison.Ordinal);
+        Assert.Contains("BuildHostCommandLine(runtimePath, runtime.BootstrapPath)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.ExtendedStartupInfoPresent | WindowsNative.CreateUnicodeEnvironment", source, StringComparison.Ordinal);
     }
 

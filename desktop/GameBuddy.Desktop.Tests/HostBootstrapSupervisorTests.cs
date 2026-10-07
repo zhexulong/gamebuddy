@@ -45,6 +45,14 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Equal(layout.PresentationRoot, rootLayout.GetProperty("presentationRoot").GetString());
         Assert.Equal(NormalizeWindowsPath(generation.ExactChildRuntimePath), NormalizeWindowsPath(report.RootElement.GetProperty("executablePath").GetString()!));
         Assert.True(new FileInfo(generation.ExactChildRuntimePath).Length < 33_554_432);
+        // The child received the bootstrap entry as its one positional argument, in the
+        // ordinary absolute form node resolves as a module. A command line that named
+        // only the image would leave node with no positional argument - it would then
+        // compile the frame below on standard input as JavaScript - and an
+        // extended-length script argument would be realpath'd to the bare drive.
+        var positional = report.RootElement.GetProperty("positionalArguments").EnumerateArray().Select(value => value.GetString()!).ToArray();
+        var entry = Path.Combine(generation.GenerationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+        Assert.Equal(new[] { entry }, positional);
 
         // The child environment is a DECLARED block, not the launcher's environment.
         // What was wrong was what the declaration omitted: the Host composes the
@@ -81,8 +89,8 @@ public sealed class HostBootstrapSupervisorTests
     {
         var source = File.ReadAllText(SupervisorSource());
 
-        Assert.Contains("WindowsNative.ToExtendedLengthPath(runtime.RuntimePath)", source, StringComparison.Ordinal);
-        Assert.Contains("new StringBuilder(Quote(WindowsNative.ToExtendedLengthPath(runtime.BootstrapPath)))", source, StringComparison.Ordinal);
+        Assert.Contains("var runtimePath = WindowsNative.ToExtendedLengthPath(runtime.RuntimePath)", source, StringComparison.Ordinal);
+        Assert.Contains("BuildHostCommandLine(runtimePath, runtime.BootstrapPath)", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.CreateProcess(runtimePath, commandLine", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Process.Start", source, StringComparison.Ordinal);
         // The supervisor must not hand the child a WHOLESALE environment: the block is
@@ -92,6 +100,44 @@ public sealed class HostBootstrapSupervisorTests
         Assert.DoesNotContain("Environment.GetEnvironmentVariables", source, StringComparison.Ordinal);
         Assert.DoesNotContain("new GuardianSupervisor", source, StringComparison.Ordinal);
         Assert.DoesNotContain("StartResidentAsync", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Pins the child's script-argument form. The launcher must hand node the image
+    /// as argument zero and the script as argument one, and the script must be the
+    /// ordinary absolute path: an image-only command line makes node compile its
+    /// standard input (the bootstrap frame) as JavaScript, and a <c>\\?\</c>-prefixed
+    /// script argument makes node realpath it to the bare drive and fail before it
+    /// loads the module.
+    /// </summary>
+    [Fact]
+    public void Host_command_line_carries_the_image_then_the_ordinary_script_path()
+    {
+        var runtimePath = Path.Combine("C:\\", "Users", "player", "AppData", "Local", "Programs", "GameBuddy", "generations", "g-abc-1-0123456789abcdef0123456789abcdef", "runtime", "node.exe");
+        var bootstrapPath = Path.Combine(Path.GetDirectoryName(runtimePath)!, "..", "bootstrap", "entry", "desktop-host-entry.internal.js");
+
+        var commandLine = RuntimeSupervisor.BuildHostCommandLine(runtimePath, bootstrapPath).ToString();
+
+        Assert.Equal($"\"{runtimePath}\" \"{bootstrapPath}\"", commandLine);
+        // The image is a token of the command line, so node has a positional argument
+        // (the script) and never falls back to evaluating standard input.
+        Assert.StartsWith("\"", commandLine, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\?\\", commandLine, StringComparison.Ordinal);
+        Assert.EndsWith($"\" \"{bootstrapPath}\"", commandLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Supervisor_source_launches_the_image_with_the_script_as_its_second_argument()
+    {
+        var source = File.ReadAllText(SupervisorSource());
+
+        // The image path keeps the extended-length form CreateProcessW needs, and it is
+        // the same value that opens the command line.
+        Assert.Contains("var runtimePath = WindowsNative.ToExtendedLengthPath(runtime.RuntimePath)", source, StringComparison.Ordinal);
+        Assert.Contains("internal static StringBuilder BuildHostCommandLine(string imagePath, string bootstrapPath) =>", source, StringComparison.Ordinal);
+        Assert.Contains("new(Quote(imagePath) + \" \" + Quote(bootstrapPath))", source, StringComparison.Ordinal);
+        // The script argument is never rewritten into extended-length form.
+        Assert.DoesNotContain("ToExtendedLengthPath(runtime.BootstrapPath)", source, StringComparison.Ordinal);
     }
 
     [Fact]

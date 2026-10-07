@@ -9,6 +9,20 @@ const string schema = "gamebuddy-desktop-host-bootstrap/v1";
 const string rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
 const string reportName = "exact-child-bootstrap-report.json";
 
+// The real Host child is node.exe running the bootstrap entry as its first positional
+// argument. A fixture that ignored its command line could not observe the launcher's
+// script-argument form at all, so it reads its own arguments the way node reads them
+// (this process already IS the bootstrap entry) and refuses when the launcher did not
+// supply the entry as argument one - which is exactly the shape that makes node
+// evaluate the bootstrap frame on standard input as JavaScript instead of parsing it
+// as JSON. It never asserts the entry's contents: only that the launcher named it.
+var positional = Environment.GetCommandLineArgs().Skip(1).ToArray();
+if (positional.Length != 1 ||
+    Path.GetExtension(positional[0]) != ".js" ||
+    !Path.GetFileName(positional[0]).StartsWith("desktop-host-entry.internal", StringComparison.Ordinal) ||
+    positional[0].StartsWith(@"\\?\", StringComparison.Ordinal))
+    return;
+
 var input = ReadStandardInputToEnd();
 if (input.Length < 2 || input[^1] != '\n' || input.Contains('\r') || input.Contains('\0')) return;
 
@@ -36,6 +50,10 @@ try
         reportWriter.WritePropertyName("frame");
         frame.WriteTo(reportWriter);
         reportWriter.WriteString("executablePath", Environment.ProcessPath);
+        reportWriter.WritePropertyName("positionalArguments");
+        reportWriter.WriteStartArray();
+        foreach (var argument in positional) reportWriter.WriteStringValue(argument);
+        reportWriter.WriteEndArray();
         reportWriter.WritePropertyName("environment");
         reportWriter.WriteStartObject();
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())

@@ -77,7 +77,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
                 AttributeList = attributeList,
             };
             var runtimePath = WindowsNative.ToExtendedLengthPath(runtime.RuntimePath);
-            var commandLine = new StringBuilder(Quote(WindowsNative.ToExtendedLengthPath(runtime.BootstrapPath)));
+            var commandLine = BuildHostCommandLine(runtimePath, runtime.BootstrapPath);
             if (!WindowsNative.CreateProcess(runtimePath, commandLine, IntPtr.Zero, IntPtr.Zero, true,
                 WindowsNative.ExtendedStartupInfoPresent | WindowsNative.CreateUnicodeEnvironment, environment, null, ref startup, out var processInformation)) WindowsNative.ThrowLastError("host_runtime_unavailable");
             launched = true;
@@ -365,6 +365,31 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             Marshal.FreeHGlobal(buffer);
         }
     }
+
+    /// <summary>
+    /// The two arguments the Host child is launched with.
+    ///
+    /// The command line begins with the image itself, in the same extended-length
+    /// form CreateProcessW is given as <c>lpApplicationName</c>. It is not an echo:
+    /// the image token is argument zero, and node's first <em>positional</em>
+    /// argument is the module it runs. A command line that carries only the script - 
+    /// as a one-token command line does, with the image supplied separately - leaves
+    /// node with no positional argument at all, and it then compiles its standard
+    /// input as the program (<c>node:internal/main/eval_stdin</c>, reported as a
+    /// syntax error at <c>[stdin]:1</c>). That is exactly what the one-shot bootstrap
+    /// frame arrives on, so the frame was being evaluated as JavaScript instead of
+    /// read as JSON.
+    ///
+    /// The script argument stays in its ordinary absolute form. The extended-length
+    /// spelling is required for the Win32 transport that starts the image, but node
+    /// realpaths its first positional argument, and <c>\?\E:\...</c> realpaths to the
+    /// bare drive (<c>EISDIR: illegal operation on a directory, lstat 'E:'</c>).
+    /// Windows applies MAX_PATH to the command line's own text rather than to the
+    /// child's file access, so a long installed script path needs no extended
+    /// spelling here - only the admitted image token keeps it.
+    /// </summary>
+    internal static StringBuilder BuildHostCommandLine(string imagePath, string bootstrapPath) =>
+        new(Quote(imagePath) + " " + Quote(bootstrapPath));
 
     private static byte[] BuildFrame(InstalledGenerationSelection selection, CurrentUserRootLayout layout, string bootstrapId)
     {
