@@ -20,6 +20,7 @@ import {
   TERMINAL_STATES,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const EMOTE_ACTION = "express_emote";
 const FACING_ACTION = "face_direction";
@@ -143,7 +144,7 @@ export async function runExpressionSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runExpressionSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

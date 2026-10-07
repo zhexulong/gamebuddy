@@ -14,6 +14,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "pickup_item"];
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -112,7 +113,7 @@ export async function runPickupItemSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runPickupItemSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

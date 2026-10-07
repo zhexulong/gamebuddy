@@ -9,6 +9,7 @@ import {
   validateNativeLocalFixturePolicy,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_dig_artifact_spot_v1";
 const _EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
@@ -144,7 +145,7 @@ export async function runDigArtifactSpotSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runDigArtifactSpotSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

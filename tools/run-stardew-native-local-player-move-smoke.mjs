@@ -9,6 +9,7 @@ import {
   summarizeSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const REQUIRED_CAPABILITIES = ["inspect_self", "cancel_active_execution", "move_to_tile"];
 
@@ -70,7 +71,7 @@ export async function runMoveSmoke(client, receipts, config) {
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runMoveSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

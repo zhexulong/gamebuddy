@@ -4,6 +4,7 @@ import {
   readNativeClientConfig,
   summarizeSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map"];
 
 /**
@@ -62,7 +63,7 @@ export async function runNavigationReadOnlySmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runNavigationReadOnlySmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

@@ -8,6 +8,7 @@ import {
   validateNativeLocalFixturePolicy,
   waitForFreshSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "place_crab_pot";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "place_crab_pot"];
@@ -114,7 +115,7 @@ export async function runPlaceCrabPotSmoke(client, config, { postconditionTimeou
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runPlaceCrabPotSmoke(session.client, config);
     console.log(JSON.stringify(result));

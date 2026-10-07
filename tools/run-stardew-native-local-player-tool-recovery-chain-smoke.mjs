@@ -12,6 +12,7 @@ import {
   waitForStableRevision,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 /**
  * Native-local recovery-chain contract for Lane G「工具缺手」.
@@ -227,7 +228,7 @@ export async function runToolRecoveryChainSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runToolRecoveryChainSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

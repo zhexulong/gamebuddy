@@ -10,6 +10,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "machine_load";
 const SCENARIO = "native_machine_coffee_load_v1";
@@ -112,7 +113,7 @@ export async function runMachineLoadSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runMachineLoadSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

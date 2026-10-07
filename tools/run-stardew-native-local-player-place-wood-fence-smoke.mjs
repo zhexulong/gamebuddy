@@ -11,6 +11,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "place_wood_fence";
 const REQUIRED_CAPABILITIES = [ACTION, "move_to_tile", "travel"];
@@ -131,7 +132,7 @@ export async function runPlaceWoodFenceSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runPlaceWoodFenceSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

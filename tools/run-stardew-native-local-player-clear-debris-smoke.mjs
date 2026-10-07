@@ -11,6 +11,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 /** Execute the clear-debris contract against an already-connected bridge session. */
 export async function runClearDebrisSmoke(client, receipts, config) {
@@ -145,7 +146,7 @@ async function connectWithRetry(config, timeoutMs) {
   let lastError;
   while (Date.now() < deadline) {
     try {
-      return await connectNativeLocalClient(config);
+      return await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
     } catch (error) {
       lastError = error;
       if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;

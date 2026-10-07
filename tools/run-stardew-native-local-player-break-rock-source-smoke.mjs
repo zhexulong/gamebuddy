@@ -17,6 +17,7 @@ import {
   waitForTerminal,
   validateNativeLocalFixturePolicy,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_break_rock_source_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
@@ -148,7 +149,7 @@ export async function runBreakRockSourceSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runBreakRockSourceSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

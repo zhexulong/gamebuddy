@@ -12,6 +12,7 @@ import {
   waitForStableRevision,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_plant_seed_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "plant_seed"];
@@ -141,7 +142,7 @@ export async function runPlantSeedSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runPlantSeedSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
