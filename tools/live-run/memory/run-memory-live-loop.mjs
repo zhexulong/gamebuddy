@@ -244,9 +244,18 @@ async function resolveScenario({ manifestPath, seed, question }) {
     forbiddenKeywords: probeStep.forbiddenKeywords ?? [],
     // The fixture's own threshold must survive into scoring (audit finding: the
     // loop hardcoded 0.5, silently over-ruling a manifest that declares 1.0).
-    minHitRate: Number.isFinite(probeStep.minHitRate) ? probeStep.minHitRate : 0.5,
-  });
-}
+ 			minHitRate: Number.isFinite(probeStep.minHitRate) ? probeStep.minHitRate : 0.5,
+			// The fixture's filler steps are the DISTANCE the probe is supposed to cross: they are
+			// real conversation that happened between the seed and the question, and the fixture
+			// declares a distance it assumes they created. They were never sent, so the loop
+			// measured a zero-distance conversation while still reporting the declared distance -
+			// and no turn count could ever reach the historian's fold threshold, which is why a
+			// fold (and therefore a compartment or a chapter) never appeared in these runs.
+			fillers: Object.freeze(
+				probe.steps.flatMap((step) => (step.kind === "filler" && typeof step.text === "string" ? [step.text] : [])),
+			),
+		});
+	}
 
 async function deadlineFetch(url, init = {}) {
   const controller = new AbortController();
@@ -499,21 +508,80 @@ export async function seedMemory(origin, client, seedTexts, supersedeText) {
 }
 
 /**
+ * Wait (bounded) for the turn THIS harness just submitted to reach a terminal state.
+ *
+ * Two phases, because one is not enough: the projection lags the 202, so immediately after the
+ * send `/state` can still show NO turn - and treating "no turn" as "settled" reads the previous
+ * turn's transcript and reports a memory miss for a turn that never ran. So first wait for the
+ * turn to appear, then wait for it to reach a terminal state. Returns what it observed so the
+ * caller can report an honest gap instead of guessing.
+ */
+async function awaitSubmittedTurnTerminal(origin, client) {
+	const readTurn = async () => {
+		const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+			headers: { Cookie: client.cookie, Origin: origin },
+		});
+		const snapshot = await response.json().catch(() => undefined);
+		return snapshot?.chat?.turn ?? null;
+	};
+	for (let attempt = 0; attempt < 60; attempt += 1) {
+		const seen = await readTurn();
+		if (seen === null) {
+			await new Promise((resolve) => setTimeout(resolve, 250));
+			continue;
+		}
+		for (let settled = 0; settled < 240; settled += 1) {
+			const turn = await readTurn();
+			if (turn === null) return Object.freeze({ observed: true, terminalState: "cleared" });
+			if (turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled")
+				return Object.freeze({ observed: true, terminalState: turn.state });
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+		return Object.freeze({ observed: true, terminalState: "unsettled" });
+	}
+	return Object.freeze({ observed: false, terminalState: "never-visible" });
+}
+
+/**
+ * Wait (bounded) until no turn is in flight on this chat. Sending while the previous turn is
+ * still running is refused with `turn_busy`, which is how a multi-turn harness dies on its
+ * second filler: the projection can still report the finished turn as `queued` after its reply
+ * has been committed.
+ */
+async function awaitChatIdle(origin, client, attempts = 60) {
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+			headers: { Cookie: client.cookie, Origin: origin },
+		});
+		const snapshot = await response.json().catch(() => undefined);
+		const turn = snapshot?.chat?.turn ?? null;
+		if (turn === null || turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled") return true;
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+	return false;
+}
+
+/**
  * Phase 2: run a real turn on the chat-only surface under the SAME continuity and
  * capture the committed companion text. The text is used for keyword scoring and is
  * never written into the report.
  *
  * Route and shapes are taken from the existing harness rather than guessed: the
- * submit route is `/messages` (202 + `disposition`), and the committed reply is the
- * LAST `role: "companion"` transcript entry - not any earlier turn's text, which
- * would make the verdict a statement about the conversation instead of this turn.
+ * submit route is `/messages` (202 + `disposition`). The committed reply is the transcript
+ * entry THIS turn added, NOT the last companion entry: this harness sends several turns
+ * (the fixture's own fillers, then the probe), so "last message" would score the previous
+ * turn's answer and report a memory miss that never happened.
  */
 async function runChatTurn(origin, client, text) {
-  const stateResponse = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
-    headers: { Cookie: client.cookie, Origin: origin },
-  });
-  const state = await stateResponse.json().catch(() => undefined);
-  const selectionGeneration = state?.selection?.generation;
+	await awaitChatIdle(origin, client);
+	const stateResponse = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+		headers: { Cookie: client.cookie, Origin: origin },
+	});
+	const state = await stateResponse.json().catch(() => undefined);
+	const companionBefore = Array.isArray(state?.chat?.transcript)
+		? state.chat.transcript.filter((message) => message?.role === "companion").length
+		: 0;
+	const selectionGeneration = state?.selection?.generation;
   if (!Number.isSafeInteger(selectionGeneration)) throw new Error("selection_generation_unavailable");
   const draftRevision = Number.isSafeInteger(state?.chat?.draft?.revision) ? state.chat.draft.revision : undefined;
 
@@ -553,18 +621,25 @@ async function runChatTurn(origin, client, text) {
     );
   }
 
-  // The terminal wait is SSE-driven with a bounded state cross-check, mirroring
-  // the Chat harness (audit finding: the loop used to poll /state every 250 ms for
-  // up to 180 s = ~720 authenticated reads for ONE turn; the harness waits on its
-  // SSE observation stream and does a bounded state read-back). The stream records
-  // nothing here - it exists only as the terminal authority.
-  const stream = await openEventStream({ origin, client, recorder: noopRecorder });
-  const streamTerminal = stream.ok ? await stream.waitForTerminal(180_000) : "unavailable";
-  await stream.close?.().catch(() => undefined);
-  // The durable /state read-back stays authoritative either way: when the stream
-  // settled it confirms the terminal; when the stream was closed early (a resync
-  // the observer itself forced, or a timeout) it is the only authority we have.
-  return readTurnOutcome(origin, client, streamTerminal);
+ 	// Terminal wait, bounded on the AUTHORITATIVE projection rather than on the SSE stream.
+	// With several turns in one run the stream replays earlier terminals (it starts from an
+	// epoch and the previous turn's terminal is already committed), so "the stream settled"
+	// can mean "the PREVIOUS turn settled" - which read a queued probe turn as if it had no
+	// reply. The two-phase wait cannot be fooled that way: it first requires THIS turn to be
+	// visible, then waits for that turn's own terminal.
+	const terminal = await awaitSubmittedTurnTerminal(origin, client);
+	if (!terminal.observed) {
+		// Never surfaced. Report it as what it is rather than reading a reply that belongs to
+		// another turn.
+		return Object.freeze({
+			turnState: "never-visible",
+			streamTerminal: terminal.terminalState,
+			committedCompanionMessages: companionBefore,
+			committedCompanionDelta: 0,
+			committedText: undefined,
+		});
+	}
+	return readTurnOutcome(origin, client, terminal.terminalState, companionBefore);
 }
 
 /**
@@ -572,21 +647,23 @@ async function runChatTurn(origin, client, text) {
  * transcript for a fresh chat-only surface session starts empty, so the companion
  * count IS this turn's delta - there are no earlier turns to leak in.
  */
-async function readTurnOutcome(origin, client, streamTerminal) {
+async function readTurnOutcome(origin, client, streamTerminal, companionBefore) {
   const snapshot = await (
     await deadlineFetch(`${origin}/api/tavern/v1/state`, { headers: { Cookie: client.cookie, Origin: origin } })
   ).json();
-  const turnState = snapshot?.chat?.turn?.state ?? null;
-  const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
-  const companion = transcript.filter((message) => message?.role === "companion");
-  const last = companion.at(-1);
-  return Object.freeze({
-    turnState,
-    streamTerminal: streamTerminal ?? null,
-    committedCompanionMessages: companion.length,
-    committedCompanionDelta: companion.length,
-    committedText: typeof last?.text === "string" ? last.text : undefined,
-  });
+ 	const turnState = snapshot?.chat?.turn?.state ?? null;
+	const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
+	const companion = transcript.filter((message) => message?.role === "companion");
+	// The reply THIS turn added. A multi-turn run (the fixture's fillers, then the probe) has
+	// earlier companion messages, so taking the last entry would score the previous turn's answer.
+	const reply = companion.length > companionBefore ? companion[companionBefore] : undefined;
+	return Object.freeze({
+		turnState,
+		streamTerminal: streamTerminal ?? null,
+		committedCompanionMessages: companion.length,
+		committedCompanionDelta: companion.length - companionBefore,
+		committedText: typeof reply?.text === "string" ? reply.text : undefined,
+	});
 }
 
 const noopRecorder = Object.freeze({ record() {} });
@@ -1049,7 +1126,12 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         deploymentManifestPath,
         gameSessionMode: "known",
         capture,
-        run: async (origin, client) => runChatTurn(origin, client, scenario.question),
+   					run: async (origin, client) => {
+						// Real turns first, in fixture order, so the probe is asked at the declared distance
+						// rather than immediately after the seed.
+						for (const filler of scenario.fillers) await runChatTurn(origin, client, filler);
+						return runChatTurn(origin, client, scenario.question);
+					},
       });
     } catch (error) {
       const message = String(error?.message ?? error);
