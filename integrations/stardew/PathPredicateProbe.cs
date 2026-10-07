@@ -75,6 +75,12 @@ internal sealed class PathPredicateProbe
     private const string EnableLiveProbeVariable = "GAMEBUDDY_STARDEW_PATH_PREDICATE_PROBE_LIVE";
     private const string EvidencePathVariable = "GAMEBUDDY_STARDEW_PATH_PREDICATE_PROBE_EVIDENCE";
 
+    /// <summary>
+    /// Optional explicit `x,y` target, so the probe can measure the EXACT pair a production refusal reported
+    /// instead of only the families it collects on its own. Set by the harness for one process.
+    /// </summary>
+    private const string TargetPathVariable = "GAMEBUDDY_STARDEW_PATH_PREDICATE_PROBE_TARGET";
+
     private static readonly JsonSerializerOptions EvidenceJsonOptions = new() { WriteIndented = true };
 
     /// <summary>
@@ -84,6 +90,16 @@ internal sealed class PathPredicateProbe
     /// probe-imposed limit whose null would be indistinguishable (:232-235).
     /// </summary>
     private const int PathExpansionLimit = 10000;
+
+    /// <summary>
+    /// The limits every measured goal is REPEATED at. The probe's whole read of a null path rests on
+    /// "the open list drained rather than a limit stopping the search" (:80-86), and that is an assumption
+    /// until it is measured: if a goal is null at 10000 but found at 40000, the limit is what failed, and any
+    /// conclusion drawn from the 10000 result is about the budget, not about reachability. 400000 is far above
+    /// any Farm-sized search (the planner counts one dequeue per distinct coordinate and never enqueues a
+    /// coordinate twice), so a null there cannot be a budget result.
+    /// </summary>
+    private static readonly int[] LimitSweep = { 10000, 40000, 400000 };
 
     /// <summary>
     /// The smallest actor-to-target Chebyshev distance the probe will measure.
@@ -102,6 +118,16 @@ internal sealed class PathPredicateProbe
     /// so this is the family Q1 is measured on.
     /// </summary>
     private const string FamilyCardinalApproach = "cardinal_approach";
+
+    /// <summary>
+    /// An ordinary WALKABLE destination at Chebyshev distance >= 2: the shape the move action asks for when it
+    /// sends the actor to a tile. Measured because a production refusal reported a walkable destination, a
+    /// positive component size and a null path at once, and no obstacle family can reproduce that.
+    /// </summary>
+    private const string FamilyWalkableDestination = "walkable_destination";
+
+    /// <summary>The exact pair a production refusal reported, supplied by the harness.</summary>
+    private const string FamilyRequestedPair = "requested_pair";
 
     /// <summary>
     /// A target whose four cardinal neighbours are ALL blocked but which has a
@@ -224,6 +250,23 @@ internal sealed class PathPredicateProbe
         this.trace.Add($"actor_start={start.X},{start.Y};location={location.NameOrUniqueName}");
 
         List<CandidateTarget> candidates = CollectCandidateTargets(location, start, this.searchRadius, this.maxCandidateTargets);
+        // An explicit target is measured FIRST and always, even when the families above are empty: it is the
+        // pair a production refusal named, and reproducing it is the whole point of setting the variable.
+        string? explicitTarget = Environment.GetEnvironmentVariable(TargetPathVariable);
+        if (!string.IsNullOrWhiteSpace(explicitTarget))
+        {
+            int separator = explicitTarget.IndexOf(',');
+            if (separator <= 0
+                || !int.TryParse(explicitTarget.AsSpan(0, separator), out int targetX)
+                || !int.TryParse(explicitTarget.AsSpan(separator + 1), out int targetY))
+            {
+                this.trace.Add($"explicit_target_rejected={explicitTarget}");
+            }
+            else
+            {
+                candidates.Insert(0, new CandidateTarget(new Point(targetX, targetY), FamilyRequestedPair));
+            }
+        }
         if (candidates.Count == 0)
         {
             this.Finish(
@@ -317,6 +360,33 @@ internal sealed class PathPredicateProbe
         int perFamily = Math.Max(1, maxCandidateTargets / 2);
         var cardinal = new List<Point>();
         var diagonalOnly = new List<Point>();
+        var walkable = new List<Point>();
+        // The family the production move action actually asks for: an ordinary WALKABLE destination. A refusal
+        // whose evidence says the destination is walkable and the planner still returned null cannot be
+        // diagnosed from the obstacle families above, because those are unwalkable by construction.
+        int walkableWanted = Math.Max(1, maxCandidateTargets / 2);
+        // The walkable family starts at distance 1: the production case to explain is a refusal of a
+        // WALKABLE destination, and a house interior (where the move fixture puts the actor) has no walkable
+        // tile as far as distance 2.
+        for (int walkableRadius = 1; walkableRadius <= searchRadius; walkableRadius++)
+        {
+            for (int dx = -walkableRadius; dx <= walkableRadius; dx++)
+            {
+                for (int dy = -walkableRadius; dy <= walkableRadius; dy++)
+                {
+                    if (walkable.Count >= walkableWanted)
+                        break;
+                    if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != walkableRadius)
+                        continue;
+                    int x = start.X + dx;
+                    int y = start.Y + dy;
+                    if (!IsInLayerBounds(location, x, y))
+                        continue;
+                    if (IsPlannerWalkable(location, x, y))
+                        walkable.Add(new Point(x, y));
+                }
+            }
+        }
         for (int radius = MinimumTargetDistance; radius <= searchRadius; radius++)
         {
             for (int dx = -radius; dx <= radius; dx++)
@@ -324,7 +394,7 @@ internal sealed class PathPredicateProbe
                 for (int dy = -radius; dy <= radius; dy++)
                 {
                     if (cardinal.Count >= perFamily && diagonalOnly.Count >= perFamily)
-                        return Merge(cardinal, diagonalOnly);
+                        return Merge(cardinal, diagonalOnly, walkable);
                     if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radius)
                         continue;
                     int x = start.X + dx;
@@ -348,16 +418,18 @@ internal sealed class PathPredicateProbe
                 }
             }
         }
-        return Merge(cardinal, diagonalOnly);
+        return Merge(cardinal, diagonalOnly, walkable);
     }
 
-    private static List<CandidateTarget> Merge(List<Point> cardinal, List<Point> diagonalOnly)
+    private static List<CandidateTarget> Merge(List<Point> cardinal, List<Point> diagonalOnly, List<Point> walkable)
     {
-        var merged = new List<CandidateTarget>(cardinal.Count + diagonalOnly.Count);
+        var merged = new List<CandidateTarget>(cardinal.Count + diagonalOnly.Count + walkable.Count);
         foreach (Point tile in cardinal)
             merged.Add(new CandidateTarget(tile, FamilyCardinalApproach));
         foreach (Point tile in diagonalOnly)
             merged.Add(new CandidateTarget(tile, FamilyDiagonalOnlyApproach));
+        foreach (Point tile in walkable)
+            merged.Add(new CandidateTarget(tile, FamilyWalkableDestination));
         return merged;
     }
 
@@ -416,6 +488,7 @@ internal sealed class PathPredicateProbe
             ["hasWalkableCardinalNeighbor"] = HasWalkableCardinalNeighbor(location, target.X, target.Y),
             ["hasWalkableDiagonalNeighbor"] = HasWalkableDiagonalNeighbor(location, target.X, target.Y),
             ["targetRelativeToActor"] = Relative(start, target),
+            ["productionCall"] = MeasureProductionCall(location, start, target, PathExpansionLimit),
             ["calls"] = calls,
         };
     }
@@ -441,6 +514,19 @@ internal sealed class PathPredicateProbe
             location,
             Game1.player,
             PathExpansionLimit);
+        List<Dictionary<string, object?>> sweep = new();
+        foreach (int limit in LimitSweep)
+        {
+            Stack<Point>? atLimit = PathFindController.findPath(start, target, goal, location, Game1.player, limit);
+            Point[] atLimitTiles = atLimit?.ToArray() ?? Array.Empty<Point>();
+            sweep.Add(new Dictionary<string, object?>
+            {
+                ["limit"] = limit,
+                ["returnsNull"] = atLimit is null,
+                ["nodeCount"] = atLimitTiles.Length,
+                ["finalTile"] = atLimitTiles.Length == 0 ? null : $"{atLimitTiles[^1].X},{atLimitTiles[^1].Y}",
+            });
+        }
         // Stack<Point>.ToArray() enumerates top-first, and reconstructPath
         // pushes the reached node before its ancestors (PathFindController.cs:
         // 248-257), so index 0 is the start tile and the last element is the
@@ -465,6 +551,7 @@ internal sealed class PathPredicateProbe
                 ? null
                 : Relationship(final.Value.X - target.X, final.Value.Y - target.Y),
             ["finalMatchesStart"] = final is not null && final.Value == start,
+            ["limitSweep"] = sweep.ToArray(),
         };
     }
 
@@ -571,6 +658,67 @@ internal sealed class PathPredicateProbe
             Game1.player,
             pathfinding: true,
             skipCollisionEffects: true);
+
+    /// <summary>
+    /// The production call path, measured as production reads it. `StardewBodyController` decides
+    /// "no path" from the CONSTRUCTOR's `pathToEndPoint` field (:105-108), not from `findPath`'s return, and
+    /// the constructor has a branch that never assigns that field at all: when the character is not an NPC,
+    /// nobody is present in the location, the goal is the plain `isAtEndPoint`, and the end point is positive,
+    /// it TELEPORTS the character (PathFindController.cs:133-136) and leaves `pathToEndPoint` null. This
+    /// records which branch ran, so a null field is never read as an A* failure without the facts that would
+    /// explain it.
+    /// </summary>
+    private static Dictionary<string, object?> MeasureProductionCall(
+        GameLocation location,
+        Point start,
+        Point target,
+        int limit)
+    {
+        Vector2 tileBefore = Game1.player.Tile;
+        bool farmersPresent = location.farmers.Count > 0;
+        bool actorInFarmers = location.farmers.Contains(Game1.player);
+        PathFindController controller = new(
+            Game1.player,
+            location,
+            IsExactTarget,
+            -1,
+            null,
+            limit,
+            target);
+        Vector2 tileAfter = Game1.player.Tile;
+        // The Mod's OWN verdict for this pair, from the same function production uses. Before the fix this
+        // reported `route_exists=true` for a destination no cardinal route reaches; the corrected verdict is
+        // what a live refusal now carries, so it is measured here beside the planner's own answer.
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            start,
+            target,
+            tile => IsPlannerWalkable(location, tile.X, tile.Y),
+            maxVisited: 4000,
+            findClosestReachable: true);
+        return new Dictionary<string, object?>
+        {
+            ["fromActorTile"] = $"{start.X},{start.Y}",
+            ["actorTilePoint"] = $"{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}",
+            ["actorTileVsTilePointDiffer"] = Game1.player.TilePoint.X != (int)Game1.player.Tile.X || Game1.player.TilePoint.Y != (int)Game1.player.Tile.Y,
+            ["locationFarmersCount"] = location.farmers.Count,
+            ["farmersPresent"] = farmersPresent,
+            ["actorInFarmers"] = actorInFarmers,
+            ["teleportBranchPossible"] = !farmersPresent,
+            ["pathToEndPointNull"] = controller.pathToEndPoint is null,
+            ["pathToEndPointCount"] = controller.pathToEndPoint?.Count,
+            ["actorMovedByConstruction"] = tileBefore != tileAfter,
+            ["modVerdict"] = verdict is ReachabilityVerdict assessed
+                ? new Dictionary<string, object?>
+                {
+                    ["targetEnclosed"] = assessed.TargetEnclosed,
+                    ["componentContainsTarget"] = assessed.ComponentContainsTarget,
+                    ["componentTiles"] = assessed.ComponentTiles,
+                    ["closestToTarget"] = assessed.ClosestToTarget is Point closestTile ? $"{closestTile.X},{closestTile.Y}" : null,
+                    ["productionLabel"] = assessed.ComponentContainsTarget ? "planner_null_with_cardinal_route" : "no_cardinal_route",
+                }
+                : null,
+        };
+    }
 
     private static bool IsPlannerWalkable(GameLocation location, int x, int y)
         => IsInLayerBounds(location, x, y) && !CollidesAt(location, x, y);

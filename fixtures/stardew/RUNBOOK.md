@@ -1939,19 +1939,37 @@ if (num >= limit) { return null; }
 ```
 
 `limit` is a **node-expansion budget**, and `null` is what the Mod saw. The Mod had been passing the
-game's own `10000`, which a dense plot exhausts — while the walkable component (the *same* predicate
-the finder uses, `PathFindController.cs:222`) still contains the target. So `no_native_path` was
-conflating two different facts, and the receipt could not tell them apart:
+game's own `10000`.
 
-- **severed**: no route exists (`route_exists=false`), or
-- **budget**: the search gave up (`path_search=native_budget_exhausted`).
+**Corrected by measurement (2026-10-07).** The paragraph that used to follow this — "a dense plot exhausts the
+budget while the walkable component still contains the target" — was not measured, and it was wrong. Running
+the path-probe against the real fixture (`actor 3,9 -> target 4,8`) returned **no path at 10000, 40000 AND
+400000** expansions: the limit was never the variable. Two constructs produced that story:
+
+- the flood enumerated **eight neighbours**, but `PathFindController.Directions` is cardinal only
+  (`PathFindController.cs:45-51`), so it called a tile reachable that a cardinal stepper must walk around a
+  corner to reach — and on a cropped field the corner is exactly what is blocked;
+- `ComponentContainsTarget` was seeded from `canTraverse(targetTile)` ("is this tile passable"), a single-tile
+  test reported as if a route had been verified.
+
+The corrected verdict for that pair, measured live: `targetEnclosed=true`, `componentContainsTarget=false`,
+`path_search=no_cardinal_route`. The adjacent-goal search resolves in **one** node (the actor's own tile),
+which is why the interaction could proceed while an exact move to that tile could not.
+
+The refusal still separates two facts, now both measured:
+
+- **no cardinal route**: the planner's own (cardinal) component never reaches the target's neighbourhood
+  (`route_exists_cardinal=false`, `path_search=no_cardinal_route`), or
+- **planner anomaly**: it does reach it and the finder still returned null
+  (`path_search=planner_null_with_cardinal_route`) — the only case in which a limit explanation is even
+  possible.
 
 Three changes (`StardewBodyController`, `ExecutionModels`):
 
 1. **The budget is raised** for Mod-initiated moves: `NativePathNodeBudget = 40000`, with the source
    anchors above in the comment. One bounded search on the game thread; the receipt names the budget
    so a future failure of this kind is attributable.
-2. **The facts are separated** in the refusal: `route_exists`, `component_tiles`, `path_search`,
+2. **The facts are separated** in the refusal: `route_exists_cardinal`, `component_tiles`, `path_search`,
    `budget`, alongside the existing `target_standable` / `target_walkable` / `blocked_by`. The
    probe's staging answer (`ComponentContainsTarget`, `ClosestToTarget`, `ComponentTiles`) is
    computed only on the already-failing path, and an unbounded component still yields **no claim**

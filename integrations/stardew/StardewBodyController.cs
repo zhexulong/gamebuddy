@@ -117,16 +117,17 @@ internal sealed class StardewBodyController
             evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
             // The native finder returned null. That is TWO different facts, and the receipt
             // must not collapse them:
-            //   * the walkable component is severed from the target -- no route exists; or
-            //   * the finder ran out of its node budget (`PathFindController.cs:232`:
-            //     `if (num >= limit) return null`), while the walkable component (the same
-            //     predicate the finder uses at `PathFindController.cs:222`) still contains the
-            //     target. A real run reported exactly this: a FREE, walkable tile the finder
-            //     could not route to, from a pocket in a dense field.
-            // So probe for the component's own verdict, and when it says the target IS
-            // reachable, plan towards the closest tile the component offers instead of
-            // refusing: the next observation is one native step closer, which is progress a
-            // companion can actually use.
+            //   * the planner's own (cardinal) component does not contain the target's
+            //     neighbourhood -- no route the planner can walk; or
+            //   * it DOES contain it and the finder still returned null, which is the only
+            //     case where a budget/limit explanation is even possible.
+            // The probe below therefore floods with the PLANNER's neighbourhood. An earlier
+            // version flooded with all eight neighbours and reported the first case as the
+            // second: a live refusal read `route_exists=true ... path_search=native_budget_exhausted`
+            // for a destination whose cardinal approaches were both blocked, and a measurement at
+            // 10000 / 40000 / 400000 expansions returned null identically, so the budget it named
+            // was never the cause. What it called a route was a diagonal one the planner cannot
+            // walk, and what it called budget exhaustion was a label it had not measured at all.
             string searchOutcome;
             ReachabilityVerdict? verdict = AssessNativeReachability(localPlayer, specification, findClosestReachable: true)
                 ?? AssessNativeReachability(localPlayer, specification);
@@ -134,11 +135,22 @@ internal sealed class StardewBodyController
             {
                 // `probe_says_reachable` states the disagreement explicitly
                 // instead of leaving a reader to derive it from target_enclosed.
-                evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=reachable_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
-                evidence += $";route_exists={assessed.ComponentContainsTarget.ToString().ToLowerInvariant()};component_tiles={assessed.ComponentTiles}";
-                searchOutcome = assessed.ComponentContainsTarget ? "native_budget_exhausted" : "no_walkable_route";
+                evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=cardinal_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
+                evidence += $";route_exists_cardinal={assessed.ComponentContainsTarget.ToString().ToLowerInvariant()};component_tiles={assessed.ComponentTiles}";
+                searchOutcome = assessed.ComponentContainsTarget
+                    ? "planner_null_with_cardinal_route"
+                    : "no_cardinal_route";
                 evidence += $";path_search={searchOutcome};budget={NativePathNodeBudget}";
-                if (!assessed.TargetEnclosed && TryFindStagingStep(localPlayer, specification.TargetTile, out Point staging))
+                // A staging step must be inside the component the PLANNER can walk, so prefer the tile the
+                // cardinal flood itself reports as the closest one it reached, and fall back to the neighbour
+                // heuristic only when the flood offers nothing. Measured reason: the heuristic can pick a
+                // diagonally-adjacent tile the cardinal planner cannot reach either, which is how a staged
+                // approach ended at `did_not_arrive`.
+                bool hasStaging = assessed.ClosestToTarget is Point;
+                Point staging = hasStaging ? assessed.ClosestToTarget!.Value : default;
+                if (!hasStaging)
+                    hasStaging = TryFindStagingStep(localPlayer, specification.TargetTile, out staging);
+                if (!assessed.TargetEnclosed && hasStaging)
                 {
                     LocalMoveSpec staged = specification with
                     {
@@ -469,6 +481,15 @@ internal sealed class StardewBodyController
     /// farmer can legally walk on -- a cropped HoeDirt is exactly that, and the Mod's own
     /// reachability probe already reports those as reachable (probe_says_reachable=true).
     /// </summary>
+    /// <summary>
+    /// The planner's own step set: cardinal only (`PathFindController.cs:45-51`). Shared so the reachability
+    /// flood and the cardinal-neighbour tests cannot drift from the graph the native finder actually searches.
+    /// </summary>
+    private static readonly Point[] CardinalOffsets =
+    {
+        new(0, -1), new(1, 0), new(0, 1), new(-1, 0),
+    };
+
     internal static bool IsWalkableTile(GameLocation location, Farmer? actor, Vector2 tile)
     {
         if (actor is null || !location.isTileOnMap(tile))
@@ -579,29 +600,47 @@ internal sealed class StardewBodyController
             return new ReachabilityVerdict(false, true, null, 1);
         if (!findClosestReachable)
         {
-            // Fast path (the original contract): the probe only has to decide whether the
-            // target's neighbourhood is inside the actor's component, so it can stop the moment
-            // it touches it.
-            if (canTraverse(targetTile))
-                return new ReachabilityVerdict(false, true);
+            // The one case that needs no enumeration at all: the actor is ALREADY adjacent to the target, so
+            // the planner has one step left to take and the only question is whether that step is possible.
+            //
+            // The earlier shortcut asked a different question -- `canTraverse(targetTile)`, "is the target
+            // tile itself passable" -- and answered it as if a route had been verified. A live refusal read
+            // exactly that as `route_exists=true ... path_search=native_budget_exhausted` for a destination
+            // whose cardinal approaches were both blocked, while a measurement at 10000, 40000 and 400000
+            // expansions returned null identically. A tile's own collision test says nothing about whether
+            // anything can walk to it, so it is no longer used to claim a route.
+            foreach (Point offset in CardinalOffsets)
+            {
+                if (new Point(targetTile.X + offset.X, targetTile.Y + offset.Y) != actorTile)
+                    continue;
+                return new ReachabilityVerdict(false, canTraverse(targetTile), null, 1);
+            }
         }
 
-        // PathFindController expands all eight surrounding tiles in the target
-        // version (the same Chebyshev neighbourhood used by its measured adjacent
-        // goal). Keep the probe's component semantics aligned with that planner.
-        Point[] neighbours =
-        {
-            new(-1, -1), new(0, -1), new(1, -1),
-            new(-1, 0),                  new(1, 0),
-            new(-1, 1),  new(0, 1),  new(1, 1),
-        };
+        // The flood must expand the neighbourhood the NATIVE PLANNER uses, or its verdict describes a
+        // different graph. `PathFindController.Directions` is cardinal only (`PathFindController.cs:45-51`:
+        // { -1,0 }, { 1,0 }, { 0,1 }, { 0,-1 }), so the planner can never step diagonally. An 8-neighbour
+        // flood therefore calls a tile "reachable" that the planner must walk around a corner to reach, and
+        // on a cropped field the corner is exactly what is blocked. Measured on the real fixture, actor at
+        // 3,9: the cardinal neighbour 3,10 resolves (2-node path at every limit), while the diagonal-only
+        // neighbour 4,8 returns null at 10000, 40000 AND 400000 expansions -- the limit is not the variable.
+        Point[] neighbours = CardinalOffsets;
+        // "Contains the target" means the planner can be NEXT TO it (Manhattan 1) or on it, because that is
+        // what makes the target reachable for a cardinal stepper. A Chebyshev ring would count a diagonally
+        // adjacent tile, which the planner cannot step across.
         bool IsTargetNeighbour(Point tile) =>
-            Math.Abs(tile.X - targetTile.X) <= 1
-            && Math.Abs(tile.Y - targetTile.Y) <= 1
-            && tile != targetTile;
+            tile != targetTile
+            && Math.Abs(tile.X - targetTile.X) + Math.Abs(tile.Y - targetTile.Y) == 1;
         static int Chebyshev(Point left, Point right) =>
             Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
-        bool containsTarget = canTraverse(targetTile);
+        // Two different facts, deliberately kept apart:
+        //   * `reachesNeighbourhood` -- the flood VISITED a tile adjacent to the target, so the planner can
+        //     stand next to it. This is what `TargetEnclosed` denies, and the original contract's question.
+        //   * `ComponentContainsTarget` -- the planner can actually STEP ONTO the target, which additionally
+        //     requires the target tile itself to be passable. Claiming this without a route is the defect the
+        //     live refusal exposed.
+        bool reachesNeighbourhood = false;
+        bool targetTraversable = canTraverse(targetTile);
         Point? closest = null;
         int closestDistance = Chebyshev(actorTile, targetTile);
         var visited = new HashSet<Point> { actorTile };
@@ -611,19 +650,25 @@ internal sealed class StardewBodyController
         while (pending.Count > 0)
         {
             Point current = pending.Dequeue();
-            if (!findClosestReachable && IsTargetNeighbour(current))
-                return new ReachabilityVerdict(false, true, current, visited.Count);
+            if (IsTargetNeighbour(current))
+            {
+                reachesNeighbourhood = true;
+                if (!findClosestReachable)
+                    return new ReachabilityVerdict(false, targetTraversable, current, visited.Count);
+            }
             foreach (Point offset in neighbours)
             {
                 Point next = new(current.X + offset.X, current.Y + offset.Y);
-                if (IsTargetNeighbour(next))
-                {
-                    containsTarget = true;
-                    if (!findClosestReachable && canTraverse(next))
-                        return new ReachabilityVerdict(false, true, next, visited.Count);
-                }
+                // The candidate's adjacency counts only once it is a tile the flood actually VISITED: an
+                // expansion that was rejected for collision is not "the component reaches the target".
                 if (!canTraverse(next) || !visited.Add(next))
                     continue;
+                if (IsTargetNeighbour(next))
+                {
+                    reachesNeighbourhood = true;
+                    if (!findClosestReachable)
+                        return new ReachabilityVerdict(false, targetTraversable, next, visited.Count);
+                }
                 if (next != targetTile)
                 {
                     // The closest tile the component offers towards the target: what a staged
@@ -641,7 +686,7 @@ internal sealed class StardewBodyController
             }
         }
 
-        return new ReachabilityVerdict(!containsTarget, containsTarget, closest, visited.Count);
+        return new ReachabilityVerdict(!reachesNeighbourhood, reachesNeighbourhood && targetTraversable, closest, visited.Count);
     }
 
     /// <summary>

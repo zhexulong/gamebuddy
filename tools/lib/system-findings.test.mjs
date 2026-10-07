@@ -142,23 +142,39 @@ test("a genuinely clean run still reports nothing", () => {
 
 
 test("a refusal is attributed by its own evidence, not by its reason code alone", () => {
-  // Measured on a real ladder run: `move_to_tile` was refused as `no_native_path`, which the fixed table maps
-  // to `observation`, while the envelope said
-  // `route_exists=true; component_tiles=2404; probe_says_reachable=true; path_search=native_budget_exhausted`.
-  // That is the Mod's planner exhausting its budget on a route the Mod can prove exists — an audit sent to the
-  // observation layer would "fix" the wrong component.
+  // Measured live, then corrected: this refusal named a budget
+  // (`route_exists=true; component_tiles=2404; probe_says_reachable=true; path_search=native_budget_exhausted`),
+  // and the measurement showed the limit was irrelevant — null at 10000, 40000 and 400000 — because the
+  // destination's CARDINAL approaches were both blocked while the native planner expands cardinally only. So
+  // the honest label is `no_cardinal_route`, the refusal is the world's geometry, and the audit belongs on
+  // `native_state`.
   const planner = summarizeSystemFindings([
     {
       action: "move_to_tile",
       args: { x: 4, y: 8 },
       state: "rejected",
       reasonCode: "no_native_path",
-      evidence: "from=3,9;to=4,8;target_standable=false;route_exists=true;path_search=native_budget_exhausted;budget=40000",
+      evidence: "from=3,9;to=4,8;target_standable=false;route_exists_cardinal=false;path_search=no_cardinal_route;budget=40000",
     },
-    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists=true" },
-    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists=true" },
+    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=false" },
+    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=false" },
   ]);
   assert.equal(planner.findings.find((finding) => finding.id === "dominant_rejection").component, "native_state");
+
+  // The other half of the same split: the planner returned null while its OWN cardinal component contains the
+  // target. That is not the world's geometry, it is a derivation worth reviewing.
+  const contradictory = summarizeSystemFindings([
+    {
+      action: "move_to_tile",
+      args: { x: 4, y: 8 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "route_exists_cardinal=true;path_search=planner_null_with_cardinal_route;budget=40000",
+    },
+    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=true" },
+    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=true" },
+  ]);
+  assert.equal(contradictory.findings.find((finding) => finding.id === "dominant_rejection").component, "observation");
 
   // Without that evidence the same code keeps its table attribution: the rule is evidence-driven, not a
   // blanket re-attribution of the code.

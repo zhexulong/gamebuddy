@@ -164,4 +164,50 @@ public sealed class ReachabilityProbeTests
 
         verdict.Should().BeNull();
     }
+
+    [Fact]
+    public void DiagonalOnlyApproach_IsNotReachableForTheCardinalPlanner()
+    {
+        // Measured live (actor 3,9 -> target 4,8 on the cropped fixture field): the destination tile itself
+        // is walkable while BOTH of its cardinal approaches are blocked, and the native finder returns null
+        // at 10000, 40000 and 400000 expansions. `PathFindController.Directions` is cardinal only, so this
+        // flood must say the component does NOT contain the target. The earlier eight-neighbour flood said it
+        // did, and the refusal then read `route_exists=true ... path_search=native_budget_exhausted` for a
+        // route no planner can walk.
+        Point actor = new(3, 9);
+        Point target = new(4, 8);
+        static bool Pocket(Point tile) =>
+            tile == new Point(4, 8) || tile == new Point(3, 9) || tile == new Point(2, 9) || tile == new Point(3, 10);
+
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            actor,
+            target,
+            Pocket,
+            maxVisited: 200);
+
+        verdict.Should().NotBeNull();
+        verdict!.Value.ComponentContainsTarget.Should().BeFalse(
+            "no cardinal route reaches the target, however walkable the target tile itself is");
+        verdict.Value.TargetEnclosed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CardinalApproach_IsReportedAsContainingTheTarget()
+    {
+        // The companion case, and the one staging is for: the target's own tile is walkable and the
+        // component reaches a CARDINAL neighbour of it, so the planner can step onto the target.
+        Point actor = new(3, 9);
+        Point target = new(3, 11);
+        static bool Lane(Point tile) => tile.Y >= 9 && tile.Y <= 11 && tile.X == 3;
+
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            actor,
+            target,
+            Lane,
+            maxVisited: 200);
+
+        verdict.Should().NotBeNull();
+        verdict!.Value.ComponentContainsTarget.Should().BeTrue();
+        verdict.Value.TargetEnclosed.Should().BeFalse();
+    }
 }
