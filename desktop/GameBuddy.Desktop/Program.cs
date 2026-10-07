@@ -210,6 +210,15 @@ internal static class Program
             // durable record - and never overwrites an existing manifest.
             var mintedDeploymentIdentity = DeploymentIdentity.EstablishForCurrentUser(layout);
 
+            // Whether this launch is the first run, which is the only launch that may
+            // ask the Host for a fresh authority. The identity says who the deployment
+            // is; the launcher-owned staging marker says whether the run that minted it
+            // ever completed. Both are needed: a marker that is still present means the
+            // earlier first run was interrupted before its Host acknowledged, so this
+            // launch continues it over the same identity rather than opening an
+            // authority that was never created.
+            var firstRun = FirstRunStaging.IsFirstRun(layout, mintedDeploymentIdentity);
+
             // From here the admitted children are launched: Voice first (the Host
             // child is handed its port/token pair), then the Host runtime and the
             // resident Guardian that attaches to its authenticated broker.
@@ -252,18 +261,26 @@ internal static class Program
             {
                 // `fresh` creates the semantic authority and `known` opens the one that
                 // already exists (host/src/composition/desktop-host-composition.ts:152).
-                // Only the run that minted the deployment identity may ask for a fresh
-                // authority: every later launch presents the identity the authority was
-                // created with, so it opens it as known. The launcher previously never
+                // Only a first run may ask for a fresh authority: the run that minted
+                // the identity, and the run that follows one which never completed. Every
+                // launch after a completed first run presents the identity the authority
+                // was created with, so it opens it as known. The launcher previously never
                 // set this and relied on the `fresh` default, which would have opened an
                 // existing authority as fresh on the second launch.
-                GameSessionMode = mintedDeploymentIdentity
+                GameSessionMode = firstRun
                     ? HostBootstrapEnvironmentOptions.FreshGameSessionMode
                     : HostBootstrapEnvironmentOptions.KnownGameSessionMode,
                 VoicePort = voiceLease is null ? null : voiceLaunch!.Port,
                 VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
             };
             await using var host = await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions).ConfigureAwait(false);
+            // The accepted acknowledgement is this run's completion fact - the Host has
+            // opened its databases, provisioned the semantic authority and is ready for
+            // service - so this is where, and the only place where, the first-run staging
+            // marker is cleared. A launch that dies before this point leaves it present
+            // and the next launch re-provisions instead of opening an authority that may
+            // not exist.
+            if (firstRun) FirstRunStaging.MarkComplete(layout);
             stage = LaunchStage.HostSession;
             // The authenticated Host broker session is the only thing that may
             // ask for a recovery, and the image admitted for this generation is

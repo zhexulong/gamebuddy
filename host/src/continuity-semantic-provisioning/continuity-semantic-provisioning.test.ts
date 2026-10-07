@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
@@ -23,8 +23,7 @@ test("production provisioning is fresh-only and malformed store is byte-preserve
     assert.equal(fresh.schemaVersion, PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION);
     fresh.close();
     assert.throws(() => provisionFreshProductionContinuity(input(root)));
-    const path = join(root, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite"),
-      _before = readFileSync(path);
+    const path = join(root, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite");
     writeFileSync(path, Buffer.from("malformed-production-store"));
     const poisoned = readFileSync(path);
     assert.throws(() => openKnownProductionContinuity(input(root)));
@@ -190,6 +189,105 @@ test("fresh authority marker rejects every mutated field without rewriting marke
       } catch {
         /* best effort */
       }
+    }
+  }
+});
+
+test("an interrupted first run is recovered by the next fresh provision", () => {
+  const root = canonicalTestRootSync("s3-interrupted-fresh-");
+  try {
+    const authority = join(root, ".gamebuddy-semantic-continuity-v1"),
+      databasePath = join(authority, "gamebuddy-continuity-v1.sqlite"),
+      markerPath = join(authority, "production-authority-marker.json");
+    // The shapes an interrupted first run leaves behind: the directory the fresh path
+    // created before its database, that database before the completion marker the fresh
+    // path writes last, and that database with SQLite's own journal beside it after a
+    // crash inside a transaction.
+    const leftovers: readonly (readonly string[])[] = [
+      [],
+      ["gamebuddy-continuity-v1.sqlite"],
+      ["gamebuddy-continuity-v1.sqlite", "gamebuddy-continuity-v1.sqlite-journal"],
+    ];
+    for (const leftover of leftovers) {
+      rmSync(authority, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      mkdirSync(authority, { recursive: true });
+      for (const entry of leftover) writeFileSync(join(authority, entry), "interrupted-first-run");
+      const recovered = provisionFreshProductionContinuity(input(root));
+      const storeId = recovered.storeId;
+      recovered.close();
+      // Discarded, not adopted: no byte of the leftover survives, a complete authority
+      // stands in its place, and the next launch can open it as known.
+      assert.equal(readFileSync(databasePath).includes(Buffer.from("interrupted-first-run")), false);
+      assert.ok(existsSync(markerPath));
+      const reopened = openKnownProductionContinuity(input(root));
+      try {
+        assert.equal(reopened.storeId, storeId);
+      } finally {
+        reopened.close();
+      }
+    }
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* SQLite handle cleanup is best effort on Windows */
+    }
+  }
+});
+
+test("a fresh provision refuses every leftover authority it cannot prove incomplete", () => {
+  const root = canonicalTestRootSync("s3-not-incomplete-");
+  try {
+    const authority = join(root, ".gamebuddy-semantic-continuity-v1"),
+      databasePath = join(authority, "gamebuddy-continuity-v1.sqlite"),
+      markerPath = join(authority, "production-authority-marker.json");
+    // A directory holding anything the fresh path never creates before its marker is
+    // not proven incomplete, so it is refused instead of deleted.
+    mkdirSync(authority, { recursive: true });
+    writeFileSync(databasePath, "leftover-database");
+    writeFileSync(join(authority, "surface-sessions"), "unexpected-artifact");
+    assert.throws(() => provisionFreshProductionContinuity(input(root)), /production_authority_artifact_present/);
+    assert.equal(readFileSync(join(authority, "surface-sessions"), "utf8"), "unexpected-artifact");
+    rmSync(join(authority, "surface-sessions"));
+    // A marker that is there but carries nothing valid does not prove completion
+    // either, and its presence is therefore refused rather than discarded.
+    writeFileSync(markerPath, "{}");
+    const markerBefore = readFileSync(markerPath),
+      databaseBefore = readFileSync(databasePath);
+    assert.throws(() => provisionFreshProductionContinuity(input(root)), /production_authority_artifact_present/);
+    assert.deepEqual(readFileSync(markerPath), markerBefore);
+    assert.deepEqual(readFileSync(databasePath), databaseBefore);
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* best effort */
+    }
+  }
+});
+
+test("a known mount refuses a missing or leftover authority and deletes nothing", () => {
+  const root = canonicalTestRootSync("s3-known-refuses-");
+  try {
+    const authority = join(root, ".gamebuddy-semantic-continuity-v1"),
+      databasePath = join(authority, "gamebuddy-continuity-v1.sqlite");
+    // A genuinely lost authority stays fail-closed: known never provisions.
+    assert.throws(() => openKnownProductionContinuity(input(root)), /production_store_not_admitted/);
+    // A leftover from an interrupted first run is not something known adopts either, and
+    // the known path never deletes: the fresh launch that recovers it still can.
+    mkdirSync(authority, { recursive: true });
+    writeFileSync(databasePath, "interrupted-first-run");
+    const leftoverBefore = readdirSync(authority);
+    assert.throws(() => openKnownProductionContinuity(input(root)), /production_authority_artifact_present/);
+    assert.deepEqual(readdirSync(authority), leftoverBefore);
+    assert.equal(readFileSync(databasePath, "utf8"), "interrupted-first-run");
+    const recovered = provisionFreshProductionContinuity(input(root));
+    recovered.close();
+  } finally {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* best effort */
     }
   }
 });

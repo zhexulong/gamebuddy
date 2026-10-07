@@ -63,10 +63,17 @@ internal sealed class DeploymentIdentityConflictException : Exception
 /// <item>manifest absent, record present - the manifest is materialized from the
 /// record: a projection, not a mint;</item>
 /// <item>neither present - the identity is minted once and the record is written
-/// before the projection that must agree with it;</item>
+/// before the projection that must agree with it, and the first-run staging marker is
+/// written before both;</item>
 /// <item>both present and disagreeing - <see cref="DeploymentIdentityConflictException"/>,
 /// with neither file touched.</item>
 /// </list>
+///
+/// The identity answers who this deployment is, not whether the run that minted it
+/// ever finished; <see cref="FirstRunStaging"/> answers the second question and the
+/// caller needs both. A launch is the first run - and only a first run may ask the
+/// Host for a fresh authority - when this step minted the identity or the staging
+/// marker says the minting run never completed.
 ///
 /// The manifest must exist before the Host child does, because the supervisor
 /// requires that file and the child reads it as input; the writer can therefore
@@ -106,8 +113,9 @@ internal static class DeploymentIdentity
     /// The launcher's pre-launch identity step: returns whether this launch mints the
     /// deployment identity, and guarantees that on return an admitted Host child can
     /// read `<operationalRoot>\deployment-manifest.json`. The caller presents
-    /// <c>fresh</c> to a minting launch and <c>known</c> to every later one, because
-    /// the identity this returns is the one the authority was created with.
+    /// <c>fresh</c> to a minting launch and to one whose <see cref="FirstRunStaging"/> marker
+    /// is still present, and <c>known</c> to every launch that follows a completed first
+    /// run, because the identity this returns is the one the authority was created with.
     /// </summary>
     internal static bool EstablishForCurrentUser(CurrentUserRootLayout layout)
     {
@@ -143,6 +151,9 @@ internal static class DeploymentIdentity
             return false;
         }
 
+        // Staging before the record: a crash between the two has to leave a mint that
+        // did not happen, never an identity that no authority was ever created for.
+        FirstRunStaging.MarkIncomplete(layout);
         var minted = Mint();
         WriteRecord(recordPath, minted);
         WriteProjection(manifestPath, layout.DataRoot, minted);

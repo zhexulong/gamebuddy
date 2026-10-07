@@ -33,16 +33,21 @@ public sealed class DeploymentIdentityTests
         Assert.True(File.Exists(manifestPath));
         OperationalDeploymentManifest.Require(layout);
 
-        // The record carries the same five values, and each root holds exactly the
-        // one file this step owns.
+        // The record carries the same five values. The operational root holds exactly the
+        // one file this step owns; the data root holds the durable record plus the
+        // launcher-owned marker that says this first run has not completed yet.
         Assert.Single(Directory.EnumerateFileSystemEntries(layout.OperationalRoot));
-        Assert.Single(Directory.EnumerateFileSystemEntries(layout.DataRoot));
+        Assert.Equal(2, Directory.EnumerateFileSystemEntries(layout.DataRoot).Count());
+        Assert.True(File.Exists(recordPath));
+        Assert.True(FirstRunStaging.IsFirstRunIncomplete(layout));
         Assert.Equal(ReadManifestIdentity(manifestPath), ReadRecordIdentity(recordPath));
         Assert.Equal(layout.DataRoot, ManifestRuntimeRoot(manifestPath));
 
-        // And the mint happened once: the same step in the same state mints nothing.
+        // And the mint happened once: the same step in the same state mints nothing, and
+        // it leaves the marker alone - only a completed handshake clears that.
         Assert.False(DeploymentIdentity.EstablishForCurrentUser(layout));
-        Assert.Single(Directory.EnumerateFileSystemEntries(layout.DataRoot));
+        Assert.True(FirstRunStaging.IsFirstRunIncomplete(layout));
+        Assert.Equal(2, Directory.EnumerateFileSystemEntries(layout.DataRoot).Count());
     }
 
     [Fact]
@@ -139,15 +144,17 @@ public sealed class DeploymentIdentityTests
         var written = File.ReadAllBytes(manifestPath);
 
         // The manifest is the identity's existing authority, so this launch presents
-        // it rather than establishing anything.
+        // it rather than establishing anything - and because nothing was ever minted
+        // here, nothing is staged either: this launch is `known`.
         Assert.False(DeploymentIdentity.EstablishForCurrentUser(layout));
+        Assert.False(FirstRunStaging.IsFirstRunIncomplete(layout));
 
         Assert.Equal(written, File.ReadAllBytes(manifestPath));
         Assert.False(File.Exists(RecordPath(layout)));
     }
 
     [Fact]
-    public async Task The_second_launch_reports_known_and_presents_the_same_identity()
+    public async Task A_completed_first_run_clears_the_marker_and_the_next_launch_is_known()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         await using var fixture = await DisposableRootFixture.CreateAsync();
@@ -159,20 +166,31 @@ public sealed class DeploymentIdentityTests
         var manifestFirst = File.ReadAllBytes(manifestPath);
         var recordFirst = File.ReadAllBytes(recordPath);
         var identityFirst = ReadManifestIdentity(manifestPath);
+        Assert.True(minted);
+
+        // The first run dies before its Host acknowledges: the identity exists but the
+        // marker still does, so a launch now is still a first run and may ask for a fresh
+        // authority rather than opening one that was never created.
+        var whileIncomplete = DeploymentIdentity.EstablishForCurrentUser(layout);
+        Assert.False(whileIncomplete);
+        Assert.True(FirstRunStaging.IsFirstRun(layout, whileIncomplete));
+
+        // The accepted acknowledgement completes the first run and clears the marker.
+        FirstRunStaging.MarkComplete(layout);
 
         var later = DeploymentIdentity.EstablishForCurrentUser(layout);
 
-        // The first launch mints and the later one does not, and the later one
-        // presents the very same identity rather than a second one.
-        Assert.True(minted);
+        // The later launch does not mint, and it presents the very same identity rather
+        // than a second one - and with the marker gone it is `known`.
         Assert.False(later);
+        Assert.False(FirstRunStaging.IsFirstRun(layout, later));
         Assert.Equal(manifestFirst, File.ReadAllBytes(manifestPath));
         Assert.Equal(recordFirst, File.ReadAllBytes(recordPath));
         Assert.Equal(identityFirst, ReadManifestIdentity(manifestPath));
 
         // The step's answer is what the production entry turns into the Host session
-        // mode, and only the minting answer may select `fresh`; every later launch
-        // delivers `known` to the child so it opens the authority that exists.
+        // mode, and only a first run may select `fresh`; every later launch delivers
+        // `known` to the child so it opens the authority that exists.
         var known = RuntimeSupervisor.BuildBootstrapEnvironment(layout, new HostBootstrapEnvironmentOptions
         {
             GameSessionMode = HostBootstrapEnvironmentOptions.KnownGameSessionMode,
@@ -205,9 +223,12 @@ public sealed class DeploymentIdentityTests
         Assert.True(File.Exists(recordPath));
 
         // Reinstall, then the next launch's whole sequence over the surviving durable
-        // authority: the same identity is presented, and no second one is minted.
+        // authority: the same identity is presented, and no second one is minted. The
+        // marker lives with that identity in the durable root, so removing only the
+        // disposable roots keeps the staging fact beside the identity it belongs to.
         CurrentUserRootLayout.ProvisionMutableRoots(fixture.Registration, fixture);
         Assert.False(DeploymentIdentity.EstablishForCurrentUser(layout));
+        Assert.True(FirstRunStaging.IsFirstRunIncomplete(layout));
 
         Assert.Equal(installed, ReadManifestIdentity(manifestPath));
         Assert.Equal(record, File.ReadAllBytes(recordPath));

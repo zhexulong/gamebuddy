@@ -40,18 +40,52 @@ public sealed class LauncherProvisioningWiringTests
     }
 
     [Fact]
-    public void Production_entry_chooses_fresh_only_on_the_run_that_established_the_identity()
+    public void Production_entry_asks_for_fresh_only_for_a_first_run_and_consults_the_marker_for_it()
     {
         var productionPath = ProductionEntry();
 
-        // The identity step reports whether this run minted the identity, and only
-        // that run may ask the Host to create a semantic authority: a later launch
-        // presenting the same identity must open the existing one as known.
+        // The identity step reports whether this run minted the identity; the
+        // launcher-owned staging marker reports whether the run that minted it ever
+        // completed. Only their combination may ask the Host to create a semantic
+        // authority: a launch following a completed first run must open the existing one
+        // as known.
         var established = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
-        var mode = productionPath.IndexOf("GameSessionMode = mintedDeploymentIdentity", StringComparison.Ordinal);
-        Assert.True(established >= 0 && mode > established, $"expected establish < mode, got establish={established} mode={mode}");
+        var decision = productionPath.IndexOf("FirstRunStaging.IsFirstRun(layout, mintedDeploymentIdentity)", StringComparison.Ordinal);
+        var mode = productionPath.IndexOf("GameSessionMode = firstRun", StringComparison.Ordinal);
+        Assert.True(established >= 0 && decision > established, $"expected establish < decision, got establish={established} decision={decision}");
+        Assert.True(mode > decision, $"expected decision < mode, got decision={decision} mode={mode}");
         Assert.Contains("HostBootstrapEnvironmentOptions.FreshGameSessionMode", productionPath, StringComparison.Ordinal);
         Assert.Contains("HostBootstrapEnvironmentOptions.KnownGameSessionMode", productionPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_entry_clears_the_first_run_marker_only_after_the_handshake_it_observes()
+    {
+        var productionPath = ProductionEntry();
+
+        // The completion fact is the acknowledged bootstrap handshake - not the process
+        // starting and not the identity existing - so the clear sits after StartHostAsync
+        // returns and before the session is served, and it happens exactly once.
+        var start = productionPath.IndexOf("StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
+        var clear = productionPath.IndexOf("FirstRunStaging.MarkComplete(layout)", StringComparison.Ordinal);
+        var serve = productionPath.IndexOf("host.WaitForExitAsync(cancellationToken)", StringComparison.Ordinal);
+        Assert.True(start >= 0 && clear > start, $"expected start < clear, got start={start} clear={clear}");
+        Assert.True(serve > clear, $"expected clear < serve, got clear={clear} serve={serve}");
+        Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging.MarkComplete(layout)"));
+    }
+
+    [Fact]
+    public void The_identity_owner_stages_the_first_run_before_the_record_it_writes()
+    {
+        var identitySource = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "DeploymentIdentity.cs")));
+
+        // The marker precedes the record the same step writes, which is what makes a crash
+        // between the two a mint that did not happen instead of an identity no authority
+        // was ever created for; and only the mint path stages.
+        var mark = identitySource.IndexOf("FirstRunStaging.MarkIncomplete(layout)", StringComparison.Ordinal);
+        var record = identitySource.IndexOf("WriteRecord(recordPath, minted)", StringComparison.Ordinal);
+        Assert.True(mark >= 0 && record > mark, $"expected mark < record, got mark={mark} record={record}");
+        Assert.Equal(1, CountOccurrences(identitySource, "FirstRunStaging.MarkIncomplete(layout)"));
     }
 
     [Fact]
@@ -65,6 +99,7 @@ public sealed class LauncherProvisioningWiringTests
         Assert.Contains("DeploymentIdentity.EstablishForCurrentUser(layout)", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("deployment-manifest.json", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("deployment-identity.json", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("deployment-first-run-staging.json", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("WriteAllText", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("WriteAllBytes", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("File.Create", productionPath, StringComparison.Ordinal);

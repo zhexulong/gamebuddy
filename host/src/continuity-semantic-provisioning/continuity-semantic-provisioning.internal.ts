@@ -9,6 +9,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -91,8 +92,12 @@ class FreshContinuityProvisionError extends Error {
  * directory. This is a supported-process concurrency boundary, not a hostile
  * same-identity filesystem security boundary: Node/Windows exposes no durable
  * directory handle capability that can prove a path was never replaced after
- * creation. We therefore never clean up a failed authority directory, and
- * never open a directory whose admission invariants are not currently exact.
+ * creation. A failure inside one attempt therefore retains its partial state for
+ * inspection and never cleans it up, and no directory whose admission invariants are
+ * not currently exact is ever opened. The one directory this does discard is a
+ * leftover from a first run that provably never finished it; see
+ * `discardProvablyIncompleteAuthorityRoot`, which states what that proof is and what
+ * it cannot distinguish.
  */
 export function provisionFreshProductionContinuity(options: FreshContinuityProvisionOptions): FreshContinuityProvision {
   validateOptions(options);
@@ -457,6 +462,12 @@ function knownAuthorityRoot(runtimeCwd: string): string {
 }
 function createFreshAuthorityRoot(runtimeCwd: string): string {
   const root = authorityRoot(runtimeCwd);
+  // A first run that died after the launcher minted the deployment identity leaves
+  // behind the authority directory this same fresh path created and never finished.
+  // The create below is non-recursive, so without this a leftover would refuse every
+  // later launch with `production_authority_artifact_present` forever - one of the two
+  // ways an interrupted first launch is unrecoverable.
+  if (isDirectory(root)) discardProvablyIncompleteAuthorityRoot(root);
   try {
     mkdirSync(root);
   } catch {
@@ -464,6 +475,47 @@ function createFreshAuthorityRoot(runtimeCwd: string): string {
   }
   if (!isDirectory(root)) throw failure("production_authority_artifact_present");
   return root;
+}
+
+/**
+ * Discards a leftover authority directory, but only when the authority side can
+ * substantiate that the first run never finished it: the completion marker the fresh
+ * path writes LAST (`production-authority-marker.json`) is absent, and the directory
+ * holds nothing the fresh path does not itself create before that marker - the
+ * database and SQLite's own sidecars of it. An empty directory is the crash between
+ * the directory's creation and the database's; the database alone is the crash before
+ * the marker.
+ *
+ * The proof is one-sided and cannot be made stronger, which is worth stating plainly:
+ * an absent marker is exactly what "never finished" leaves, and an absent marker is
+ * also what "the marker was removed afterwards" leaves, and nothing on disk tells the
+ * two apart. What makes discarding safe is the caller's context rather than the proof:
+ * this runs only for a `fresh` mount, and the launcher asks for a fresh mount only
+ * when its own deployment-identity record shows the identity was minted by a run it
+ * never saw complete. A `known` mount never reaches this function and never deletes
+ * anything.
+ */
+function discardProvablyIncompleteAuthorityRoot(root: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    throw failure("production_authority_artifact_present");
+  }
+  if (entries.includes(AUTHORITY_MARKER_NAME) || entries.some((entry) => !databaseFamilyEntry(entry)))
+    throw failure("production_authority_artifact_present");
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  } catch {
+    throw failure("production_authority_artifact_present");
+  }
+  // The directory has to be gone: a non-recursive create over a directory that is
+  // still there would silently be the old one.
+  if (isDirectory(root)) throw failure("production_authority_artifact_present");
+}
+/** The database the fresh path creates before its completion marker, and SQLite's sidecars of it. */
+function databaseFamilyEntry(entry: string): boolean {
+  return entry === DATABASE_NAME || entry.startsWith(`${DATABASE_NAME}-`);
 }
 
 /** Checks shared runtime root on every fresh/open admission before SQLite opens. */
