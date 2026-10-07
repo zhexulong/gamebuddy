@@ -718,7 +718,10 @@ async function createTaskModelRuntime(
             baseUrl: "http://127.0.0.1:8317/v1",
             api: "openai-completions",
             apiKey: "$CPA_OAI_API_KEY",
-            authHeader: true,
+            // No `authHeader`: the OpenAI-compatible adapter installs `Authorization: Bearer`
+            // from the resolved key itself. The tavern entry for this same provider id and
+            // shape has been verified live without the flag (a real provider turn completes),
+            // and carrying it here would make the two surfaces disagree about the same fact.
             compat: {
               supportsDeveloperRole: false,
               supportsReasoningEffort: true,
