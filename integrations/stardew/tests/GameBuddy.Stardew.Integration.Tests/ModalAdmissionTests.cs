@@ -79,9 +79,15 @@ public sealed class ModalAdmissionTests
         {
             ExecutionManager manager = CreateManager(1001);
 
-            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "the Modal profile's precondition is the modal being present, never a bare idle body");
+            // The layering changed with the convergence: the Modal profile decides whether the action
+            // may be ATTEMPTED (only a cutscene outranks a modal), and the HANDLER decides whether a modal
+            // is actually present - because it can name that (`no_modal_present`). So admission ADMITS
+            // here, and the refusal with the specific code is asserted by ModalDismissActionTests /
+            // ModalAnswerDialogueTests. What this pin now protects is that admission does not invent a
+            // modal-obstacle it cannot describe.
+            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)
+                .Should().BeNull(
+                    "an idle body is not an obstacle for the modal family: the handler names the missing modal");
         });
     }
 
@@ -227,9 +233,12 @@ public sealed class ModalAdmissionTests
         {
             ExecutionManager manager = CreateManager(1001);
 
-            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "without an open modal the Modal profile's precondition fails even at the pass-out hour");
+            // Same layering as above, and the pass-out hour is not an obstacle either: with no modal
+            // mounted the handler refuses with `no_modal_present`, which is the accurate statement. A
+            // PASS-OUT still cannot be ACTED ON, because there is nothing to act on.
+            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)
+                .Should().BeNull(
+                    "the pass-out hour is not an obstacle for the modal family when no modal is mounted");
         });
     }
 

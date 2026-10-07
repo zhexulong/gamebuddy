@@ -57,19 +57,23 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         this.revision++;
 
-        // WIA §4.1/§4.2: an absorbed cutscene outranks the modal. The admission
-        // profile also refuses with player_not_actionable under eventUp, and
-        // this body keeps the same ruling so a granted execution can never
-        // close a modal that the world replaced with an event.
-        if (Game1.eventUp)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // The Modal profile is this family's admission (it refuses unless the disposition IS Modal and
+        // no cutscene absorbed the actor), so the mounted modal is the precondition here rather than an
+        // obstacle. Before this call the profile had no production caller at all and this body
+        // re-derived the ruling - which is what the file header used to claim the shared admission did.
+        if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.Modal) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
 
         IClickableMenu? modal = Game1.activeClickableMenu;
         if (modal is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);
 
-        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
+            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
+            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
+            // the failure-mode collapse the review flagged.
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
         string modalType = modal.GetType().Name;
 
@@ -153,8 +157,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         this.revision++;
 
-        if (Game1.eventUp)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // The Modal profile is this family's admission (it refuses unless the disposition IS Modal and
+        // no cutscene absorbed the actor), so the mounted modal is the precondition here rather than an
+        // obstacle. Before this call the profile had no production caller at all and this body
+        // re-derived the ruling - which is what the file header used to claim the shared admission did.
+        if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.Modal) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
 
         if (Game1.activeClickableMenu is not DialogueBox dialogue)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);

@@ -32,7 +32,10 @@ public sealed class RideBusActionTests
         (LocalExecutionReceipt receipt, _) = InvokeRideBus(manager, "req_bus_no_actor");
 
         receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("player_not_actionable");
+            // Admission owns identity and its code names the state; this handler used to hardcode
+            // player_not_actionable for every identity failure.
+
+        receipt.ReasonCode.Should().Be("world_not_ready");
     }
 
     [Theory]

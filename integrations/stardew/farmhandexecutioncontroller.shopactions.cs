@@ -301,8 +301,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             ? boundExecutionId
             : this.NewExecutionId(request.RequestId);
 
-        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
+            // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
+            // to discard it with `out _` and report player_not_actionable for every identity failure, which is
+            // the failure-mode collapse the review flagged.
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
         // One body at a time, like every other action.
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null
