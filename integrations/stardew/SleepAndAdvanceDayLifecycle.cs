@@ -542,9 +542,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// Return true once the actor is standing on the bed tile, so the game
     /// itself raises the Sleep touch action.
     /// </summary>
+    /// <summary>
+    /// The walk-to-bed search budget. The game s own settler walk uses 10000
+    /// (`PathFindController.cs:62`); the bed is a handful of tiles away, so this only has to be a
+    /// bound on the game thread rather than a tuned number, and the trace records how many tiles the
+    /// plan actually had so a refusal can never be read as an arrival.
+    /// </summary>
+    private const int BedWalkNodeBudget = 10000;
+
     private bool WalkToBed()
-    {
-        if (Game1.player.currentLocation is not FarmHouse farmHouse)
+    {        if (Game1.player.currentLocation is not FarmHouse farmHouse)
             return false;
         Point bedSpot = farmHouse.GetPlayerBedSpot();
         var bedTile = new Vector2(bedSpot.X, bedSpot.Y);
@@ -557,13 +564,31 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
         if (!this.arrivalDispatched)
         {
-            // The native path finder is the same route the game's own villagers
-            // use; it is not input injection.
-            var controller = new PathFindController(Game1.player, farmHouse, bedSpot, Game1.player.FacingDirection);
+            // The native path finder is the same route the game's own villagers use; it is not input
+            // injection.
+            //
+            // NOT the four-argument constructor: that one passes `PathFindController.isAtEndPoint` directly,
+            // and it is the only form whose constructor can TELEPORT the actor instead of planning
+            // (`PathFindController.cs:133-136` moves the player onto the end point when the location has no
+            // farmers, and leaves `pathToEndPoint` null). With a predicate of our own that branch cannot be
+            // taken, so the trace below always describes a real plan rather than a silent placement.
+            var controller = new PathFindController(
+                Game1.player,
+                farmHouse,
+                (node, target, _location, _character) => node.x == target.X && node.y == target.Y,
+                Game1.player.FacingDirection,
+                null,
+                BedWalkNodeBudget,
+                bedSpot);
             Game1.player.controller = controller;
             this.installedController = controller;
             this.arrivalDispatched = true;
-            this.trace.Add($"pathfind_to_bed_tile:{bedSpot.X},{bedSpot.Y}");
+            int plannedTiles = controller.pathToEndPoint?.Count ?? 0;
+            this.trace.Add(
+                $"pathfind_to_bed_tile:{bedSpot.X},{bedSpot.Y};planned_tiles={plannedTiles};"
+                    + $"location_farmers={farmHouse.farmers.Count};from={Game1.player.Tile.X},{Game1.player.Tile.Y}");
+            if (plannedTiles == 0)
+                this.trace.Add($"bed_walk_unplanned;tile={Game1.player.Tile.X},{Game1.player.Tile.Y}");
             return false;
         }
 
