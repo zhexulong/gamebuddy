@@ -177,10 +177,21 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // quantises by RequiredCount, and the Collect branch is UI-free only while the
   // output holds exactly one stack — at two or more it opens ItemGrabMenu. Neither
   // chest_store/chest_retrieve (ordinary owned Chests and fridges, via Chest.addItem
-  // and GetItemsForPlayer) nor machine_load (pinned to a specific machine) covers
+  // and GetItemsForPlayer) nor machine_load covers
   // that. A future load_building_chest / collect_building_chest_output pair would
   // have to register first, because this table rejects unregistered action ids
   // (see the unknown_action_id assertion).
+  //
+  // SCOPE NOTE on machine_load, added by ruling 1 (2026-10-06): that action's acceptance pins
+  // expectedQualifiedItemId to exactly "(O)433" via FarmhandActionDefinitions.cs:120
+  // (SlotItemTarget), i.e. it covers ONE machine rule — Default_CoffeeBeans on (BC)12 — out of the
+  // 39 recorded in tools/stardew-native-local-machine-content-contract.mjs:60. That pin is a FROZEN,
+  // hash-bound contract (EXPECTED_XNB_SHA256 / EXPECTED_MACHINE_DIGEST, enforced by the
+  // machine_rule_trigger_mismatch comparison), so widening it would claim conservation evidence for
+  // machine rules nobody has measured. The boundary is intentional; this note exists because a reader
+  // searching this table for "what does machine_load actually cover" previously found the phrase
+  // "pinned to a specific machine", which understates the restriction and hides where the rest of the
+  // record lives.
   BuildingChest: {
     at: "GameLocation",
     group: "merge_into_existing",
@@ -243,6 +254,19 @@ export const SELECTOR_VERDICTS = Object.freeze({
     reason: "terminal is Game1.warpFarmer, the same native transition `enter_exit` registers; a warp is not a new intent",
     anchor: "GameLocation.cs:9475",
   },
+  // MECHANISM RECORDED 2026-10-06, reachability OPEN. DispatchNativeDoor
+  // (farmhandexecutioncontroller.movementactions.cs:427-476) admits a Buildings-layer Action only
+  // when the tile is a key of location.doors (:447), and updateDoors builds that table from the FOURTH
+  // token of the Action string (GameLocation.cs:17601-17638) — so a Warp-family Action with fewer than
+  // four tokens is considered by updateDoors and then discarded. Such a tile reaches enter_exit only
+  // through the resolver fallback (:473-475), not through the native performAction dispatch, so the
+  // native gate that tile carries would not run. This narrowing is deliberate: reading the Action
+  // property without the door table would also execute non-warp actions such as "Kitchen". A principled
+  // widening exists (admit when the Action string contains "Warp", the same predicate updateDoors
+  // uses), but it changes enter_exit's dispatch surface and needs a live re-run to accept, so it is
+  // NOT applied. Whether any shipped map actually carries such a tile is UNVERIFIED: the decompiled
+  // tree has no Content/ directory, so the map layer cannot be inspected here. The greenhouse door
+  // that WAS exercised live goes through the building path (:439-445) and is correctly gated.
   // CORRECTED 2026-10-06: this was merge_into_existing -> [travel, enter_exit], which was a
   // COVERAGE CLAIM THE IMPLEMENTATION DOES NOT HONOR. Verified blockers, two independent ones:
   //   * enter_exit's building branch requires `building.HasIndoors() && getPointForHumanDoor() == source`
@@ -321,12 +345,19 @@ export const SELECTOR_VERDICTS = Object.freeze({
     reason: "showPrairieKingMenu() sets Game1.currentMinigame = AbigailGame",
     anchor: "GameLocation.cs:10195",
   },
+  // RULING 2026-10-06: B2 excludes the SELECTOR, not the capability. The branch is unreachable
+  // because it needs a right-click edge, but the capability behind it is a public UI-free seam —
+  // Building.ToggleAnimalDoor (Building.cs:915) — and driving public seams rather than input
+  // dispatchers is what dismiss_modal (DialogueBox.closeDialogue), ride_minecart (MinecartWarp) and
+  // select_mine_elevator_floor (Game1.enterMine) already do. Keeping this excluded would make B2 say
+  // something about the capability that contradicts those three.
   BuildingToggleAnimalDoor: {
     at: "GameLocation",
-    group: "explicit_exclusion",
-    boundary: "B2_input_edge_gated_branch",
-    reason: "the branch only calls buildingAt.ToggleAnimalDoor when Game1.didPlayerJustRightClick(ignoreNonMouseHeldInput: true) is true",
-    anchor: "GameLocation.cs:10137",
+    group: "new_primitive_needed",
+    actionId: "toggle_animal_door",
+    reason:
+      "the selector needs Game1.didPlayerJustRightClick (GameLocation.cs:10137-10148) so it is not an Agent entry point, but Building.ToggleAnimalDoor (Building.cs:915) is public and UI-free — no menu, no input, nothing to drive",
+    anchor: "GameLocation.cs:10137 -> Building.cs:915 (ToggleAnimalDoor)",
   },
   playSound: {
     at: "GameLocation",
@@ -359,7 +390,25 @@ export const METHOD_VERDICTS = Object.freeze({
   //     Bus_Yes 分支的应答语义仍属 answer_dialogue，收钱 + 强制控制的编排由原生自己完成）
   "Game1.warpFarmer@9788": merge(["enter_exit"], "same Farmer.warpFarmer transition", "4.3"),
   "GameServer.warpFarmer@673": merge(["enter_exit"], "multiplayer-authoritative copy of the same warp transition", "4.3"),
-  "NPC.checkAction@2464": merge(["interact_npc_with_item"], "gift branch routes into tryToReceiveActiveObject -> receiveGift", "4.3"),
+  // CORRECTED 2026-10-06 (ruling 7). The old row said a plain merge into interact_npc_with_item,
+  // which was a false coverage claim of the same kind as ObeliskWarp's. NPC.checkAction (NPC.cs:2464)
+  // does TWO things and we cover one:
+  //   * the GIFT branch routes into tryToReceiveActiveObject (NPC.cs:1712), which is what
+  //     interact_npc_with_item mirrors — but that action REQUIRES a held item (slot +
+  //     expectedQualifiedItemId; the handler refuses with item_not_owned_in_slot without one), so it
+  //     covers gifting only;
+  //   * the TALK branch (NPC.cs:2504-2506 and siblings: CurrentDialogue.Push + Game1.drawDialogue)
+  //     has no caller at all.
+  // The uncovered half is counted as the primitive it needs. A "partial merge" group would say this
+  // better, but the verdict vocabulary here is fixed (merge / newPrimitive / pending / implemented /
+  // plainContent / contentFromSelector) and inventing a helper name silently breaks the module — so
+  // the covered half is named in the reason instead, and nothing is lost.
+  "NPC.checkAction@2464": newPrimitive(
+    "talk_to_npc",
+    "the gifting half is covered by interact_npc_with_item (which mirrors tryToReceiveActiveObject and needs a held item), but the talk half has no caller: nothing invokes NPC.checkAction's talk branch (CurrentDialogue.Push + Game1.drawDialogue)",
+    "NPC.cs:2464 -> :2504-2506 (talk) / :1712 tryToReceiveActiveObject (gift)",
+    "4.3",
+  ),
   "ShippingBin.shipItem@158": merge(["ship_item"], "private shipItem is the shipping transaction; Farm.shipItem is registered", "4.3"),
   "ShippingBin.leftClicked@182": merge(["ship_item"], "menu-free shipping entry point", "4.3"),
   "HoeDirt.shake@367": {

@@ -103,6 +103,8 @@
     "set_sign_display",
     "deposit_silo_hay",
     "toggle_tool_light",
+    "withdraw_silo_hay",
+    "use_obelisk",
     "scythe_crop",
     "harvest_bush",
     "harvest_fruit_tree",
@@ -1012,6 +1014,40 @@
           "signature": "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "flips the local lantern light source and removes/readds it; on is a per-tool local bool and the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "withdraw_silo_hay",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public static Object GetHayFromAnySilo(GameLocation currentLocation)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "decrements piecesOfHay on the shared farm and mints the hay object without inserting it; the body reads no multiplayer token"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "use_obelisk",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Buildings/Building.cs",
+          "signature": "public static void PerformObeliskWarp(string destination, int warp_x, int warp_y, bool force_dismount, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "warps the local player to a fixed destination via obeliskWarpForReal, which also force-dismounts; warping is per-actor and the body reads no multiplayer token"
         }
       ],
       "admission": {

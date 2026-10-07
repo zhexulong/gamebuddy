@@ -18,7 +18,23 @@ public static class BridgeProtocol
     // acknowledgement is ~16.7 KiB, so the framing bound must admit the full
     // publication plus growth; 32 KiB keeps a margin while staying well below
     // the 64 KiB named-pipe buffer ceiling.
-    public const int MaximumMessageBytes = 32 * 1024;
+    // RAISED 2026-10-07 from 32 KiB, which the action catalog had outgrown. hello_ack carries the
+    // complete published catalog and it crossed the old bound at 70 registered actions, which made
+    // EVERY live gate fail with message_too_large — not one action's fault but all of them, because
+    // every runner's first call is hello. The old bound was sized from the surface as it stood at 34
+    // actions (~16.7 KiB, per the mirror comment on the Host side), so it encoded a snapshot of growth
+    // rather than a limit: the catalog costs ~365 bytes per action and any further action would have
+    // tripped it again. 128 KiB admits roughly 290 actions of head-room.
+    //
+    // This is not a security boundary and never was: the frame travels over a local, authenticated,
+    // owner-scoped named pipe, not a network ingress. Its job is to bound one allocation per frame,
+    // which 128 KiB still does. The alternative — splitting the descriptor publication out of
+    // hello_ack — is the better shape long term (Capabilities and EnabledActionIds are also two
+    // projections of the same set), but it changes the handshake contract and deserves its own pass.
+    public const int MaximumMessageBytes = 128 * 1024;
+
+    /// <summary>Byte size of the last frame that exceeded <see cref="MaximumMessageBytes"/>.</summary>
+    public static int LastFrameSizeBytes { get; private set; }
 
     /// <summary>
     /// Frozen per-node wire binding-map bound on the inbound Body program candidate,
@@ -86,8 +102,14 @@ public static class BridgeProtocol
             };
             if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes)
             {
-                json = string.Empty;
+                // The size is diagnostics, so it does NOT go in the reason code: the reason is a
+                // contract value consumers match on (the serialization test asserts it by equality,
+                // and the Host mirrors it). It is published separately so the ModEntry diagnostic —
+                // which is what reaches the SMAPI log — can report how far past the bound the frame
+                // is, instead of every oversize failure reading identically.
+                LastFrameSizeBytes = System.Text.Encoding.UTF8.GetByteCount(json);
                 reasonCode = "message_too_large";
+                json = string.Empty;
                 return false;
             }
 
@@ -1832,6 +1854,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "chest_store" or "chest_retrieve" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
+        "use_obelisk" => new[] { "x", "y", "expectedTargetId" },
         "toggle_tool_light" => new[] { "slot", "x", "y" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },

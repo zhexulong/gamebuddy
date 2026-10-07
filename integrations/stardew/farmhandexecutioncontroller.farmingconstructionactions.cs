@@ -164,78 +164,105 @@ internal sealed partial class ExecutionManager
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is null
-            || dirt.crop.forageCrop.Value
-            || !dirt.readyForHarvest()
-            || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab
-            || !string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_unavailable", $"target={targetX},{targetY}");
-
-        StardewValley.Crop crop = dirt.crop;
-        // HoeDirt.performUseAction promotes a Golden Scythe to a scythe
-        // harvest even for a crop whose data says Grab. This narrow action
-        // exposes only the ordinary native Grab path, so reject that override.
-        if (Game1.player.CurrentTool is StardewValley.Tool selectedTool
-            && selectedTool.isScythe()
-            && string.Equals(selectedTool.ItemId, "66", StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "golden_scythe_grab_override", null);
-
-        StardewValley.Item harvestItem;
-        try
+        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
         {
-            harvestItem = StardewValley.ItemRegistry.Create(crop.indexOfHarvest.Value, 1);
+            // Out of the native interaction radius: walk in and then harvest, exactly like the
+            // sibling cost actions. Refusing here taught a live Agent nothing: its only evidence
+            // was `target=x,y`, so it retried the same request six times (run O).
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "harvest_crop",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteHarvestCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
         }
-        catch (Exception)
-        {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_item_unavailable", $"target={targetX},{targetY}");
-        }
-        if (!string.Equals(harvestItem.QualifiedItemId, expectedQualifiedHarvestItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_changed", $"target={targetX},{targetY}");
-        if (!Game1.player.couldInventoryAcceptThisItem(harvestItem))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"item={expectedQualifiedHarvestItemId}");
 
-        bool regrowsAfterHarvest = crop.RegrowsAfterHarvest();
-        string cropId = crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown";
-        int inventoryBefore = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedHarvestItemId ? item.Stack : 0);
-        int phaseBefore = crop.currentPhase.Value;
-        int dayOfPhaseBefore = crop.dayOfCurrentPhase.Value;
-        LocalCropHarvestingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, cropId, expectedQualifiedHarvestItemId, regrowsAfterHarvest, this.revision, requestedDeadlineMs);
-        // HoeDirt.performUseAction is the target-version native grab-harvest
-        // route. It dispatches Crop.harvest and, only when that native method
-        // says the crop is non-regrowing, invokes native destroyCrop itself.
-        // Do not reproduce either inventory or terrain mutation here.
-        // This outer native wrapper returns true only when it destroyed a
-        // non-regrowing crop. A successful regrow harvest deliberately falls
-        // through to its pre-harvest readiness result (normally false), so its
-        // receipt must rely on the separate inventory and phase postconditions.
-        bool nativePathReturn = dirt.performUseAction(tile);
+        return this.ExecuteHarvestCrop(executionId, requestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs);
+    }
 
-        int inventoryAfter = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedHarvestItemId ? item.Stack : 0);
-        bool inventoryGained = inventoryAfter > inventoryBefore;
-        bool cropStillPresent = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
-            && afterDirt.crop is not null;
-        StardewValley.Crop? cropAfter = cropStillPresent
-            ? ((StardewValley.TerrainFeatures.HoeDirt)afterFeature!).crop
-            : null;
-        bool regrowAdvanced = regrowsAfterHarvest && cropAfter is not null
-            && cropAfter.dayOfCurrentPhase.Value > dayOfPhaseBefore
-            && cropAfter.currentPhase.Value >= phaseBefore;
-        bool cropPostcondition = regrowsAfterHarvest ? cropStillPresent && regrowAdvanced : !cropStillPresent;
-        bool nativeAccepted = inventoryGained && cropPostcondition && (regrowsAfterHarvest || nativePathReturn);
-        ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        return receipt;
+    /// <summary>
+    /// The harvest terminal step: re-validates the target and runs the native grab-harvest.
+    /// Called directly when the actor is already in range and from the approach continuation
+    /// after a walk, so both paths run the same checks and produce the same evidence.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteHarvestCrop(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+
+    StardewValley.GameLocation location = Game1.player.currentLocation;
+    Vector2 tile = new(targetX, targetY);
+    if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+        || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+        || dirt.crop is null
+        || dirt.crop.forageCrop.Value
+        || !dirt.readyForHarvest()
+        || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab
+        || !string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal))
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_unavailable", $"target={targetX},{targetY}");
+
+    StardewValley.Crop crop = dirt.crop;
+    // HoeDirt.performUseAction promotes a Golden Scythe to a scythe
+    // harvest even for a crop whose data says Grab. This narrow action
+    // exposes only the ordinary native Grab path, so reject that override.
+    if (Game1.player.CurrentTool is StardewValley.Tool selectedTool
+        && selectedTool.isScythe()
+        && string.Equals(selectedTool.ItemId, "66", StringComparison.Ordinal))
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "golden_scythe_grab_override", null);
+
+    StardewValley.Item harvestItem;
+    try
+    {
+        harvestItem = StardewValley.ItemRegistry.Create(crop.indexOfHarvest.Value, 1);
+    }
+    catch (Exception)
+    {
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_item_unavailable", $"target={targetX},{targetY}");
+    }
+    if (!string.Equals(harvestItem.QualifiedItemId, expectedQualifiedHarvestItemId, StringComparison.Ordinal))
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_changed", $"target={targetX},{targetY}");
+    if (!Game1.player.couldInventoryAcceptThisItem(harvestItem))
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"item={expectedQualifiedHarvestItemId}");
+
+    bool regrowsAfterHarvest = crop.RegrowsAfterHarvest();
+    string cropId = crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown";
+    int inventoryBefore = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedHarvestItemId ? item.Stack : 0);
+    int phaseBefore = crop.currentPhase.Value;
+    int dayOfPhaseBefore = crop.dayOfCurrentPhase.Value;
+    LocalCropHarvestingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, cropId, expectedQualifiedHarvestItemId, regrowsAfterHarvest, this.revision, requestedDeadlineMs);
+    // HoeDirt.performUseAction is the target-version native grab-harvest
+    // route. It dispatches Crop.harvest and, only when that native method
+    // says the crop is non-regrowing, invokes native destroyCrop itself.
+    // Do not reproduce either inventory or terrain mutation here.
+    // This outer native wrapper returns true only when it destroyed a
+    // non-regrowing crop. A successful regrow harvest deliberately falls
+    // through to its pre-harvest readiness result (normally false), so its
+    // receipt must rely on the separate inventory and phase postconditions.
+    bool nativePathReturn = dirt.performUseAction(tile);
+
+    int inventoryAfter = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedHarvestItemId ? item.Stack : 0);
+    bool inventoryGained = inventoryAfter > inventoryBefore;
+    bool cropStillPresent = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+        && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
+        && afterDirt.crop is not null;
+    StardewValley.Crop? cropAfter = cropStillPresent
+        ? ((StardewValley.TerrainFeatures.HoeDirt)afterFeature!).crop
+        : null;
+    bool regrowAdvanced = regrowsAfterHarvest && cropAfter is not null
+        && cropAfter.dayOfCurrentPhase.Value > dayOfPhaseBefore
+        && cropAfter.currentPhase.Value >= phaseBefore;
+    bool cropPostcondition = regrowsAfterHarvest ? cropStillPresent && regrowAdvanced : !cropStillPresent;
+    bool nativeAccepted = inventoryGained && cropPostcondition && (regrowsAfterHarvest || nativePathReturn);
+    ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+    string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
+    LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+        $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()}");
+    this.Remember(receipt);
+    this.AddTrace(receipt);
+    return receipt;
     }
 
     public LocalExecutionReceipt RequestLocalPlantSeed(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)

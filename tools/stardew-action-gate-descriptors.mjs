@@ -215,6 +215,9 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // (bus_arrived), the fare actually deducted, and the world moving the actor to
   // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
   gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
+  // Promoted 2026-10-06 after their native-local live gates passed on a rebuilt fixture environment.
+  gate("withdraw_silo_hay", 1, "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs", "silo_hay_taken", "native_withdraw_silo_hay_v1"),
+  gate("use_obelisk", 1, "run-stardew-native-local-player-use-obelisk-smoke.mjs", "obelisk_arrived", "native_use_obelisk_v1"),
 
   // Buying is the transaction only; the action refuses if the owner is out of reach so a
   // walk failure can never be reported as a trade failure. The runner also proves the two

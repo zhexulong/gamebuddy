@@ -114,6 +114,7 @@ public sealed partial class ModEntry : Mod
     private NativeLocalFeedFixturePending? nativeLocalFeedFixturePending;
     private NativeLocalCollectAnimalProductFixturePending? nativeLocalCollectAnimalProductFixturePending;
     private NativeLocalClearHoeDirtFixturePending? nativeLocalClearHoeDirtFixturePending;
+    private NativeLocalUseObeliskFixturePending? nativeLocalUseObeliskFixturePending;
     private NativeLocalDigArtifactSpotFixturePending? nativeLocalDigArtifactSpotFixturePending;
     private NativeLocalPlaceCrabPotFixturePending? nativeLocalPlaceCrabPotFixturePending;
     private NativeLocalBaitCrabPotFixturePending? nativeLocalBaitCrabPotFixturePending;
@@ -1279,6 +1280,75 @@ public sealed partial class ModEntry : Mod
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
+        if (this.nativeLocalUseObeliskFixturePending is NativeLocalUseObeliskFixturePending obeliskPending && e.Player == Game1.player)
+        {
+            // The location is final here, so the structure can be placed once and survive.
+            if (e.NewLocation is Farm obeliskFarm
+                && string.Equals(obeliskFarm.NameOrUniqueName, obeliskPending.FarmName, StringComparison.Ordinal)
+                && e.Player.Tile == obeliskPending.StandingTile)
+            {
+                StardewValley.Buildings.Building? placed = obeliskFarm.buildings.FirstOrDefault(candidate => candidate is not null
+                    && candidate.buildingType.Value == obeliskPending.BuildingType
+                    && candidate.tileX.Value == (int)obeliskPending.Origin.X
+                    && candidate.tileY.Value == (int)obeliskPending.Origin.Y);
+                if (placed is null)
+                {
+                    placed = new StardewValley.Buildings.Building(obeliskPending.BuildingType, obeliskPending.Origin);
+                    placed.daysOfConstructionLeft.Value = 0;
+                    obeliskFarm.buildings.Add(placed);
+                    obeliskFarm.updateLayout();
+                }
+                placed.daysOfConstructionLeft.Value = 0;
+
+                // Ask the questions the ACTION will ask, not the ones the fixture already knows the
+                // answer to. Re-testing the chosen type and Contains() on the object just added proved
+                // nothing: the first live run passed those and was still refused with
+                // obelisk_out_of_reach, because the actor was outside the interaction ring while the
+                // check compared against the building ORIGIN tile.
+                e.Player.Position = obeliskPending.StandingTile * Game1.tileSize;
+                string publishedId = ExecutionManager.BuildObeliskTargetId(
+                    "building",
+                    obeliskFarm.NameOrUniqueName,
+                    placed.buildingType.Value,
+                    placed.tileX.Value,
+                    placed.tileY.Value);
+                ExecutionManager.ObeliskFixtureProbe probe = ExecutionManager.ProbeObeliskFixture(
+                    obeliskFarm,
+                    (int)placed.tileX.Value,
+                    (int)placed.tileY.Value,
+                    (int)e.Player.TilePoint.X,
+                    (int)e.Player.TilePoint.Y,
+                    publishedId);
+                if (probe.Resolvable)
+                {
+                    this.nativeLocalUseObeliskFixturePending = null;
+                    this.nativeLocalPlayerFixtureInitialized = true;
+                    this.Monitor.Log(
+                        "GameBuddy native-local-player initialized use_obelisk precondition before bridge attachment: "
+                            + $"building_type={placed.buildingType.Value};tile={placed.tileX.Value},{placed.tileY.Value};"
+                            + $"size={placed.tilesWide.Value}x{placed.tilesHigh.Value};"
+                            + $"standing={(int)obeliskPending.StandingTile.X},{(int)obeliskPending.StandingTile.Y};"
+                            + $"placed_after_warp=true;building_count={obeliskFarm.buildings.Count};"
+                            + $"probe_tile={probe.TileX},{probe.TileY};probe_route={probe.Route};probe_identity_matches=true;probe_in_ring=true",
+                        LogLevel.Info);
+                    return;
+                }
+                this.nativeLocalUseObeliskFixturePending = null;
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log(
+                    "GameBuddy native-local-player fixture setup failed: scenario=native_use_obelisk_v1; "
+                        + "error=fixture_native_local_use_obelisk_building_not_resolvable_after_warp",
+                    LogLevel.Error);
+                return;
+            }
+            this.nativeLocalUseObeliskFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log(
+                "GameBuddy native-local-player fixture setup failed: scenario=native_use_obelisk_v1; "
+                    + $"error=fixture_native_local_use_obelisk_warp_landed_elsewhere;location={e.NewLocation?.NameOrUniqueName};tile={(int)e.Player.Tile.X},{(int)e.Player.Tile.Y}",
+                LogLevel.Error);
+            return;
+        }
         if (this.nativeLocalBaitCrabPotFixturePending is NativeLocalBaitCrabPotFixturePending baitPending && e.Player == Game1.player)
         {
             if (e.NewLocation is Farm farm && string.Equals(farm.NameOrUniqueName, baitPending.FarmName, StringComparison.Ordinal)
@@ -2219,7 +2289,12 @@ public sealed partial class ModEntry : Mod
             return this.SerializeError(state, null, reasonCode);
         if (!handler(request, out BridgeEnvelope<TResponse>? response, out reasonCode) || response is null)
             return this.SerializeError(state, request.CorrelationId, reasonCode);
-        return BridgeProtocol.TrySerialize(response, out string json, out _) ? json : this.SerializeError(state, request.CorrelationId, "response_serialization_failed");
+        if (BridgeProtocol.TrySerialize(response, out string json, out string serializeReason))
+            return json;
+        // The reason is what makes a live failure diagnosable; discarding it made every
+        // serialization fault look identical.
+        this.Monitor?.Log($"GameBuddy bridge response serialization failed: reason={serializeReason}; type={response.Type}; frameBytes={BridgeProtocol.LastFrameSizeBytes}", LogLevel.Error);
+        return this.SerializeError(state, request.CorrelationId, "response_serialization_failed");
     }
 
     private SceneObservationInput? TryCreateSceneObservationInput()
@@ -2560,6 +2635,8 @@ public sealed partial class ModEntry : Mod
     private sealed record NativeLocalFeedFixturePending(string AnimalHouseName, Vector2 TroughTile, Vector2 StandingTile);
     private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
     private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
+
+    private sealed record NativeLocalUseObeliskFixturePending(string FarmName, string BuildingType, Vector2 Origin, Vector2 StandingTile);
     private sealed record NativeLocalDigArtifactSpotFixturePending(string FarmName, Vector2 ArtifactTile, Vector2 StandingTile);
     private sealed record NativeLocalBaitCrabPotFixturePending(string FarmName, Vector2 TargetTile, Vector2 StandingTile, StardewValley.Objects.CrabPot Pot, StardewValley.Object Bait, long OwnerId);
 

@@ -1644,6 +1644,66 @@
         }
       },
       {
+        "actionId": "withdraw_silo_hay",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "silo_hay_taken"
+        }
+      },
+      {
+        "actionId": "use_obelisk",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "obelisk_arrived"
+        }
+      },
+      {
         "actionId": "scythe_crop",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2094,6 +2154,8 @@
       "set_sign_display",
       "deposit_silo_hay",
       "toggle_tool_light",
+      "withdraw_silo_hay",
+      "use_obelisk",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2185,6 +2247,8 @@
       "set_sign_display",
       "deposit_silo_hay",
       "toggle_tool_light",
+      "withdraw_silo_hay",
+      "use_obelisk",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",

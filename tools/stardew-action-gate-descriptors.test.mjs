@@ -74,6 +74,8 @@ test("descriptor runner identity names the native-local shared-harness runner fo
   // actual native-local route (run-stardew-native-local-player-*), which is
   // the shared-harness runner. Any parallel/legacy runner ID is stale.
   const expectedRunners = Object.freeze({
+    use_obelisk: "run-stardew-native-local-player-use-obelisk-smoke.mjs",
+    withdraw_silo_hay: "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
     move_to_tile: "run-stardew-native-local-player-move-smoke.mjs",
     equip_tool: "run-stardew-native-local-player-equip-tool-smoke.mjs",
     travel: "run-stardew-native-local-player-travel-smoke.mjs",
@@ -253,6 +255,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "ship_item",
       "ride_minecart",
       "ride_bus",
+      "withdraw_silo_hay",
+      "use_obelisk",
       "shop_purchase",
       "select_mine_elevator_floor",
       "cut_grass",

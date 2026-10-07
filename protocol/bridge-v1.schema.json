@@ -4541,7 +4541,28 @@
       "additionalProperties": false,
       "maxProperties": 0
     },
-    "shopPurchaseArgs": {
+    "obeliskAndSiloArgs": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "x",
+          "y",
+          "expectedTargetId"
+        ],
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "shopPurchaseArgs": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -5824,6 +5845,28 @@
             ],
             "properties": {
               "action": {
+                "enum": [
+                  "withdraw_silo_hay",
+                  "use_obelisk"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/obeliskAndSiloArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "shop_purchase"
               }
             }
@@ -5991,7 +6034,9 @@
             "harvest_fruit_tree",
             "shake_tree",
             "take_pedestal_item",
-            "toggle_fence_gate"
+            "toggle_fence_gate",
+            "withdraw_silo_hay",
+            "use_obelisk"
           ]
         },
         "args": {

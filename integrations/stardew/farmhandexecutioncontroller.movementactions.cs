@@ -500,6 +500,11 @@ internal sealed partial class ExecutionManager
                 ? locationMatches
                 : Game1.player.currentLocation is StardewValley.Locations.MineShaft elevatorMine
                     && elevatorMine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
+            // The obelisk's landing tile is NOT a legal postcondition: Route A's warpFarmer may
+            // shift the actor to a passable neighbour of the requested tile, and Route B's landing
+            // is chosen inside the game's own delayed callback (WarpTotemEntry, else the whichFarm
+            // fallback). Only "the actor reached the destination location" can be asserted.
+            "use_obelisk" => locationMatches,
             _ => Game1.player.TilePoint.X == specification.TargetX && Game1.player.TilePoint.Y == specification.TargetY,
         };
         ExecutionState state = locationMatches && tileMatches ? ExecutionState.Succeeded : ExecutionState.Uncertain;
@@ -512,7 +517,9 @@ internal sealed partial class ExecutionManager
                         ? "mine_entered"
                         : specification.Action == "select_mine_elevator_floor"
                             ? "mine_elevator_floor_selected"
-                            : "travel_completed"
+                            : specification.Action == "use_obelisk"
+                                ? "obelisk_arrived"
+                                : "travel_completed"
             : specification.Action == "enter_exit"
                 ? "enter_exit_postcondition_mismatch"
                 : specification.Action == "ride_minecart"
@@ -521,7 +528,9 @@ internal sealed partial class ExecutionManager
                         ? "mine_entry_postcondition_mismatch"
                         : specification.Action == "select_mine_elevator_floor"
                             ? "mine_elevator_floor_postcondition_mismatch"
-                            : "travel_postcondition_mismatch";
+                            : specification.Action == "use_obelisk"
+                                ? "obelisk_postcondition_mismatch"
+                                : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.

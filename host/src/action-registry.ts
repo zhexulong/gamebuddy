@@ -67,6 +67,18 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Ride the native bus from the Bus Stop ticket machine to the desert; the Mod checks the vault, the driver and the fare itself and drives the game's own ticket interaction.",
     ["bus_ticket_machine"],
   ),
+  actionAdapter(
+    "withdraw_silo_hay",
+    "Take hay out of a silo",
+    "Withdraw one hay from a discovered silo. The Mod re-resolves the silo from the opaque target id and asserts both halves of the move (the silo store drops and the carried hay rises), so a one-sided change is never reported as success.",
+    ["silo"],
+  ),
+  actionAdapter(
+    "use_obelisk",
+    "Use a warp obelisk",
+    "Activate a discovered warp obelisk. The Mod chooses the destination from the target itself (a Data/Buildings obelisk, or the island farm obelisk tile), so the caller names the structure and never a destination.",
+    ["obelisk"],
+  ),
   actionAdapter("use_raft", "Launch a raft", "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
   actionAdapter("mount_transport", "Mount a named horse", "Mount one advertised named native horse.", ["horse"]),
   actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance. The destination level comes from the entrance tile's own declaration, exactly as it does for a real click, so no client level is accepted.", ["mine_entrance"]),
@@ -444,6 +456,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   shake_tree: "stardew_shake_tree",
   take_pedestal_item: "stardew_take_pedestal_item",
   toggle_fence_gate: "stardew_toggle_fence_gate",
+  withdraw_silo_hay: "stardew_withdraw_silo_hay",
+  use_obelisk: "stardew_use_obelisk",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -575,6 +589,8 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "shop_purchase",
   "ride_bus",
   "select_mine_elevator_floor",
+  "withdraw_silo_hay",
+  "use_obelisk",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -602,6 +618,42 @@ export function getDescriptorArgument(
       };
     }
   }
+  return undefined;
+}
+
+/**
+ * Two legal descriptor shapes reach this gate and both must be read:
+ *   * the hello_ack wire form — `arguments` (an array of {name,type}) plus `postcondition` as
+ *     `{ name }` (BridgeProtocolModels.cs:150-158);
+ *   * the action-surface form — `argumentSchema` (an object keyed by name).
+ * Reading only one is how a completeness gate can look present and still shut on the descriptor that
+ * actually arrives, so both readers below accept either shape and compare the whole name list in
+ * order.
+ */
+function publishedArgumentNames(
+  descriptor: ActionRegistration["descriptor"],
+): readonly string[] | undefined {
+  if (!descriptor) return undefined;
+  if (Array.isArray(descriptor.arguments)) return descriptor.arguments.map((argument) => argument.name);
+  if (descriptor.argumentSchema && isRecord(descriptor.argumentSchema)) return Object.keys(descriptor.argumentSchema);
+  return undefined;
+}
+
+function hasExactPublishedArgumentNames(
+  descriptor: ActionRegistration["descriptor"],
+  expected: readonly string[],
+): boolean {
+  const names = publishedArgumentNames(descriptor);
+  return names !== undefined && JSON.stringify(names) === JSON.stringify(expected);
+}
+
+/** The postcondition is published as a record with a `name`; older shapes carry a bare string. */
+function publishedPostconditionName(
+  descriptor: ActionRegistration["descriptor"],
+): string | undefined {
+  const postcondition: unknown = descriptor?.postcondition;
+  if (typeof postcondition === "string") return postcondition;
+  if (isRecord(postcondition) && typeof postcondition.name === "string") return postcondition.name;
   return undefined;
 }
 
@@ -669,6 +721,22 @@ export function isModDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (descriptor.postcondition !== "minecart_ride_completed") return false;
+    return true;
+  }
+  if (actionId === "withdraw_silo_hay") {
+    // The silo tile plus the opaque silo selector, both mandatory: the Mod re-resolves the silo
+    // from the target id and refuses on its own hay and capacity preconditions.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "silo_hay_taken") return false;
+    return true;
+  }
+  if (actionId === "use_obelisk") {
+    // Same shape as ride_minecart: the structure's tile plus the opaque obelisk selector, both
+    // mandatory, because the Agent names the structure and never the destination.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "obelisk_arrived") return false;
     return true;
   }
   if (actionId === "answer_dialogue") {
