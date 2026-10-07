@@ -252,7 +252,7 @@ test("validated request-target errors reply normally without sealing the helper"
         text: "hello",
         locale: "en-US",
       }),
-      { ok: true, accepted: "player_input" },
+      { ok: true, accepted: "player_input", turnOutcome: "unobserved" },
     );
     assert.equal(helper.kills, 0);
   } finally {
@@ -388,7 +388,7 @@ test("a legacy target returning void is still reported as accepted", async () =>
         text: "legacy",
         locale: "en-US",
       }),
-      { ok: true, accepted: "player_input" },
+      { ok: true, accepted: "player_input", turnOutcome: "unobserved" },
     );
   } finally {
     await server.close();
@@ -473,8 +473,8 @@ test("idempotency fingerprints use validated request semantics rather than JSON 
     const runtimeInstanceId = hello.runtimeInstanceId as string;
     const first = `{"type":"player_input","requestId":"request_semantic","runtimeInstanceId":"${runtimeInstanceId}","sourceEventId":"source_semantic","text":"café","locale":"en-US"}`;
     const equivalent = `{ "locale" : "en-\\u0055S", "text" : "caf\\u00e9", "sourceEventId" : "source_semantic", "runtimeInstanceId" : "${runtimeInstanceId}", "requestId" : "request_semantic", "type" : "player_input" }`;
-    assert.deepEqual(await rawFrame(helper, "connection_01", first), { ok: true, accepted: "player_input" });
-    assert.deepEqual(await rawFrame(helper, "connection_01", equivalent), { ok: true, accepted: "player_input" });
+    assert.deepEqual(await rawFrame(helper, "connection_01", first), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
+    assert.deepEqual(await rawFrame(helper, "connection_01", equivalent), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
     assert.equal(executions, 1);
     const changed = equivalent.replace("source_semantic", "source_changed");
     assert.equal((await rawFrame(helper, "connection_01", changed)).code, "control_idempotency_collision");
@@ -700,7 +700,7 @@ test("original timeout then terminal settle returns cached success to a later du
     assert.equal((await frame(helper, "connection_01", request)).code, "control_request_timeout");
     release();
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(await frame(helper, "connection_01", request), { ok: true, accepted: "player_input" });
+    assert.deepEqual(await frame(helper, "connection_01", request), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
     assert.equal(executions, 1);
   } finally {
     await server.close();
@@ -743,7 +743,7 @@ test("late duplicate independently waits for a live target and gets its result w
     assert.equal((await frame(helper, "connection_01", request)).code, "control_request_timeout");
     const duplicate = frame(helper, "connection_01", request);
     setTimeout(release, 5);
-    assert.deepEqual(await duplicate, { ok: true, accepted: "player_input" });
+    assert.deepEqual(await duplicate, { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
     assert.equal(executions, 1);
   } finally {
     await server.close();
@@ -928,6 +928,43 @@ test("timeout reply never evicts its live idempotency reservation", async () => 
     release();
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(executions, 256);
+  } finally {
+    await server.close();
+  }
+});
+
+
+test("the control reply names how the delivered turn ended, not only that it was accepted", async () => {
+  // This is the seam the classification travels: Pi's final message said error/aborted, the loop now keeps
+  // that, and a caller must be able to read it. Before this, the reply was always
+  // `{ ok: true, accepted: "player_input" }` — the same answer whether the companion replied or the turn died.
+  const helper = new FakeHelper();
+  const target = {
+    acceptPlayerInput: async () => ({ accepted: true as const, turnOutcome: "error" as const }),
+    stopAll: () => ({ admission: { accepted: true }, settled: Promise.resolve() }),
+  };
+  const server = startCompanionControlServer(launch, target, {
+    platform: "win32",
+    spawnHelper: () => helper as never,
+    requestTimeoutMs: 50,
+  });
+  try {
+    const hello = await frame(helper, "connection_01", {
+      type: "hello",
+      protocolVersion: 1,
+      launchToken: launch.launchToken,
+    });
+    assert.deepEqual(
+      await frame(helper, "connection_01", {
+        type: "player_input",
+        requestId: "request_outcome",
+        runtimeInstanceId: hello.runtimeInstanceId as string,
+        sourceEventId: "source_outcome",
+        text: "did the turn survive?",
+        locale: "en-US",
+      }),
+      { ok: true, accepted: "player_input", turnOutcome: "error" },
+    );
   } finally {
     await server.close();
   }

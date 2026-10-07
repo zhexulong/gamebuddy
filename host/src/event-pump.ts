@@ -34,6 +34,20 @@ export type PlayerInput = Readonly<{
 }>;
 
 export type DeliveryDisposition = "steer" | "follow_up" | "hold";
+/**
+ * How one delivered turn ENDED, as observed by whoever ran it.
+ *
+ * `completed` — Pi settled the turn without reporting a failure.
+ * `aborted` / `error` — Pi's own final-message classification said so (see
+ *   `native-companion-content.ts:252-258`, which already distinguishes them).
+ * `unobserved` — the adapter cannot say (no Pi event stream, or the turn never ran).
+ *
+ * This vocabulary exists because the classification WAS being discarded: the Game loop passed
+ * `onRejected: () => undefined`, so an aborted/errored provider turn reached the caller as an ordinary
+ * accepted message. A caller must be able to tell "the companion answered" from "the turn died", and
+ * "nobody looked" must not be spelled the same way as "it worked".
+ */
+export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "unobserved";
 export type PendingBatch = Readonly<{
   batchId: string;
   disposition: Exclude<DeliveryDisposition, "hold">;
@@ -66,7 +80,11 @@ const MAX_PENDING_LIFECYCLE = 128;
 const MAX_PENDING_WORLD_FACTS = 32;
 
 export interface CompanionTurnSink {
-  deliver(text: string, disposition: Exclude<DeliveryDisposition, "hold">): Promise<void>;
+  /**
+   * Deliver one batch. The return value is how the turn ended; an adapter that cannot observe it returns
+   * nothing, which callers must read as `unobserved` rather than as success.
+   */
+  deliver(text: string, disposition: Exclude<DeliveryDisposition, "hold">): Promise<CompanionTurnOutcome | void>;
 }
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
@@ -165,14 +183,14 @@ export class CompanionEventPump {
     return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
   }
 
-  public async flush(sink: CompanionTurnSink): Promise<void> {
-    if (this.#delivering || !this.hasPendingDelivery) return;
+  public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
+    if (this.#delivering || !this.hasPendingDelivery) return undefined;
     this.#delivering = true;
     const generation = this.#generation;
     const pending = this.#retryBatch ?? this.takeBatch();
     this.#retryBatch = undefined;
     try {
-      await sink.deliver(pending.serialized, pending.disposition);
+      return (await sink.deliver(pending.serialized, pending.disposition)) ?? undefined;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.

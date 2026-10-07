@@ -157,7 +157,10 @@ function requireRuntime(value) {
 function expectAcceptance(reply, expected) {
   const accepted = Array.isArray(expected) ? expected : [expected];
   if (reply.ok !== true || !accepted.includes(reply.accepted)) throw new Error(`control_client_request_rejected:${reply.code ?? "invalid_reply"}`);
-  return Object.freeze({ accepted: reply.accepted });
+  // How the delivered turn ended, when the reply carries it: `completed`/`aborted`/`error` come from the
+  // Host's own turn observation, and `unobserved` means the Host could not say. A caller must never have to
+  // read silence as a successful answer.
+  return Object.freeze({ accepted: reply.accepted, turnOutcome: reply.turnOutcome });
 }
 
 function encodeRequest(value) {
@@ -184,8 +187,8 @@ function parseReply(bytes) {
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { throw new Error("control_client_response_invalid"); }
   if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.ok !== "boolean") throw new Error("control_client_response_invalid");
   if (value.ok === true) {
-    const allowed = ["ok", "runtimeInstanceId", "protocolVersion", "accepted"];
-    if (Object.keys(value).some((key) => !allowed.includes(key)) || (value.runtimeInstanceId !== undefined && !IDENTIFIER.test(value.runtimeInstanceId)) || (value.protocolVersion !== undefined && value.protocolVersion !== 1) || (value.accepted !== undefined && !["player_input", "stop_all", "active_turn_cancelled", "queued_turn_cancelled", "no_active_turn", "duplicate_stop"].includes(value.accepted))) throw new Error("control_client_response_invalid");
+    const allowed = ["ok", "runtimeInstanceId", "protocolVersion", "accepted", "turnOutcome"];
+    if (Object.keys(value).some((key) => !allowed.includes(key)) || (value.runtimeInstanceId !== undefined && !IDENTIFIER.test(value.runtimeInstanceId)) || (value.protocolVersion !== undefined && value.protocolVersion !== 1) || (value.accepted !== undefined && !["player_input", "stop_all", "active_turn_cancelled", "queued_turn_cancelled", "no_active_turn", "duplicate_stop"].includes(value.accepted)) || (value.turnOutcome !== undefined && !["completed", "aborted", "error", "unobserved"].includes(value.turnOutcome))) throw new Error("control_client_response_invalid");
   } else {
     if (Object.keys(value).length !== 2 || typeof value.code !== "string" || !/^[a-z0-9_:-]{1,128}$/.test(value.code)) throw new Error("control_client_response_invalid");
   }

@@ -26,7 +26,7 @@ export type ProductControlTarget = Readonly<{
    * report no outcome and are therefore treated as accepted.
    */
   acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<
-    Readonly<{ accepted: boolean; reasonCode?: string }> | void
+    Readonly<{ accepted: boolean; reasonCode?: string; turnOutcome?: "completed" | "aborted" | "error" | "unobserved" }> | void
   >;
   stopAll(input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>): Readonly<{
     admission: Readonly<{ accepted: boolean }>;
@@ -311,7 +311,14 @@ export function startCompanionControlServer(
           if (disposition !== undefined && disposition.accepted !== true) {
             throw new Error(disposition.reasonCode ?? "control_player_input_refused");
           }
-          reply = { ok: true, accepted: "player_input" };
+          // ... and report how the turn ENDED. Without this the same channel said "accepted" for a turn
+          // whose provider stream had failed, which is how a real live run's failure read as the companion
+          // choosing not to answer.
+          reply = {
+            ok: true,
+            accepted: "player_input",
+            turnOutcome: disposition !== undefined && disposition.accepted === true ? disposition.turnOutcome : "unobserved",
+          };
         } else if (request.type === "stop_all") {
           // Keep this immediately adjacent to synchronous control admission:
           // target work starts before its settled promise exists.
