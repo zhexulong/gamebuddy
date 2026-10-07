@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runDesktopHostBootstrap } from "../wire/desktop-runtime-bootstrap.internal.js";
@@ -19,7 +19,13 @@ function boundedFailureCode(error: unknown): string {
 }
 
 if (import.meta.main) {
-  void runDesktopHostBootstrap(dirname(fileURLToPath(import.meta.url))).catch((error: unknown) => {
+  // The wire resolves the native reparse inspector pair from the root it is given,
+  // and that pair sits beside `bootstrap` at the artifact root of the generation,
+  // not under this entry's own directory. Passing the entry's directory made the
+  // wire look for `<entry>/native/windows-reparse-inspector/<rid>`, find nothing
+  // and refuse every launch with `windows_reparse_inspection_unavailable`; the
+  // entry sits at `<artifact>/bootstrap/entry`, so its artifact root is two levels up.
+  void runDesktopHostBootstrap(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")).catch((error: unknown) => {
     process.stderr.write(`${boundedFailureCode(error)}\n`);
     process.exitCode = 1;
   });
