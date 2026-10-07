@@ -40,26 +40,31 @@ public sealed class LauncherProvisioningWiringTests
     }
 
     [Fact]
-    public void Production_entry_asks_for_fresh_only_for_a_first_run_and_consults_the_marker_for_it()
+    public void Production_entry_asks_for_fresh_only_when_the_authority_has_to_be_established()
     {
         var productionPath = ProductionEntry();
 
-        // The identity step reports whether this run minted the identity; the
-        // launcher-owned staging marker reports whether the run that minted it ever
-        // completed. Only their combination may ask the Host to create a semantic
-        // authority: a launch following a completed first run must open the existing one
-        // as known.
+        // The identity step reports whether this run minted the identity; the durable authority
+        // itself reports whether it was ever finished. Only their combination may ask the Host
+        // to establish a semantic authority: a launch whose authority is physically complete
+        // opens the existing one as known, whatever the launcher's own staging marker says.
         var established = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
-        var decision = productionPath.IndexOf("FirstRunStaging.IsFirstRun(layout, mintedDeploymentIdentity)", StringComparison.Ordinal);
-        var mode = productionPath.IndexOf("GameSessionMode = firstRun", StringComparison.Ordinal);
+        var decision = productionPath.IndexOf("SessionModeDecision.EstablishesAuthority(layout, mintedDeploymentIdentity)", StringComparison.Ordinal);
+        var mode = productionPath.IndexOf("GameSessionMode = establishesAuthority", StringComparison.Ordinal);
         Assert.True(established >= 0 && decision > established, $"expected establish < decision, got establish={established} decision={decision}");
         Assert.True(mode > decision, $"expected decision < mode, got decision={decision} mode={mode}");
         Assert.Contains("HostBootstrapEnvironmentOptions.FreshGameSessionMode", productionPath, StringComparison.Ordinal);
         Assert.Contains("HostBootstrapEnvironmentOptions.KnownGameSessionMode", productionPath, StringComparison.Ordinal);
+
+        // The entry consults that decision and never the staging marker: its one mention of the
+        // marker owner is the clear after the acknowledgement it observes, so the marker cannot
+        // force `fresh` here, and no reader of it remains anywhere in the entry.
+        Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging."));
+        Assert.DoesNotContain("IsFirstRun", productionPath, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Production_entry_clears_the_first_run_marker_only_after_the_handshake_it_observes()
+    public void Production_entry_clears_the_staging_marker_only_after_the_handshake_it_observes()
     {
         var productionPath = ProductionEntry();
 
@@ -67,11 +72,11 @@ public sealed class LauncherProvisioningWiringTests
         // starting and not the identity existing - so the clear sits after StartHostAsync
         // returns and before the session is served, and it happens exactly once.
         var start = productionPath.IndexOf("StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
-        var clear = productionPath.IndexOf("FirstRunStaging.MarkComplete(layout)", StringComparison.Ordinal);
+        var clear = productionPath.IndexOf("FirstRunStaging.Clear(layout)", StringComparison.Ordinal);
         var serve = productionPath.IndexOf("host.WaitForExitAsync(cancellationToken)", StringComparison.Ordinal);
         Assert.True(start >= 0 && clear > start, $"expected start < clear, got start={start} clear={clear}");
         Assert.True(serve > clear, $"expected clear < serve, got clear={clear} serve={serve}");
-        Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging.MarkComplete(layout)"));
+        Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging.Clear(layout)"));
     }
 
     [Fact]
@@ -100,6 +105,10 @@ public sealed class LauncherProvisioningWiringTests
         Assert.DoesNotContain("deployment-manifest.json", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("deployment-identity.json", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("deployment-first-run-staging.json", productionPath, StringComparison.Ordinal);
+        // Neither does it name any part of the authority the decision reads: the paths belong
+        // to the owners of those facts, not to the entry.
+        Assert.DoesNotContain(ProductionAuthority.DirectoryName, productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain(ProductionAuthority.CompletionMarkerFileName, productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("WriteAllText", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("WriteAllBytes", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("File.Create", productionPath, StringComparison.Ordinal);
