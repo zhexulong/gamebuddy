@@ -263,6 +263,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["npc"],
   ),
   actionAdapter(
+    "talk_to_npc",
+    "Talk to a villager",
+    "Talk to an adjacent villager through the native NPC.checkAction talk branch, which mounts the game's own dialogue. The actor must be empty-handed: with an item in hand the native entry takes the gift path instead (interact_npc_with_item), and the action refuses with hands_not_empty. A villager who is asleep or out of reach is refused in the native branch's own terms.",
+    ["npc", "dialogue"],
+  ),
+  actionAdapter(
     "water_pet_bowl",
     "Water the pet bowl",
     "Use the native Watering Can on the current location's completed, unwatered native Pet Bowl.",
@@ -433,6 +439,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   express_emote: "stardew_express_emote",
   face_direction: "stardew_face_direction",
   interact_npc_with_item: "stardew_interact_npc_with_item",
+  talk_to_npc: "stardew_talk_to_npc",
   pet_animal: "stardew_pet_animal",
   advance_day: "stardew_advance_day",
   clear_debris: "stardew_clear_debris",
@@ -588,6 +595,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "express_emote",
   "face_direction",
   "interact_npc_with_item",
+  "talk_to_npc",
   "pet_animal",
   "advance_day",
   "ride_minecart",
@@ -719,6 +727,15 @@ export function isModDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
+    return true;
+  }
+  if (actionId === "talk_to_npc") {
+    // The NPC family's shared { x, y, expectedTargetId } shape. x/y is only the tile the
+    // villager was published at (the walk leg's destination); the person is named by the
+    // opaque family target id and re-resolved on the Mod's game thread.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "npc_talked") return false;
     return true;
   }
   if (actionId === "ride_minecart") {

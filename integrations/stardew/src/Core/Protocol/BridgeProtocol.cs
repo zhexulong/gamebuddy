@@ -1850,6 +1850,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
             "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" => new[] { "x", "y", "expectedTargetId" },
+        // talk_to_npc names the villager through the NPC family's opaque target id
+        // (the same one npc_relationship/interact_npc_with_item publish) plus the tile
+        // it was published at, which is only the approach leg's destination: the Mod
+        // re-resolves the person and measures reach against the live tile.
+        "talk_to_npc" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "chest_store" or "chest_retrieve" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },

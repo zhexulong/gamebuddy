@@ -554,6 +554,8 @@ export function fixtureActions(action) {
   if (action === "withdraw_silo_hay") return ["withdraw_silo_hay"];
   if (action === "toggle_animal_door") return ["toggle_animal_door"];
   if (action === "enter_exit_warp_action") return ["move_to_tile", "enter_exit"];
+  if (action === "enter_mine_ladder") return ["move_to_tile", "enter_mine"];
+  if (action === "talk_to_npc") return ["talk_to_npc"];
   if (action === "use_obelisk") return ["use_obelisk"];
   // toggle_tool_light runs the Lantern tool itself; the fixture supplies the
   // Lantern in the selected slot and the actor is already standing.
@@ -737,6 +739,8 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("withdraw_silo_hay")) return "native_withdraw_silo_hay_v1";
   if (actions.includes("toggle_animal_door")) return "native_toggle_animal_door_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
+  if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
+  if (action === "talk_to_npc") return "native_talk_to_npc_v1";
   if (actions.includes("use_obelisk")) return "native_use_obelisk_v1";
   if (actions.includes("toggle_tool_light")) return "native_toggle_tool_light_v1";
   if (actions.includes("harvest_bush")) return "native_harvest_bush_v1";

@@ -333,6 +333,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // The widening contract: a Warp Action present in the LIVE map layer but absent from the
   // cached doors table. Experimental until its live gate passes.
   enter_exit_warp_action: "run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
+  // Second gate for an already-live-verified action: the LADDER path into a shaft, which the
+  // published enter_mine gate (the Mine entrance map) does not cover.
+  enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
+  talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
   // Move-stall probe: drives the SAME published move_to_tile action over a fixture
   // that stands a native blocker (Pet or parked Horse) on the route, measuring
   // whether the native pushing/pass-through mechanisms resolve the block before

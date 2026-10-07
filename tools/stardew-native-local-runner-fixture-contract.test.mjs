@@ -69,6 +69,8 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
   "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
   "run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs": "enter_exit_warp_action",
+  "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs": "enter_mine_ladder",
+  "run-stardew-native-local-player-talk-to-npc-smoke.mjs": "talk_to_npc",
   "run-stardew-native-local-player-use-obelisk-smoke.mjs": "use_obelisk",
   "run-stardew-native-local-player-dress-mannequin-smoke.mjs": "dress_mannequin",
   "run-stardew-native-local-player-enter-mine-smoke.mjs": "enter_mine",

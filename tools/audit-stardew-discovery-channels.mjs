@@ -60,6 +60,10 @@ const TARGET_FIELD = Object.freeze({
   clear_debris: "DebrisTargets",
   npc_relationship: "NpcRelationshipTargets",
   interact_npc_with_item: "NpcRelationshipTargets",
+  // talk_to_npc names the villager through the same published family target list
+  // (see farmhandexecutioncontroller.npcactions.cs); only this declaration was
+  // missing, so the audit could not verify its discovery leg at all.
+  talk_to_npc: "NpcRelationshipTargets",
   pet_animal: "PetTargets",
   water_pet_bowl: "PetBowlTargets",
   water_slime_hutch_trough: "SlimeHutchTroughTargets",

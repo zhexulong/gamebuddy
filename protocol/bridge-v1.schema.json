@@ -5493,6 +5493,7 @@
                   "machine_inspect",
                   "machine_collect_output",
                   "npc_relationship",
+                  "talk_to_npc",
                   "pet_animal"
                 ]
               }
@@ -6025,6 +6026,7 @@
             "machine_load",
             "machine_collect_output",
             "npc_relationship",
+            "talk_to_npc",
             "pet_animal",
             "collect_animal_product",
             "feed_animal",

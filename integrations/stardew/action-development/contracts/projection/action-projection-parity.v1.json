@@ -1227,6 +1227,36 @@
         }
       },
       {
+        "actionId": "talk_to_npc",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "npc_talked"
+        }
+      },
+      {
         "actionId": "express_emote",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2207,7 +2237,9 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": []
+    "experimentalActionIds": [
+      "talk_to_npc"
+    ]
   },
   "protocol": {
     "schemas": [
