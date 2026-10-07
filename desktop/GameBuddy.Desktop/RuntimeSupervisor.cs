@@ -12,7 +12,23 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxWireBytes = 32_768;
     private const string DeploymentManifestFileName = "deployment-manifest.json";
-    private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(30);
+    // The acknowledgement means READY FOR SERVICE: by the time the child writes it, it has opened
+    // its databases, provisioned the semantic authority, Magic Context and the Pi agent stores, and
+    // is listening on its private channel - and everything the supervisor does next (transferring the
+    // generation locks, starting the resident guardian, opening the tray and the browser) depends on
+    // that. So this budget must cover a cold first launch, where several SQLite authorities and a Node
+    // runtime are created while antivirus and the indexer scan the freshly written files. Thirty
+    // seconds killed a healthy child mid-provisioning on this machine, and the generic
+    // `host_runtime_unavailable` it produced was indistinguishable from a broken installation. A real
+    // failure does not need a small budget to be noticed: the child's exit closes its stdout pipe, so
+    // the acknowledgement read fails at once and the diagnostic comes from the child itself.
+    private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(180);
+
+    /// <summary>
+    /// Names the budget's expiry as its own reason, so "the child is hung or extremely slow" can never
+    /// again be reported as the generic runtime failure a genuinely broken start produces.
+    /// </summary>
+    internal const string BootstrapTimeoutCategory = "host_bootstrap_timeout";
 
     // Test-only hooks. Production composition neither sets nor exposes them.
     internal Func<Task>? BeforeFrameWriteForTesting { get; set; }
@@ -125,7 +141,12 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         catch (OperationCanceledException exception)
         {
-            var unavailable = new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
+            // Distinguish this launcher's own bootstrap budget from the caller cancelling the launch:
+            // the first means the child is hung or extremely slow, the second means the launch was
+            // abandoned. Reporting both as the generic runtime failure is what hid the budget's expiry.
+            var unavailable = new GuardianLaunchUnavailableException(
+                cancellationToken.IsCancellationRequested ? "host_runtime_unavailable" : BootstrapTimeoutCategory,
+                exception);
             await AttachChildStderrAsync(unavailable, childStderr).ConfigureAwait(false);
             throw unavailable;
         }
