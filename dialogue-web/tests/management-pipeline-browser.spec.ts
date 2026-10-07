@@ -1012,6 +1012,9 @@ test("management browser creates a connection from the Host catalog and never re
       ),
       [
         "anthropic-messages",
+        // Azure OpenAI Responses is a real adapter in the runtime's set and had been
+        // missing from this list, which is what made an Azure deployment unconfigurable.
+        "azure-openai-responses",
         "openai-completions",
         "openai-responses",
         "openai-codex-responses",
@@ -1019,6 +1022,7 @@ test("management browser creates a connection from the Host catalog and never re
         "google-vertex",
         "bedrock-converse-stream",
         "mistral-conversations",
+        "pi-messages",
       ],
     );
     await expect(panel.locator("#connection-api-shape")).toHaveValue("openai-completions");
@@ -1602,21 +1606,35 @@ test("management browser sets the companion language once, durably, and the runt
     const panel = page.locator("[data-language-settings]");
     await expect(panel).toBeVisible({ timeout: 10_000 });
 
-    // The panel adopts what the Host holds: it never shows a local guess beside a
-    // durable setting. A never-configured root records the language the UI is
-    // already showing, which is the player's browser language here (en-US).
-    const select = panel.getByRole("combobox");
-    await expect(select).toHaveValue("en-US", { timeout: 10_000 });
+  		// The panel adopts what the Host holds: it never shows a local guess beside a
+		// durable setting. A never-configured root records the language the UI is
+		// already showing, which is the player's browser language here (en-US).
+		//
+		// The COMPANION's language is a tag the player types (any bounded BCP-47 tag saves);
+		// the interface has its OWN control, and the two are deliberately independent, so
+		// this journey asserts both halves - a tag round-trips, and moving the interface
+		// language does not drag the companion's with it.
+		const companionField = panel.locator("#companion-language");
+		await expect(companionField).toHaveValue("en-US", { timeout: 10_000 });
 
-    // Switching writes through the durable store and reports it.
-    await select.selectOption("zh-CN");
-    await expect(page.locator(".success-banner").first()).toBeVisible({ timeout: 10_000 });
+		// Switching writes through the durable store and reports it.
+		await companionField.fill("ja-JP");
+		await companionField.press("Enter");
+		await expect(page.locator(".success-banner").first()).toBeVisible({ timeout: 10_000 });
 
-    // Durable read-back on reload: the stored preference, not the local choice.
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
-    await expect(page.locator("[data-language-settings]").getByRole("combobox")).toHaveValue("zh-CN", {
-      timeout: 10_000,
-    });
+		// Durable read-back on reload: the stored preference, not the local choice.
+		await page.reload({ waitUntil: "domcontentloaded", timeout: 10_000 });
+		await expect(page.locator("#companion-language")).toHaveValue("ja-JP", {
+			timeout: 10_000,
+		});
+
+		// The interface's own language is the other control, and it is not the companion's.
+		const interfaceField = page.locator("#ui-language");
+		await expect(interfaceField).toHaveValue("en", { timeout: 10_000 });
+		await interfaceField.selectOption("zh-CN");
+		await expect(page.locator("#companion-language")).toHaveValue("ja-JP", {
+			timeout: 10_000,
+		});
 
     // Two writes and no more: the first records the language the panel was
     // already showing (a never-configured root adopts the browser's), the second
