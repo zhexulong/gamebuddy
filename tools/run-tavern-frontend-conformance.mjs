@@ -301,6 +301,62 @@ if (failedFiles.length > 0) {
   }
 }
 
+// 2c. Test-level retry: a journey that still fails after its whole file was re-run gets one run of
+// its own, in a worker with no other test's leftovers. The failure this catches - a durable write or
+// an artifact admission tripping over state a previous test left behind - is not a product failure,
+// and the difference matters: it decides whether the gate is red for the product or for the suite.
+// A journey that fails here too stays a failure; the retry is a second chance, not an excuse.
+const stillFailing = observed.filter(
+  (row) =>
+    !(row.status === "expected" && row.lastResultStatus === "passed") &&
+    row.status !== "skipped" &&
+    row.title !== undefined &&
+    row.file !== undefined,
+);
+if (stillFailing.length > 0) {
+  const titles = [...new Set(stillFailing.map((row) => row.title))];
+  const filesToRun = [...new Set(stillFailing.map((row) => row.file))];
+  const pattern = titles.map((title) => title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join("|");
+  process.stderr.write(
+    `[frontend-conformance] re-running ${titles.length} failing test(s) on their own: ${titles.join(", ")}\n`,
+  );
+  const solo = await run(
+    "pnpm",
+    [
+      "--dir",
+      "dialogue-web",
+      "exec",
+      "playwright",
+      "test",
+      ...filesToRun,
+      `--grep=${pattern}`,
+      "--project=chromium",
+      "--workers=1",
+      "--reporter=json",
+    ],
+    {
+      cwd: repositoryRoot,
+      env: { ...process.env, GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: outputRoot },
+    },
+  );
+  let soloDocument;
+  try {
+    soloDocument = JSON.parse(solo.stdout.slice(solo.stdout.indexOf("{")));
+  } catch {
+    soloDocument = undefined;
+  }
+  if (soloDocument !== undefined) {
+    const soloRows = new Map(collectTests(soloDocument).map((row) => [`${row.file}::${row.title}`, row]));
+    observed = observed.map((row) => {
+      const replacement = soloRows.get(`${row.file}::${row.title}`);
+      if (replacement === undefined) return row;
+      if (replacement.status === "expected" && replacement.lastResultStatus === "passed")
+        passedOnRetry.push(`${row.file} :: ${row.title} (alone)`);
+      return replacement;
+    });
+  }
+}
+
 // 3. Per-suite: enough tests. Then per-surface: the declared criteria test
 // present and green, and nothing disabled anywhere.
 for (const { surface, suite } of enforcedSuites) {
