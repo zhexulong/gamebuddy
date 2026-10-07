@@ -379,6 +379,9 @@ function observeCompanionReply(committedText) {
   if (expressive) signals.push("expressive_stage_direction");
   if (!assistantShell) signals.push("no_assistant_shell");
   return Object.freeze({
+    // The reply as committed, so a language observation can be judged against the
+    // text it was taken from rather than believed.
+    text,
     committedChars: text.length,
     cjkRatio: Number(cjkRatio.toFixed(3)),
     primaryScript,
@@ -1184,19 +1187,24 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
           lorebookConstantPresent: m0Sources?.lorebookConstantPresent ?? null,
         }),
         ...(replyObservation === null
-          ? {}
-          : {
-              replyLanguage: Object.freeze({
-                cjkRatio: replyObservation.cjkRatio,
-                primaryScript: replyObservation.primaryScript,
-                chineseEffective: replyObservation.chineseEffective,
-              }),
-              persona: Object.freeze({
-                committedChars: replyObservation.committedChars,
-                signals: replyObservation.signals,
-                ...(replyObservation.assistantShell === true ? { assistantShell: true } : {}),
-              }),
+        ? {}
+        : {
+            replyLanguage: Object.freeze({
+              cjkRatio: replyObservation.cjkRatio,
+              primaryScript: replyObservation.primaryScript,
+              chineseEffective: replyObservation.chineseEffective,
             }),
+            persona: Object.freeze({
+              committedChars: replyObservation.committedChars,
+              signals: replyObservation.signals,
+              ...(replyObservation.assistantShell === true ? { assistantShell: true } : {}),
+            }),
+            // The reply itself. A language observation without the text it was taken from
+            // cannot be judged: "the companion answered in Chinese" and "the observation
+            // is wrong" look identical. This is the live run's own evidence copy, the same
+            // way the harness records the question it asked.
+            replyText: Object.freeze({ text: replyObservation.text }),
+          }),
       }),
       seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
       // The L2 comparison facts, content-free but auditable: which side of the

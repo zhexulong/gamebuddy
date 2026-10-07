@@ -870,6 +870,11 @@ export const SubmitMessageCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   selectionGeneration: PositiveGeneration,
   text: BoundedText,
+  // The language of the PLAYER'S OWN message, which the UI knows because it produced
+  // the text (it is the interface locale, not the companion's language: the companion's
+  // language is the player preference and is what the prompt is instructed with). This
+  // is the pair this UI is localized for, and `und` covers a message the UI could not
+  // classify.
   locale: Type.Union([Type.Literal("en"), Type.Literal("zh-CN")]),
   expectedDraftRevision: Type.Optional(Revision),
 });
