@@ -79,7 +79,7 @@ public sealed class ChildStderrDiagnosticTests
     public async Task A_refused_handshake_reports_what_the_child_wrote_to_its_own_stderr()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
-        await using var harness = await RefusalHarness.CreateAsync("host refused: the deployment manifest declares an unsupported schemaVersion");
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync("host refused: the deployment manifest declares an unsupported schemaVersion");
 
         var failure = await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
             () => harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None));
@@ -100,7 +100,7 @@ public sealed class ChildStderrDiagnosticTests
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
         const string secret = "cpaoai-9F3bC1dE5aB7c9D0e2F4a6B8c0D2e4F6";
-        await using var harness = await RefusalHarness.CreateAsync($"provider refused: CPA_OAI_API_KEY={secret} rejected");
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync($"provider refused: CPA_OAI_API_KEY={secret} rejected");
 
         var failure = await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
             () => harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None));
@@ -115,7 +115,7 @@ public sealed class ChildStderrDiagnosticTests
     public async Task A_child_that_writes_nothing_is_reported_as_a_capture_that_found_nothing()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
-        await using var harness = await RefusalHarness.CreateAsync(string.Empty);
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync(string.Empty);
 
         var failure = await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
             () => harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None));
@@ -132,7 +132,7 @@ public sealed class ChildStderrDiagnosticTests
         // pipe and park the child on its next write, so the observation would change
         // the launch it observes. Draining is what makes this fail fast instead of
         // waiting out the 30-second bootstrap timeout.
-        await using var harness = await RefusalHarness.CreateAsync(new string('x', 200_000) + " refusal-tail");
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync(new string('x', 200_000) + " refusal-tail");
 
         var stopwatch = Stopwatch.StartNew();
         var failure = await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
@@ -150,7 +150,7 @@ public sealed class ChildStderrDiagnosticTests
     public async Task A_launch_that_succeeds_is_unaffected_by_the_stderr_capture()
     {
         if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
-        await using var harness = await RefusalHarness.CreateAsync(refusal: null);
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync(refusal: null);
 
         await using var lease = await harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None);
 
@@ -159,76 +159,5 @@ public sealed class ChildStderrDiagnosticTests
         Assert.True(File.Exists(Path.Combine(harness.Layout.DataRoot, "desktop-host-runtime-fixture.ready")));
         harness.RequestHostExit();
         Assert.True(await lease.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
-    }
-
-    /// <summary>
-    /// One installed generation whose replacement Host runtime is the test fixture,
-    /// with the manifest the launcher's pre-launch check requires. A non-null refusal
-    /// is written to the file the fixture reads before it answers the handshake, so
-    /// the child writes those exact bytes to its own stderr and exits without an
-    /// acknowledgement.
-    /// </summary>
-    private sealed class RefusalHarness : IAsyncDisposable
-    {
-        private RefusalHarness(DisposableInstalledGuardianGeneration generation, CurrentUserRootLayout layout, InstalledGenerationSelection selection, AdmittedHostRuntime runtime, RuntimeSupervisor supervisor)
-        {
-            Generation = generation;
-            Layout = layout;
-            Selection = selection;
-            Runtime = runtime;
-            Supervisor = supervisor;
-        }
-
-        internal DisposableInstalledGuardianGeneration Generation { get; }
-        internal CurrentUserRootLayout Layout { get; }
-        internal InstalledGenerationSelection Selection { get; }
-        internal AdmittedHostRuntime Runtime { get; }
-        internal RuntimeSupervisor Supervisor { get; }
-
-        internal static async Task<RefusalHarness> CreateAsync(string? refusal)
-        {
-            var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
-            try
-            {
-                generation.ReplaceHostRuntimeWithFixture();
-                var registration = new CurrentUserRootRegistrationRecord(CurrentUserRootRegistration.SchemaVersion, generation.ProgramRoot);
-                var operationalRoot = Path.Combine(generation.LocalApplicationData, "GameBuddy", "operational");
-                foreach (var path in new[] { Path.Combine(generation.LocalApplicationData, "GameBuddy", "data"), operationalRoot, Path.Combine(generation.LocalApplicationData, "GameBuddy", "presentation") }) Directory.CreateDirectory(path);
-                TestDeploymentManifest.WriteDeploymentManifest(operationalRoot);
-                var layout = CurrentUserRootLayout.DeriveForTesting(registration, new LocalApplicationDataProvider(generation.LocalApplicationData));
-                var selection = InstalledGenerationSelection.Acquire(generation.ProgramRoot);
-                try
-                {
-                    var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
-                    if (refusal is not null) File.WriteAllBytes(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.refuse"), Encoding.UTF8.GetBytes(refusal));
-                    return new RefusalHarness(generation, layout, selection, runtime, new RuntimeSupervisor());
-                }
-                catch
-                {
-                    await selection.DisposeAsync().ConfigureAwait(false);
-                    throw;
-                }
-            }
-            catch
-            {
-                await generation.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
-        }
-
-        internal void RequestHostExit() => File.WriteAllText(Path.Combine(Layout.DataRoot, "desktop-host-runtime-fixture.ready.exit"), "exit");
-
-        public async ValueTask DisposeAsync()
-        {
-            await Supervisor.DisposeAsync();
-            await Runtime.DisposeAsync();
-            await Selection.DisposeAsync();
-            await Generation.DisposeAsync();
-        }
-    }
-
-    private sealed class LocalApplicationDataProvider(string path) : ILocalApplicationDataProvider
-    {
-        public string GetLocalApplicationDataPath() => path;
     }
 }

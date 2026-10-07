@@ -101,11 +101,34 @@ public sealed class WindowsNativeAbiTests
         using (reader)
         using (writer)
         {
-            var payload = "bootstrap-frame"u8.ToArray();
-            var read = HostBootstrapPipeIo.ReadOneFrameAsync(reader, 32_768, CancellationToken.None);
-            await HostBootstrapPipeIo.WriteOneFrameAsync(writer, payload, CancellationToken.None);
+            var frames = new List<byte[]>();
+            var read = HostBootstrapPipeIo.ReadFramesAsync(reader, 32_768, (frame) => { frames.Add(frame); return true; }, CancellationToken.None);
+            await HostBootstrapPipeIo.WriteOneFrameAsync(writer, "bootstrap-frame"u8.ToArray(), CancellationToken.None);
             writer.Dispose();
-            Assert.Equal(payload, await read);
+            await read;
+            // A document that never got its newline still reaches the sink, which is what lets the
+            // frame validation refuse a child that closed mid-frame.
+            Assert.Single(frames);
+            Assert.Equal("bootstrap-frame"u8.ToArray(), frames[0]);
+        }
+
+        // The framing is the contract: the reader hands over LF-terminated documents one at a time
+        // and a sink that asks to stop ends the read WITHOUT waiting for the endpoint's end - the
+        // acknowledgement no longer closes the child's standard output, so a reader that waited for
+        // it would wait for the whole product to stop. The token bounds that failure instead of
+        // letting this test hang on it.
+        Assert.True(WindowsNative.CreatePipe(out var framedReader, out var framedWriter, IntPtr.Zero, 0));
+        using (framedReader)
+        using (framedWriter)
+        using (var stalled = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            var frames = new List<byte[]>();
+            var read = HostBootstrapPipeIo.ReadFramesAsync(framedReader, 32_768, (frame) => { frames.Add(frame); return false; }, stalled.Token);
+            await HostBootstrapPipeIo.WriteOneFrameAsync(framedWriter, "{\"stage\":\"provisioning\"}\n"u8.ToArray(), CancellationToken.None);
+            await read;
+            Assert.False(stalled.IsCancellationRequested, "the reader waited for the endpoint's end instead of stopping at the frame the sink refused to continue after");
+            Assert.Single(frames);
+            Assert.Equal("{\"stage\":\"provisioning\"}\n"u8.ToArray(), frames[0]);
         }
 
         Assert.True(WindowsNative.CreatePipe(out var blockedReader, out var blockedWriter, IntPtr.Zero, 0));
@@ -113,7 +136,7 @@ public sealed class WindowsNativeAbiTests
         using (blockedWriter)
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
         {
-            var blockedRead = HostBootstrapPipeIo.ReadOneFrameAsync(blockedReader, 32_768, timeout.Token);
+            var blockedRead = HostBootstrapPipeIo.ReadFramesAsync(blockedReader, 32_768, (frame) => true, timeout.Token);
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => blockedRead);
             Assert.True(blockedReader.IsClosed);
         }

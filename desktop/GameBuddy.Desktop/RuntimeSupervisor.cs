@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Win32.SafeHandles;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -12,26 +13,52 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxWireBytes = 32_768;
     private const string DeploymentManifestFileName = "deployment-manifest.json";
+    // The one informational frame the child may write before its acknowledgement, on the
+    // SAME pipe and the SAME framing as the acknowledgement. It names the step the child is
+    // entering, and optionally the player decision it is waiting for, so the launcher can
+    // measure the child's SILENCE instead of guessing the whole startup from one timer.
+    private const string StatusSchema = "gamebuddy-desktop-host-bootstrap-status/v1";
     // The acknowledgement means READY FOR SERVICE: by the time the child writes it, it has opened
     // its databases, provisioned the semantic authority, Magic Context and the Pi agent stores, and
     // is listening on its private channel - and everything the supervisor does next (transferring the
     // generation locks, starting the resident guardian, opening the tray and the browser) depends on
-    // that. So this budget must cover a cold first launch, where several SQLite authorities and a Node
-    // runtime are created while antivirus and the indexer scan the freshly written files. Thirty
-    // seconds killed a healthy child mid-provisioning on this machine, and the generic
-    // `host_runtime_unavailable` it produced was indistinguishable from a broken installation. A real
-    // failure does not need a small budget to be noticed: the child's exit closes its stdout pipe, so
-    // the acknowledgement read fails at once and the diagnostic comes from the child itself.
-    private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(180);
+    // that.
+    //
+    // The wait is therefore bounded by silence, not by the whole startup: this interval is the
+    // longest the child may be quiet without announcing anything, re-armed by every frame it
+    // writes and suspended while it says it is waiting for its player. It is sized against the
+    // same observation the old whole-startup budget was raised for - a cold first launch creates
+    // several SQLite authorities and a Node runtime while antivirus and the indexer scan the
+    // freshly written files - and the child's longest silent stretch by construction is the one
+    // composition construction it announces as `provisioning`.
+    private static readonly TimeSpan BootstrapSilenceTimeout = TimeSpan.FromMinutes(5);
+
+    // Last resort. A child that keeps announcing progress is still not allowed to make the
+    // launcher wait forever, so this ceiling stays armed throughout and is deliberately larger
+    // than the silence interval.
+    private static readonly TimeSpan BootstrapCeiling = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Names the budget's expiry as its own reason, so "the child is hung or extremely slow" can never
-    /// again be reported as the generic runtime failure a genuinely broken start produces.
+    /// Names the silent wait's expiry as its own reason, so "the child stopped progressing" can
+    /// never again be reported as the generic runtime failure a genuinely broken start produces.
     /// </summary>
     internal const string BootstrapTimeoutCategory = "host_bootstrap_timeout";
 
+    /// <summary>
+    /// Labels the last bootstrap stage the child announced; a failed launch carries it in its
+    /// diagnostic beside the child's own stderr excerpt. This is why the status channel exists:
+    /// the operator reads where the child stopped, not only that it went quiet.
+    /// </summary>
+    internal const string BootstrapStageLabel = "host_bootstrap_last_stage";
+
     // Test-only hooks. Production composition neither sets nor exposes them.
     internal Func<Task>? BeforeFrameWriteForTesting { get; set; }
+
+    /// <summary>
+    /// Test-only override of the silence interval, so a focused test observes the watch expire in
+    /// milliseconds instead of minutes. Production selects the constant above.
+    /// </summary>
+    internal TimeSpan? BootstrapSilenceTimeoutForTesting { get; set; }
 
     internal async Task<RuntimeSupervisorLease> StartHostAsync(InstalledGenerationSelection selection, AdmittedHostRuntime runtime, CurrentUserRootLayout layout, CancellationToken cancellationToken, HostBootstrapEnvironmentOptions? options = null)
     {
@@ -56,6 +83,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var launched = false;
         DesktopHostBootstrapBroker? broker = null;
         var brokerTransferred = false;
+        // The last bootstrap stage the child announced, kept for the failure diagnostic.
+        // Declared out here because the frame dispatch that records it runs behind the
+        // cancellable read and the catches below report what it saw.
+        string? lastStage = null;
         try
         {
             runtime.VerifyStillLocked();
@@ -117,12 +148,14 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
             var frame = BuildFrame(selection, layout, bootstrapId);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(BootstrapTimeout);
+            // The two bounds of the pre-acknowledgement wait. Both cancel this one linked source,
+            // and the classification below separates the caller's own cancellation from them.
+            using var watchdog = new HostBootstrapWatchdog(timeout, BootstrapSilenceTimeoutForTesting ?? BootstrapSilenceTimeout, BootstrapCeiling);
             await HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame, timeout.Token).ConfigureAwait(false);
             parentStdinWriter.Dispose();
             parentStdinWriter = null;
             await broker.AuthenticateHostAsync(process, timeout.Token).ConfigureAwait(false);
-            var ack = await ReadOneAcknowledgementAsync(parentStdoutReader, selection, bootstrapId, timeout.Token).ConfigureAwait(false);
+            var ack = await ReadAcknowledgementAsync(parentStdoutReader, selection, bootstrapId, timeout.Token, watchdog, (stage) => lastStage = stage).ConfigureAwait(false);
             if (!WindowsNative.GetExitCodeProcess(process, out _) ||
                 WindowsNative.WaitForSingleObject(process, 0) != WindowsNative.WaitTimeout) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
             parentStdoutReader.Dispose();
@@ -136,24 +169,25 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         catch (GuardianLaunchUnavailableException exception)
         {
-            await AttachChildStderrAsync(exception, childStderr).ConfigureAwait(false);
+            await AttachBootstrapDiagnosticsAsync(exception, childStderr, lastStage).ConfigureAwait(false);
             throw;
         }
         catch (OperationCanceledException exception)
         {
-            // Distinguish this launcher's own bootstrap budget from the caller cancelling the launch:
-            // the first means the child is hung or extremely slow, the second means the launch was
-            // abandoned. Reporting both as the generic runtime failure is what hid the budget's expiry.
+            // Distinguish the caller cancelling the launch from this launcher's own bounds: the
+            // first means the launch was abandoned, the second means the child stopped
+            // progressing and the silence watch named it. Reporting both as the generic runtime
+            // failure is what hid the old whole-startup budget's expiry.
             var unavailable = new GuardianLaunchUnavailableException(
                 cancellationToken.IsCancellationRequested ? "host_runtime_unavailable" : BootstrapTimeoutCategory,
                 exception);
-            await AttachChildStderrAsync(unavailable, childStderr).ConfigureAwait(false);
+            await AttachBootstrapDiagnosticsAsync(unavailable, childStderr, lastStage).ConfigureAwait(false);
             throw unavailable;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or OutOfMemoryException or JsonException)
         {
             var unavailable = new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
-            await AttachChildStderrAsync(unavailable, childStderr).ConfigureAwait(false);
+            await AttachBootstrapDiagnosticsAsync(unavailable, childStderr, lastStage).ConfigureAwait(false);
             throw unavailable;
         }
         finally
@@ -185,17 +219,19 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Binds the launched child's own stderr to the failure the launch is about to
-    /// report. The category is untouched: the excerpt is what the child said about the
-    /// same blocker, appended where an operator can read it. A failure that happened
-    /// before any child existed carries no excerpt at all, and a capture that retained
-    /// nothing says so instead of pretending the child was silent. It runs at most once
-    /// per exception.
+    /// Binds the two facts the launcher owns about a failed launch to the failure it is
+    /// about to report: the last bootstrap stage the child announced, and the child's own
+    /// stderr excerpt. The category is untouched. A stage is only reported when one was
+    /// actually observed, and a capture that retained nothing says so instead of pretending
+    /// the child was silent. It runs at most once per exception.
     /// </summary>
-    private static async Task AttachChildStderrAsync(GuardianLaunchUnavailableException exception, ChildStderrCapture? capture)
+    private static async Task AttachBootstrapDiagnosticsAsync(GuardianLaunchUnavailableException exception, ChildStderrCapture? capture, string? lastStage)
     {
-        if (capture is null || exception.Diagnostic is not null) return;
-        exception.Diagnostic = ChildStderrExcerpt.Format(await capture.ExcerptAsync().ConfigureAwait(false));
+        if (exception.Diagnostic is not null || (capture is null && lastStage is null)) return;
+        var parts = new List<string>(2);
+        if (lastStage is not null) parts.Add($"{BootstrapStageLabel}: {lastStage}");
+        if (capture is not null) parts.Add(ChildStderrExcerpt.Format(await capture.ExcerptAsync().ConfigureAwait(false)));
+        exception.Diagnostic = string.Join(' ', parts);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -446,19 +482,103 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         return document;
     }
 
-    private static async Task<HostBootstrapResult> ReadOneAcknowledgementAsync(SafeFileHandle reader, InstalledGenerationSelection selection, string bootstrapId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads the frames the child writes before its acknowledgement, dispatching every status frame
+    /// and accepting the acknowledgement as the only success.
+    ///
+    /// Status frames are informational: any number of them may arrive, and each one re-arms the
+    /// silence watch (or suspends it, when it names a player decision). A frame that is neither a
+    /// valid status frame nor the acknowledgement fails the handshake closed, so a malformed or
+    /// out-of-order status frame can never be mistaken for readiness, and neither can the
+    /// acknowledgement be read as a mere status frame.
+    /// </summary>
+    private static async Task<HostBootstrapResult> ReadAcknowledgementAsync(SafeFileHandle reader, InstalledGenerationSelection selection, string bootstrapId, CancellationToken cancellationToken, HostBootstrapWatchdog watchdog, Action<string> observedStage)
     {
-        var bytes = await HostBootstrapPipeIo.ReadOneFrameAsync(reader, MaxWireBytes, cancellationToken).ConfigureAwait(false);
-        ValidateOneWireDocument(bytes);
-        using var document = JsonDocument.Parse(bytes[..^1]);
-        var ack = document.RootElement;
-        if (!ExactPropertiesInOrder(ack, "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema") ||
-            ack.GetProperty("schema").GetString() != "gamebuddy-desktop-host-bootstrap/v1" || ack.GetProperty("protocolVersion").GetInt32() != 1 || ack.GetProperty("status").GetString() != "accepted" ||
-            ack.GetProperty("bootstrapId").GetString() != bootstrapId || ack.GetProperty("generation").GetString() != selection.Generation || ack.GetProperty("inventoryDigest").GetString() != selection.InventoryDigest ||
-            ack.GetProperty("runtimeAdmissionSha256").GetString() != selection.RuntimeAdmissionSha256 || ack.GetProperty("rootLayoutSchema").GetString() != "gamebuddy-windows-root-layout/v1")
-            throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-        return new HostBootstrapResult();
+        HostBootstrapResult? acknowledgement = null;
+        // The loop stops at the acknowledgement instead of at the end of the stream: the child keeps
+        // its stdout open for as long as it serves, so waiting for the end of the stream would wait
+        // for the whole product to stop.
+        await HostBootstrapPipeIo.ReadFramesAsync(reader, MaxWireBytes, (frame) =>
+        {
+            var stage = DispatchBootstrapFrame(frame, selection, bootstrapId, watchdog);
+            if (stage is null)
+            {
+                acknowledgement = new HostBootstrapResult();
+                return false;
+            }
+            observedStage(stage);
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
+        // No acknowledgement before the end of the stream is the child closing its own handshake,
+        // which is exactly the failure an empty read reported before.
+        return acknowledgement ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
+
+    /// <summary>
+    /// Classifies one frame the child wrote. Returns the announced stage for a status frame; null
+    /// means this frame is the acknowledgement. The two schemas are disjoint and each frame is
+    /// validated against its own exact shape here, so a status frame that copies the
+    /// acknowledgement's fields is refused rather than served, and the acknowledgement is never
+    /// read as one more status frame.
+    /// </summary>
+    private static string? DispatchBootstrapFrame(byte[] frame, InstalledGenerationSelection selection, string bootstrapId, HostBootstrapWatchdog watchdog)
+    {
+        ValidateOneWireDocument(frame);
+        using var document = JsonDocument.Parse(frame[..^1]);
+        var value = document.RootElement;
+        if (value.ValueKind != JsonValueKind.Object) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+        var schema = value.TryGetProperty("schema", out var schemaValue) && schemaValue.ValueKind == JsonValueKind.String ? schemaValue.GetString() : null;
+        if (schema == StatusSchema)
+        {
+            if (!TryReadStatus(value, out var stage, out var waitingForPlayerInput)) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+            // The child proved it is progressing. A frame that names the player decision it is
+            // about to wait for suspends the silence watch; the next frame that does not arms it
+            // again.
+            watchdog.ObserveFrame(waitingForPlayerInput);
+            return stage;
+        }
+        if (IsAcknowledgement(value, selection, bootstrapId)) return null;
+        throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+    }
+
+    private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId) =>
+        ExactPropertiesInOrder(ack, "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema") &&
+        ack.GetProperty("schema").GetString() == "gamebuddy-desktop-host-bootstrap/v1" &&
+        ack.GetProperty("protocolVersion").GetInt32() == 1 &&
+        ack.GetProperty("status").GetString() == "accepted" &&
+        ack.GetProperty("bootstrapId").GetString() == bootstrapId &&
+        ack.GetProperty("generation").GetString() == selection.Generation &&
+        ack.GetProperty("inventoryDigest").GetString() == selection.InventoryDigest &&
+        ack.GetProperty("runtimeAdmissionSha256").GetString() == selection.RuntimeAdmissionSha256 &&
+        ack.GetProperty("rootLayoutSchema").GetString() == "gamebuddy-windows-root-layout/v1";
+
+    /// <summary>
+    /// Reads one status frame: the exact ordinal key sequence the child writes, two bounded tokens
+    /// and the optional wait statement. The stage order is protocol here for the same reason it is
+    /// for every other frame on this wire - it keeps exactly one shape acceptable - and the
+    /// wait statement is the only field that may follow the stage.
+    /// </summary>
+    private static bool TryReadStatus(JsonElement value, out string stage, out bool waitingForPlayerInput)
+    {
+        stage = string.Empty;
+        waitingForPlayerInput = false;
+        if (value.ValueKind != JsonValueKind.Object) return false;
+        var names = value.EnumerateObject().Select(property => property.Name).ToArray();
+        var announced = names.Length == 4 && names[3] == "waitingForPlayerInput";
+        if ((names.Length != 3 && !announced) || names[0] != "schema" || names[1] != "protocolVersion" || names[2] != "stage") return false;
+        if (value.GetProperty("schema").GetString() != StatusSchema || value.GetProperty("protocolVersion").GetInt32() != 1) return false;
+        var announcedStage = value.GetProperty("stage").GetString();
+        if (announcedStage is null || !ValidStatusToken(announcedStage)) return false;
+        stage = announcedStage;
+        if (!announced) return true;
+        var waiting = value.GetProperty("waitingForPlayerInput").GetString();
+        if (waiting is null || !ValidStatusToken(waiting)) return false;
+        waitingForPlayerInput = true;
+        return true;
+    }
+
+    private static bool ValidStatusToken(string value) =>
+        value.Length is > 0 and <= 64 && value[0] is >= 'a' and <= 'z' && value.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
     private static void ValidateOneWireDocument(byte[] bytes)
     {
@@ -514,21 +634,47 @@ internal static class HostBootstrapPipeIo
         }, cancellationToken);
     }
 
-    internal static Task<byte[]> ReadOneFrameAsync(SafeFileHandle reader, int maximumBytes, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads the endpoint frame by frame - one LF-terminated document at a time - handing every
+    /// complete frame to the sink until the sink asks to stop or the endpoint reaches its end.
+    ///
+    /// This is a LINE reader, not a read-to-end. The acknowledgement no longer closes the child's
+    /// standard output, because the child writes informational status frames before it and then
+    /// goes on serving, so a read that waited for the end of the stream would wait for the whole
+    /// product to stop. A trailing partial document is handed over too, so a child that dies
+    /// mid-frame is refused by the frame validation instead of looking like a silent child.
+    ///
+    /// Cancellation keeps the shape it always had: the endpoint is closed and the worker is
+    /// released with CancelSynchronousIo, which is the only thing that unblocks a synchronous read.
+    /// </summary>
+    internal static Task ReadFramesAsync(SafeFileHandle reader, int maximumFrameBytes, Func<byte[], bool> onFrame, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        if (maximumBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+        ArgumentNullException.ThrowIfNull(onFrame);
+        if (maximumFrameBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maximumFrameBytes));
         return RunSynchronousIoAsync(reader, () =>
         {
             using var stream = new FileStream(reader, FileAccess.Read, bufferSize: 4096, isAsync: false);
-            using var output = new MemoryStream();
+            using var frame = new MemoryStream();
             var buffer = new byte[4096];
             while (true)
             {
                 var count = stream.Read(buffer, 0, buffer.Length);
-                if (count == 0) return output.ToArray();
-                if (output.Length + count > maximumBytes) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-                output.Write(buffer, 0, count);
+                if (count == 0)
+                {
+                    // The endpoint reached its end: nothing more can arrive on it.
+                    if (frame.Length != 0) onFrame(frame.ToArray());
+                    return;
+                }
+                for (var index = 0; index < count; index++)
+                {
+                    frame.WriteByte(buffer[index]);
+                    if (frame.Length > maximumFrameBytes) throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
+                    if (buffer[index] != (byte)'\n') continue;
+                    var complete = frame.ToArray();
+                    frame.SetLength(0);
+                    if (!onFrame(complete)) return;
+                }
             }
         }, cancellationToken);
     }
@@ -735,4 +881,85 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => new(CloseAsync(CancellationToken.None));
+}
+
+/// <summary>
+/// Bounds the pre-acknowledgement wait on the child's own behaviour, over the same linked source
+/// the handshake already carries.
+///
+/// Two independent bounds replace the single whole-startup timer:
+/// <list type="bullet">
+/// <item>the SILENCE watch expires when no frame of any kind arrived for the configured interval,
+/// which is what "the child is not progressing" actually means. It is re-armed by every frame the
+/// child writes and suspended while a frame says the child is waiting for its player, so a child
+/// waiting for a human decision is never killed for being quiet; the next frame that does not say
+/// so arms it again.</item>
+/// <item>the CEILING stays armed throughout as the last resort, so a child that keeps announcing
+/// progress still cannot make the launcher wait forever.</item>
+/// </list>
+///
+/// Both cancel the same source, so neither mints a category of its own: the caller still tells its
+/// own cancellation from these two by token identity, and both report the one bounded
+/// <c>host_bootstrap_timeout</c> reason whose name now means exactly what it says.
+/// </summary>
+internal sealed class HostBootstrapWatchdog : IDisposable
+{
+    private readonly CancellationTokenSource cancellation;
+    private readonly TimeSpan silence;
+    private readonly Timer silenceTimer;
+    private readonly Timer ceilingTimer;
+    private readonly object gate = new();
+    private long lastProgress = Stopwatch.GetTimestamp();
+    private bool waitingForPlayerInput;
+
+    internal HostBootstrapWatchdog(CancellationTokenSource cancellation, TimeSpan silenceTimeout, TimeSpan ceiling)
+    {
+        ArgumentNullException.ThrowIfNull(cancellation);
+        if (silenceTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(silenceTimeout));
+        if (ceiling <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ceiling));
+        this.cancellation = cancellation;
+        silence = silenceTimeout;
+        // Armed before the launcher writes its own frame: a child that never starts, never reads
+        // the frame or never answers is silent in exactly the same way as one that wedges later.
+        silenceTimer = new Timer(OnSilenceExpired, null, silenceTimeout, Timeout.InfiniteTimeSpan);
+        ceilingTimer = new Timer(OnCeilingExpired, null, ceiling, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// One frame arrived from the child. The next silence is measured from here; a frame that says
+    /// the child is waiting for its player disarms the watch entirely, and any later frame that
+    /// does not say so arms it again.
+    /// </summary>
+    internal void ObserveFrame(bool waitingForPlayerInput)
+    {
+        lock (gate)
+        {
+            if (cancellation.IsCancellationRequested) return;
+            lastProgress = Stopwatch.GetTimestamp();
+            this.waitingForPlayerInput = waitingForPlayerInput;
+            silenceTimer.Change(waitingForPlayerInput ? Timeout.InfiniteTimeSpan : silence, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void OnSilenceExpired(object? state)
+    {
+        // The elapsed check decides in the child's favour: a frame that reached the launcher between
+        // this timer's expiry and this callback moved the progress mark, so the child that just
+        // spoke is not killed for a silence it already ended.
+        var expired = false;
+        lock (gate) expired = !waitingForPlayerInput && Stopwatch.GetElapsedTime(lastProgress) >= silence;
+        if (expired) cancellation.Cancel();
+    }
+
+    private void OnCeilingExpired(object? state)
+    {
+        // Deliberately unconditional: the ceiling is the last resort, not a progress measurement.
+        cancellation.Cancel();
+    }
+
+    public void Dispose()
+    {
+        silenceTimer.Dispose();
+        ceilingTimer.Dispose();
+    }
 }
