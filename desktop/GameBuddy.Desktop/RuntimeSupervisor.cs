@@ -263,6 +263,13 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             ["TEMP"] = RequiredEnvironment("TEMP"),
             ["TMP"] = RequiredEnvironment("TMP"),
             ["LOCALAPPDATA"] = RequiredEnvironment("LOCALAPPDATA"),
+            // Windows marks itself in the environment as well as in the filesystem, and
+            // the PowerShell sidecars the Host starts read that mark: the named-mutex
+            // broker's own script refuses to run unless $env:OS is Windows_NT. Because
+            // this block is DECLARED rather than inherited, omitting the mark made the
+            // sidecar inherit an environment that did not identify Windows, and every
+            // launch failed closed with windows_named_mutex_required.
+            ["OS"] = "Windows_NT",
             // The Host reaches the player's provider itself, so a player behind a proxy
             // keeps working; absent is normal and simply not carried.
             ["HTTP_PROXY"] = OptionalEnvironment("HTTP_PROXY"),
