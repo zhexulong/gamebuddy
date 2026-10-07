@@ -2547,7 +2547,11 @@ function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): 
 function persistContextPlan(db: DatabaseSync, plan: AcceptedTurnAuthoredContextPlan, turnId: string): void {
   db.prepare("INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count, volatile_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, plan.threadId, plan.continuityId, plan.companionId, plan.playerId, plan.profileId, plan.profileRevision, plan.profileCanonicalHash, plan.chatSurfaceSessionId, plan.stableTokenCount, plan.volatileTokenCount);
   for (const [ordinal, source] of plan.stableSources.entries()) db.prepare("INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
-  for (const [ordinal, source] of plan.volatileSources.entries()) db.prepare("INSERT INTO tavern_turn_context_volatile_sources (turn_id, ordinal, durable_turn_id, source_id, kind, revision, canonical_hash, total_order_key, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, turnId, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey, source.provenance);
+  // The volatile table has NINE columns; the placeholder list used to carry ten, so persisting ANY volatile
+  // source threw `10 values for 9 columns` — which the Chat service re-wrapped as
+  // `chat_pipeline_service_unavailable` and the browser saw as HTTP 503. Invisible until volatile sources
+  // actually existed (managed World Info was never wired, so this INSERT never ran).
+  for (const [ordinal, source] of plan.volatileSources.entries()) db.prepare("INSERT INTO tavern_turn_context_volatile_sources (turn_id, ordinal, durable_turn_id, source_id, kind, revision, canonical_hash, total_order_key, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, turnId, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey, source.provenance);
 }
 
 function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceInput, turnId: string): AcceptedTurnAuthoredContextPlan {

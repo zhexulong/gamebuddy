@@ -28,6 +28,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
+import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
 import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
 import {
@@ -767,8 +768,14 @@ await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // ASSERTED: this ladder's content gate used to concede that "a disposable root legitimately has
 // neither file", but a run whose companion has no persona cannot support a claim about how it plays
 // or talks. Absence is a failure now, and the log names the persona that spoke.
-const provisionedPersona = await provisionLiveRunPersona(runtimeRoot);
-const personaMounted = await assertLiveRunPersonaMounted(runtimeRoot);
+// The RUNTIME CWD, not the root: `runtime-identity.ts:107` resolves it to `<root>/contexts/<identityKey>`,
+// the product writes the book there (`new-companion-service.ts:202`), and every reader opens it from there.
+// Provisioning into the root left the book on disk while the runtime never read it — and the assertion still
+// passed, because it checked the file WE wrote rather than the path the runtime reads. Same directory now.
+const personaCwd = join(runtimeRoot, "contexts", identityKey(identity));
+await mkdir(personaCwd, { recursive: true });
+const provisionedPersona = await provisionLiveRunPersona(personaCwd);
+const personaMounted = await assertLiveRunPersonaMounted(personaCwd);
 if (!personaMounted.ok)
   throw new Error(`live_run_persona_not_mounted:${personaMounted.problems.join(",")}`);
 process.stderr.write(

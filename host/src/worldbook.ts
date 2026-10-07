@@ -29,6 +29,13 @@ export type WorldBookEntry = Readonly<{
    * false: an entry must be explicitly reviewed as always-on to earn it.
    */
   constant?: boolean;
+  /**
+   * The card's own trigger words, carried through the import unchanged.
+   *
+   * Volatile selection tests `playerText.includes(key)`, so these — not the author-facing title — are what
+   * make a keyword-gated entry reachable when the player actually says the word.
+   */
+  keys?: readonly string[];
   integrationId?: string;
   saveId?: string;
   worldId?: string;
@@ -175,7 +182,11 @@ function validateEntry(value: unknown): WorldBookEntry {
     !isScope(value.scope) ||
     !isProvenance(value.provenance) ||
     (value.tokenBudget !== "small" && value.tokenBudget !== "medium") ||
-    (value.constant !== undefined && typeof value.constant !== "boolean")
+    (value.constant !== undefined && typeof value.constant !== "boolean") ||
+    (value.keys !== undefined &&
+      (!Array.isArray(value.keys) ||
+        value.keys.length === 0 ||
+        value.keys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0 || key.length > 64)))
   )
     throw new Error("invalid_worldbook");
   const worldScoped = value.scope === "world";
@@ -195,6 +206,11 @@ function validateEntry(value: unknown): WorldBookEntry {
     provenance: value.provenance,
     tokenBudget: value.tokenBudget,
     ...(value.constant === undefined ? {} : { constant: value.constant as boolean }),
+    // The card's trigger words survive the projection: the volatile per-turn selection matches them against
+    // what the player actually said, so dropping them here would make keyword-gated entries unreachable.
+    ...(Array.isArray(value.keys)
+      ? { keys: Object.freeze(value.keys.filter((key): key is string => typeof key === "string" && key.trim().length > 0 && key.length <= 64).slice(0, 16)) }
+      : {}),
     ...(value.integrationId === undefined ? {} : { integrationId: value.integrationId }),
     ...(value.saveId === undefined ? {} : { saveId: value.saveId }),
     ...(value.worldId === undefined ? {} : { worldId: value.worldId }),

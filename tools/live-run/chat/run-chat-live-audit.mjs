@@ -58,10 +58,10 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 
@@ -94,6 +94,17 @@ const SUBMIT_PROMPT_TEXT = process.env.GAMEBUDDY_CHAT_PROMPT ?? "Please respond 
 // How many COMPLETED conversation turns a default run drives. The cancel probe is separate and always
 // last (see below), so this number is exactly how many durable companion replies the run can produce.
 const CONVERSATION_TURNS = Math.max(1, Math.min(8, Number(process.env.GAMEBUDDY_CHAT_TURNS ?? 2)));
+// Keep the disposable runtime root on request, so the agent conversation's actual input and output can be
+// READ after the run instead of inferred from the reply's wording. Off by default: the root is throwaway
+// state, and a run that keeps it must say so in its own evidence.
+const KEEP_RUNTIME_ROOT = process.env.GAMEBUDDY_CHAT_KEEP_ROOT === "1";
+// One prompt per conversation turn, when the run wants to ask different questions (the always-on entry and
+// an ordinary entry are retrieved differently, so proving the world book is in context needs both). Fewer
+// prompts than turns repeats the last one; absent, every turn uses SUBMIT_PROMPT_TEXT.
+const CONVERSATION_PROMPTS = (process.env.GAMEBUDDY_CHAT_PROMPTS ?? "")
+  .split("|")
+  .map((prompt) => prompt.trim())
+  .filter((prompt) => prompt.length > 0);
 
 const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "failed"]));
 
@@ -1133,8 +1144,17 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // Mount the live-run persona BEFORE anything reads the runtime cwd: the product's convention is
   // <runtimeCwd>/card.json + worldbook.json, and a run without them has no persona at all — so this is
   // provisioned (byte for byte, no preprocessing) and then ASSERTED, never assumed.
-  environment.persona = await provisionLiveRunPersona(root);
-  environment.personaMounted = await assertLiveRunPersonaMounted(root);
+  // The runtime reads the book from its RUNTIME CWD — <root>/contexts/<identityKey(identity)>
+  // (runtime-identity.ts:107), which is also where the product writes it (new-companion-service.ts:202).
+  // Writing it to the root put the book on disk while the runtime never read it, and the old assertion
+  // passed anyway because it checked the file WE wrote rather than the path the runtime reads. Both now
+  // target the same directory, so the assertion can only pass when the runtime would find the book.
+  const { identityKey } = await import(pathToFileURL(join(HOST_ROOT, "dist-test", "runtime-identity.js")).href);
+  const personaCwd = join(root, "contexts", identityKey(AUDIT_IDENTITY));
+  await mkdir(personaCwd, { recursive: true });
+  environment.personaCwd = personaCwd;
+  environment.persona = await provisionLiveRunPersona(personaCwd);
+  environment.personaMounted = await assertLiveRunPersonaMounted(personaCwd);
   if (!environment.personaMounted.ok)
     throw new Error(`live_run_persona_not_mounted:${environment.personaMounted.problems.join(",")}`);
   const configPath = join(root, "chat-audit.json");
@@ -1420,7 +1440,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     // how often it was asked. Now: `CONVERSATION_TURNS` completed turns (default 2), then the cancel
     // probe, which stays because the cancel route settling durably is a product fact of its own.
     for (let index = 0; index < CONVERSATION_TURNS; index += 1) {
-      const turn = await runTurn({ cancel: false });
+      const message = CONVERSATION_PROMPTS.length === 0
+        ? SUBMIT_PROMPT_TEXT
+        : CONVERSATION_PROMPTS[Math.min(index, CONVERSATION_PROMPTS.length - 1)];
+      const turn = await runTurn({ cancel: false, message });
       if (turn?.terminal !== true) environment.boundaryReason ??= "conversation_turn_not_terminal";
     }
     await runTurn({ cancel: true });
@@ -1634,7 +1657,10 @@ export async function main(argv = process.argv.slice(2)) {
       const side = Object.freeze({
       ...buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() }),
       persona: environment.persona?.identity ?? null,
+      personaCwd: environment.personaCwd ?? null,
       personaMounted: environment.personaMounted?.ok === true,
+      // Where the agent conversation's input/output lives, when the caller asked to keep it.
+      runtimeRoot: KEEP_RUNTIME_ROOT ? root : null,
     });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
@@ -1643,7 +1669,8 @@ export async function main(argv = process.argv.slice(2)) {
     else console.log(JSON.stringify(trace));
     return 0;
   } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
+    if (KEEP_RUNTIME_ROOT) console.log(JSON.stringify({ keptRuntimeRoot: root }));
+    else await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
   }
 }
 

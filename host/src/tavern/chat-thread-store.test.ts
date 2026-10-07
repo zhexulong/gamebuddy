@@ -670,6 +670,76 @@ test("volatile selector respects secondaryKeys and selectiveLogic across all 4 m
   }
 });
 
+test("a durable turn plan with volatile world-book sources round-trips through SQLite", async () => {
+  // Regression guard: the volatile INSERT carried ten placeholders for a nine-column table, so accepting a
+  // turn that actually HAD volatile sources threw `10 values for 9 columns`, which the Chat service re-wrapped
+  // as `chat_pipeline_service_unavailable` and the browser saw as HTTP 503. Every earlier test accepted with
+  // `volatileSourceRefs` empty, so the statement never ran and the defect stayed invisible.
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p4-volatile-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  try {
+    const t0 = Date.now();
+    const s = createChatThreadStore(root, continuityKey, () => t0);
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit({
+      chatThreadId: "thread_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_01",
+      opening: "blank",
+    });
+    const binding = {
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      selectionGeneration: 1,
+    };
+    const volatileContent = "鲸鱼娘其实喜欢帅气男生。";
+    const accepted = await (await import("./chat-thread-store.js")).acceptMountedPlayerMessage(binding, {
+      text: "我很喜欢帅哥",
+      locale: "zh-CN",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+      authoredContextPreparation: {
+        sourceRefs: [],
+        stableTokenCount: 0,
+        volatileSourceRefs: [
+          {
+            sourceId: "world-info_entry_1",
+            kind: "lorebook_entry",
+            revision: "2",
+            canonicalHash: createHash("sha256").update(volatileContent, "utf8").digest("hex"),
+            totalOrderKey: "0001",
+            provenance: `tavern-world-book-entry/world-info_entry_1/revision/2/canonical/${"c".repeat(64)}`,
+          },
+        ],
+        volatileTokenCount: 8,
+      },
+    });
+    assert.equal(accepted.status, "accepted_queued");
+    const state = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(state.currentTurnContextPlan?.volatileSources, [
+      {
+        sourceId: "world-info_entry_1",
+        kind: "lorebook_entry",
+        revision: "2",
+        canonicalHash: createHash("sha256").update(volatileContent, "utf8").digest("hex"),
+        totalOrderKey: "0001",
+        provenance: `tavern-world-book-entry/world-info_entry_1/revision/2/canonical/${"c".repeat(64)}`,
+      },
+    ]);
+    assert.equal(state.currentTurnContextPlan?.volatileTokenCount, 8);
+    s.close?.();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("P4 durable turn acceptance, claim, start, and presentation transitions work atomically", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-p4p5-");
   const continuityKey = createHash("sha256")

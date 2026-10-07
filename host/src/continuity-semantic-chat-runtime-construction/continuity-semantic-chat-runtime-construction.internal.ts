@@ -315,9 +315,26 @@ async function resolveBoundWorldBookSource(
   )
     throw new Error("chat_runtime_exact_content_unavailable");
   const constantEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant === true);
+  // Keyword-gated entries must ALSO be handed over: `deriveVolatileWorldInfoSources` turns a native
+  // book's `keywordEntries` into per-turn volatile selection candidates (catalog-service.ts:303-328).
+  // Without them it returns an empty list (catalog-service.ts:327), so the companion never surfaces what
+  // its own card says — silently, with no error anywhere.
+  const keywordEntries = book.entries
+    .filter((entry) => entry.constant !== true)
+    .map((entry) =>
+      Object.freeze({
+        entryId: entry.entryId,
+        title: entry.title,
+        content: entry.content,
+        // The card's own trigger words ride along; without them the volatile selection can only ever match the
+        // author-facing title, which a player does not say.
+        ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
+      }),
+    );
   return Object.freeze({
     binding,
     alwaysOnPremise: book.alwaysOnPremise,
     ...(constantEntries.length > 0 ? { constantEntries } : {}),
+    ...(keywordEntries.length > 0 ? { keywordEntries: Object.freeze(keywordEntries) } : {}),
   });
 }
