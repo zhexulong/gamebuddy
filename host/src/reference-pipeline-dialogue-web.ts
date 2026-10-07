@@ -15,11 +15,14 @@ import {
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
+// One derived definition of the player-content body ceiling, shared with the delegated dispatcher:
+// a second copy of this number is how the two dispatch paths ended up disagreeing about the same
+// request.
+import { MAX_TAVERN_MESSAGE_BODY_BYTES } from "./reference-pipeline-dialogue-web.core.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
-const MAX_MESSAGE_SUBMIT_BODY_BYTES = 24 * 1024;
 const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
 const REFERENCE_RELEASE_TIER = "chat_core";
 const REFERENCE_ROUTE_IDS = [
@@ -140,8 +143,8 @@ export function createReferencePipelineDialogueWebRequestHandler(
         if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
         const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
         if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
-         const body = await readJsonBody(request, MAX_MESSAGE_SUBMIT_BODY_BYTES);
-        if (!submitMessageRequestValidator.Check(body))
+      			const body = await readJsonBody(request, MAX_TAVERN_MESSAGE_BODY_BYTES);
+			if (!submitMessageRequestValidator.Check(body))
           return sendProblem(response, 400, "invalid_request");
         const result = await pipelineService.submitAfterResponseCommit(
           body as import("./tavern/browser-contract/index.js").SubmitMessageCommandV1,

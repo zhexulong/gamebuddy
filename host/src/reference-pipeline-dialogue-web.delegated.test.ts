@@ -361,6 +361,117 @@ test("delegated handler serves all mounted Tavern operations with the broker ses
   }
 });
 
+test("delegated handler submits a message the contract allows, however long", async () => {
+	// The contract permits message text up to 16,384 UTF-8 bytes (`MAX_TEXT_UTF8_BYTES`,
+	// `tavern-browser-nfc-utf8-text-v1` on `SubmitMessageCommandV1.text`). The transport read this
+	// route's body with the BOOTSTRAP limit (4 KiB), so a long but perfectly valid message was
+	// refused before it ever reached the pipeline - a player typing a long message got a rejection
+	// for a message the product had already declared valid.
+	let receivedText;
+	const recorder = { starts: 0, statuses: 0, closes: 0 };
+	const broker = createComposedReferenceGameBrowserRequestHandler({
+		profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+		bootstrapToken,
+		async readChat(context) { return stateForChat(context); },
+	});
+	const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+		profile: tavernProfile,
+		referenceStateFacade: facade,
+		pipelineService: Object.freeze({
+			async submitAfterResponseCommit(
+				command: { text: string },
+				_key: string,
+				commit202: (committed: SubmitResultV1) => Promise<void>,
+			) {
+				receivedText = command.text;
+				await commit202(result);
+				recorder.starts += 1;
+				return result;
+			},
+			async readSubmissionStatus() {
+				recorder.statuses += 1;
+				return Object.freeze({ apiVersion: 1, disposition: "accepted" as const, committedResult: result });
+			},
+			async cancel() { throw new Error("not_used"); },
+			async close() { recorder.closes += 1; },
+		}) as unknown as ChatPipelineService,
+		eventStream,
+		capability: broker.delegatedAuthCapability,
+	});
+	const server = await start(broker, delegated);
+	try {
+		const initial = await bootstrap(server.origin);
+		const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+		const root = await initial.json() as { chat: { csrfToken: string } };
+		// 8,000 characters: inside the contract's 16,384-byte ceiling for ASCII, far outside the
+		// 4 KiB bootstrap limit the route used to read the body with.
+		const longText = "a".repeat(8_000);
+		const submit = await fetch(`${server.origin}/api/tavern/v1/messages`, {
+			method: "POST",
+			headers: {
+				Origin: server.origin,
+				Cookie: cookie,
+				"Content-Type": "application/json",
+				"X-CSRF-Token": root.chat.csrfToken,
+				"Idempotency-Key": "A".repeat(22),
+			},
+			body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: longText, locale: "en" }),
+		});
+		assert.equal(submit.status, 202, `long message must be accepted, got ${submit.status} ${await submit.text()}`);
+		assert.equal(receivedText, longText);
+		assert.equal(recorder.starts, 1);
+	} finally {
+		await server.close();
+	}
+});
+
+test("delegated handler keeps a bound, and the bound is the contract's before the transport's", async () => {
+	// Two distinct ceilings, and the order matters. The contract's text limit is applied to the
+	// DECODED string (16,384 UTF-8 bytes), so text past it is a typed 400 with the service never
+	// reached. The transport's body ceiling is only a blowup guard, so a body past IT is a 413.
+	const recorder = { starts: 0, statuses: 0, closes: 0 };
+	const broker = createComposedReferenceGameBrowserRequestHandler({
+		profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+		bootstrapToken,
+		async readChat(context) { return stateForChat(context); },
+	});
+	const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+		profile: tavernProfile,
+		referenceStateFacade: facade,
+		pipelineService: service(recorder),
+		eventStream,
+		capability: broker.delegatedAuthCapability,
+	});
+	const server = await start(broker, delegated);
+	try {
+		const initial = await bootstrap(server.origin);
+		const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+		const root = await initial.json() as { chat: { csrfToken: string } };
+		const post = (text: string) => fetch(`${server.origin}/api/tavern/v1/messages`, {
+			method: "POST",
+			headers: {
+				Origin: server.origin,
+				Cookie: cookie,
+				"Content-Type": "application/json",
+				"X-CSRF-Token": root.chat.csrfToken,
+				"Idempotency-Key": "A".repeat(22),
+			},
+			body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text, locale: "en" }),
+		});
+		// Past the contract's text ceiling, inside the transport's body ceiling.
+		const pastTextCeiling = await post("a".repeat(20_000));
+		assert.equal(pastTextCeiling.status, 400);
+		assert.equal((await pastTextCeiling.json() as { code: string }).code, "invalid_request");
+		// Past the transport's body ceiling.
+		const pastBodyCeiling = await post("a".repeat(200_000));
+		assert.equal(pastBodyCeiling.status, 413);
+		assert.equal((await pastBodyCeiling.json() as { code: string }).code, "payload_too_large");
+		assert.equal(recorder.starts, 0);
+	} finally {
+		await server.close();
+	}
+});
+
 test("delegated handler without a mounted pipeline service fails mutations closed", async () => {
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),

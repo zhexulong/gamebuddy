@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-  type ComposedTavernProfile,
-  TAVERN_BROWSER_API_V1,
-  type TavernBrowserNavigationItemIdV1,
-  TavernBrowserValidatorsV1,
-  type TavernProblemV1,
+	type ComposedTavernProfile,
+	MAX_TEXT_UTF8_BYTES,
+	TAVERN_BROWSER_API_V1,
+	type TavernBrowserNavigationItemIdV1,
+	TavernBrowserValidatorsV1,
+	type TavernProblemV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
@@ -18,6 +19,17 @@ import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-s
 
 const LOOPBACK_HOST = "127.0.0.1";
 export const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
+/**
+ * Body ceiling for a route that carries player message text.
+ *
+ * Derived from the contract's own limit rather than chosen: `SubmitMessageCommandV1.text` accepts
+ * up to `MAX_TEXT_UTF8_BYTES` (16,384) UTF-8 bytes, and that check runs on the DECODED string - so
+ * a body can legitimately be larger than the text limit, because JSON escapes one character as up
+ * to six bytes (`\uXXXX`). The bootstrap request's 4 KiB ceiling has nothing to do with a player's
+ * message: reading this route with it refused long messages the contract had already declared
+ * valid, which is a rejection no player could act on.
+ */
+export const MAX_TAVERN_MESSAGE_BODY_BYTES = MAX_TEXT_UTF8_BYTES * 6;
 const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
 const REFERENCE_RELEASE_TIER = "chat_core";
 const REFERENCE_ROUTE_IDS = [

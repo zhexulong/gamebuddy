@@ -9,8 +9,9 @@ import type { ChatEventStream } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 import {
-  MAX_BOOTSTRAP_BODY_BYTES,
-  assertReferenceProfile,
+	MAX_BOOTSTRAP_BODY_BYTES,
+	MAX_TAVERN_MESSAGE_BODY_BYTES,
+	assertReferenceProfile,
   hasRequestBody,
   isBrowserSameOriginRead,
   isExactLoopbackHost,
@@ -89,9 +90,11 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
         const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
         if (context === null) return sendProblem(response, 401, "unauthorized");
         if (!checkComposedReferenceGameBrowserAuthCsrf(context, request)) return sendProblem(response, 403, "csrf_failed");
-        const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
-        if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
-        const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
+     			const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
+			if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
+			// The message route carries the player's own text, so its ceiling is the contract's text
+			// limit with JSON-escaping headroom - never the bootstrap request's 4 KiB.
+			const body = await readJsonBody(request, MAX_TAVERN_MESSAGE_BODY_BYTES);
         const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submit");
         if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
           return sendProblem(response, 400, "invalid_request");
