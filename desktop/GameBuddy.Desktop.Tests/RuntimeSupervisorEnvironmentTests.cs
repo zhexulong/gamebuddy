@@ -6,6 +6,38 @@ namespace GameBuddy.Desktop.Tests;
 public sealed class RuntimeSupervisorEnvironmentTests
 {
     private const string Nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private const string NonceKey = "GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256";
+
+    // The declared block is the contract: exactly these names, no more and no fewer,
+    // apart from the proxy names which are forwarded only when the ambient environment
+    // happens to carry them. Counting entries could not express that - it went stale
+    // every time a required name was added, and it reported a healthy launch as broken
+    // while saying nothing about which name was missing.
+    private static readonly string[] FrozenWireKeys =
+    [
+        "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST",
+        "GAMEBUDDY_HOST_GAME_SESSION_MODE",
+        "GAMEBUDDY_HOST_SURFACE",
+        "LOCALAPPDATA",
+        "OS",
+        "PATH",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "WINDIR",
+    ];
+
+    private static readonly string[] ForwardedProxyKeys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"];
+
+    private static string[] SortedKeys(IEnumerable<string> keys) =>
+        keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+
+    private static void AssertDeclaredBlock(IReadOnlyDictionary<string, string> environment, params string[] conditionalKeys)
+    {
+        Assert.Empty(FrozenWireKeys.Except(environment.Keys));
+        Assert.All(environment.Keys, key => Assert.Contains(key, FrozenWireKeys.Concat(ForwardedProxyKeys).Concat(conditionalKeys)));
+    }
 
     [Fact]
     public void BuildBootstrapEnvironment_injects_the_frozen_wire_environment_with_the_default_assembly_input()
@@ -16,7 +48,8 @@ public sealed class RuntimeSupervisorEnvironmentTests
 
         var environment = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout));
 
-        Assert.Equal(7, environment.Count);
+        AssertDeclaredBlock(environment);
+        Assert.Equal("Windows_NT", environment["OS"]);
         Assert.Equal(Path.Combine(layout.Layout.OperationalRoot, "deployment-manifest.json"), environment["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"]);
         Assert.Equal("fresh", environment["GAMEBUDDY_HOST_GAME_SESSION_MODE"]);
         Assert.Equal("composed-reference-game", environment["GAMEBUDDY_HOST_SURFACE"]);
@@ -34,13 +67,13 @@ public sealed class RuntimeSupervisorEnvironmentTests
         using var layout = CreateLayout();
         TestDeploymentManifest.WriteDeploymentManifest(layout.Layout.OperationalRoot);
 
-        var withNonce = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { TavernNarrativeGateNonceSha256 = Nonce }));
-        Assert.Equal(Nonce, withNonce["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"]);
-        Assert.Equal(8, withNonce.Count);
-
         var withoutNonce = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { TavernNarrativeGateNonceSha256 = null }));
-        Assert.False(withoutNonce.ContainsKey("GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"));
-        Assert.Equal(7, withoutNonce.Count);
+        Assert.False(withoutNonce.ContainsKey(NonceKey));
+        AssertDeclaredBlock(withoutNonce);
+
+        var withNonce = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { TavernNarrativeGateNonceSha256 = Nonce }));
+        Assert.Equal(Nonce, withNonce[NonceKey]);
+        Assert.Equal(SortedKeys(withoutNonce.Keys), SortedKeys(withNonce.Keys.Where(key => key != NonceKey)));
     }
 
     [Fact]
@@ -59,8 +92,8 @@ public sealed class RuntimeSupervisorEnvironmentTests
 
         Assert.Equal("known", environment["GAMEBUDDY_HOST_GAME_SESSION_MODE"]);
         Assert.Equal("chat-only", environment["GAMEBUDDY_HOST_SURFACE"]);
-        Assert.Equal(Nonce, environment["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"]);
-        Assert.Equal(8, environment.Count);
+        Assert.Equal(Nonce, environment[NonceKey]);
+        AssertDeclaredBlock(environment, NonceKey);
     }
 
     [Fact]
@@ -127,13 +160,16 @@ public sealed class RuntimeSupervisorEnvironmentTests
 
         Assert.Equal("49731", withVoice["GAMEBUDDY_VOICE_PORT"]);
         Assert.Equal("vGQf7mKx2LpR9sBw4Aa1", withVoice["GAMEBUDDY_VOICE_TOKEN"]);
-        Assert.Equal(9, withVoice.Count);
+        AssertDeclaredBlock(withVoice, "GAMEBUDDY_VOICE_PORT", "GAMEBUDDY_VOICE_TOKEN");
 
         // Both absent means pure text; no Voice environment is delivered.
         var withoutVoice = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout));
         Assert.False(withoutVoice.ContainsKey("GAMEBUDDY_VOICE_PORT"));
         Assert.False(withoutVoice.ContainsKey("GAMEBUDDY_VOICE_TOKEN"));
-        Assert.Equal(7, withoutVoice.Count);
+        AssertDeclaredBlock(withoutVoice);
+        Assert.Equal(
+            SortedKeys(withoutVoice.Keys),
+            SortedKeys(withVoice.Keys.Where(key => key is not ("GAMEBUDDY_VOICE_PORT" or "GAMEBUDDY_VOICE_TOKEN"))));
     }
 
     [Theory]
