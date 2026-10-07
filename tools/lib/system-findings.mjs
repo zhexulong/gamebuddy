@@ -50,19 +50,24 @@ const REASON_COMPONENT = Object.freeze({
 /**
  * Reasons whose component depends on the EVIDENCE the refusal carried, not on the code alone.
  *
- * Measured: `move_to_tile` was refused as `no_native_path` — which the table maps to `observation` — while
- * its own envelope said `route_exists=true; component_tiles=2404; probe_says_reachable=true;
- * path_search=native_budget_exhausted; budget=40000`. That is the Mod's own planner exhausting its search
- * budget on a route the Mod can prove exists: a native-state/budget fact, not an observation gap. Sending
- * the audit to the observation layer would have "fixed" the wrong component.
+ * Measured this time, not inferred: `move_to_tile(3,9 -> 4,8)` was refused as `no_native_path`, and the
+ * envelope blamed a budget (`route_exists=true; component_tiles=2404; probe_says_reachable=true;
+ * path_search=native_budget_exhausted; budget=40000`). Both halves of that story were wrong, and a live
+ * measurement settled it — with the actor really standing at 3,9, the exact-goal search returned null at
+ * 10000, 40000 AND 400000 expansions, while the CARDINAL neighbour 3,10 resolved with a 2-node path at every
+ * limit. The native planner expands cardinally only (`PathFindController.cs:45-51`); the destination's
+ * cardinal approaches were both blocked, so no route existed for the planner and the limit was never the
+ * variable. The refusal is the world's geometry (`native_state`), and a planner that returned null while its
+ * own cardinal component DOES contain the target is the case worth an observation review.
  */
 function componentOf(reasonCode, evidence) {
   if (typeof reasonCode !== "string" || reasonCode.length === 0) return "unclassified";
   const head = reasonCode.split(":", 1)[0];
   const defaultComponent = REASON_COMPONENT[head] ?? "unclassified";
   if (head === "no_native_path" && typeof evidence === "string") {
-    if (/path_search=native_budget_exhausted/.test(evidence)) return "native_state";
-    if (/probe_says_reachable=true/.test(evidence) || /route_exists=true/.test(evidence)) return "native_state";
+    if (/path_search=planner_null_with_cardinal_route/.test(evidence)) return "observation";
+    if (/path_search=no_cardinal_route/.test(evidence)) return "native_state";
+    if (/path_search=undecided/.test(evidence)) return "observation";
   }
   return defaultComponent;
 }
