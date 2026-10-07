@@ -47,7 +47,13 @@ const MAX_PRIVATE_FRAME_BYTES = 65_536;
 const MAX_GUARDIAN_DEADLINE_HORIZON_MS = 300_000;
 const guardianSessionSchema = "gamebuddy-desktop-guardian-session/v1";
 const bootstrapSchema = "gamebuddy-desktop-host-bootstrap/v1";
+const statusSchema = "gamebuddy-desktop-host-bootstrap-status/v1";
 const rootLayoutSchema = "gamebuddy-windows-root-layout/v1";
+// One stage or waiting token: a bounded lowercase identifier. The launcher only has
+// to tell this frame from the acknowledgement and read the two tokens, so nothing
+// else may cross this channel - a path, a message or a count would all be new wire
+// surface for no fact the operator needs.
+const statusToken = /^[a-z][a-z0-9-]{0,63}$/;
 const sha256 = /^[a-f0-9]{64}$/;
 const generation = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 // The native recovery ingress parses the recovery actor and the binding
@@ -98,9 +104,17 @@ const desktopGuardianSessionBindings = new WeakMap<object, DesktopGuardianSessio
 export async function runDesktopHostBootstrap(artifactRoot: string): Promise<void> {
   if (process.platform !== "win32") throw unavailable();
 
+  // Every status frame below precedes the acknowledgement and describes the step the
+  // child is entering, so the launcher's silence watch can be re-armed by real facts
+  // instead of by one timer guessing at the whole startup. They are informational: a
+  // status frame that cannot be written never fails the bootstrap.
+  await writeStatus("bootstrap-frame");
   const frame = parseBootstrapFrame(await readBootstrapFrame());
+  await writeStatus("root-layout");
   const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot);
+  await writeStatus("voice-surface");
   const voice = await connectOptionalVoiceSurface();
+  await writeStatus("deployment-manifest");
   const assemblyInput = await loadDesktopHostAssemblyInput(
     publishCompositionReady,
     voice?.reader,
@@ -291,11 +305,19 @@ async function createDesktopProductCompositionForBootstrap(
   assemblyInput: DesktopHostAssemblyInput,
 ): Promise<DesktopPrivateHostComposition> {
   const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
+  await writeStatus("guardian-session");
   const session = await createAuthenticatedDesktopGuardianSession(consumeDesktopGuardianSessionCapability(guardianAuthority));
   try {
     // The composition is a static binding so the release artifact retains the
     // whole entry closure at build time; its construction failure still closes
     // the authenticated session below.
+    //
+    // This is the child's longest silent stretch by construction: one call opens the
+    // durable stores, provisions the semantic authority, mounts the Chat lane, builds
+    // the game owner and starts the presentation admission. The launcher's silence
+    // budget is therefore measured from here, which is the fact this stage exists to
+    // state.
+    await writeStatus("provisioning");
     return await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
   } catch (error) {
     try {
@@ -757,6 +779,39 @@ export async function driveGuardianRecoveryConversation(transport: DesktopGuardi
   const settledStatus = recoveryAcknowledgementStatus(await settled, input, binding, ["contained"]);
   if (settledStatus !== "contained") throw unavailable();
   return Object.freeze({ outcome: "contained" as const });
+}
+
+/**
+ * Publishes one informational status frame on the SAME channel and the SAME framing as
+ * the acknowledgement: one JSON object plus one newline, written before it.
+ *
+ * The acknowledgement keeps its exact meaning - ready for service - and stays the only
+ * success signal. This frame exists because one binary signal plus a timer cannot
+ * distinguish a child that is slow from one that is waiting for its player from one
+ * that is wedged, and all three were being guessed at, wrongly, from the same silence.
+ *
+ * `waitingForPlayerInput` names the human decision the child is about to wait for,
+ * which is the one fact that suspends the launcher's silence watch: a child waiting for
+ * its player must never be killed for being quiet.
+ */
+async function writeStatus(stage: string, waitingForPlayerInput?: string): Promise<void> {
+  if (!statusToken.test(stage) || (waitingForPlayerInput !== undefined && !statusToken.test(waitingForPlayerInput))) throw unavailable();
+  const bytes = Buffer.from(`${JSON.stringify({
+    schema: statusSchema,
+    protocolVersion: 1,
+    stage,
+    ...(waitingForPlayerInput === undefined ? {} : { waitingForPlayerInput }),
+  })}\n`, "utf8");
+  if (bytes.length > MAX_WIRE_BYTES) throw unavailable();
+  await new Promise<void>((resolveWrite) => {
+    // Informational only. The write is awaited so the frame cannot be reordered behind
+    // the work it announces, and a broken status channel is swallowed here: what must
+    // fail closed is the acknowledgement's own write, not this one. The listener is
+    // removed on both paths, so nothing is left attached to the stream.
+    const onError = (): void => { process.stdout.off("error", onError); resolveWrite(); };
+    process.stdout.once("error", onError);
+    process.stdout.write(bytes, () => { process.stdout.off("error", onError); resolveWrite(); });
+  });
 }
 
 async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<void> {

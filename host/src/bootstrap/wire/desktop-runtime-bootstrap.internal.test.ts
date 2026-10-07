@@ -42,6 +42,34 @@ test("desktop bootstrap helper seeds the composed surface from the Host env seam
   assert.match(defaulted.stderr, /wire_publish_ready:called\n/);
 });
 
+test("desktop bootstrap helper announces its bounded status stages before exactly one acknowledgement and nothing else", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("success");
+
+  // The acknowledgement is still exactly what it was, and it is the last frame on the channel.
+  assert.equal(schemaOf(result.acknowledgement!), bootstrapSchema);
+  assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+
+  // Everything before it is a well-formed, bounded status frame, in the order the child enters the
+  // stages, and the acknowledgement follows them. Nothing else may appear on this channel: an extra
+  // frame, a frame after the acknowledgement, or a third schema would leave the launcher's frame
+  // loop holding something it cannot dispatch.
+  assert.deepEqual(result.lines.map((line) => schemaOf(line)), [...bootstrapStages.map(() => statusSchema), bootstrapSchema]);
+  assert.deepEqual(result.statuses.map((line) => (JSON.parse(line) as { stage: string }).stage), [...bootstrapStages]);
+  assert.equal(result.statuses.length, bootstrapStages.length);
+  for (const [index, line] of result.statuses.entries()) {
+    const frame = JSON.parse(line) as Record<string, unknown>;
+    // The exact ordinal key sequence the launcher validates. The wait statement is optional and
+    // may only be written when the child is about to wait for a human decision; the
+    // pre-acknowledgement path has no such decision, so this child never writes it.
+    assert.deepEqual(Object.keys(frame), ["schema", "protocolVersion", "stage"]);
+    assert.equal(frame.schema, statusSchema);
+    assert.equal(frame.protocolVersion, 1);
+    assert.equal(frame.stage, bootstrapStages[index]);
+    assert.match(String(frame.stage), /^[a-z][a-z0-9-]{0,63}$/);
+  }
+});
+
 test("desktop bootstrap helper fails closed on an invalid composed surface or marker nonce without any guardian contact", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   for (const [scenario, options] of [
@@ -252,7 +280,7 @@ test("desktop bootstrap helper fails the recovery session closed when the durabl
   assert.doesNotMatch(result.stderr, /recovery_outcome:/);
 });
 
-async function runWireFixture(scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
+async function runWireFixture(scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; lines: readonly string[]; statuses: readonly string[]; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
   const bootstrapId = (scenario === "success" ? "d" : scenario === "recovery-success" ? "1" : scenario === "recovery-role-rejected" ? "4" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
@@ -383,12 +411,13 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
     const workerClose = waitForClose(worker);
     const failureScenario = scenario === "composition-failure" || scenario === "ack-write-failure" || scenario === "termination-failure" || scenario === "invalid-surface" || scenario === "invalid-nonce";
-    const output = failureScenario ? undefined : collectFirstLine(worker.stdout!, worker);
+    const output = failureScenario ? undefined : collectFrames(worker.stdout!, worker);
     const stderr = collectBounded(worker.stderr!);
     let workerStderr = "";
     worker.stderr!.on("data", (chunk: Buffer) => { workerStderr = (workerStderr + chunk.toString()).slice(-4096); });
     worker.stdin!.end(`${JSON.stringify({ schema: "gamebuddy-desktop-host-bootstrap/v1", protocolVersion: 1, bootstrapId, generation: "g-wire", inventoryDigest: "e".repeat(64), runtimeAdmissionSha256: "f".repeat(64), rootLayout })}\n`);
-    const acknowledgement = output === undefined ? undefined : await withTimeout(output, 10_000, "bootstrap acknowledgement").catch((error) => { throw new Error(`${error.message}; worker=${worker?.exitCode ?? "running"}/${worker?.signalCode ?? "none"}; stderr=${workerStderr || "<empty>"}; peer=${peerError?.message ?? "none"}; operations=${requests.map((request) => String(request.operation)).join(",") || "<none>"}`); });
+    const frames = output === undefined ? undefined : await withTimeout(output, 10_000, "bootstrap acknowledgement").catch((error) => { throw new Error(`${error.message}; worker=${worker?.exitCode ?? "running"}/${worker?.signalCode ?? "none"}; stderr=${workerStderr || "<empty>"}; peer=${peerError?.message ?? "none"}; operations=${requests.map((request) => String(request.operation)).join(",") || "<none>"}`); });
+    const acknowledgement = frames?.acknowledgement;
     if (failureScenario) {
       await withTimeout(workerClose, 2_000, `${scenario} rejection`);
       if (connected) await withTimeout(guardianPeerClosed, 2_000, `${scenario} guardian cleanup`);
@@ -425,7 +454,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     }
     const workerClosedAt = scenario === "delayed-arm-ack" ? performance.now() : undefined;
     await withTimeout(workerClose, 10_000, "worker cleanup");
-    return { requests, acknowledgement, stderr: await stderr, guardianClosed, armReceiptAt, workerClosedAt, workerExitCode: worker.exitCode, workerExitedNaturally: worker.exitCode === 0 };
+    return { requests, acknowledgement, lines: frames?.lines ?? [], statuses: frames?.statuses ?? [], stderr: await stderr, guardianClosed, armReceiptAt, workerClosedAt, workerExitCode: worker.exitCode, workerExitedNaturally: worker.exitCode === 0 };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) { worker.kill("SIGTERM"); await withTimeout(waitForClose(worker), 10_000, "worker failure cleanup").catch(() => undefined); }
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -441,7 +470,7 @@ function workerSource(moduleDirectory: string, guardianInstanceId: string, attem
   // arm frame is the usual approvedExecutable-carrying frame and the launch plan
   // is the native ParseLaunch encoder output (executable === approvedExecutable).
   const operation = scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed"
-    ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, authorization: { role: "player_host", revision: "11111111-1111-4111-8111-111111111111", executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
+    ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, armFacts: { revision: "11111111-1111-4111-8111-111111111111", leaseName: "Local\\\\GameBuddy-Wire-Lease", playerJobName: "Local\\\\GameBuddy-Wire-Player", aiJobName: "Local\\\\GameBuddy-Wire-Ai" }, authorization: { executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
     : scenario === "recovery-success"
       ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
       : scenario === "recovery-role-rejected"
@@ -484,8 +513,56 @@ function workerSource(moduleDirectory: string, guardianInstanceId: string, attem
   return `${setup}\nimport { mock } from "node:test";\nawait mock.module(${JSON.stringify(compositionUrl)}, { namedExports: { ${composition} } });\nconst { runDesktopHostBootstrap } = await import(${JSON.stringify(bootstrapUrl)});\ntry { await runDesktopHostBootstrap(${JSON.stringify(moduleDirectory)}); } catch (error) { process.stderr.write(String((error instanceof Error ? error.message : error) ?? "desktop_runtime_bootstrap_unavailable") + "\\n"); process.exit(1); }`;
 }
 
-function collectFirstLine(stream: NodeJS.ReadableStream, child?: ReturnType<typeof spawn>): Promise<string> {
-  return new Promise((resolveLine, rejectLine) => { let data = ""; stream.on("data", (chunk) => { data += chunk.toString(); const index = data.indexOf("\n"); if (index >= 0) resolveLine(data.slice(0, index)); }); stream.once("error", rejectLine); child?.once("close", (code) => { if (code !== 0) rejectLine(new Error(`wire_worker_exit_${code}`)); }); });
+/*
+ * The two frame types the child may write on its standard output before it serves, and the one
+ * channel they share. The status frame is informational and bounded to a stage token (plus the
+ * token naming a player decision the child is waiting for); the acknowledgement keeps its own
+ * schema, its own exact key order and its meaning as the ONLY success signal.
+ */
+const bootstrapSchema = "gamebuddy-desktop-host-bootstrap/v1";
+const statusSchema = "gamebuddy-desktop-host-bootstrap-status/v1";
+// The stages the wire announces, in the order the child enters them. This list is the contract of
+// the status channel: every frame is emitted immediately before the call it names, none of them
+// is emitted from a loop, and the child's own writer can produce no other stage.
+const bootstrapStages = ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"] as const;
+
+function schemaOf(line: string): string | undefined {
+  try {
+    const value = JSON.parse(line) as { schema?: unknown };
+    return typeof value.schema === "string" ? value.schema : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Collects the frames the child writes on its standard output, stopping at the acknowledgement:
+ * the child keeps that channel open for as long as it serves, so waiting for its end would wait
+ * for the whole product to stop.
+ */
+function collectFrames(stream: NodeJS.ReadableStream, child?: ReturnType<typeof spawn>): Promise<Readonly<{ lines: readonly string[]; statuses: readonly string[]; acknowledgement: string }>> {
+  return new Promise((resolveFrames, rejectFrames) => {
+    const lines: string[] = [];
+    let pending = "";
+    let settled = false;
+    stream.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      pending += chunk.toString();
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline < 0) return;
+        const line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        lines.push(line);
+        if (schemaOf(line) !== bootstrapSchema) continue;
+        settled = true;
+        resolveFrames(Object.freeze({ lines: Object.freeze([...lines]), statuses: Object.freeze(lines.filter((candidate) => schemaOf(candidate) === statusSchema)), acknowledgement: line }));
+        return;
+      }
+    });
+    stream.once("error", rejectFrames);
+    child?.once("close", (code) => { if (!settled && code !== 0) rejectFrames(new Error(`wire_worker_exit_${code}`)); });
+  });
 }
 
 function collectBounded(stream: NodeJS.ReadableStream): Promise<string> {
@@ -540,6 +617,22 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.ok(acknowledgementIndex >= 0);
   assert.ok(compositionCallIndex < acknowledgementIndex);
   assert.ok(source.indexOf("consumeDesktopRootLayoutCapability(rootAuthority)") >= 0);
+  // The status channel is one more frame type on the SAME channel and the SAME framing (one JSON
+  // object plus one newline), announced immediately before the step it names and always before the
+  // acknowledgement; the acknowledgement keeps its own schema and stays the only frame that ends
+  // the channel.
+  assert.match(source, /const statusSchema = "gamebuddy-desktop-host-bootstrap-status\/v1"/);
+  assert.match(source, /const statusToken = \/\^\[a-z\]\[a-z0-9-\]\{0,63\}\$\//);
+  assert.match(source, /process\.stdout\.write\(bytes, \(\) => \{ process\.stdout\.off\("error", onError\); resolveWrite\(\); \}\);/);
+  assert.match(source, /process\.stdout\.end\(acknowledgement/);
+  for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"]) {
+    assert.match(source, new RegExp(`await writeStatus\\\\("${stage}"\\\\)`));
+  }
+  assert.ok(source.indexOf('await writeStatus("provisioning")') < acknowledgementIndex);
+  // No status frame is written from inside a loop, and none of them carries a wait statement: the
+  // pre-acknowledgement path waits for no human decision.
+  assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);
+  assert.doesNotMatch(source, /writeStatus\([^)]*,\s*"/);
   assert.doesNotMatch(source, /export (function|async function) (mint|create|consume)Desktop/);
   assert.doesNotMatch(source, /DesktopGuardianSession(?:Capability|Binding)?\s*\}\s*from/);
   assert.doesNotMatch(source, /installDesktopGuardianSessionFactoryForTest/);

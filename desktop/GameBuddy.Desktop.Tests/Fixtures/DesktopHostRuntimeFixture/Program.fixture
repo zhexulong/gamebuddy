@@ -65,15 +65,34 @@ try
     var exit = ready + ".exit";
     File.WriteAllText(ready, "ready", new UTF8Encoding(false));
     // The Desktop supervisor reads the bootstrap acknowledgement from the
-    // child's stdout after the session hello, blocking until EOF. Mirror the
-    // production Host's writeAcknowledgement exactly: one LF-terminated JSON
-    // document written through the inherited stdout handle, then the child
-    // closes its copy so the supervisor's read reaches EOF. Console.Out does
-    // not release the handle under the injected-inheritance pipe, so this
-    // writes the raw handle directly (same pattern as ExactChildBootstrapFixture).
+    // child's stdout after the session hello. Mirror the production Host's
+    // writeAcknowledgement exactly: one LF-terminated JSON document written
+    // through the inherited stdout handle, then the child closes its copy.
     var acknowledgementBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schema, protocolVersion = 1, status = "accepted", binding.bootstrapId, binding.generation, binding.inventoryDigest, binding.runtimeAdmissionSha256, rootLayoutSchema }) + "\n");
+    // Test-only status channel. The plan file names the exact frames this child writes
+    // VERBATIM, in order, before its acknowledgement, plus how long it stays quiet after each
+    // of them and before the acknowledgement. A test can therefore drive the launcher with
+    // well-formed status frames, a wait statement, a malformed frame or a forged frame in the
+    // status shape, and can make a real child go quiet on a schedule. Without a plan this
+    // fixture writes exactly what the production child wrote before this channel existed: its
+    // acknowledgement and nothing else.
+    var statusPlanPath = Path.Combine(dataRoot, "desktop-host-runtime-fixture.status.json");
     using (var stdout = new FileStream(new SafeFileHandle(WindowsNative.GetStdHandle(-11), ownsHandle: true), FileAccess.Write, bufferSize: 0))
     {
+        if (File.Exists(statusPlanPath))
+        {
+            using var plan = JsonDocument.Parse(File.ReadAllText(statusPlanPath));
+            var delayMs = plan.RootElement.TryGetProperty("delayMs", out var delay) ? delay.GetInt32() : 0;
+            foreach (var announcedFrame in plan.RootElement.GetProperty("frames").EnumerateArray())
+            {
+                stdout.Write(Encoding.UTF8.GetBytes(announcedFrame.GetString() + "\n"));
+                stdout.Flush();
+                if (delayMs > 0) await Task.Delay(delayMs);
+            }
+            var holdMs = plan.RootElement.TryGetProperty("holdMs", out var hold) ? hold.GetInt32() : 0;
+            if (holdMs > 0) await Task.Delay(holdMs);
+            if (plan.RootElement.TryGetProperty("ack", out var writesAcknowledgement) && !writesAcknowledgement.GetBoolean()) return;
+        }
         stdout.Write(acknowledgementBytes);
         stdout.Flush();
     }

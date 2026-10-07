@@ -171,7 +171,7 @@ public sealed class HostBootstrapSupervisorTests
         var frame = source.IndexOf("var frame = BuildFrame(selection, layout, bootstrapId)", StringComparison.Ordinal);
         var write = source.IndexOf("HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame", StringComparison.Ordinal);
         var authenticate = source.IndexOf("await broker.AuthenticateHostAsync(process, timeout.Token)", StringComparison.Ordinal);
-        var acknowledgement = source.IndexOf("var ack = await ReadOneAcknowledgementAsync", StringComparison.Ordinal);
+        var acknowledgement = source.IndexOf("var ack = await ReadAcknowledgementAsync", StringComparison.Ordinal);
         var transfer = source.IndexOf("var locks = runtime.TransferLocks()", StringComparison.Ordinal);
 
         Assert.True(create >= 0 && create < frame && frame < write && write < authenticate && authenticate < acknowledgement && acknowledgement < transfer);
@@ -202,7 +202,7 @@ public sealed class HostBootstrapSupervisorTests
     public void Supervisor_source_requires_the_acknowledged_exact_child_to_remain_unsignaled_before_leasing()
     {
         var source = File.ReadAllText(SupervisorSource());
-        var acknowledgement = source.IndexOf("var ack = await ReadOneAcknowledgementAsync", StringComparison.Ordinal);
+        var acknowledgement = source.IndexOf("var ack = await ReadAcknowledgementAsync", StringComparison.Ordinal);
         var exitCodeCheck = source.IndexOf("if (!WindowsNative.GetExitCodeProcess(process, out _) ||", acknowledgement, StringComparison.Ordinal);
         var activeCheck = source.IndexOf("WindowsNative.WaitForSingleObject(process, 0) != WindowsNative.WaitTimeout", acknowledgement, StringComparison.Ordinal);
         var transfer = source.IndexOf("var locks = runtime.TransferLocks()", acknowledgement, StringComparison.Ordinal);
@@ -249,7 +249,11 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("private const int MaxWireBytes = 32_768", source, StringComparison.Ordinal);
         Assert.Contains("writer.WriteString(\"schema\", \"gamebuddy-desktop-host-bootstrap/v1\")", source, StringComparison.Ordinal);
         Assert.Contains("writer.WritePropertyName(\"rootLayout\")", source, StringComparison.Ordinal);
-        Assert.Contains("ValidateOneWireDocument(bytes)", source, StringComparison.Ordinal);
+        // Every frame is structurally validated before it is parsed, whichever frame it turns out
+        // to be: the acknowledgement's own shape check below is not the only gate it passes.
+        var validation = source.IndexOf("ValidateOneWireDocument(frame)", StringComparison.Ordinal);
+        var parse = source.IndexOf("JsonDocument.Parse(frame[..^1])", validation, StringComparison.Ordinal);
+        Assert.True(validation >= 0 && parse > validation);
         Assert.Contains("ExactPropertiesInOrder(ack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ProcessId { get", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RuntimePath { get", source[source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal)..], StringComparison.Ordinal);
@@ -268,6 +272,41 @@ public sealed class HostBootstrapSupervisorTests
         Assert.Contains("WindowsNative.CancelSynchronousIo(worker)", source, StringComparison.Ordinal);
         Assert.Contains("endpoint?.Dispose()", source, StringComparison.Ordinal);
         Assert.Contains("await Task.Factory.StartNew", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Supervisor_source_bounds_the_wait_by_silence_and_dispatches_status_frames_before_the_acknowledgement()
+    {
+        var source = File.ReadAllText(SupervisorSource());
+
+        // One status frame type on the SAME channel and the SAME framing as the acknowledgement.
+        // The acknowledgement's schema, its meanings and its success-only role are untouched, and
+        // no second pipe, category or wire bound is introduced beside them.
+        Assert.Contains("private const string StatusSchema = \"gamebuddy-desktop-host-bootstrap-status/v1\"", source, StringComparison.Ordinal);
+        Assert.Contains("internal const string BootstrapStageLabel = \"host_bootstrap_last_stage\"", source, StringComparison.Ordinal);
+        Assert.Contains("internal const string BootstrapTimeoutCategory = \"host_bootstrap_timeout\"", source, StringComparison.Ordinal);
+        Assert.Contains("writer.WriteString(\"schema\", \"gamebuddy-desktop-host-bootstrap/v1\")", source, StringComparison.Ordinal);
+        Assert.Contains("ack.GetProperty(\"rootLayoutSchema\").GetString() == \"gamebuddy-windows-root-layout/v1\"", source, StringComparison.Ordinal);
+        Assert.Contains("private const int MaxWireBytes = 32_768", source, StringComparison.Ordinal);
+
+        // The whole-startup timer is gone. The wait is now the child's own silence, re-armed by
+        // every frame and SUSPENDED while a frame says the child is waiting for its player, with a
+        // separate generous ceiling as the last resort.
+        Assert.DoesNotContain("BootstrapTimeout = TimeSpan.FromSeconds", source, StringComparison.Ordinal);
+        Assert.Contains("private static readonly TimeSpan BootstrapSilenceTimeout", source, StringComparison.Ordinal);
+        Assert.Contains("private static readonly TimeSpan BootstrapCeiling", source, StringComparison.Ordinal);
+        Assert.Contains("silenceTimer.Change(waitingForPlayerInput ? Timeout.InfiniteTimeSpan : silence, Timeout.InfiniteTimeSpan)", source, StringComparison.Ordinal);
+        Assert.Contains("!waitingForPlayerInput && Stopwatch.GetElapsedTime(lastProgress) >= silence", source, StringComparison.Ordinal);
+        Assert.Contains("watchdog.ObserveFrame(waitingForPlayerInput)", source, StringComparison.Ordinal);
+
+        // The loop stops at the acknowledgement instead of at the end of the child's standard
+        // output, which the child keeps open for as long as it serves.
+        Assert.DoesNotContain("ReadOneFrameAsync", source, StringComparison.Ordinal);
+        Assert.Contains("internal static Task ReadFramesAsync(SafeFileHandle reader, int maximumFrameBytes, Func<byte[], bool> onFrame, CancellationToken cancellationToken)", source, StringComparison.Ordinal);
+        Assert.Contains("if (stage is null)", source, StringComparison.Ordinal);
+
+        // The caller's own cancellation still reports the generic reason, never the silent wait.
+        Assert.Contains("cancellationToken.IsCancellationRequested ? \"host_runtime_unavailable\" : BootstrapTimeoutCategory", source, StringComparison.Ordinal);
     }
 
     [Fact]
