@@ -139,3 +139,54 @@ test("a genuinely clean run still reports nothing", () => {
   assert.deepEqual(result.findings, []);
   assert.equal(result.rejectedCount, 0);
 });
+
+
+test("a refusal is attributed by its own evidence, not by its reason code alone", () => {
+  // Measured on a real ladder run: `move_to_tile` was refused as `no_native_path`, which the fixed table maps
+  // to `observation`, while the envelope said
+  // `route_exists=true; component_tiles=2404; probe_says_reachable=true; path_search=native_budget_exhausted`.
+  // That is the Mod's planner exhausting its budget on a route the Mod can prove exists — an audit sent to the
+  // observation layer would "fix" the wrong component.
+  const planner = summarizeSystemFindings([
+    {
+      action: "move_to_tile",
+      args: { x: 4, y: 8 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "from=3,9;to=4,8;target_standable=false;route_exists=true;path_search=native_budget_exhausted;budget=40000",
+    },
+    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists=true" },
+    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists=true" },
+  ]);
+  assert.equal(planner.findings.find((finding) => finding.id === "dominant_rejection").component, "native_state");
+
+  // Without that evidence the same code keeps its table attribution: the rule is evidence-driven, not a
+  // blanket re-attribution of the code.
+  const bare = summarizeSystemFindings([
+    { action: "move_to_tile", args: { x: 4, y: 8 }, state: "rejected", reasonCode: "no_native_path" },
+    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path" },
+    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path" },
+  ]);
+  assert.equal(bare.findings.find((finding) => finding.id === "dominant_rejection").component, "observation");
+});
+
+test("an admitted action whose executions fail is reported even though no dispatch was refused", () => {
+  // Three harvest executions ended in `target_out_of_reach` after being ACCEPTED, so a refusal-only reading saw
+  // one unrelated finding. The per-execution outcomes now reach the summary.
+  const result = summarizeSystemFindings(
+    [{ action: "harvest_crop", args: { x: 5, y: 7 }, state: "accepted", reasonCode: "accepted" }],
+    { harvest_crop: { failedTerminalReasonCodes: { target_out_of_reach: 3 } } },
+  );
+  const finding = result.findings.find((entry) => entry.id === "accepted_then_failed");
+  assert.ok(finding, "the retry-into-failure loop must be reported");
+  assert.equal(finding.action, "harvest_crop");
+  assert.equal(finding.count, 3);
+  assert.equal(finding.severity, "high");
+  assert.deepEqual(finding.sampleCodes, ["target_out_of_reach"]);
+  // A run whose executions all reached their terminal reports nothing new.
+  const clean = summarizeSystemFindings(
+    [{ action: "harvest_crop", args: { x: 5, y: 7 }, state: "succeeded", reasonCode: "crop_harvested" }],
+    { harvest_crop: { failedTerminalReasonCodes: {} } },
+  );
+  assert.equal(clean.findings.length, 0);
+});

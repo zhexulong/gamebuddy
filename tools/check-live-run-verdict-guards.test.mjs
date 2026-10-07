@@ -36,9 +36,17 @@ test("the guard catches the exact shape that let the ladder pass without a perso
   ].join("\n");
   await withFixture(preFix, async (root) => {
     const findings = findAbsencePassBranches({ root });
-    assert.equal(findings.length, 1, "the unfixed branch must be reported");
-    assert.equal(findings[0].line, 5);
-    assert.match(findings[0].snippet, /\?\s*true/);
+    // Two lines, and both are load-bearing: the absence TEST (line 4) and the absence VALUE (line 5). The
+    // disjunction rule was added after a real `x === null || x.passed` survived the two earlier rules.
+    assert.deepEqual(
+      findings.map((finding) => ({ line: finding.line, kind: finding.kind })),
+      [
+        { line: 4, kind: "absence_by_disjunction" },
+        { line: 5, kind: "absence_default_true" },
+      ],
+      "both halves of the judgement must be reported",
+    );
+    assert.match(findings[1].snippet, /\?\s*true/);
     // And the CLI must fail, not merely print.
     const result = spawnSync(process.execPath, [CHECKER, "--root", root], { encoding: "utf8" });
     assert.equal(result.status, 1, "the checker must exit non-zero on a real finding");
@@ -123,4 +131,39 @@ test("a camelCase pass identifier is not skipped", async () => {
   await withFixture(camelNoShape, async (root) => {
     assert.deepEqual(findAbsencePassBranches({ root }), [], "a plain call is not an absence-as-pass branch");
   });
+});
+
+
+test("a pass-shaped name that is true when its observation is ABSENT is reported", async () => {
+  // The third spelling: a disjunction whose absence branch makes a pass-shaped name true. Measured in the game
+  // ladder: `const interactionPassed = interactionAssessment === null || interactionAssessment.passed;` — a
+  // boolean that cannot tell "assessed and fine" from "nobody assessed it".
+  const root = await mkdtemp(join(tmpdir(), "verdict-guard-disjunction-"));
+  try {
+    await writeFile(
+      join(root, "gate.mjs"),
+      [
+        "export function decide(interactionAssessment) {",
+        "  const interactionPassed = interactionAssessment === null || interactionAssessment.passed;",
+        "  return interactionPassed;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const findings = findAbsencePassBranches({ root });
+    assert.equal(findings.length, 1, "the disjunction form must be reported");
+    assert.equal(findings[0].kind, "absence_by_disjunction");
+    assert.match(findings[0].snippet, /=== null \|\|/);
+
+    // A non-absence disjunction is ordinary logic, not this shape: the rule is about ABSENCE, not about `||`.
+    await writeFile(
+      join(root, "ordinary.mjs"),
+      ['export function decide(state) {', '  const passed = state === "ok" || state === "done";', "  return passed;", "}"].join("\n"),
+    );
+    const afterOrdinary = findAbsencePassBranches({ root });
+    assert.equal(afterOrdinary.length, 1, "an ordinary || must not be reported");
+    assert.match(afterOrdinary[0].snippet, /interactionAssessment/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

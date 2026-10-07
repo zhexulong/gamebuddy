@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
@@ -71,7 +72,14 @@ test("the runner enforces a companion-interaction gate for ladder-3 summaries", 
   // The gate must be wired into the ladder-3 verdict so a "checklist of what I
   // did" closing line blocks the run instead of passing silently.
   assert.match(RUNNER_SOURCE, /assessCompanionInteraction/);
-  assert.match(RUNNER_SOURCE, /interactionPassed = interactionAssessment === null \|\| interactionAssessment\.passed/);
+  // The interaction gate publishes an OUTCOME vocabulary: `unobserved` means nobody could assess the reply,
+  // which must stay distinguishable from `verified`. The old boolean (`=== null || .passed`) could not say
+  // which, and the verdict-guard now rejects that spelling outright.
+  assert.match(RUNNER_SOURCE, /const interactionOutcome =/);
+  assert.match(RUNNER_SOURCE, /interactionAssessment === null \? "unobserved"/);
+  assert.match(RUNNER_SOURCE, /const interactionPassed = interactionOutcome !== "failed";/);
+  assert.match(RUNNER_SOURCE, /absence-as-pass: rungs 0-2 emit no companion line by design/);
+  assert.match(RUNNER_SOURCE, /interactionOutcome,/);
   assert.match(RUNNER_SOURCE, /contextPassed && contentPassed && worldBookPassed && interactionPassed/);
 });
 
@@ -82,7 +90,10 @@ test("the runner emits system findings as a first-class health signal", () => {
   assert.match(RUNNER_SOURCE, /import \{ summarizeSystemFindings \} from "\.\.\/\..\/lib\/system-findings\.mjs"/);
   assert.match(RUNNER_SOURCE, /const actionTrace = \[\]/);
   assert.match(RUNNER_SOURCE, /actionTrace\.push\(entry\)/);
-  assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(actionTrace\)/);
+  // The summary receives the per-execution failures too: an action admitted and then failed produces no
+  // REFUSAL, so a refusal-only reading reported nothing while the caller retried a dead request.
+  assert.match(RUNNER_SOURCE, /const systemFindings = summarizeSystemFindings\(/);
+  assert.match(RUNNER_SOURCE, /failedTerminalReasonCodes: entry\.failedTerminalReasonCodes \?\? \{\}/);
   // First-class fields of the result JSON: the health report and its
   // companion observation block (roll-monitoring data) sit next to the
   // presented text in the same result object.
@@ -262,7 +273,11 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
   assert.match(RUNNER_SOURCE, /const sessionVerdict =/);
   assert.match(RUNNER_SOURCE, /\? "turn_timeout"/);
   assert.match(RUNNER_SOURCE, /sessionVerdict === "completed"/);
-  assert.match(RUNNER_SOURCE, /sessionTurnErrors: unsettledSessionTurns,/);
+  // The per-turn errors are published, and a provider failure counts as one: the turn WAS
+  // delivered (so it is not `unsettled`) and produced no text (so it is not silence). A real run
+  // reported exactly such a failure as `silent` with an empty error list.
+  assert.match(RUNNER_SOURCE, /^    sessionTurnErrors,$/m);
+  assert.match(RUNNER_SOURCE, /agentTurnOutcome,/);
   // Run H attempted 14 actions, got 14 refusals and one successful walk, harvested
   // nothing, and still passed: a session that only moved/looked/equipped must not be
   // reported as a played session.
@@ -296,6 +311,12 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
     assert.ok(at >= 0, `runner must contain: ${needle}`);
     return at;
   };
+  // ORDER, and the order IS the fix: a failed turn is decided BEFORE silence, so a provider failure
+  // can never again be reported as the companion choosing to stay quiet.
+  assert.ok(
+    positionOf('? "turn_failed"') < positionOf('? "silent"'),
+    "turn_failed must be decided before silent",
+  );
   assert.ok(
     positionOf("const spokeToPlayer = typeof presentedSummary") < positionOf("const sessionVerdict ="),
     "spokeToPlayer is read by the verdict, so it must be declared first",
@@ -334,7 +355,8 @@ test("ladder 6 is a self-directed play session whose output is a capability audi
 
   // Behavioural check of the audit itself: the REAL function is extracted and run
   // against a synthetic trace, so the projection is tested rather than described.
-  const buildCapabilityAudit = extractRunnerFunction(RUNNER_SOURCE, "buildCapabilityAudit");
+  // Order follows the array: the helper first (it is what the audit calls), the audit second.
+  const [, buildCapabilityAudit] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeExecutionOutcomes", "buildCapabilityAudit"]);
   const audit = buildCapabilityAudit({
     actionTrace: [
       { action: "move_to_tile", requestId: "r-move", state: "accepted", reasonCode: "accepted" },
@@ -408,7 +430,15 @@ test("a repeat run joins the stored continuity instead of being refused by it", 
  * runner module never loads here (top-level live side effects), so the function
  * text is evaluated in isolation; it must therefore be free of closures.
  */
-function extractRunnerFunction(source, name) {
+function extractRunnerFunction(source, name, globals = {}) {
+  // An array of names compiles ALL of them into one scope, so a helper that a tested function calls is
+  // evaluated with it. Without this, an extracted copy referenced a function that only existed in the
+  // runner file and the behavioural test failed for a reason that had nothing to do with the behaviour.
+  if (Array.isArray(name)) {
+    const parts = name.map((one) => extractRunnerFunction(source, one).source);
+    const names = Object.keys(globals);
+    return new Function(...names, `${parts.join("\n")}\nreturn [${name.join(", ")}];`)(...names.map((key) => globals[key]));
+  }
   const marker = `function ${name}`;
   const start = source.indexOf(marker);
   assert.ok(start !== -1, `runner must define ${name}`);
@@ -442,7 +472,10 @@ function extractRunnerFunction(source, name) {
   // Include the signature from the name through the body so the evaluated text is
   // a complete declaration.
   const body = source.slice(start, end);
-  return new Function(`${body}\nreturn ${name};`)();
+  const value = new Function(`${body}\nreturn ${name};`)();
+  // Carry the declaration text so several declarations can be composed into one scope.
+  Object.defineProperty(value, "source", { value: body, enumerable: false });
+  return value;
 }
 
 test("ladder 5 is an embodied-memory covenant rung judged by receipts, not keywords", () => {
@@ -559,4 +592,105 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // presentation.pieces = [] and presentedSummary = "".
   assert.match(RUNNER_SOURCE, /onCompanionTextPresented,\n/);
   assert.doesNotMatch(RUNNER_SOURCE, /LADDER === "3" \|\| LADDER === "4" \? \{ onCompanionTextPresented \}/);
+});
+
+test("the capability audit keeps an execution's terminal failure and cannot read it as success", () => {
+  // Regression for two real defects found by auditing a live run:
+  //  1. receipts were deduped by executionId alone, so the first code seen (accepted) claimed the
+  //     execution and its authoritative terminal failure was dropped — three harvest executions ended in
+  //     `target_out_of_reach` while the audit still said `harvest_crop: succeeded` with `unresolved: []`;
+  //  2. success was decided by "any terminal receipt", so one success hid the failures beside it.
+  const [, buildCapabilityAudit] = extractRunnerFunction(RUNNER_SOURCE, [
+    "summarizeExecutionOutcomes",
+    "buildCapabilityAudit",
+  ]);
+  const receipt = (executionId, reasonCode) => ({ type: "execution_receipt", requestId: "r-harvest", executionId, reasonCode });
+  const audit = buildCapabilityAudit({
+    actionTrace: [
+      { action: "harvest_crop", requestId: "r-harvest", state: "accepted", reasonCode: "accepted" },
+    ],
+    facts: [
+      // One execution that failed, one that succeeded.
+      receipt("exec-failed", "accepted"),
+      receipt("exec-failed", "controller_started"),
+      receipt("exec-failed", "target_out_of_reach"),
+      // The bridge is allowed to redeliver the SAME pair: that must not count twice.
+      receipt("exec-failed", "target_out_of_reach"),
+      receipt("exec-ok", "accepted"),
+      receipt("exec-ok", "crop_harvested"),
+    ],
+    visibleActionIds: ["harvest_crop"],
+    sessionTurns: [{ goalIndex: 0 }],
+    terminalReasonCodes: { harvest_crop: "crop_harvested" },
+  });
+  const entry = audit.attempts.find((attempt) => attempt.actionId === "harvest_crop");
+  assert.equal(entry.executionOutcomes.succeeded, 1);
+  assert.equal(entry.executionOutcomes.failed, 1);
+  assert.deepEqual(entry.failedTerminalReasonCodes, { target_out_of_reach: 1 });
+  // One success next to one failure is NOT success.
+  assert.equal(entry.verdict, "partial");
+  assert.deepEqual(audit.partialFailures, [
+    { actionId: "harvest_crop", failedTerminalReasonCodes: { target_out_of_reach: 1 } },
+  ]);
+  assert.equal(audit.succeededCount, 0);
+
+  // A failed-only action is a system stall, and its code is visible.
+  const failedOnly = buildCapabilityAudit({
+    actionTrace: [{ action: "harvest_crop", requestId: "r-harvest", state: "accepted", reasonCode: "accepted" }],
+    facts: [receipt("exec-failed", "accepted"), receipt("exec-failed", "target_out_of_reach")],
+    visibleActionIds: [],
+    sessionTurns: [],
+    terminalReasonCodes: { harvest_crop: "crop_harvested" },
+  });
+  assert.equal(failedOnly.attempts[0].verdict, "failed");
+  assert.equal(failedOnly.blockedBySystem.length, 1);
+  assert.deepEqual(failedOnly.unresolved, []);
+});
+
+test("a turn that ended in a provider failure is a failure, not silence", () => {
+  const [agentTurnFailureReason, readAgentTurnOutcome] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["agentTurnFailureReason", "readAgentTurnOutcome"],
+    { readFileSync, redactLiveRunText: (value) => value },
+  );
+  const write = (entries) => {
+    const file = join(tmpdir(), `gb-ladder-turn-${randomUUID()}.jsonl`);
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n"), "utf8");
+    return file;
+  };
+  const assistant = (content, extra) => ({ type: "message", message: { role: "assistant", content, ...extra } });
+  // The measured shape: thinking only, then a provider error with zero usage.
+  const failed = readAgentTurnOutcome(
+    write([
+      assistant([{ type: "thinking", thinking: "..." }], { stopReason: "toolUse" }),
+      assistant([{ type: "thinking", thinking: "truncated" }], {
+        stopReason: "error",
+        errorMessage: "unexpected EOF",
+        usage: { totalTokens: 0 },
+      }),
+    ]),
+  );
+  assert.equal(failed.observed, true);
+  assert.equal(failed.producedText, false);
+  assert.equal(failed.stopReason, "error");
+  assert.equal(failed.error, "unexpected EOF");
+  assert.equal(agentTurnFailureReason(failed), "provider_error:unexpected EOF");
+  // A turn that DID speak and then errored is not this case.
+  assert.equal(
+    agentTurnFailureReason(
+      readAgentTurnOutcome(write([assistant([{ type: "text", text: "我在这儿。" }], { stopReason: "error" })])),
+    ),
+    undefined,
+  );
+  // A clean turn is not a failure either.
+  assert.equal(
+    agentTurnFailureReason(
+      readAgentTurnOutcome(write([assistant([{ type: "text", text: "好。" }], { stopReason: "stop" })])),
+    ),
+    undefined,
+  );
+  // An unreadable session is `unobserved`, never a fabricated cause.
+  const unreadable = readAgentTurnOutcome(join(tmpdir(), "gb-ladder-missing-session.jsonl"));
+  assert.deepEqual(unreadable, { observed: false, reason: "session_not_readable" });
+  assert.equal(agentTurnFailureReason(unreadable), undefined);
 });

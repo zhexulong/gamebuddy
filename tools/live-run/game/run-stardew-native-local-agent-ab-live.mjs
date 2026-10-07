@@ -21,7 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +38,7 @@ import {
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
+import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../core/persona.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
@@ -272,6 +273,174 @@ let presentedSummary = null;
 const presentationPieces = [];
 let turnStartedAtMs = null;
 /**
+ * The agent session's own terminal record for the turn(s) this run drove.
+ *
+ * The harness used to decide "did the companion speak" from `presentedSummary` alone, so a turn whose
+ * provider stream ENDED IN AN ERROR was reported as `silent` — as if the companion had chosen not to
+ * speak. Measured on a real ladder-6 run: the last assistant message carried `stopReason: "error"`,
+ * `errorMessage: "unexpected EOF"` and zero usage tokens, the verdict was `silent`, `sessionTurnErrors`
+ * was empty, and the harness log contained no agent-side line at all. The runtime's own durable session
+ * record is the authoritative fact here and the capture already keeps it.
+ *
+ * Only bounded, content-free facts are published: the stop reason, whether any assistant text part
+ * existed, how many assistant messages the turn had, and a redacted provider transport message. Player
+ * or companion TEXT is never read into the result.
+ */
+function readAgentTurnOutcome(sessionJsonlPath) {
+  let raw;
+  try {
+    raw = readFileSync(sessionJsonlPath, "utf8");
+  } catch {
+    return Object.freeze({ observed: false, reason: "session_not_readable" });
+  }
+  let assistantMessages = 0;
+  let last = null;
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = entry?.message;
+    if (entry?.type !== "message" || message?.role !== "assistant") continue;
+    assistantMessages += 1;
+    const parts = Array.isArray(message.content) ? message.content : [];
+    last = {
+      stopReason: typeof message.stopReason === "string" ? message.stopReason : "unknown",
+      hasText: parts.some(
+        (part) => part?.type === "text" && typeof part.text === "string" && part.text.trim().length > 0,
+      ),
+      errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : null,
+      totalTokens: typeof message.usage?.totalTokens === "number" ? message.usage.totalTokens : null,
+    };
+  }
+  if (last === null) return Object.freeze({ observed: false, reason: "no_assistant_message" });
+  return Object.freeze({
+    observed: true,
+    assistantMessages,
+    stopReason: last.stopReason,
+    // A turn that produced no assistant text at all is exactly the case that used to be
+    // indistinguishable from a companion choosing silence.
+    producedText: last.hasText,
+    error: last.errorMessage === null ? null : redactLiveRunText(last.errorMessage).slice(0, 120),
+    totalTokens: last.totalTokens,
+  });
+}
+
+/**
+ * `provider_error`-style reason for a turn that ended in a provider/runtime failure WITHOUT producing
+ * any text, or `undefined` when the session record does not say that. Deliberately narrow: a turn that
+ * spoke and then failed is not this case, and an unreadable session stays `unobserved` — the verdict
+ * reports that rather than converting it into a cause.
+ */
+function agentTurnFailureReason(outcome) {
+  if (outcome?.observed !== true) return undefined;
+  if (outcome.producedText === true) return undefined;
+  if (outcome.stopReason !== "error" && outcome.stopReason !== "aborted") return undefined;
+  return `provider_${outcome.stopReason}${outcome.error === null ? "" : `:${outcome.error}`}`;
+}
+
+/**
+ * The newest agent session record under this run's runtime root, or an object saying where it looked.
+ *
+ * The product's own convention is `<runtimeCwd>/surface-sessions/<surfaceSessionId>/sessions/*.jsonl`
+ * (`host/src/runtime-identity.ts:127-136`), and that is checked first. It is not the ONLY place a runtime may
+ * put a session, though: one live run recorded none there (its result said `no_session_record` while the
+ * session had certainly run), so the search falls back to a bounded walk of the runtime cwd. Returning the
+ * searched base matters as much as the path: `unobserved` must name what it looked at, so a reader can tell a
+ * missing session from a reader looking in the wrong place.
+ */
+function findAgentSessionJsonl(root, identity) {
+  const runtimeCwd = join(root, "contexts", identityKey(identity));
+  const base = join(runtimeCwd, "surface-sessions");
+  const searched = [];
+  const candidates = [];
+  const collect = (directory) => {
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) collect(path);
+      else if (entry.name.endsWith(".jsonl")) candidates.push({ path, file: entry.name });
+    }
+  };
+  if (existsSync(base)) {
+    searched.push(base);
+    collect(base);
+  }
+  if (candidates.length === 0 && existsSync(runtimeCwd)) {
+    searched.push(runtimeCwd);
+    collect(runtimeCwd);
+  }
+  if (candidates.length === 0) return { path: undefined, searched: searched.map(String) };
+  // Session file names are UTC timestamps, so the last one lexicographically is the newest.
+  candidates.sort((left, right) => left.file.localeCompare(right.file));
+  return { path: candidates[candidates.length - 1].path, searched };
+}
+
+/**
+ * Per-execution receipt outcomes, derived from the run's own facts.
+ *
+ * Deduplicating receipts by `executionId` alone was WRONG and hid real failures: one execution legally
+ * emits several receipts (`accepted` -> `controller_started` -> `tool_approach_completed` ->
+ * `target_out_of_reach`), so the first one seen claimed the execution and every later code — including
+ * its authoritative terminal failure — was dropped. Measured on a real run: three harvest executions
+ * ended in `target_out_of_reach`, `capabilityAudit` still reported `harvest_crop.verdict: "succeeded"`
+ * with `unresolved: []`, and `target_out_of_reach` appeared nowhere in the audit.
+ *
+ * A receipt's identity is therefore `(executionId, reasonCode)`: the bridge's legitimate redelivery
+ * repeats the same pair, while a different code is a different fact about the same execution. Codes that
+ * cannot end an execution are progress; anything else is a terminal claim, classified against the
+ * action's registered success terminal from the published gate table.
+ */
+function summarizeExecutionOutcomes({ facts, actionOfRequest, terminalReasonCodes }) {
+  // Codes that cannot END an execution: anything else is a terminal claim. Declared here so this
+  // function is self-contained and can be evaluated (and tested) on its own.
+  const progressCodes = new Set(["accepted", "controller_started", "tool_approach_completed", "tile_advanced"]);
+  const byExecution = new Map();
+  const seen = new Set();
+  for (const fact of facts ?? []) {
+    if (fact?.type !== "execution_receipt") continue;
+    const actionId = typeof fact.requestId === "string" ? actionOfRequest.get(fact.requestId) : undefined;
+    if (actionId === undefined) continue;
+    const executionId =
+      typeof fact.executionId === "string" && fact.executionId.length > 0
+        ? fact.executionId
+        : `${fact.requestId}:${fact.reasonCode}`;
+    const code = typeof fact.reasonCode === "string" && fact.reasonCode.length > 0 ? fact.reasonCode : "unknown";
+    const key = `${executionId}\u001f${code}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const current = byExecution.get(executionId) ?? { actionId, terminals: [] };
+    if (!progressCodes.has(code)) current.terminals.push(code);
+    byExecution.set(executionId, current);
+  }
+  const perAction = new Map();
+  for (const entry of byExecution.values()) {
+    const registered = terminalReasonCodes[entry.actionId];
+    const succeeded = entry.terminals.includes(registered);
+    const failures = entry.terminals.filter((code) => code !== registered);
+    const current = perAction.get(entry.actionId) ?? {
+      executions: { succeeded: 0, failed: 0, inFlight: 0 },
+      failedTerminalReasonCodes: {},
+    };
+    if (succeeded) current.executions.succeeded += 1;
+    else if (failures.length > 0) current.executions.failed += 1;
+    else current.executions.inFlight += 1;
+    for (const code of failures)
+      current.failedTerminalReasonCodes[code] = (current.failedTerminalReasonCodes[code] ?? 0) + 1;
+    perAction.set(entry.actionId, current);
+  }
+  return perAction;
+}
+
+/**
  * Presence-mechanism evidence for the run result (design
  * stardew-companion-presence-mechanisms §1.5): the committed companion_text
  * pieces in arrival order plus the headline TTFB of the first bubble. Used by
@@ -457,6 +626,9 @@ async function runAgentTurn(text, tools) {
   })();
   let status = null;
   let turn = null;
+  // Dispatches issued BEFORE this turn: evidence of arrival must be caused by the turn, not by the run's
+  // earlier traffic.
+  const dispatchesBeforeTurn = actionTrace.length;
   // How long one delivered turn may wait before the harness stops waiting. For an
   // open play session this is a HARNESS bound, not a product verdict (design 1432:
   // timeouts belong to the harness), so ladder 6 gets a budget that fits dozens of
@@ -478,9 +650,12 @@ async function runAgentTurn(text, tools) {
   }
   if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
   turn.steerObserved =
-    (factLog ?? []).length > 0 ||
     agentProgramId !== null ||
-    (typeof presentedSummary === "string" && presentedSummary.length > 0);
+    (typeof presentedSummary === "string" && presentedSummary.length > 0) ||
+    // The turn's own effects: a dispatch it issued is proof the steer reached the session. `factLog.length > 0`
+    // used to stand here and proved almost nothing — any Mod fact, including an unrelated body trace, made it
+    // true while no player text had reached Pi at all.
+    actionTrace.length > dispatchesBeforeTurn;
   sampleAdvertisedActions();
   if (turn.settled === true && turn.steerObserved === false)
     turn.reason = "steer_may_have_been_silently_dropped";
@@ -557,23 +732,25 @@ function buildCapabilityAudit({
   }
 
   // Join receipts back to the action that caused them. The fact log carries no
-  // actionId, but it does carry requestId/executionId; deduplicating by
-  // executionId keeps the bridge's legitimate two-route redelivery from reading as
-  // a second run.
-  const seenExecution = new Set();
+  // actionId, but it does carry requestId/executionId; see summarizeExecutionOutcomes for why
+  // the identity is (executionId, reasonCode) and not executionId alone.
+  const seenReceipt = new Set();
   for (const fact of facts ?? []) {
     if (fact?.type !== "execution_receipt") continue;
     const actionId = typeof fact.requestId === "string" ? actionOfRequest.get(fact.requestId) : undefined;
     if (actionId === undefined) continue;
     const current = byAction.get(actionId);
     if (current === undefined) continue;
-    const key = typeof fact.executionId === "string" && fact.executionId.length > 0 ? fact.executionId : `${fact.requestId}:${fact.reasonCode}`;
-    if (seenExecution.has(key)) continue;
-    seenExecution.add(key);
-    const terminal = terminalReasonCodes[actionId];
+    const executionId =
+      typeof fact.executionId === "string" && fact.executionId.length > 0
+        ? fact.executionId
+        : `${fact.requestId}:${fact.reasonCode}`;
     const code = stateOf(fact.reasonCode);
+    const key = `${executionId}\u001f${code}`;
+    if (seenReceipt.has(key)) continue;
+    seenReceipt.add(key);
     bump(current.receiptReasonCodes, code);
-    if (typeof terminal === "string" && code === terminal) {
+    if (code === terminalReasonCodes[actionId]) {
       current.terminalReceipts += 1;
       bump(current.terminalReasonCodes, code);
     } else {
@@ -581,23 +758,48 @@ function buildCapabilityAudit({
     }
   }
 
+  // A receipt the audit calls "progress" may still be an execution's END, and that is how three
+  // authoritative failures (target_out_of_reach) disappeared from a real run's audit. Per-execution
+  // outcomes are therefore derived separately, from the same facts, and folded back in below.
+  const executionOutcomes = summarizeExecutionOutcomes({
+    facts,
+    actionOfRequest,
+    terminalReasonCodes,
+  });
+
   const reachedTerminal = (entry) => entry.terminalReceipts > 0;
   const sawFailure = (entry) => Object.keys(entry.rejections).length > 0;
+  const failedExecutions = (entry) => executionOutcomes.get(entry.actionId)?.executions.failed ?? 0;
   const attempted = [...byAction.values()]
-    .map((entry) =>
-      Object.freeze({
+    .map((entry) => {
+      const outcomes = executionOutcomes.get(entry.actionId) ?? {
+        executions: { succeeded: 0, failed: 0, inFlight: 0 },
+        failedTerminalReasonCodes: {},
+      };
+      const failed = outcomes.executions.failed;
+      return Object.freeze({
         ...entry,
         admissionStates: Object.freeze({ ...entry.admissionStates }),
         rejections: Object.freeze({ ...entry.rejections }),
         terminalReasonCodes: Object.freeze({ ...entry.terminalReasonCodes }),
         receiptReasonCodes: Object.freeze({ ...entry.receiptReasonCodes }),
-        verdict: reachedTerminal(entry)
+        executionOutcomes: Object.freeze({
+          ...outcomes.executions,
+        }),
+        failedTerminalReasonCodes: Object.freeze({ ...outcomes.failedTerminalReasonCodes }),
+        // `succeeded` now means EVERY execution of this action finished on its registered terminal;
+        // one success next to a failure is `partial`, and failures are never folded into success.
+        verdict: reachedTerminal(entry) && failed === 0
           ? "succeeded"
-          : sawFailure(entry)
-            ? "blocked"
-            : "unresolved",
-      }),
-    )
+          : reachedTerminal(entry)
+            ? "partial"
+            : failed > 0
+              ? "failed"
+              : sawFailure(entry)
+                ? "blocked"
+                : "unresolved",
+      });
+    })
     .sort((left, right) => right.dispatches - left.dispatches || left.actionId.localeCompare(right.actionId));
   const advertised = Array.isArray(visibleActionIds) ? visibleActionIds.filter((id) => typeof id === "string") : [];
   return Object.freeze({
@@ -605,12 +807,19 @@ function buildCapabilityAudit({
     sessionTurnCount: (sessionTurns ?? []).length,
     attempts: Object.freeze(attempted),
     attemptedCount: attempted.length,
-    succeededCount: attempted.filter(reachedTerminal).length,
+    succeededCount: attempted.filter((entry) => entry.verdict === "succeeded").length,
     // "The system blocked it" is a claim that needs evidence behind it: an action
-    // is only reported as a system stall when the trace shows a refusal or a
-    // terminal failure, and as `unresolved` when nothing terminal was observed at
+    // is only reported as a system stall when the trace shows a refusal or an execution
+    // that ended on a non-success terminal, and as `unresolved` when nothing terminal was observed at
     // all. An audit that over-claims is worse than one that admits a gap.
-    blockedBySystem: Object.freeze(attempted.filter((entry) => entry.verdict === "blocked")),
+    blockedBySystem: Object.freeze(attempted.filter((entry) => entry.verdict === "blocked" || entry.verdict === "failed")),
+    // Actions that succeeded at least once AND failed at least once. Their failures are the
+    // interesting ones (a retry that never worked), so they must not hide behind the success.
+    partialFailures: Object.freeze(
+      attempted
+        .filter((entry) => entry.verdict === "partial")
+        .map((entry) => Object.freeze({ actionId: entry.actionId, failedTerminalReasonCodes: entry.failedTerminalReasonCodes })),
+    ),
     unresolved: Object.freeze(attempted.filter((entry) => entry.verdict === "unresolved").map((entry) => entry.actionId)),
     notAttempted: Object.freeze(advertised.filter((actionId) => !byAction.has(actionId)).sort()),
     advertisedCount: advertised.length,
@@ -732,7 +941,7 @@ client.execute = async (request) => {
 
   try {
     const receipt = await originalExecute(request);
-    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode };
+    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode, evidence: receipt?.evidence?.detail };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
     return receipt;
@@ -1108,9 +1317,24 @@ try {
   const accomplishedActionIds = succeededActionIds.filter(
     (actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId),
   );
+  // The session's own terminal record, read from the runtime root this run drove. It is what separates
+  // "the companion chose not to speak" from "the turn died at the provider": before this, a real run
+  // whose turn ended in `stopReason: "error"` was reported as `silent`.
+  const sessionSearch = findAgentSessionJsonl(runtimeRoot, identity);
+  const agentTurnOutcome =
+    sessionSearch.path === undefined
+      ? Object.freeze({ observed: false, reason: "no_session_record", searched: Object.freeze(sessionSearch.searched) })
+      : readAgentTurnOutcome(sessionSearch.path);
+  const turnFailureReason = agentTurnFailureReason(agentTurnOutcome);
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
     .map((entry) => ({ goalIndex: entry.goalIndex, error: entry.turn?.error ?? "unsettled" }));
+  // A provider failure is its own per-turn error: the turn was delivered, so it is not `unsettled`,
+  // and it produced no text, so it is not silence either.
+  const sessionTurnErrors =
+    turnFailureReason === undefined
+      ? unsettledSessionTurns
+      : [...unsettledSessionTurns, { goalIndex: sessionTurns.length === 0 ? 0 : sessionTurns.length - 1, error: turnFailureReason }];
   // A play session that never speaks is not a companion session. Run M did 17 native
   // actions over fifteen minutes and produced no player-facing line at all: the rung's
   // own goal asks for a short report, and "did the companion play" includes "did it
@@ -1121,15 +1345,17 @@ try {
   const sessionVerdict =
     sessionTurns.length === 0
       ? "no_turns"
-      : !sessionSpoken
-        ? "silent"
-        : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
-          ? "turn_timeout"
-          : unsettledSessionTurns.length > 0
-            ? "turn_unsettled"
-            : accomplishedActionIds.length > 0
-              ? "completed"
-              : "nothing_accomplished";
+      : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
+        ? "turn_timeout"
+        : unsettledSessionTurns.length > 0
+          ? "turn_unsettled"
+          : turnFailureReason !== undefined
+            ? "turn_failed"
+            : !sessionSpoken
+              ? "silent"
+              : accomplishedActionIds.length > 0
+                ? "completed"
+                : "nothing_accomplished";
   const ladderSixPassed =
     LADDER === "6"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
@@ -1190,14 +1416,30 @@ try {
     (LADDER === "3" || LADDER === "4" || LADDER === "5" || LADDER === "6") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
-  const interactionPassed = interactionAssessment === null || interactionAssessment.passed;
+  // The interaction gate assesses what the companion SAID. `unobserved` means nobody could assess it, which a
+  // reader must be able to tell apart from "assessed and fine" — the previous boolean could not.
+  const interactionOutcome =
+    interactionAssessment === null ? "unobserved" : interactionAssessment.passed ? "verified" : "failed";
+  // absence-as-pass: rungs 0-2 emit no companion line by design, and rung 6 requires speech before this point
+  // (sessionSpoken), so an unassessed interaction can never turn a rung into a pass.
+  const interactionPassed = interactionOutcome !== "failed";
   // System-level diagnostics: aggregate every rejected action into a small set
   // of system findings (component attribution + count + sample), so each live
   // run yields a "system health report" instead of just pass/blocked. A finding
   // such as one reasonCode dominating or the same coordinates retried points at
   // the observation/contract layer, not at the model. Compare two runs with
   // tools/compare-live-run-findings.mjs to judge whether a fix helped.
-  const systemFindings = summarizeSystemFindings(actionTrace);
+  const systemFindings = summarizeSystemFindings(
+    actionTrace,
+    // Per-action failed-execution counts, so a retry loop that never produced a REFUSAL is still visible
+    // (the dispatch says `accepted`; only the execution's terminal failure shows the loop).
+    Object.fromEntries(
+      (capabilityAudit?.attempts ?? []).map((entry) => [
+        entry.actionId,
+        { failedTerminalReasonCodes: entry.failedTerminalReasonCodes ?? {} },
+      ]),
+    ),
+  );
   // Presence mechanisms (design stardew-companion-presence-mechanisms §1.5/§2.4),
   // computed from facts this run already holds — no new product producer:
   //  - chunking: every committed companion_text piece in arrival order, with
@@ -1251,7 +1493,11 @@ try {
     // reader must be able to tell a finished play session from one the harness cut
     // off, which `state` alone cannot say.
     sessionVerdict,
-    sessionTurnErrors: unsettledSessionTurns,
+    sessionTurnErrors,
+    // The session record's own terminal facts (stop reason, whether the turn produced any text, the
+    // redacted provider message). Published so a verdict of `turn_failed` is auditable rather than
+    // asserted, and so `silent` can be told apart from `nobody could read it`.
+    agentTurnOutcome,
     attemptedActionIds,
     succeededActionIds,
     // Present for every ladder; ladder 6's verdict treats silence as its own outcome.
@@ -1287,6 +1533,7 @@ try {
     contentGate,
     contentPassed,
     interactionAssessment,
+    interactionOutcome,
     systemFindings,
     observation,
     presentedSummary: presentedSummary ?? null,
