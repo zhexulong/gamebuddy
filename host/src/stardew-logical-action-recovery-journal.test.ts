@@ -501,6 +501,84 @@ test("initial document budget is enforced", async () => {
   }
 });
 
+test("a full journal evicts settled history instead of wedging every later action", async () => {
+  const dir = await root();
+  try {
+    // A real ladder session filled the 256-record cap with 254 `terminal_settled` records
+    // and then could not create ANY action: every write re-validated the same full document
+    // and threw `recovery_journal_budget_exceeded`, so the companion, and a real player after
+    // enough actions, permanently loses the ability to act. The journal is bounded HISTORY,
+    // and nothing may depend on a settled record (`allowedTransition` has no edge out of
+    // `terminal_settled`), so a new record must be able to make room by dropping the oldest
+    // settled ones.
+    const limits = { ...options(dir), maxRecords: 4 };
+    const journal = await StardewLogicalActionRecoveryJournal.open(limits);
+    for (let index = 1; index <= 4; index += 1) {
+      const id = `settled-${index}`;
+      await journal.prepare({ ...record(id), dispatchOrdinal: index });
+      await journal.markSentUnknown(id);
+      await journal.markTerminalSettled(id);
+    }
+    assert.equal(journal.records().length, 4);
+
+    // The fifth action is the one that used to be impossible.
+    await journal.prepare({ ...record("fresh"), dispatchOrdinal: 5 });
+    assert.equal(journal.record("fresh")?.state, "prepared");
+    assert.ok(journal.records().length <= 4, "eviction must keep the journal inside its record budget");
+    assert.equal(journal.record("settled-1"), null, "the oldest settled record is the one evicted");
+    assert.equal(journal.record("settled-4")?.state, "terminal_settled", "newer history survives");
+
+    // Memory and disk must agree: a reopen sees exactly the same records.
+    const reopened = await StardewLogicalActionRecoveryJournal.open(limits);
+    assert.deepEqual(
+      reopened.records().map((item) => `${item.logicalActionId}:${item.state}`).sort(),
+      journal.records().map((item) => `${item.logicalActionId}:${item.state}`).sort(),
+    );
+    assert.equal(reopened.record("fresh")?.state, "prepared");
+    const encoded = JSON.parse(await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8")) as {
+      records: unknown[];
+    };
+    assert.deepEqual(encoded.records.length, reopened.records().length);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("records that still owe recovery are never evicted, and their refusal stays honest", async () => {
+  const dir = await root();
+  try {
+    // Everything here still owes something (in flight or awaiting recovery), so no eviction
+    // is possible. The budget refusal must stand and must be attributable to real in-flight
+    // volume, not to settled history the journal could have dropped.
+    const limits = { ...options(dir), maxRecords: 2 };
+    const journal = await StardewLogicalActionRecoveryJournal.open(limits);
+    await journal.prepare({ ...record("pending-1"), dispatchOrdinal: 1 });
+    await journal.prepare({ ...record("pending-2"), dispatchOrdinal: 2 });
+    await journal.markRecoveryRequired("pending-1");
+    await journal.markSentUnknown("pending-2");
+
+    await assert.rejects(
+      () => journal.prepare({ ...record("pending-3"), dispatchOrdinal: 3 }),
+      /recovery_journal_budget_exceeded/,
+    );
+    // The records that owe recovery are all still there, in memory and on disk.
+    assert.equal(journal.record("pending-1")?.state, "recovery_required");
+    assert.equal(journal.record("pending-2")?.state, "sent_unknown");
+    const reopened = await StardewLogicalActionRecoveryJournal.open(limits);
+    assert.equal(reopened.record("pending-1")?.state, "recovery_required");
+    assert.equal(reopened.record("pending-2")?.state, "sent_unknown");
+    // `recovery_required` records the OUTCOME that recovery could not resolve, so the module
+    // deliberately excludes it from `recoverableRecords()` (nothing active remains to do) —
+    // but its evidence is never dropped either: only `terminal_settled` history is evictable.
+    assert.deepEqual(
+      reopened.recoverableRecords().map((item) => item.logicalActionId),
+      ["pending-2"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 
 type LockRequest = Readonly<{ operation: "reclaim_stale_lock" | "release_owned_lock"; token?: string; root: string; segments: readonly string[] }>;
 function testLockChild(): ChildProcess {

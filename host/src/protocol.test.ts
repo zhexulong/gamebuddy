@@ -119,7 +119,13 @@ test("body admission preserves envelope scope, type and serialized frame limits"
   assert.notEqual(validateBridgeMessage({ ...envelope, type: "body_node_admission_grant" }, scope, now), null);
   assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, saveId: "other" } }, scope, now), null);
   assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, extra: "field" } }, scope, now), null);
-  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(1024) }])) } };
+  // Sized RELATIVE to the accepted frame bound, because this test used to hardcode 32 KiB and stopped
+  // testing anything once the bound was raised to 128 KiB - it then failed for the wrong reason (the payload
+  // was fully valid), which is how a stale test masks itself. 64 arguments x 4 KiB is over any bound this
+  // protocol has used, and stays over it if the bound moves again. The C# twin was fixed the same way.
+  const oversizeChunk = 4 * 1024;
+  const oversizeCount = 64;
+  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: oversizeCount }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(oversizeChunk) }])) } };
   assert.throws(() => serializeBounded(oversized), /message_too_large/);
   assert.notEqual(validateBridgeMessage(oversized, scope, now), null);
 });

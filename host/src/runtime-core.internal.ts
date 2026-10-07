@@ -729,7 +729,38 @@ export async function createRuntimeWithFixedToolsCore(
                 execute_threshold_percentage:
                   internalMagicContextFeatureTestOverride.historianExecuteThresholdPercentage,
               }),
-          dreamer: { disable: true, inject_docs: false },
+          // Owner ruling D (2026-10-08): narrow-open Dreamer. Only the two
+          // memory-hygiene tasks run. The schedule is the only disable control,
+          // so every other canonical task is listed explicitly to keep the
+          // upstream defaults from switching them on ("" is off but manually
+          // runnable). inject_docs stays false: its default is true and it would
+          // write ARCHITECTURE.md/STRUCTURE.md into the m[0] `<project-docs>`
+          // block. Model resolution follows the historian convention here: flat
+          // entries are adapted to the per-harness blocks in memory by the
+          // plugin's project-tier loader, and the project file is never rewritten.
+          dreamer: {
+            disable: false,
+            inject_docs: false,
+            model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${
+              (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId
+            }`,
+            thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
+              .thinkingLevel,
+            tasks: {
+              "classify-memories": { schedule: "0 6 * * *" },
+              curate: { schedule: "0 4 * * 0" },
+              "map-memories": { schedule: "" },
+              verify: { schedule: "" },
+              "verify-broad": { schedule: "" },
+              "compress-cues": { schedule: "" },
+              retrospective: { schedule: "" },
+              "maintain-docs": { schedule: "" },
+              "evaluate-smart-notes": { schedule: "" },
+              "review-user-memories": { schedule: "" },
+              "promote-primers": { schedule: "" },
+              "refresh-primers": { schedule: "" },
+            },
+          },
           sidekick: { disable: true },
           // The upstream generic system block is a coding-agent instruction set
           // (ctx_memory/ctx_search/Git/project guidance). Chat intentionally keeps

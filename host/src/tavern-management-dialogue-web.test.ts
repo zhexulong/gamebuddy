@@ -39,6 +39,7 @@ const profile = composeTavernProfile({
     "world-info.bind",
     "settings.voice.read",
     "settings.voice.consent",
+    "settings.voice.devices",
   ],
   operationIds: [
     "draft.save",
@@ -47,6 +48,7 @@ const profile = composeTavernProfile({
     "world-info.bind",
     "settings.voice.read",
     "settings.voice.consent",
+    "settings.voice.devices",
   ],
   navigationItemIds: ["chat"],
 });
@@ -1585,6 +1587,61 @@ test("management handler exposes the Host-owned Voice preference read and consen
     decidedAtMs: 1,
     outputDevice: null,
   });
+  await handler.close();
+  assert.equal(recorder.closes, 1);
+});
+
+test("management handler lists output endpoints through the injected Voice Gateway enumerator", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  let calls = 0;
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    voicePreferenceStore,
+    listVoiceOutputDevices: async () => {
+      calls += 1;
+      return [
+        { id: "waveout:0", name: "Headphones" },
+        { id: "waveout:1", name: "Speakers (C-Media)" },
+      ];
+    },
+    profile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return output;
+  };
+  // Unauthenticated read is rejected before the enumerator is consulted.
+  assert.equal(
+    (await run(request("GET", "/api/tavern/v1/settings/voice-devices", { "sec-fetch-site": "same-origin" }))).status,
+    401,
+  );
+  assert.equal(calls, 0);
+  const bootstrap = await run(
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+  );
+  assert.equal(bootstrap.status, 200);
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+  const devices = await run(
+    request("GET", "/api/tavern/v1/settings/voice-devices", { cookie, "sec-fetch-site": "same-origin" }),
+  );
+  assert.equal(devices.status, 200);
+  assert.deepEqual(JSON.parse(devices.body), {
+    devices: [
+      { id: "waveout:0", name: "Headphones" },
+      { id: "waveout:1", name: "Speakers (C-Media)" },
+    ],
+    defaultSelectable: true,
+  });
+  assert.equal(calls, 1);
   await handler.close();
   assert.equal(recorder.closes, 1);
 });

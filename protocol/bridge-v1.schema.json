@@ -2781,14 +2781,32 @@
           },
           "maxItems": 16
         },
-        "shopTargets": {
+        "worldObjectTargets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/worldObjectTarget" },
+          "maxItems": 48
+        },
         "wearableTargets": {
           "type": "array",
-          "items": {
-            "$ref": "#/$defs/wearableTarget"
-          },
-          "maxItems": 8
+          "items": { "$ref": "#/$defs/wearableTarget" },
+          "maxItems": 16
         },
+        "warpItemTargets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/warpItemTarget" },
+          "maxItems": 16
+        },
+        "panSites": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/panSite" },
+          "maxItems": 16
+        },
+        "mailboxTargets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mailboxTarget" },
+          "maxItems": 16
+        },
+        "shopTargets": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/shopTarget"
@@ -7267,6 +7285,64 @@
         "isMineEntrance": {
           "type": "boolean"
         }
+      }
+    },
+    "worldObjectTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName"],
+      "properties": {
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["placement_candidate", "removable_object", "non_removable_object", "breakable_container"] },
+        "location": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "slot": { "type": "integer" },
+        "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "displayName": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "wearableTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "bodySlot"],
+      "properties": {
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bodySlot": { "type": "string", "enum": ["hat", "shirt", "pants", "boots", "left_ring", "right_ring"] },
+        "occupantQualifiedItemId": { "type": ["string", "null"] },
+        "occupantDisplayName": { "type": ["string", "null"] }
+      }
+    },
+    "warpItemTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "qualifiedItemId", "displayName", "stack", "destination", "destinationX", "destinationY"],
+      "properties": {
+        "slot": { "type": "integer" },
+        "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "stack": { "type": "integer", "minimum": 1 },
+        "destination": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "destinationX": { "type": "integer" },
+        "destinationY": { "type": "integer" }
+      }
+    },
+    "panSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } }
+    },
+    "mailboxTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "pendingCount"],
+      "properties": {
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "location": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "pendingCount": { "type": "integer", "minimum": 0 }
       }
     },
     "shopTarget": {

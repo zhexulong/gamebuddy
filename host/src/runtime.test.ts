@@ -1194,7 +1194,36 @@ test("runtime loads only Magic Context and preserves a session partition", async
     );
     assert.deepEqual(config.historian.disallowed_tools, ["*"]);
     assert.deepEqual(config.todowrite, { enabled: true, overlay: false });
-    assert.equal(config.dreamer.disable, true);
+    // Owner ruling D: narrow-open Dreamer (memory hygiene only).
+    assert.equal(config.dreamer.disable, false);
+    assert.equal(config.dreamer.inject_docs, false);
+    assert.equal(
+      config.dreamer.model,
+      `${DEFAULT_COMPANION_MODEL_CONFIG.provider}/${DEFAULT_COMPANION_MODEL_CONFIG.modelId}`,
+    );
+    assert.equal(
+      config.dreamer.thinking_level,
+      DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
+    );
+    const dreamerSchedules = Object.fromEntries(
+      Object.entries(
+        config.dreamer.tasks as Record<string, { schedule: string }>,
+      ).map(([task, value]) => [task, value.schedule]),
+    );
+    assert.deepEqual(dreamerSchedules, {
+      "classify-memories": "0 6 * * *",
+      curate: "0 4 * * 0",
+      "map-memories": "",
+      verify: "",
+      "verify-broad": "",
+      "compress-cues": "",
+      retrospective: "",
+      "maintain-docs": "",
+      "evaluate-smart-notes": "",
+      "review-user-memories": "",
+      "promote-primers": "",
+      "refresh-primers": "",
+    });
     assert.equal(config.system_prompt_injection.enabled, false);
     assert.equal(
       runtime.session.systemPrompt.includes("## Magic Context"),

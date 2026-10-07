@@ -804,7 +804,19 @@ test("production Game presentation composition supplies session and opaque admis
   assert.match(source, /sessionId: gameSessionId/);
   assert.match(source, /createGamePresentationAdmissionProvider\(\s*turnTracker,\s*handle\.interruption,\s*\)/);
   assert.match(source, /createFarmhandCompanionPresentationPort/);
-  assert.match(source, /host\.attachVoiceStopper\(\s*consumeGameVoicePresentationAttachment/);
+  // The voice path is asserted as BEHAVIOUR, not as a spelling. Commit 75eb1dae
+  // deliberately hoisted the attachment consumption into `gameVoicePayload` (so the
+  // streaming sink and the stop function come from one consumption) and rewired this
+  // line; the earlier assertion pinned the pre-hoist nesting instead. What must stay
+  // true is that exactly one attachment is consumed and the stopper is handed that
+  // consumption's stop function - a second consumption is the defect class this pins.
+  assert.equal(
+    source.match(/consumeGameVoicePresentationAttachment\(/gu)?.length,
+    1,
+    "the presentation attachment must be consumed exactly once",
+  );
+  assert.match(source, /host\.attachVoiceStopper\(\s*gameVoicePayload\.stopVoice\s*\)/);
+  assert.match(source, /const gameVoicePayload =\s*\n?\s*options\.gameVoicePresentation === undefined/);
   assert.match(source, /const activateIngress/);
   assert.doesNotMatch(source, /trace.*sink/i);
   assert.doesNotMatch(source, /inputId.*admission/i);
