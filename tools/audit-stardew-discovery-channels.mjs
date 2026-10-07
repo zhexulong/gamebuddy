@@ -64,6 +64,11 @@ const TARGET_FIELD = Object.freeze({
   // (see farmhandexecutioncontroller.npcactions.cs); only this declaration was
   // missing, so the audit could not verify its discovery leg at all.
   talk_to_npc: "NpcRelationshipTargets",
+  // Both wearable actions name the actor's OWN body slots through the same published list
+  // (WearableTargets). dismount_transport publishes no target list: its subject is the actor's own
+  // mount, so it has no discovery leg to declare here (the same reason advance_day has none).
+  equip_wearable: "WearableTargets",
+  unequip_wearable: "WearableTargets",
   pet_animal: "PetTargets",
   water_pet_bowl: "PetBowlTargets",
   water_slime_hutch_trough: "SlimeHutchTroughTargets",
@@ -109,7 +114,17 @@ const TARGET_FIELD = Object.freeze({
   withdraw_silo_hay: "SiloTargets",
   use_obelisk: "ObeliskTargets",
   toggle_animal_door: "AnimalDoorTargets",
+
+  // The world-object lane. All three read the lane's single projection, so all three
+  // discover their target through `worldObjectTargets`.
+  place_owned_object: "WorldObjectTargets",
+  remove_placed_item: "WorldObjectTargets",
+  break_container_source: "WorldObjectTargets",
   shop_purchase: "ShopTargets",
+  // The building-chest pair. Both name a chest a BUILDING declares in its own data
+  // (Data/Buildings -> BuildingData.Chests), published as `buildingChestTargets`.
+  load_building_chest: "BuildingChestTargets",
+  collect_building_chest_output: "BuildingChestTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */

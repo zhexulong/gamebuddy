@@ -19,6 +19,25 @@ export type StardewActionAdapter = Readonly<{
  * identity-version, or lifecycle facts.
  */
 export const STARDEW_ACTION_ADAPTERS = Object.freeze([
+
+  actionAdapter(
+    "place_owned_object",
+    "Place an owned object",
+    "Place one owned placeable object (any bigCraftable, including a tapper, or furniture) on a published world tile. Read the opaque target id, its tile, the backpack slot and the item id from the `worldObjectTargets` entries of the most recent observation. The Mod re-resolves the target on the game thread, calls the game's own Object.placementAction, and proves the object now exists on that tile; an occupied tile is refused by name rather than silently adding nothing.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "remove_placed_item",
+    "Remove a placed object",
+    "Remove one object occupying a world tile with the named axe or pickaxe. Read the opaque target id, its tile and the tool slot from the `worldObjectTargets` entry of the most recent observation, and equip that tool first. A tool that cannot remove that exact object is refused by name (`remove_placed_item_tool_cannot_remove_target`), never reported as a silent no-op, and the postcondition is the object being GONE from the tile.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "break_container_source",
+    "Break a container",
+    "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
+    ["world_object"],
+  ),
   actionAdapter(
     "move_to_tile",
     "Move to a Stardew tile",
@@ -268,6 +287,55 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Talk to an adjacent villager through the native NPC.checkAction talk branch, which mounts the game's own dialogue. The actor must be empty-handed: with an item in hand the native entry takes the gift path instead (interact_npc_with_item), and the action refuses with hands_not_empty. A villager who is asleep or out of reach is refused in the native branch's own terms.",
     ["npc", "dialogue"],
   ),
+
+  actionAdapter(
+    "equip_wearable",
+    "Equip a wearable you own",
+    "Put one wearable from a named backpack slot onto the farmer's own body slot, through the native Farmer.Equip<TItem> the inventory UI itself ends in. expectedTargetId must be copied exactly from the wearableTargets entries of the MOST RECENT observe result, and the named body slot must be the one that item type belongs to (a hat cannot go on the boots slot). A repeat of an already-satisfied request answers wearable_already_equipped as a success.",
+    ["wearable"],
+  ),
+  actionAdapter(
+    "unequip_wearable",
+    "Unequip a wearable",
+    "Take the wearable off the farmer's own body slot into a named EMPTY backpack slot. It refuses (wearable_inventory_full) when the backpack has no free slot at all, because the removed item would otherwise be dropped on the ground; it refuses (wearable_destination_slot_occupied) when the named slot is not free.",
+    ["wearable"],
+  ),
+  actionAdapter(
+    "dismount_transport",
+    "Dismount the horse",
+    "End the farmer's own mounted state through the native Horse.dismount terminal. It carries no arguments: the postcondition is !who.isRidingHorse(), re-read from the world after the call.",
+    ["horse"],
+  ),
+  actionAdapter(
+    "use_warp_item",
+    "Use a warp totem you are holding",
+    "Consume a held warp totem through the game's own object-use path and ride the warp the totem itself names. slot and expectedQualifiedItemId must come from the warpItemTargets of the most recent observation; only the arrival postcondition reports success.",
+    ["totem", "travel"],
+  ),
+  actionAdapter(
+    "pan_ore",
+    "Pan a water spot for ore",
+    "Pan an ore-panning spot with the Copper Pan the farmer holds, through the native Pan.DoFunction. The tile is re-checked against the game's own live panning point, so a stale site is refused rather than panned.",
+    ["pan", "ore"],
+  ),
+  actionAdapter(
+    "claim_mail_attachment",
+    "Claim a mailbox attachment",
+    "Claim whatever is waiting in a mailbox, completing a letter whose %item attachment has to be delivered rather than discarding it. The opaque target id binds the location, the tile and the pending letter.",
+    ["mail", "mailbox"],
+  ),
+  actionAdapter(
+    "load_building_chest",
+    "Load a building chest",
+    "Put the held item into a storage chest the BUILDING itself declares, such as a Mill's input chest, through the native Load branch. The requested slot must be the one already held.",
+    ["building_chest"],
+  ),
+  actionAdapter(
+    "collect_building_chest_output",
+    "Collect building chest output",
+    "Take what a building's own output chest holds. A chest holding two or more stacks is refused by name rather than opening a container menu.",
+    ["building_chest"],
+  ),
   actionAdapter(
     "water_pet_bowl",
     "Water the pet bowl",
@@ -440,6 +508,14 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   face_direction: "stardew_face_direction",
   interact_npc_with_item: "stardew_interact_npc_with_item",
   talk_to_npc: "stardew_talk_to_npc",
+  equip_wearable: "stardew_equip_wearable",
+  unequip_wearable: "stardew_unequip_wearable",
+  dismount_transport: "stardew_dismount_transport",
+  use_warp_item: "stardew_use_warp_item",
+  pan_ore: "stardew_pan_ore",
+  claim_mail_attachment: "stardew_claim_mail_attachment",
+  load_building_chest: "stardew_load_building_chest",
+  collect_building_chest_output: "stardew_collect_building_chest_output",
   pet_animal: "stardew_pet_animal",
   advance_day: "stardew_advance_day",
   clear_debris: "stardew_clear_debris",
@@ -471,6 +547,10 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   toggle_fence_gate: "stardew_toggle_fence_gate",
   withdraw_silo_hay: "stardew_withdraw_silo_hay",
   toggle_animal_door: "stardew_toggle_animal_door",
+
+  place_owned_object: "stardew_place_owned_object",
+  remove_placed_item: "stardew_remove_placed_item",
+  break_container_source: "stardew_break_container_source",
   use_obelisk: "stardew_use_obelisk",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
@@ -592,6 +672,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // not about lifecycle: a member may be Experimental (admitted through the
 // candidate carve-out) or already live_verified.
 export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
+
+  "place_owned_object",
+  "remove_placed_item",
+  "break_container_source",
+  "equip_wearable",
+  "unequip_wearable",
+  "dismount_transport",
   "express_emote",
   "face_direction",
   "interact_npc_with_item",
@@ -607,6 +694,11 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "withdraw_silo_hay",
   "use_obelisk",
   "toggle_animal_door",
+  "load_building_chest",
+  "collect_building_chest_output",
+  "use_warp_item",
+  "pan_ore",
+  "claim_mail_attachment",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -687,6 +779,28 @@ export function isModDescriptorComplete(
   descriptor: ActionRegistration["descriptor"],
 ): boolean {
   if (!descriptor || !isValidActionDescriptor(descriptor)) return false;
+
+  if (actionId === "place_owned_object") {
+    // The lane's placement shape: the tile, the backpack slot holding the item, the item's own
+    // wire identity and the opaque placement target, all mandatory.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "owned_object_placed") return false;
+    return true;
+  }
+  if (actionId === "remove_placed_item") {
+    // The lane's tool shape: the tile, the tool slot and the opaque object target.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "placed_item_removed") return false;
+    return true;
+  }
+  if (actionId === "break_container_source") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "container_source_broken") return false;
+    return true;
+  }
   if (actionId === "express_emote") {
     const arg = getDescriptorArgument(descriptor, "emote");
     if (!arg || arg.type !== "string") return false;
@@ -746,6 +860,54 @@ export function isModDescriptorComplete(
     if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
     if (descriptor.effect !== "write") return false;
     if (descriptor.postcondition !== "minecart_ride_completed") return false;
+    return true;
+  }
+  if (actionId === "equip_wearable") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "wearable_equipped") return false;
+    return true;
+  }
+  if (actionId === "unequip_wearable") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "wearable_unequipped") return false;
+    return true;
+  }
+  if (actionId === "dismount_transport") {
+    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "transport_dismounted") return false;
+    return true;
+  }
+  if (actionId === "use_warp_item") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot","expectedQualifiedItemId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "warp_item_arrived") return false;
+    return true;
+  }
+  if (actionId === "pan_ore") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot","x","y"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "ore_panned") return false;
+    return true;
+  }
+  if (actionId === "claim_mail_attachment") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "mail_claimed") return false;
+    return true;
+  }
+  if (actionId === "load_building_chest") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","slot","expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "building_chest_loaded") return false;
+    return true;
+  }
+  if (actionId === "collect_building_chest_output") {
+    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "building_chest_output_collected") return false;
     return true;
   }
   if (actionId === "withdraw_silo_hay") {

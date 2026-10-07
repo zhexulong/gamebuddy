@@ -1859,8 +1859,21 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "chest_store" or "chest_retrieve" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
-        "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
+            "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
                 "toggle_animal_door" => new[] { "x", "y", "expectedTargetId" },
+        // use_warp_item's native ingress reads the HELD item, so the request names the slot
+        // that must hold the totem plus the totem's wire identity. pan_ore names the pan slot
+        // and the live ore-pan site its own predicate resolves. claim_mail_attachment names
+        // the mailbox tile and its opaque target.
+        "use_warp_item" => new[] { "slot", "expectedQualifiedItemId" },
+        "pan_ore" => new[] { "slot", "x", "y" },
+        "claim_mail_attachment" => new[] { "x", "y", "expectedTargetId" },
+        // The building-chest pair. A building chest is reached from a tile of the building
+        // EXTERIOR (Data/Buildings ActionTiles, or DefaultAction), so x,y is that tile and
+        // expectedTargetId names which building's which chest. load_building_chest also needs
+        // the held slot: the native Load branch reads who.ActiveObject, not the pack.
+        "load_building_chest" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "collect_building_chest_output" => new[] { "x", "y", "expectedTargetId" },
         "use_obelisk" => new[] { "x", "y", "expectedTargetId" },
         "toggle_tool_light" => new[] { "slot", "x", "y" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
@@ -1887,7 +1900,17 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     // many units to buy. There is deliberately no coordinate: it buys from a shop the
     // actor already stands next to (walking is move_to_tile's job).
     "shop_purchase" => new[] { "expectedTargetId", "expectedQualifiedItemId", "quantity" },
+
+        "place_owned_object" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        "remove_placed_item" or "break_container_source" => new[] { "x", "y", "slot", "expectedTargetId" },
     "answer_dialogue" => new[] { "responseKey" },
+
+        // The actor's own attachment state. dismount_transport carries NO arguments: its subject
+        // is the actor's own mount and its readiness is native state, and the Host rejects an
+        // extra OR missing key, so a target id "for safety" would make every request invalid.
+        "equip_wearable" => new[] { "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        "unequip_wearable" => new[] { "slot", "expectedTargetId" },
+        "dismount_transport" => Array.Empty<string>(),
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
         _ => null,

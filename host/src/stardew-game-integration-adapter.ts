@@ -201,6 +201,112 @@ function hasStardewCompletionEvidence(
   // Each published action is explicit. Unsupported schemas fail closed rather
   // than treating a succeeded receipt or a matching substring as completion.
   switch (actionId) {
+
+    case "place_owned_object":
+      // Evidence literal: farmhandexecutioncontroller.worldobjectactions.cs ExecutePlaceOwnedObject —
+      // target;location;tile;slot;item;terrain_feature;terrain_feature_tapped;native_placement;
+      // object_present;placed_qualified_item_id;placed_type;inventory_before;inventory_after.
+      // The native branch adds a COPY, so nothing may be decided from a reference; the proof is the
+      // object being present on the tile afterwards plus the inventory count dropping by one.
+      return (
+        receipt.reasonCode === "owned_object_placed" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "slot",
+            "item",
+            "terrain_feature",
+            "terrain_feature_tapped",
+            "native_placement",
+            "object_present",
+            "placed_qualified_item_id",
+            "placed_type",
+            "inventory_before",
+            "inventory_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.native_placement === "true" &&
+            e.object_present === "true" &&
+            e.placed_qualified_item_id === e.item &&
+            e.inventory_after !== e.inventory_before &&
+            Number.isSafeInteger(Number(e.inventory_before)) &&
+            Number.isSafeInteger(Number(e.inventory_after)) &&
+            Number(e.inventory_after) === Number(e.inventory_before) - 1,
+        )
+      );
+    case "remove_placed_item":
+      // Evidence literal: ExecuteRemovePlacedItem — target;location;tile;item;type;tool;tool_kind;
+      // slot;swings;removed;tile_object_after;drops;drop_count;stamina_before;stamina_after.
+      // The removal is proved by the tile being empty afterwards, never by a native return value.
+      return (
+        receipt.reasonCode === "placed_item_removed" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "item",
+            "type",
+            "tool",
+            "tool_kind",
+            "slot",
+            "swings",
+            "removed",
+            "tile_object_after",
+            "drops",
+            "drop_count",
+            "stamina_before",
+            "stamina_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.removed === "true" &&
+            e.tile_object_after === "none" &&
+            (e.tool_kind === "axe" || e.tool_kind === "pickaxe") &&
+            Number.isSafeInteger(Number(e.swings)) &&
+            Number(e.swings) >= 1 &&
+            Number(e.drop_count) === (e.drops === undefined || e.drops.length === 0 ? 0 : e.drops.split("|").length),
+        )
+      );
+    case "break_container_source":
+      // Evidence literal: ExecuteBreakContainerSource — target;location;tile;item;type;tool;slot;
+      // swings;container_gone;tile_object_after;drops;drop_count;stamina_before;stamina_after.
+      // The seam returns false even when it destroys the container, so the ONLY proof is the
+      // container being gone plus the drops the game added during the swing window.
+      return (
+        receipt.reasonCode === "container_source_broken" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "item",
+            "type",
+            "tool",
+            "slot",
+            "swings",
+            "container_gone",
+            "tile_object_after",
+            "drops",
+            "drop_count",
+            "stamina_before",
+            "stamina_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.container_gone === "true" &&
+            e.tile_object_after === "none" &&
+            Number.isSafeInteger(Number(e.swings)) &&
+            Number(e.swings) >= 1 &&
+            Number(e.drop_count) === (e.drops === undefined || e.drops.length === 0 ? 0 : e.drops.split("|").length),
+        )
+      );
     case "equip_tool":
       // The frozen contract is ["tool_equipped","already_equipped"]
       // (farmhandactiondevelopmentcontract.cs:74) and the Mod emits exactly those
@@ -299,6 +405,142 @@ function hasStardewCompletionEvidence(
             hasOpaqueEvidenceValue(e.expected) &&
             hasOpaqueEvidenceValue(e.actual) &&
             e.expected.split(":")[0] === e.actual.split(":")[0],
+        )
+      );
+    case "load_building_chest":
+      // Evidence literal: farmhandexecutioncontroller.buildingchestactions.cs — the chest identity
+      // prefix (tile;location;target;building_type;building_origin;chest_id;branch) plus item;
+      // held_stack_before;held_stack_after;chest_item_before;chest_item_after;chest_slots_before;
+      // chest_slots_after;moved_count;released_count;required_count;chest_capacity_before;
+      // item_accepted;native_accepted;native_refusal;native_menu_opened.
+      //
+      // The native branch returns a bool, so the bool is NOT the proof: the rule requires BOTH
+      // observed halves of the quantised transfer (the chest gained exactly as many of the named
+      // item as the held stack lost) and that the amount is a whole number of the conversion's
+      // `required_count` quanta. `native_refusal` names which native data field's gate the
+      // refusal belonged to; on a success it must be `none`.
+      return (
+        receipt.reasonCode === "building_chest_loaded" &&
+        exactEvidence(
+          detail,
+          [
+            "tile",
+            "location",
+            "target",
+            "building_type",
+            "building_origin",
+            "chest_id",
+            "branch",
+            "item",
+            "held_stack_before",
+            "held_stack_after",
+            "chest_item_before",
+            "chest_item_after",
+            "chest_slots_before",
+            "chest_slots_after",
+            "moved_count",
+            "released_count",
+            "required_count",
+            "chest_capacity_before",
+            "item_accepted",
+            "native_accepted",
+            "native_refusal",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const heldBefore = integerEvidenceValue(e.held_stack_before);
+            const heldAfter = integerEvidenceValue(e.held_stack_after);
+            const chestBefore = integerEvidenceValue(e.chest_item_before);
+            const chestAfter = integerEvidenceValue(e.chest_item_after);
+            const moved = integerEvidenceValue(e.moved_count);
+            const released = integerEvidenceValue(e.released_count);
+            const required = positiveIntegerEvidence(e.required_count);
+            return (
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              e.branch === "load" &&
+              hasOpaqueEvidenceValue(e.item) &&
+              heldBefore !== null &&
+              heldAfter !== null &&
+              chestBefore !== null &&
+              chestAfter !== null &&
+              moved !== null &&
+              moved > 0 &&
+              released === moved &&
+              heldBefore - heldAfter === moved &&
+              chestAfter - chestBefore === moved &&
+              required !== null &&
+              moved % required === 0 &&
+              integerEvidenceValue(e.chest_capacity_before) !== null &&
+              e.item_accepted === "true" &&
+              e.native_accepted === "true" &&
+              e.native_refusal === "none" &&
+              e.native_menu_opened === "false"
+            );
+          },
+        )
+      );
+    case "collect_building_chest_output":
+      // Evidence literal: farmhandexecutioncontroller.buildingchestactions.cs — the same chest
+      // identity prefix plus item;chest_slots_before;chest_slots_after;chest_item_before;
+      // chest_item_after;moved_count;carried_before;carried_after;native_accepted;
+      // native_menu_opened.
+      //
+      // Collect auto-collects only a SINGLE stack, so a success must show the named stack leaving
+      // the chest (its count and the chest's slot count both fell) AND the actor's inventory
+      // gaining exactly that many of the same item; `native_menu_opened` must be false because the
+      // >= 2-stack case is refused by name rather than handed to a container menu.
+      return (
+        receipt.reasonCode === "building_chest_output_collected" &&
+        exactEvidence(
+          detail,
+          [
+            "tile",
+            "location",
+            "target",
+            "building_type",
+            "building_origin",
+            "chest_id",
+            "branch",
+            "item",
+            "chest_slots_before",
+            "chest_slots_after",
+            "chest_item_before",
+            "chest_item_after",
+            "moved_count",
+            "carried_before",
+            "carried_after",
+            "native_accepted",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const slotsBefore = integerEvidenceValue(e.chest_slots_before);
+            const slotsAfter = integerEvidenceValue(e.chest_slots_after);
+            const chestBefore = integerEvidenceValue(e.chest_item_before);
+            const chestAfter = integerEvidenceValue(e.chest_item_after);
+            const moved = integerEvidenceValue(e.moved_count);
+            const carriedBefore = integerEvidenceValue(e.carried_before);
+            const carriedAfter = integerEvidenceValue(e.carried_after);
+            return (
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              e.branch === "collect" &&
+              hasOpaqueEvidenceValue(e.item) &&
+              slotsBefore !== null &&
+              slotsAfter !== null &&
+              chestBefore !== null &&
+              chestAfter !== null &&
+              moved !== null &&
+              carriedBefore !== null &&
+              carriedAfter !== null &&
+              moved > 0 &&
+              chestBefore - chestAfter === moved &&
+              slotsAfter < slotsBefore &&
+              carriedAfter - carriedBefore === moved &&
+              e.native_accepted === "true" &&
+              e.native_menu_opened === "false"
+            );
+          },
         )
       );
     case "till_soil":

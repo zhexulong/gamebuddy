@@ -120,6 +120,10 @@ public static class FarmhandActionCatalog
         E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineInspect()), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget("(O)433")), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Target()),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("slot","integer"),("expectedQualifiedItemId","string"))),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetItem()), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)322")), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)710")), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)685")),
+
+        E("place_owned_object", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "owned_object_placed", "Object.placementAction"), FarmhandActionLifecycle.Experimental),
+        E("remove_placed_item", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_item_removed", "Object.performRemoveAction"), FarmhandActionLifecycle.Experimental),
+        E("break_container_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "container_source_broken", "BreakableContainer.performToolAction"), FarmhandActionLifecycle.Experimental),
         E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
@@ -160,6 +164,25 @@ public static class FarmhandActionCatalog
         E("withdraw_silo_hay", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "silo_hay_taken", "GameLocation.GetHayFromAnySilo"), FarmhandActionLifecycle.LiveVerified),
         E("use_obelisk", "transport_warps", FarmhandActionHandlerGroup.Movement, A(null, null, "obelisk_arrived", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("toggle_animal_door", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "animal_door_toggled", "Building.ToggleAnimalDoor"), FarmhandActionLifecycle.LiveVerified),
+        // Item/tile lane. use_warp_item is the native object branch plus the consumption the
+        // action-button dispatch pairs with it; pan_ore is the one-use panning lifecycle; the
+        // mailbox claim is the TALK/claim verb on a map Action tile. All three stay
+        // Experimental until each passes its own native-local live gate.
+        E("use_warp_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "warp_item_arrived", "Object.performUseAction"), FarmhandActionLifecycle.Experimental),
+        E("pan_ore", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "ore_panned", "Pan.DoFunction"), FarmhandActionLifecycle.Experimental),
+        E("claim_mail_attachment", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mail_claimed", "GameLocation.mailbox"), FarmhandActionLifecycle.Experimental),
+        // The building-chest pair. Some buildings declare their OWN storage in Data/Buildings
+        // (BuildingData.Chests: the Mill's Input/Output, the Junimo Hut's Output), reached by
+        // a click on a building tile rather than by any C# class, so neither
+        // chest_store/chest_retrieve (player-owned Chests and the fridge) nor
+        // machine_load/machine_collect_output (one machine's heldObject) can serve them.
+        // Both drive the terminal public `Building.PerformBuildingChestAction`
+        // (Building.cs:746) that the native click path ends in, and both prove their
+        // postcondition from the world afterwards. Experimental: they stay off the default
+        // Agent surface until each passes its own native-local live gate, and the promotion
+        // to LiveVerified is a separate catalog edit owned by the parent.
+        E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestLoad(), FarmhandActionLifecycle.Experimental),
+        E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestCollect(), FarmhandActionLifecycle.Experimental),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified),
@@ -189,6 +212,18 @@ public static class FarmhandActionCatalog
         // and quantity is clamped against live stock and the purse on the game thread.
         E("shop_purchase", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, ShopPurchase(), FarmhandActionLifecycle.LiveVerified),
         E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
+
+        // The actor's OWN attachment state. All three change what the farmer is wearing or
+        // riding rather than a world tile, so every postcondition is an ACTOR fact and the opaque
+        // target id names a body slot of the actor (hat/boots/shirt/pants/left_ring/right_ring)
+        // instead of a coordinate. Both wearable actions drive Farmer.Equip<TItem>, the method the
+        // native InventoryPage click path ends in; dismount_transport drives the Horse.dismount
+        // terminal the game's own non-interactive callers use. Experimental: each stays off the
+        // default Agent surface until it passes its own native-local live gate, and promotion to
+        // LiveVerified is a separate catalog edit owned by the parent.
+        E("equip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_equipped", "Farmer.Equip"), FarmhandActionLifecycle.Experimental),
+        E("unequip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_unequipped", "Farmer.Equip"), FarmhandActionLifecycle.Experimental),
+        E("dismount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(Array.Empty<FarmhandActionArgument>(), new Dictionary<string, string>(), EmbodiedActorResource, "write", "transport_dismounted", "Horse.dismount"), FarmhandActionLifecycle.Experimental),
     // WIA §4.2 modal-handling family: the ONE action that may run while the
     // world holds a modal. `dismiss_modal` only closes an informational native
     // dialogue (a DialogueBox with no pending question); answering a question
@@ -245,6 +280,38 @@ public static class FarmhandActionCatalog
         null,
         new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
     private static FarmhandActionDescriptor SlotTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
+
+    /// <summary>
+    /// load_building_chest carries a required `slot` because the native Load branch reads
+    /// `who.ActiveObject` (Building.cs:764) — the HELD item, which is `Items[CurrentToolIndex]`
+    /// — and not "some item in the pack", unlike chest_store. The slot names the inventory
+    /// slot to HOLD for the call, which is what the branch reads; this action selects it around
+    /// the call and restores the previous selection afterwards, refusing with
+    /// item_not_owned_in_slot when the slot holds no Object. x,y is the building chest's
+    /// published interaction tile and expectedTargetId the opaque "which building's which
+    /// chest" id.
+    /// </summary>
+    private static FarmhandActionDescriptor BuildingChestLoad() => new(
+        new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") },
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "building_chest_loaded",
+        "Building.PerformBuildingChestAction");
+
+    /// <summary>
+    /// collect_building_chest_output takes no slot: the native Collect branch takes whatever
+    /// single stack the chest holds, and a chest holding two or more stacks is refused by name
+    /// (building_chest_requires_menu) rather than handed to the container menu the branch would
+    /// otherwise open.
+    /// </summary>
+    private static FarmhandActionDescriptor BuildingChestCollect() => new(
+        new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") },
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "building_chest_output_collected",
+        "Building.PerformBuildingChestAction");
 
     /// <summary>
     /// ride_minecart carries the station tile plus the opaque published ride

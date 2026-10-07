@@ -152,7 +152,8 @@ public sealed class NativeLocalPlayerFixtureConfig
     /// </summary>
     private static readonly string[] KnownFixtureScenarios = new[]
     {
-        "", "navigation_mutation_v1", "navigation_read_only_v1", "native_till_soil_v1", "native_water_crop_v1", "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1", "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_machine_inspect_v1", "native_machine_coffee_load_v1", "native_machine_coffee_collect_v1", "native_machine_navigate_ab_v1", "native_npc_relationship_v1", "native_interact_npc_with_item_v1", "native_pet_animal_v1", "native_water_pet_bowl_v1", "native_water_slime_hutch_trough_v1", "native_use_item_v1", "native_place_wood_fence_v1", "native_chop_tree_source_v1", "native_break_rock_source_v1", "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1", "native_water_crop_empty_can_recovery_v1", "native_harvest_crop_inventory_full_recovery_v1", "native_stamina_recovery_v1", "native_refill_watering_can_v1", "native_feed_animal_v1", "native_collect_animal_product_v1", "native_dig_artifact_spot_v1", "native_place_crab_pot_v1", "native_bait_crab_pot_v1", "native_chest_store_v1", "native_chest_retrieve_v1", "native_fridge_store_v1", "native_fridge_retrieve_v1", "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1", "native_cut_weeds_v1", "native_cut_grass_v1", "native_scythe_crop_v1", "native_harvest_bush_v1", "native_harvest_fruit_tree_v1", "native_shake_tree_v1", "native_take_pedestal_item_v1", "native_toggle_fence_gate_v1", "native_craft_item_v1", "native_clear_cask_v1", "native_dress_mannequin_v1", "native_set_sign_display_v1", "native_deposit_silo_hay_v1", "native_use_obelisk_v1", "native_withdraw_silo_hay_v1", "native_toggle_animal_door_v1", "native_enter_exit_warp_action_v1", "native_mine_enter_ladder_v1", "native_talk_to_npc_v1", "native_toggle_tool_light_v1", "native_cook_recipe_v1", "native_craft_item_partial_v1", "native_crab_pot_collect_v1", "native_ship_item_v1", "native_jodi_harvest_deliver_v1", "native_pass_out_v1", "native_ride_minecart_v1", "native_ride_bus_v1", "native_mine_elevator_v1", "native_shop_purchase_v1", "native_use_raft_v1", "native_mount_transport_v1", "native_enter_mine_v1",
+        "", "navigation_mutation_v1", "navigation_read_only_v1", "native_till_soil_v1", "native_water_crop_v1", "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1", "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_machine_inspect_v1", "native_machine_coffee_load_v1", "native_machine_coffee_collect_v1", "native_machine_navigate_ab_v1", "native_npc_relationship_v1", "native_interact_npc_with_item_v1", "native_pet_animal_v1", "native_water_pet_bowl_v1", "native_water_slime_hutch_trough_v1", "native_use_item_v1", "native_place_wood_fence_v1",
+ "native_world_object_v1", "native_chop_tree_source_v1", "native_break_rock_source_v1", "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1", "native_water_crop_empty_can_recovery_v1", "native_harvest_crop_inventory_full_recovery_v1", "native_stamina_recovery_v1", "native_refill_watering_can_v1", "native_feed_animal_v1", "native_collect_animal_product_v1", "native_dig_artifact_spot_v1", "native_place_crab_pot_v1", "native_bait_crab_pot_v1", "native_chest_store_v1", "native_chest_retrieve_v1", "native_fridge_store_v1", "native_fridge_retrieve_v1", "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1", "native_cut_weeds_v1", "native_cut_grass_v1", "native_scythe_crop_v1", "native_harvest_bush_v1", "native_harvest_fruit_tree_v1", "native_shake_tree_v1", "native_take_pedestal_item_v1", "native_toggle_fence_gate_v1", "native_craft_item_v1", "native_clear_cask_v1", "native_dress_mannequin_v1", "native_set_sign_display_v1", "native_deposit_silo_hay_v1", "native_use_obelisk_v1", "native_withdraw_silo_hay_v1", "native_toggle_animal_door_v1", "native_enter_exit_warp_action_v1", "native_mine_enter_ladder_v1", "native_talk_to_npc_v1", "native_toggle_tool_light_v1", "native_cook_recipe_v1", "native_craft_item_partial_v1", "native_crab_pot_collect_v1", "native_ship_item_v1", "native_jodi_harvest_deliver_v1", "native_pass_out_v1", "native_ride_minecart_v1", "native_ride_bus_v1", "native_mine_elevator_v1", "native_shop_purchase_v1", "native_use_raft_v1", "native_mount_transport_v1", "native_enter_mine_v1", "native_building_chest_v1", "native_building_chest_multistack_v1",
         // Ladder 5 embodied-memory covenant probe (design
         // chat-long-horizon-memory-probe-design.md §10.5 class 1): the declared
         // Given is one mature Strawberry crop on the Farm plus the naturally-
@@ -165,6 +166,14 @@ public sealed class NativeLocalPlayerFixtureConfig
         // .faceDirection need no world object, inventory slot or prior action,
         // so this scenario provisions no fixture fact at all.
         "native_express_emote_v1",
+
+        // The actor's own attachment state (lane actor-state): equip/unequip one wearable and
+        // dismount the actor's own horse. The two unequip scenarios are the SAME action on two
+        // declared Givens — a backpack with room, and a FULL backpack, which is the frozen refusal.
+        "native_equip_wearable_v1",
+        "native_unequip_wearable_v1",
+        "native_unequip_wearable_inventory_full_v1",
+        "native_dismount_transport_v1",
         // The move-stall probe stands a NATIVE挡路实体 (Pet, or a parked Horse as
         // the generic NPC-class case) on the middle tile of a three-collinear
         // walkable line (actor → blocker → target). A* plans straight through the
@@ -176,6 +185,9 @@ public sealed class NativeLocalPlayerFixtureConfig
         "native_move_stall_probe_pet_v1", "native_move_stall_probe_npc_v1",
         "native_wia_modal_interrupt_v1", "native_wia_modal_dismiss_chain_v1", "native_wia_pass_out_v1", "native_wia_answer_question_v1", "native_wia_eat_interrupt_v1",
           "native_wia_tool_approach_interrupt_v1", "native_wia_animal_product_interrupt_v1", "native_wia_item_pickup_interrupt_v1",
+        // Item/tile lane: the warp-totem Given, the ore-pan Given produced by the game's own
+        // ten-minute update, and the mailbox Given.
+        "native_use_warp_item_v1", "native_pan_ore_v1", "native_claim_mail_attachment_v1",
 
     };
 

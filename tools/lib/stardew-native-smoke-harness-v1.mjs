@@ -66,6 +66,33 @@ export async function observeFresh(client, { actionable = false } = {}) {
   return snapshot;
 }
 
+/**
+ * Execute with a snapshot that is re-observed if the world advanced in between.
+ *
+ * `executeFresh` binds the request to the snapshot it is handed and refuses when the client's cached
+ * snapshot is already newer, because a request bound to an outdated revision is not the request the
+ * observation justified. The world advancing between an observe and its execute is normal, so this
+ * helper treats the refusal as a transient: observe again, and send against the fresh snapshot. It is
+ * bounded, so a world that never settles still fails rather than looping.
+ */
+export async function executeFreshAfterReobserve(client, options, { attempts = 3 } = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 8) throw new NativeSmokeHarnessError("invalid_native_reobserve_attempts");
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const snapshot = await observeFresh(client, { actionable: options.actionable === true });
+    try {
+      return await executeFresh(client, { ...options, snapshot });
+    } catch (error) {
+      if (error instanceof NativeSmokeHarnessError && error.code === "stale_native_snapshot") {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError ?? new NativeSmokeHarnessError("stale_native_snapshot");
+}
+
 /** Submit one fresh, revision-bound request and verify its immediate receipt. */
 export async function executeFresh(client, { action, args, snapshot, requestId, idempotencyKey, timeoutMs }) {
   if (!client || typeof client.execute !== "function") throw new NativeSmokeHarnessError("invalid_native_client");

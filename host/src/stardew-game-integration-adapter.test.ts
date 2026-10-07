@@ -758,8 +758,10 @@ test("a ride_minecart receipt names the ridden objective as well as the arrival 
 });
 
 test("pickup_forage completion evidence requires the contract tile, item, removal, and exact inventory delta", () => {
+  // The identity key is part of the contract since `6f2d75cb`, so this fixture must carry it too;
+  // without it the helper rejects the payload before reaching the clauses this test is about.
   const valid =
-    "location=Forest;tile=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";
+    "location=Forest;targetIdentity=forage_01;tile=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";
   const receipt = {
     state: "succeeded",
     reasonCode: "forage_picked_up",

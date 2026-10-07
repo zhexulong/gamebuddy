@@ -553,6 +553,14 @@ export function fixtureActions(action) {
   if (action === "deposit_silo_hay") return ["deposit_silo_hay"];
   if (action === "withdraw_silo_hay") return ["withdraw_silo_hay"];
   if (action === "toggle_animal_door") return ["toggle_animal_door"];
+  // The building-chest pair. Both publish the same load/collect targets over the building the
+  // fixture provisions (a Load chest and a Collect chest declared by its own data); each action is
+  // independently listed because neither is a precondition of the other.
+  if (action === "load_building_chest") return ["load_building_chest"];
+  if (action === "collect_building_chest_output") return ["collect_building_chest_output"];
+  // The multi-stack variant runs the SAME action over a world whose Collect chest holds two
+  // stacks: the state the owner ruled must be refused by name rather than handed to a menu.
+  if (action === "collect_building_chest_multistack") return ["collect_building_chest_output"];
   if (action === "enter_exit_warp_action") return ["move_to_tile", "enter_exit"];
   if (action === "enter_mine_ladder") return ["move_to_tile", "enter_mine"];
   if (action === "talk_to_npc") return ["talk_to_npc"];
@@ -571,6 +579,14 @@ export function fixtureActions(action) {
   // mine entrance and production alone launches / mounts / enters.
   if (action === "use_raft") return ["use_raft"];
   if (action === "mount_transport") return ["mount_transport"];
+  if (action === "equip_wearable") return ["equip_wearable"];
+  if (action === "unequip_wearable") return ["unequip_wearable"];
+  if (action === "dismount_transport") return ["dismount_transport"];
+  // The world-object lane: one scenario arms all three Givens, and none of the three needs another
+  // action as a precondition.
+  if (action === "place_owned_object") return ["place_owned_object"];
+  if (action === "remove_placed_item") return ["remove_placed_item"];
+  if (action === "break_container_source") return ["break_container_source"];
   if (action === "enter_mine") return ["enter_mine"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
@@ -603,6 +619,9 @@ export function fixtureActions(action) {
   // The fixture grows crab pots, baits them and advances to a mature output;
   // production alone collects. The existing place/bait actions stay separate.
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
+  if (action === "use_warp_item") return ["use_warp_item"];
+  if (action === "pan_ore") return ["pan_ore"];
+  if (action === "claim_mail_attachment") return ["claim_mail_attachment"];
   // The cross-day lifecycle is a real wire action now: the fixture publishes
   // advance_day and production dispatches it. Its own route, native sleep answer
   // and Saving/Saved/DayStarted observation are the action's business, so no
@@ -627,6 +646,14 @@ export function fixtureScenario(actions, action) {
   if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "shop_purchase") return "native_shop_purchase_v1";
   if (action === "select_mine_elevator_floor") return "native_mine_elevator_v1";
+  // The building-chest pair needs its own world: a finished building whose DATA declares a Load
+  // and a Collect chest, with the Load chest empty, the Collect chest stocked, and the actor
+  // holding an item the Load chest accepts. The multi-stack variant differs only in how many
+  // stacks the Collect chest holds, so it MUST select its scenario here, before the Collect action
+  // branch below could claim it.
+  if (action === "load_building_chest") return "native_building_chest_v1";
+  if (action === "collect_building_chest_output") return "native_building_chest_v1";
+  if (action === "collect_building_chest_multistack") return "native_building_chest_multistack_v1";
   if (action === "ship_item_island") return "native_ship_item_island_v1";
   // Ladder 6 (self-directed play session). This MUST be an action-keyed branch in
   // this block: the play-session action set publishes harvest_crop AND ship_item,
@@ -748,14 +775,28 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("shake_tree")) return "native_shake_tree_v1";
   if (actions.includes("take_pedestal_item")) return "native_take_pedestal_item_v1";
   if (actions.includes("toggle_fence_gate")) return "native_toggle_fence_gate_v1";
+  // The world-object lane: ONE scenario arms all three Givens (a placeable tapper on a mature tree,
+  // a placed machine, a twig, a barrel, and the axe/pickaxe to act with).
+  if (actions.includes("place_owned_object") || actions.includes("remove_placed_item") || actions.includes("break_container_source"))
+    return "native_world_object_v1";
+
+  // The world-object lane: ONE scenario arms all three Givens (a placeable tapper on a
+  // mature tree, a placed machine, a twig, a barrel, and the axe/pickaxe to act with).
+  if (actions.includes("place_owned_object") || actions.includes("remove_placed_item") || actions.includes("break_container_source")) return "native_world_object_v1";
   if (actions.includes("use_raft")) return "native_use_raft_v1";
   if (actions.includes("mount_transport")) return "native_mount_transport_v1";
+  if (actions.includes("equip_wearable")) return "native_equip_wearable_v1";
+  if (actions.includes("unequip_wearable")) return "native_unequip_wearable_v1";
+  if (actions.includes("dismount_transport")) return "native_dismount_transport_v1";
   if (actions.includes("enter_mine")) return "native_enter_mine_v1";
   if (actions.includes("scythe_crop")) return "native_scythe_crop_v1";
   if (actions.includes("ship_item")) return "native_ship_item_v1";
   if (actions.includes("craft_item")) return "native_craft_item_v1";
   if (actions.includes("cook_recipe")) return "native_cook_recipe_v1";
   if (actions.includes("collect_crab_pot_output")) return "native_crab_pot_collect_v1";
+  if (actions.includes("use_warp_item")) return "native_use_warp_item_v1";
+  if (actions.includes("pan_ore")) return "native_pan_ore_v1";
+  if (actions.includes("claim_mail_attachment")) return "native_claim_mail_attachment_v1";
   return "";
 }
 // The Mod catalog is the authority for which registrations are still

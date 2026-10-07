@@ -157,6 +157,8 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
             // failure can never be reported as a trade failure (move_to_tile owns walking).
             "shop_purchase" => this.executions.RequestLocalShopPurchase(request, ledger),
 
+            "use_warp_item" => this.executions.RequestLocalUseWarpItem(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedQualifiedItemId ?? string.Empty, request.DeadlineMs),
+
             "ship_item" => this.executions.RequestLocalShipItem(
                 request.RequestId,
                 request.Args.Slot ?? 0,

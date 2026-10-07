@@ -573,6 +573,25 @@ activeExecution?: ActiveExecution | null;
    * state FLIPPED, and a target whose identity ignores its state cannot be verified. */
   animalDoorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
     buildingType: string; isOpen: boolean }>[];
+
+  /** One object the world-object lane can act on at a world tile, plus the backpack slot that
+   * acts. `kind` is what the live object IS for this lane ('placement_candidate',
+   * 'removable_object', 'non_removable_object', 'breakable_container'); `slot` is the backpack
+   * slot the named action must act through, or -1 when the actor owns no tool for it. */
+  worldObjectTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
+  wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
+  warpItemTargets?: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number; destination: string; destinationX: number; destinationY: number }>[];
+  panSites?: readonly Readonly<{ x: number; y: number }>[];
+  mailboxTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; pendingCount: number }>[];
+    y: number; slot: number; qualifiedItemId: string; displayName: string }>[];
+   /** A building's own declared chest (Data/Buildings -> BuildingData.Chests). `branch` is the native
+   * branch the chest takes (`load` or `collect`; the Chest type is never published, because it can
+   * only open a container menu) and `stackCount`/`itemCount` are the LIVE chest's own counts:
+   * collect auto-collects exactly one stack and load moves whole `RequiredCount` quanta, so a target
+   * whose identity ignored them could not be used to decide whether a call can succeed. */
+  buildingChestTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
+    buildingType: string; chestId: string; branch: "load" | "collect"; stackCount: number;
+    itemCount: number; loadInputSlot?: number; loadInputQualifiedItemId?: string; loadInputStack?: number }>[];
   obeliskTargets?: readonly Readonly<{ targetId: string; route: string; location: string; x: number;
      y: number; displayName: string; destination: string; forceDismount: boolean }>[];
 }>;
@@ -590,9 +609,18 @@ export type ExecutionRequest = Readonly<{
     | "ride_minecart"
     | "select_mine_elevator_floor"
     | "ride_bus"
-  | "withdraw_silo_hay"
-  | "use_obelisk"
-  | "toggle_animal_door"
+    | "withdraw_silo_hay"
+
+    | "place_owned_object"
+    | "remove_placed_item"
+    | "break_container_source"
+    | "use_obelisk"
+    | "toggle_animal_door"
+    | "use_warp_item"
+    | "pan_ore"
+    | "claim_mail_attachment"
+    | "load_building_chest"
+    | "collect_building_chest_output"
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
@@ -614,6 +642,9 @@ export type ExecutionRequest = Readonly<{
     | "machine_collect_output"
     | "npc_relationship"
     | "talk_to_npc"
+    | "equip_wearable"
+    | "unequip_wearable"
+    | "dismount_transport"
     | "pet_animal"
     | "collect_animal_product"
     | "feed_animal"
@@ -1178,6 +1209,7 @@ const SNAPSHOT_KEYS = [
   "shopTargets",
   "mineElevatorFloorTargets",
   "animalDoorTargets",
+  "buildingChestTargets",
   "obeliskTargets",
   "minecartTargets",
   "bushTargets",
@@ -1185,14 +1217,27 @@ const SNAPSHOT_KEYS = [
   "shakeTreeTargets",
   "pedestalTargets",
   "fenceGateTargets",
+
+  "worldObjectTargets",
+  "wearableTargets",
+  "warpItemTargets",
+  "panSites",
+  "mailboxTargets",
   "weather",
    "minecartTargets",
     "mineElevatorFloorTargets",
     "animalDoorTargets",
     "obeliskTargets",
+    "buildingChestTargets",
     "raftTargets",
     "horseTargets",
     "mineEntranceTargets",
+
+    "worldObjectTargets",
+  "wearableTargets",
+  "warpItemTargets",
+  "panSites",
+  "mailboxTargets",
     "weather",
 ] as const;
 
@@ -1680,6 +1725,9 @@ function isBoundedNonEmptyString(value: unknown, maxLength: number): value is st
 }
 
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
+
+  const worldObjectArgsVerdict = validateWorldObjectActionArgs(value);
+  if (worldObjectArgsVerdict !== null) return worldObjectArgsVerdict;
   if (
     !isRecord(value) ||
     !hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"])
@@ -1696,6 +1744,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "withdraw_silo_hay" &&
      value.action !== "use_obelisk" &&
      value.action !== "toggle_animal_door" &&
+
+     value.action !== "place_owned_object" &&
+     value.action !== "remove_placed_item" &&
+     value.action !== "break_container_source" &&
+     value.action !== "use_warp_item" &&
+     value.action !== "pan_ore" &&
+     value.action !== "claim_mail_attachment" &&
+     value.action !== "load_building_chest" &&
+     value.action !== "collect_building_chest_output" &&
      value.action !== "shop_purchase" &&
      value.action !== "select_mine_elevator_floor" &&
      value.action !== "use_raft" &&
@@ -1723,6 +1780,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "machine_collect_output" &&
     value.action !== "npc_relationship" &&
     value.action !== "talk_to_npc" &&
+    value.action !== "equip_wearable" &&
+    value.action !== "unequip_wearable" &&
+    value.action !== "dismount_transport" &&
     value.action !== "pet_animal" &&
     value.action !== "collect_animal_product" &&
     value.action !== "feed_animal" &&
@@ -1834,6 +1894,29 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   ) {
     // All three take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "collect_building_chest_output") {
+    // All four take the shared { x, y, expectedTargetId } shape and no slot.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "claim_mail_attachment") {
+    // The mailbox tile plus the opaque id that binds the pending count AND the head letter.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_mailbox_target";
+  } else if (value.action === "pan_ore") {
+    // The pan slot plus the live ore-pan site the Mod re-resolves against `orePanPoint`.
+    if (!hasExactKeys(value.args, ["slot", "x", "y"])) return "invalid_execution_request";
+    if (!Number.isSafeInteger(value.args.slot) || (value.args.slot as number) < 0) return "invalid_pan_slot";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_pan_site";
+  } else if (value.action === "use_warp_item") {
+    // The slot that must hold the totem plus the totem's wire identity; both are re-read on
+    // the game thread, so this only checks the shape.
+    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
+    if (!Number.isSafeInteger(value.args.slot) || (value.args.slot as number) < 0) return "invalid_warp_item_slot";
+    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
+  } else if (value.action === "load_building_chest") {
+    // load_building_chest carries a required `slot` on top of that shape: the native Load branch
+    // reads who.ActiveObject (the HELD item, i.e. Items[CurrentToolIndex]), not "some item in the
+    // pack", so the request must name the slot that is already the held one.
+    if (!hasExactKeys(value.args, ["x", "y", "slot", "expectedTargetId"])) return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2050,6 +2133,33 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_npc_talk_target";
+
+  } else if (value.action === "equip_wearable") {
+    // The wearable family's shape: an opaque body-slot target id, the backpack slot the item comes
+    // from, and that item's wire identity. The Mod re-resolves the slot and its occupant on the
+    // game thread, so there is nothing else to model here.
+    if (!hasExactKeys(value.args, ["slot","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      typeof value.args.expectedQualifiedItemId !== "string" ||
+      value.args.expectedQualifiedItemId.length === 0 ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_equip_wearable_target";
+  } else if (value.action === "unequip_wearable") {
+    // No item id: the item is whatever the named body slot already holds, and `slot` is the EMPTY
+    // backpack slot the removed wearable must land in.
+    if (!hasExactKeys(value.args, ["slot","expectedTargetId"])) return "invalid_args";
+    if (
+      !isToolSlot(value.args.slot) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_unequip_wearable_target";
+  } else if (value.action === "dismount_transport") {
+    // No arguments at all: the subject is the actor's own mount and its readiness is native state.
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
   } else if (value.action === "pet_animal") {
     if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
     
@@ -2263,6 +2373,42 @@ export function serializeBounded(value: unknown): string {
 }
 
 function diagnoseSnapshot(value: Record<string, unknown>): string {
+
+  if (
+    value.worldObjectTargets !== undefined &&
+    (!Array.isArray(value.worldObjectTargets) ||
+      value.worldObjectTargets.length > 48 ||
+      !value.worldObjectTargets.every(isWorldObjectTargetFact))
+  )
+    return "invalid_snapshot:worldObjectTargets";
+  if (
+    value.wearableTargets !== undefined &&
+    (!Array.isArray(value.wearableTargets) ||
+      value.wearableTargets.length > 16 ||
+      !value.wearableTargets.every(isWearableTargetFact))
+  )
+    return "invalid_snapshot:wearableTargets";
+  if (
+    value.warpItemTargets !== undefined &&
+    (!Array.isArray(value.warpItemTargets) ||
+      value.warpItemTargets.length > 16 ||
+      !value.warpItemTargets.every(isWarpItemTargetFact))
+  )
+    return "invalid_snapshot:warpItemTargets";
+  if (
+    value.panSites !== undefined &&
+    (!Array.isArray(value.panSites) ||
+      value.panSites.length > 16 ||
+      !value.panSites.every(isPanSiteFact))
+  )
+    return "invalid_snapshot:panSites";
+  if (
+    value.mailboxTargets !== undefined &&
+    (!Array.isArray(value.mailboxTargets) ||
+      value.mailboxTargets.length > 16 ||
+      !value.mailboxTargets.every(isMailboxTargetFact))
+  )
+    return "invalid_snapshot:mailboxTargets";
   if (!Number.isSafeInteger(value.revision)) return "invalid_snapshot:revision";
   if (typeof value.location !== "string") return "invalid_snapshot:location";
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
@@ -2670,10 +2816,28 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     (!Array.isArray(value.obeliskTargets) || value.obeliskTargets.length > 32 || !value.obeliskTargets.every(isObeliskTargetFact))
   )
     return "invalid_snapshot:obeliskTargets";
+  if (
+    value.buildingChestTargets !== undefined &&
+    (!Array.isArray(value.buildingChestTargets) ||
+      value.buildingChestTargets.length > 16 ||
+      !value.buildingChestTargets.every(isBuildingChestTargetFact))
+  )
+    return "invalid_snapshot:buildingChestTargets";
   return "accepted";
 }
 
 function validateSnapshot(value: Record<string, unknown>): string | null {
+
+  const worldObjectTargetsVerdict = worldObjectTargetsError(value);
+  const wearableTargetsVerdict = wearableTargetsError(value);
+  if (wearableTargetsVerdict !== null) return wearableTargetsVerdict;
+  const warpItemTargetsVerdict = warpItemTargetsError(value);
+  if (warpItemTargetsVerdict !== null) return warpItemTargetsVerdict;
+  const panSitesVerdict = panSitesError(value);
+  if (panSitesVerdict !== null) return panSitesVerdict;
+  const mailboxTargetsVerdict = mailboxTargetsError(value);
+  if (mailboxTargetsVerdict !== null) return mailboxTargetsVerdict;
+  if (worldObjectTargetsVerdict !== null) return worldObjectTargetsVerdict;
   return hasOnlyKeys(value, SNAPSHOT_KEYS) &&
     Number.isSafeInteger(value.revision) &&
     typeof value.location === "string" &&
@@ -2905,6 +3069,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
         value.animalDoorTargets.every(isAnimalDoorTargetFact))) &&
     (value.obeliskTargets === undefined ||
       (Array.isArray(value.obeliskTargets) && value.obeliskTargets.length <= 32 && value.obeliskTargets.every(isObeliskTargetFact))) &&
+    (value.buildingChestTargets === undefined ||
+      (Array.isArray(value.buildingChestTargets) &&
+        value.buildingChestTargets.length <= 16 &&
+        value.buildingChestTargets.every(isBuildingChestTargetFact))) &&
     (value.minecartTargets === undefined ||
      (Array.isArray(value.minecartTargets) &&
        value.minecartTargets.length <= 24 &&
@@ -2927,6 +3095,17 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
   return hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
+      value.action === "place_owned_object" ||
+      value.action === "remove_placed_item" ||
+      value.action === "break_container_source" ||
+      value.action === "equip_wearable" ||
+      value.action === "unequip_wearable" ||
+      value.action === "dismount_transport" ||
+      value.action === "load_building_chest" ||
+      value.action === "collect_building_chest_output" ||
+      value.action === "use_warp_item" ||
+      value.action === "pan_ore" ||
+      value.action === "claim_mail_attachment" ||
     (value.action === "move_to_tile" ||
       value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
@@ -3003,6 +3182,35 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     Number.isFinite(value.deadlineMs)
     ? null
     : "invalid_execution_request";
+}
+
+function validateWorldObjectActionArgs(value: unknown): string | null {
+  if (!isRecord(value) || !isRecord(value.args)) return null;
+  // Only the three world-object actions are this helper's business; everything else is validated by
+  // validateExecutionRequestEnvelope and the per-action chain.
+  if (
+    value.action !== "place_owned_object" &&
+    value.action !== "remove_placed_item" &&
+    value.action !== "break_container_source"
+  )
+    return null;
+  const args = value.args;
+  if (value.action === "place_owned_object") {
+    // The tile, the backpack slot holding the item, that item's wire identity and the opaque
+    // placement target: the native placement path needs the item to be the HELD one, so the slot
+    // and the identity are both mandatory.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_placement_tile";
+    if (!isToolSlot(args.slot)) return "invalid_placement_slot";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0) return "invalid_placement_item";
+  } else {
+    // Removing a placed item and breaking a container both take the tile, the tool slot and the
+    // opaque object target, and nothing else.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
+  }
+  return null;
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
@@ -4353,6 +4561,165 @@ function isAnimalDoorTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.y) &&
     typeof value.buildingType === "string" &&
     typeof value.isOpen === "boolean"
+  );
+}
+
+/** One building-declared chest. The counts are the live chest's own (`stackCount` slots, `itemCount`
+ * items) and the branch is the native branch the chest's data declares; a Chest-type chest is never
+ * published, so the union below is closed. */
+
+
+/** The world-object lane's projection. Every member is always written (the Mod omits nulls,
+ * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
+ * missing or malformed array must fail closed rather than read as a transport fault. */
+
+function wearableTargetsError(value: Record<string, unknown>): string | null {
+  if (value.wearableTargets === undefined) return null;
+  if (
+    !Array.isArray(value.wearableTargets) ||
+    value.wearableTargets.length > 16 ||
+    !value.wearableTargets.every(isWearableTargetFact)
+  )
+    return "invalid_snapshot:wearableTargets";
+  return null;
+}
+
+function isWearableTargetFact(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // A missing optional member must be allowed: the Mod omits nulls on the wire.
+  return hasExactKeys(record, ["targetId","bodySlot","occupantQualifiedItemId","occupantDisplayName"]);
+}
+
+function warpItemTargetsError(value: Record<string, unknown>): string | null {
+  if (value.warpItemTargets === undefined) return null;
+  if (
+    !Array.isArray(value.warpItemTargets) ||
+    value.warpItemTargets.length > 16 ||
+    !value.warpItemTargets.every(isWarpItemTargetFact)
+  )
+    return "invalid_snapshot:warpItemTargets";
+  return null;
+}
+
+function isWarpItemTargetFact(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // A missing optional member must be allowed: the Mod omits nulls on the wire.
+  return hasExactKeys(record, ["slot","qualifiedItemId","displayName","stack","destination","destinationX","destinationY"]);
+}
+
+function panSitesError(value: Record<string, unknown>): string | null {
+  if (value.panSites === undefined) return null;
+  if (
+    !Array.isArray(value.panSites) ||
+    value.panSites.length > 16 ||
+    !value.panSites.every(isPanSiteFact)
+  )
+    return "invalid_snapshot:panSites";
+  return null;
+}
+
+function isPanSiteFact(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // A missing optional member must be allowed: the Mod omits nulls on the wire.
+  return hasExactKeys(record, ["x","y"]);
+}
+
+function mailboxTargetsError(value: Record<string, unknown>): string | null {
+  if (value.mailboxTargets === undefined) return null;
+  if (
+    !Array.isArray(value.mailboxTargets) ||
+    value.mailboxTargets.length > 16 ||
+    !value.mailboxTargets.every(isMailboxTargetFact)
+  )
+    return "invalid_snapshot:mailboxTargets";
+  return null;
+}
+
+function isMailboxTargetFact(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // A missing optional member must be allowed: the Mod omits nulls on the wire.
+  return hasExactKeys(record, ["targetId","location","x","y","pendingCount"]);
+}
+function worldObjectTargetsError(value: Record<string, unknown>): string | null {
+  if (value.worldObjectTargets === undefined) return null;
+  if (
+    !Array.isArray(value.worldObjectTargets) ||
+    value.worldObjectTargets.length > 48 ||
+    !value.worldObjectTargets.every(isWorldObjectTargetFact)
+  )
+    return "invalid_snapshot:worldObjectTargets";
+  return null;
+}
+
+function isWorldObjectTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    (value.kind === "placement_candidate" ||
+      value.kind === "removable_object" ||
+      value.kind === "non_removable_object" ||
+      value.kind === "breakable_container") &&
+    typeof value.location === "string" &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.slot === "number" &&
+    Number.isSafeInteger(value.slot) &&
+    value.slot >= -1 &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    typeof value.displayName === "string"
+  );
+}
+function isBuildingChestTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    // hasOnlyKeys, not hasExactKeys: the three load-input hint fields are omitted entirely when
+    // the actor holds nothing this chest accepts (the Mod's serializer omits nulls), exactly like
+    // the optional members of `machineTargets`.
+    hasOnlyKeys(value, [
+      "targetId",
+      "location",
+      "x",
+      "y",
+      "buildingType",
+      "chestId",
+      "branch",
+      "stackCount",
+      "itemCount",
+      "loadInputSlot",
+      "loadInputQualifiedItemId",
+      "loadInputStack",
+    ]) &&
+    typeof value.targetId === "string" &&
+    /^building_chest_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isBoundedNonEmptyString(value.location, 256) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    isBoundedNonEmptyString(value.buildingType, 128) &&
+    isBoundedNonEmptyString(value.chestId, 64) &&
+    (value.branch === "load" || value.branch === "collect") &&
+    isNonNegativeSafeInteger(value.stackCount) &&
+    isNonNegativeSafeInteger(value.itemCount) &&
+    (value.loadInputSlot === undefined || value.loadInputSlot === null || isToolSlot(value.loadInputSlot)) &&
+    (value.loadInputQualifiedItemId === undefined ||
+      value.loadInputQualifiedItemId === null ||
+      isBoundedNonEmptyString(value.loadInputQualifiedItemId, 128)) &&
+    (value.loadInputStack === undefined ||
+      value.loadInputStack === null ||
+      (Number.isSafeInteger(value.loadInputStack) && (value.loadInputStack as number) >= 1)) &&
+    ((value.loadInputSlot === undefined && value.loadInputQualifiedItemId === undefined && value.loadInputStack === undefined) ||
+      (isToolSlot(value.loadInputSlot) &&
+        isBoundedNonEmptyString(value.loadInputQualifiedItemId, 128) &&
+        Number.isSafeInteger(value.loadInputStack) &&
+        (value.loadInputStack as number) >= 1))
   );
 }
 

@@ -2321,3 +2321,68 @@ branch is gated on the local player and `movementPause` is 1000 ms in a shared w
 solo: neither changes which dialogue is chosen nor whether friendship is granted. The register carries
 this as an acknowledged unverified shared-world scope, so promotion beyond Experimental should come
 with shared-world evidence or an explicit ruling.
+
+## Phase 2 — nine new actions, all live-verified (2026-10-08)
+
+One shared native-local fixture per family, one runner per action. Each row below is a real gate run whose
+receipt the runner asserted; nothing here is a mechanism-level claim.
+
+| action | fixture scenario | result |
+| --- | --- | --- |
+| `equip_wearable` | `native_equip_wearable_v1` | passed / `wearable_equipped` |
+| `unequip_wearable` | `native_unequip_wearable_v1` | passed / `wearable_unequipped` |
+| `dismount_transport` | `native_dismount_transport_v1` | passed / `transport_dismounted` |
+| `place_owned_object` | `native_world_object_v1` | passed / `owned_object_placed` |
+| `remove_placed_item` | `native_world_object_v1` | passed / `placed_item_removed` |
+| `break_container_source` | `native_world_object_v1` | passed / `container_source_broken` |
+| `use_warp_item` | `native_use_warp_item_v1` | passed / `warp_item_arrived` |
+| `pan_ore` | `native_pan_ore_v1` | passed / `ore_panned` |
+| `claim_mail_attachment` | `native_claim_mail_attachment_v1` | passed / `mail_claimed` |
+
+### The four product defects these gates found (all fixed)
+
+1. **An unreachable discovery branch.** The world-object scan guarded its loop with
+   `if (player.Items[slot] is not StardewValley.Object owned || owned.Stack <= 0) continue;`, and
+   `Tool` is NOT a `StardewValley.Object` (both derive from `Item`). Every tool slot was skipped, so the
+   removable-object and breakable-container scan below it could never run. Three separate runners
+   reported their object Given absent while only placement candidates were published. The item test now
+   belongs to the placement branch alone.
+2. **An invented precondition.** `RemovesThisObject` began with `if (target.Fragility == 2) return false;`,
+   reasoning from `fragility_Indestructable`. The native `Object.performToolAction` has no such test before
+   its removal branches, and the twig branch is itself what SETS fragility to 2 (Object.cs:1184). Because a
+   registry-created `(O)294` already reports fragility 2, every twig was classified non-removable. Removed.
+3. **The mailbox was sought in map data that does not contain it.** `IsMailboxTile` scanned the location's
+   Buildings layer for a `Mailbox` action. The repository's own content probe over all 563 maps shows
+   `Maps/Farm` declares exactly one action property (`Buildings:Message "Farm.1"` at 8,7) and the only
+   `Mailbox` actions anywhere are `TownMailbox N` in the Town variants. The farm mailbox is per-player and
+   computed in code: `Farmer.getMailboxPosition()` (public) returns the player's cabin mailbox when they
+   live in a cabin, else `Game1.getFarm().GetMainMailboxPosition()`, and `Farm.cs:1473` draws it there. So
+   `claim_mail_attachment` could never advertise a target in production. The predicate now asks the game.
+4. **The warp-totem fixture refused to arm during the post-load fade.** It tested the native context gate
+   immediately, including `Game1.fadeToBlack`, which is true right after a save load. The transient part
+   is now awaited on a tick and the "initialized" line moves with the arming; the non-transient part
+   (`eventUp`, festival, swimming, bathing clothes, onBridge) still refuses, and now NAMES the blocker and
+   its value so a failure says which one it was.
+
+### Two shared-wiring defects, and one harness defect
+
+* Four of the five new snapshot target arrays were never registered on the Host. A new array needs six
+  points in `host/src/protocol.ts` (the interface member, BOTH `SNAPSHOT_KEYS` lists, a `validateSnapshot`
+  branch, the coarse conjunction, and an `is<X>Fact` predicate), and the predicate's key list must be
+  copied from the record in `BridgeProtocolModels.cs` - guessing it makes `hasExactKeys` reject the Mod's
+  own payload and the bridge closes with `invalid_snapshot:<field>`, which reads like a transport fault.
+* `executeFresh` refuses when the client's cached snapshot is newer than the one being bound. That is a
+  transient - the world moving between an observe and its execute is normal - and two runners lost a run
+  to it. The harness now also exports `executeFreshAfterReobserve`, which re-observes and re-sends, bounded.
+  The existing helper is untouched, so no other runner changed behaviour.
+* Two runners demanded DISPATCH evidence (the totem slot, the stack pair, `native_use_started`) from the
+  SHARED arrival terminal, which only describes the arrival. Each fact is now asserted on the receipt that
+  carries it. Their offline fakes carried the same wrong assumption, which is why the tests stayed green.
+
+### Runner timing, learned again
+
+The second activation in the warp-totem runner was sent while the actor was still finishing the warp, so
+admission answered `player_not_actionable` - true, but not the clause under test. The negative phase now
+waits for an actionable actor first. The same class of fix as `dismiss_modal`, `ride_bus` and `enter_exit`:
+a request whose native work resolves immediately, or whose world is mid-animation, must not be asserted
+against the wrong phase.

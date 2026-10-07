@@ -276,7 +276,7 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "mount_transport",
       "enter_mine",
       "dismiss_modal",
-      "answer_dialogue",
+        "answer_dialogue",
     ],
   );
   assert.deepEqual(

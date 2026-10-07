@@ -75,6 +75,7 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
             "select_mine_elevator_floor" => this.executions.RequestLocalSelectMineElevatorFloor(request, ledger),
             "use_obelisk" => this.executions.RequestLocalUseObelisk(request, ledger),
             "face_direction" => this.executions.RequestLocalFaceDirection(request, ledger),
+            "dismount_transport" => this.executions.RequestLocalDismountTransport(request.RequestId, request.DeadlineMs),
 
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
