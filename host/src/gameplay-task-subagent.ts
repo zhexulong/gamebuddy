@@ -31,12 +31,11 @@ import type { GameConnection } from "./game-connection.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
-export const GAMEPLAY_SUBAGENT_MODEL_CONFIG: CompanionModelConfig =
-  Object.freeze({
-    provider: "cpa-oai",
-    modelId: "gpt-5.6-luna",
-    thinkingLevel: "medium",
-  });
+export const GAMEPLAY_SUBAGENT_MODEL_CONFIG = Object.freeze({
+  provider: "cpa-oai",
+  modelId: "gpt-5.6-luna",
+  thinkingLevel: "medium",
+}) satisfies CompanionModelConfig;
 
 export type GameplayTaskResult = Readonly<{
   taskId: string;

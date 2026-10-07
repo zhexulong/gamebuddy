@@ -6,7 +6,8 @@ import test from "node:test";
 import { createContainedGameRuntime, type ContainedGameRuntimePlatform } from "./core/contained-game-runtime.js";
 import type { RoleLaunchOperation, TypedPrivateGameAuthorizationProducer, TypedPrivateGameFacts } from "./contract/game-runtime.js";
 
-const binding = Object.freeze({ guardianInstanceId: "g", guardianEpoch: 1, attemptId: "a", operationWaitBudgetMs: 1_000 });
+const armFacts: TypedPrivateGameFacts = Object.freeze({ revision: "r" });
+const binding = Object.freeze({ guardianInstanceId: "g", guardianEpoch: 1, attemptId: "a", operationWaitBudgetMs: 1_000, armFacts });
 const launchOperation = (deadlineUnixMs = Date.now() + 60_000): RoleLaunchOperation => Object.freeze({ deadlineUnixMs });
 const facts: TypedPrivateGameFacts = Object.freeze({ role: "player", revision: 1 });
 const produce: TypedPrivateGameAuthorizationProducer = (authorization) => authorization(facts);
@@ -97,7 +98,7 @@ test("expired authorization and close prevent later launch; results are redacted
 
 test("authorization is invocation-bound and binding is snapshotted", async () => {
   const log: string[] = [];
-  const mutable: { guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number } = { ...binding };
+  const mutable: { guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; armFacts: TypedPrivateGameFacts } = { ...binding };
   let saved: ((facts: TypedPrivateGameFacts) => void) | undefined;
   const runtime = createContainedGameRuntime(fakePlatform(log), mutable);
   mutable.guardianEpoch = 99;
