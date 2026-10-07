@@ -180,15 +180,24 @@ internal sealed class SleepModalProbe
         }
 
         // The native path finder is the same route the game's own villagers use;
-        // it is not input injection. hasMoved/lastTouchActionLocation then update
-        // through the ordinary movement path.
+        // it is not input injection. The coordinate overload is forbidden here:
+        // it passes isAtEndPoint and can teleport the actor while leaving a null
+        // path. A private predicate makes the constructor plan instead.
         Game1.player.controller = new PathFindController(
             Game1.player,
             farmHouse,
-            bedSpot,
-            Game1.player.FacingDirection);
+            (node, target, _location, _character) => node.x == target.X && node.y == target.Y,
+            Game1.player.FacingDirection,
+            null,
+            10000,
+            bedSpot);
         this.arrivalDispatched = true;
-        this.trace.Add($"arrival=pathfind_to_bed_tile:{bedSpot.X},{bedSpot.Y}");
+        int plannedTiles = (Game1.player.controller as PathFindController)?.pathToEndPoint?.Count ?? 0;
+        this.trace.Add(
+            $"arrival_dispatch=pathfind_to_bed_tile:{bedSpot.X},{bedSpot.Y};planned_tiles={plannedTiles};"
+                + $"location_farmers={farmHouse.farmers.Count};from={Game1.player.Tile.X},{Game1.player.Tile.Y}");
+        if (plannedTiles == 0)
+            this.trace.Add($"bed_walk_unplanned;tile={Game1.player.Tile.X},{Game1.player.Tile.Y}");
         this.monitor.Log(
             $"GameBuddy sleep-modal probe dispatched native pathfind to bed tile ({bedSpot.X},{bedSpot.Y}); "
                 + "the game owns the Sleep touch action.",
