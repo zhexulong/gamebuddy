@@ -2348,9 +2348,17 @@ receipt the runner asserted; nothing here is a mechanism-level claim.
    reported their object Given absent while only placement candidates were published. The item test now
    belongs to the placement branch alone.
 2. **An invented precondition.** `RemovesThisObject` began with `if (target.Fragility == 2) return false;`,
-   reasoning from `fragility_Indestructable`. The native `Object.performToolAction` has no such test before
-   its removal branches, and the twig branch is itself what SETS fragility to 2 (Object.cs:1184). Because a
-   registry-created `(O)294` already reports fragility 2, every twig was classified non-removable. Removed.
+   reasoning from `fragility_Indestructable`.
+   **CORRECTION, same day, from independent review:** the test that motivated that change WAS wrong, but the
+   conclusion drawn from it was too. `fragility == 2` is refused by the native code at `Object.cs:1346-1349` —
+   AFTER the twig branch (:1182) and the error-`bigCraftable` branch (:1339-1345), and BEFORE
+   `Type == "Crafting"` (:1350). I had read only :1140-1200 and asserted the guard did not exist anywhere.
+   Removing it therefore mis-classified every `Type == "Crafting" && Fragility == 2` object as removable, so
+   the action swung twelve times and reported an uncertain postcondition instead of a named refusal — a
+   regression on real saves (Mountain's brazier, the Slime Hutch's `(BC)56`, the Farm Cave's `(BC)128`). The
+   guard is restored IN THE NATIVE POSITION, and the twig stays removable because the native twig branch
+   precedes the test, which is why the twig live gate passed and still passes. The twig's own `fragility` is
+   reported as 2 at runtime (Object.cs:1184 sets it), so the fixture asserting `IsTwig()` is right.
 3. **The mailbox was sought in map data that does not contain it.** `IsMailboxTile` scanned the location's
    Buildings layer for a `Mailbox` action. The repository's own content probe over all 563 maps shows
    `Maps/Farm` declares exactly one action property (`Buildings:Message "Farm.1"` at 8,7) and the only

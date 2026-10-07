@@ -697,12 +697,17 @@ internal sealed partial class ExecutionManager
     {
         if (tool is not Axe && tool is not Pickaxe)
             return false;
-        // NOTE: there is deliberately NO `Fragility == 2` guard here. An earlier version had one,
-        // reasoning from `fragility_Indestructable`; the native `Object.performToolAction` has no such
-        // test anywhere before its removal branches, and the twig branch is itself what SETS fragility
-        // to 2 (Object.cs:1184). Because `ItemRegistry.Create("(O)294")` already yields fragility 2,
-        // that invented guard classified every twig as non-removable - the discovery then dropped it
-        // and a live runner reported its Given absent after the fixture had placed it.
+        // `fragility == 2` is refused by the native code, and the POSITION of that test matters:
+        // Object.performToolAction checks it at :1346-1349, AFTER the twig branch (:1182) and after the
+        // error-bigCraftable branch (:1339-1345), and BEFORE the `Type == "Crafting"` branch (:1350).
+        // So it is applied below, not at the top: an earlier version of this mirror placed it first,
+        // which would have refused objects the native path removes. (An intermediate version removed it
+        // entirely, reasoning from a partial read of the method - that mis-classified every
+        // `Type == "Crafting" && Fragility == 2` object as removable, so the action swung twelve times
+        // and reported an uncertain postcondition instead of a named refusal.)
+        if (target.Fragility == 2)
+            return false;
+
         if (target.Type == "Crafting" && !(tool is MeleeWeapon) && tool.isHeavyHitter())
             return true;
         if (target.IsTwig() && tool is Axe)

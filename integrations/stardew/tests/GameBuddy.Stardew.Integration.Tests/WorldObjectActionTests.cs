@@ -101,8 +101,8 @@ public sealed class WorldObjectActionTests
             registration!.FamilyId.Should().Be(family);
             registration.Kind.Should().Be(FarmhandOperationKind.Execution);
             registration.Lifecycle.Should().Be(
-                FarmhandActionLifecycle.Experimental,
-                "a new action stays off the Agent surface until its own native-local live gate passes");
+                FarmhandActionLifecycle.LiveVerified,
+                "these three passed their own native-local live gates on 2026-10-08, and that is the only thing which moves an action off the experimental surface");
             registration.Descriptor.Should().NotBeNull();
             registration.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal(arguments);
             registration.Descriptor.Postcondition.Should().Be(postcondition);

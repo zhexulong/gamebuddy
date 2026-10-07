@@ -935,6 +935,14 @@ export function isModDescriptorComplete(
     if (publishedPostconditionName(descriptor) !== "obelisk_arrived") return false;
     return true;
   }
+  if (actionId === "dismiss_modal") {
+    // No arguments at all: the exact wire shape is the EMPTY set, and the Host rejects extra or
+    // missing keys, so there is nothing to name here. The postcondition is the one the Mod mints.
+    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "modal_dismissed") return false;
+    return true;
+  }
   if (actionId === "answer_dialogue") {
     const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
     if (JSON.stringify(argumentNames) !== JSON.stringify(["responseKey"])) return false;
