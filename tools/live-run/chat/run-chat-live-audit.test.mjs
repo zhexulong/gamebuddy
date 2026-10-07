@@ -26,6 +26,7 @@ import {
   classifyStartupStderr,
   compareReloadSnapshot,
   contentFree,
+  conversationTurnBoundaryReason,
   createAuditDeploymentManifest,
   createAuditRecorder,
   evaluateProbeReply,
@@ -784,4 +785,17 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   assert.match(source, /committedCompanionDelta/);
   assert.match(source, /outcome\.committedCompanionDelta/);
   assert.doesNotMatch(source, /const committed = environment\.presentationMarkers > before/);
+});
+
+test("a conversation turn contributes a boundary reason when it is unsettled or failed", async () => {
+  // A FAILED turn is a terminal state, so an earlier version of the loop left the run reporting
+  // `collected` while one of its own conversation turns had died (`runtime_unavailable`). The run
+  // verdict must carry that fact; the per-turn state and its bounded problemCode stay in the trace.
+  assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "completed" } }), undefined);
+  assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "cancelled" } }), undefined);
+  assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "failed" } }), "conversation_turn_failed");
+  assert.equal(conversationTurnBoundaryReason({ terminal: false, projection: { turnState: "running" } }), "conversation_turn_not_terminal");
+  assert.equal(conversationTurnBoundaryReason(undefined), "conversation_turn_not_terminal");
+  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  assert.match(source, /conversationTurnBoundaryReason\(turn\)/);
 });
