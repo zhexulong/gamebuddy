@@ -125,7 +125,10 @@ public sealed class ModalAnswerDialogueTests
             LocalExecutionReceipt receipt = InvokeAnswer(manager, "req_answer_no_actor", "Yes");
 
             receipt.State.Should().Be(ExecutionState.Rejected);
-            receipt.ReasonCode.Should().Be("player_not_actionable");
+            // The SHARED admission resolves the bound actor and names that state (world_not_ready);
+            // this handler used to hardcode player_not_actionable for every identity failure, which is the
+            // reason-code reuse the review flagged.
+            receipt.ReasonCode.Should().Be("world_not_ready");
         });
     }
 
@@ -147,7 +150,10 @@ public sealed class ModalAnswerDialogueTests
             "answer_dialogue",
             new BridgeExecutionArgs { ResponseKey = responseKey },
             1,
-            5000);
+            // A LIVE deadline: the modal family now validates it through the shared admission, and an
+            // expired one is refused with `invalid_deadline` instead of being executed. Epoch-zero + 5s is in
+            // 1970, which is what these tests used to pass because the handlers ignored the field.
+            DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds());
         return manager.RequestLocalAnswerDialogue(request, manager);
     }
 

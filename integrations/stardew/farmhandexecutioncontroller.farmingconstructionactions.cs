@@ -164,7 +164,6 @@ internal sealed partial class ExecutionManager
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-        if (!IsCropTargetInRange(Game1.player, targetX, targetY))
         {
             // Out of the native interaction radius: walk in and then harvest, exactly like the
             // sibling cost actions. Refusing here taught a live Agent nothing: its only evidence

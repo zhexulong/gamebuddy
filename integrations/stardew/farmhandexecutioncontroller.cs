@@ -632,8 +632,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // eventUp clause keeps the §4.2 "and !eventUp" precondition even if the
         // WorldModel swap ever reorders the precedence.
         LocalDispositionKind disposition = ClassifyAdmissionDisposition(boundActor);
+        // The Modal profile decides whether the action may be ATTEMPTED; whether a modal is actually
+        // present is the handler business, because it names that far better (no_modal_present,
+        // modal_not_answerable, modal_not_dismissible). Refusing here on `disposition != Modal` made those
+        // codes unreachable and replaced them with the generic player_not_actionable - a diagnosis
+        // regression the modal tests caught.
+        //
+        // A cutscene is the one thing that outranks a mounted modal (WorldModel.Classify gives Modal
+        // precedence over PassOut and Transient), and the explicit eventUp clause keeps that true even if
+        // the precedence ever changes.
         bool notActionable = profile is AdmissionActionabilityProfile.Modal
-            ? disposition != LocalDispositionKind.Modal || Game1.eventUp
+            ? disposition == LocalDispositionKind.Event || Game1.eventUp
             : disposition != LocalDispositionKind.Idle;
         if (notActionable)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);

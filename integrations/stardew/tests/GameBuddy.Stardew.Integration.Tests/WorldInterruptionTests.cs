@@ -17,23 +17,49 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class WorldInterruptionTests
 {
+    /// <summary>
+    /// The pure classification, with every fact explicit. The body controller and admission both feed
+    /// `WorldModel.Classify` from `WorldModel.ReadFacts`, so pinning the ruling order HERE pins the
+    /// authority - a wrapper that fabricated one of those facts could no longer satisfy these tests.
+    /// </summary>
+    private static ActorDispositionKind Classify(
+        bool eventUp,
+        bool menuOpen,
+        int timeOfDay,
+        float stamina,
+        bool freezePaused,
+        bool usingTool,
+        bool dialogueUp = false,
+        bool eating = false,
+        string? menuType = "menu")
+    {
+        return WorldModel.Classify(
+            new ActorWorldFacts(
+                EventUp: eventUp,
+                MenuType: menuOpen ? menuType : null,
+                DialogueUp: dialogueUp,
+                TimeOfDay: timeOfDay,
+                Stamina: stamina,
+                FreezePaused: freezePaused,
+                Eating: eating,
+                UsingTool: usingTool,
+                ToolCharged: false)).Kind;
+    }
     // ---- disposition classification (WIA §4.1; ≈ Lane A ComputeDisposition) ----
 
     [Fact]
     public void Classify_EventAbsorbsEverything()
     {
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: true, menuOpen: true, timeOfDay: 2600, stamina: -20f, freezePaused: true, usingTool: true)
-            .Should().Be(StardewBodyController.LocalDispositionKind.Event,
+        Classify(eventUp: true, menuOpen: true, timeOfDay: 2600, stamina: -20f, freezePaused: true, usingTool: true)
+            .Should().Be(ActorDispositionKind.Event,
                 "a cutscene absorbs the actor and outranks every lower lock");
     }
 
     [Fact]
     public void Classify_ModalWinsOverPassOutAndTransient()
     {
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: false, menuOpen: true, timeOfDay: 2600, stamina: -20f, freezePaused: true, usingTool: true)
-            .Should().Be(StardewBodyController.LocalDispositionKind.Modal,
+        Classify(eventUp: false, menuOpen: true, timeOfDay: 2600, stamina: -20f, freezePaused: true, usingTool: true)
+            .Should().Be(ActorDispositionKind.Modal,
                 "an open modal outranks an imminent pass-out: the player is still deciding, e.g. at the ReadyCheck");
     }
 
@@ -42,17 +68,15 @@ public sealed class WorldInterruptionTests
     {
         // startToPassOut() arms freezePause=7000 (WIA §2-6), so counting the faint
         // as "transient" would hide the terminal behind the pass-out animation.
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: false, menuOpen: false, timeOfDay: 2500, stamina: -15f, freezePaused: true, usingTool: false)
-            .Should().Be(StardewBodyController.LocalDispositionKind.PassOut);
+        Classify(eventUp: false, menuOpen: false, timeOfDay: 2500, stamina: -15f, freezePaused: true, usingTool: false)
+            .Should().Be(ActorDispositionKind.PassOut);
     }
 
     [Fact]
     public void Classify_TimeOfDay2600IsPassOut_WithFullStamina()
     {
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: false, menuOpen: false, timeOfDay: 2600, stamina: 200f, freezePaused: false, usingTool: false)
-            .Should().Be(StardewBodyController.LocalDispositionKind.PassOut,
+        Classify(eventUp: false, menuOpen: false, timeOfDay: 2600, stamina: 200f, freezePaused: false, usingTool: false)
+            .Should().Be(ActorDispositionKind.PassOut,
                 "the forced cross-day pass-out is a world fact regardless of stamina");
     }
 
@@ -61,18 +85,16 @@ public sealed class WorldInterruptionTests
     [InlineData(false, true)]
     public void Classify_FreezePauseAndToolAnimationAreTransient(bool freezePaused, bool usingTool)
     {
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: false, menuOpen: false, timeOfDay: 1200, stamina: 200f, freezePaused: freezePaused, usingTool: usingTool)
-            .Should().Be(StardewBodyController.LocalDispositionKind.Transient,
+        Classify(eventUp: false, menuOpen: false, timeOfDay: 1200, stamina: 200f, freezePaused: freezePaused, usingTool: usingTool)
+            .Should().Be(ActorDispositionKind.Transient,
                 "a short-lived body lock is transient, not a terminal");
     }
 
     [Fact]
     public void Classify_PlainFrameIsIdle()
     {
-        StardewBodyController.ClassifyLocalDisposition(
-            eventUp: false, menuOpen: false, timeOfDay: 1200, stamina: 200f, freezePaused: false, usingTool: false)
-            .Should().Be(StardewBodyController.LocalDispositionKind.Idle);
+        Classify(eventUp: false, menuOpen: false, timeOfDay: 1200, stamina: 200f, freezePaused: false, usingTool: false)
+            .Should().Be(ActorDispositionKind.Idle);
     }
 
     // ---- transient window (WIA §4.4) -----------------------------------------

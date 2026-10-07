@@ -108,7 +108,9 @@ public sealed class ModalDismissActionTests
             manager.SetTestActorResolver(() => null);
 
             InvokeDismiss(manager, "req_dismiss_absent")
-                .ReasonCode.Should().Be("player_not_actionable");
+                // Same as the answer path: admission owns identity, and its code names the state.
+                .ReasonCode.Should().Be("world_not_ready",
+                    "admission resolves the bound actor and names that state; the handler no longer hardcodes player_not_actionable for identity failures");
         });
     }
 
@@ -133,7 +135,10 @@ public sealed class ModalDismissActionTests
             "dismiss_modal",
             new BridgeExecutionArgs(),
             1,
-            5000);
+            // A LIVE deadline: the modal family now validates it through the shared admission, and an
+            // expired one is refused with `invalid_deadline` instead of being executed. Epoch-zero + 5s is in
+            // 1970, which is what these tests used to pass because the handlers ignored the field.
+            DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds());
         return manager.RequestLocalDismissModal(request, manager);
     }
 

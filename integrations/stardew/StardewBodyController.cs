@@ -84,7 +84,12 @@ internal sealed class StardewBodyController
             return false;
         }
 
-        if (!localPlayer.CanMove || Game1.activeClickableMenu is not null || Game1.eventUp)
+        // The body-environment ruling comes from the SHARED authority, not from a third copy of it: this
+// used to be `!CanMove || menu != null || eventUp`, which agreed with admission only by accident and
+// could not say WHY the actor is held. Reading the disposition makes movement and admission decide
+// the same way, and the refusal below can then name the holder.
+LocalDispositionKind movementDisposition = ClassifyLocalDisposition(localPlayer);
+if (movementDisposition != LocalDispositionKind.Idle)
         {
             reasonCode = "player_not_actionable";
             evidence = $"can_move={localPlayer.CanMove.ToString().ToLowerInvariant()};menu={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()};event_up={Game1.eventUp.ToString().ToLowerInvariant()}";
@@ -265,13 +270,7 @@ internal sealed class StardewBodyController
         // equivalent of Lane A's WorldModel.ComputeDisposition (wia-contract
          // frozen type), computed here through the shared WorldModel.Classify
          // authority; no local disposition precedence is maintained in this loop.
-        LocalDispositionKind disposition = ClassifyLocalDisposition(
-            Game1.eventUp,
-            Game1.activeClickableMenu is not null,
-            Game1.timeOfDay,
-            localPlayer.Stamina,
-            localPlayer.freezePause > 0,
-            localPlayer.UsingTool);
+        LocalDispositionKind disposition = ClassifyLocalDisposition(localPlayer);
 
         switch (disposition)
         {
@@ -1068,21 +1067,16 @@ internal sealed class StardewBodyController
     /// The disposition precedence, delegated to the single authority
     /// (<see cref="WorldModel.Classify"/>).
     /// </summary>
-    internal static LocalDispositionKind ClassifyLocalDisposition(
-        bool eventUp, bool menuOpen, int timeOfDay, float stamina, bool freezePaused, bool usingTool)
+    /// <summary>
+    /// The body's disposition, read from the SAME facts admission reads. An earlier version delegated
+    /// the CLASSIFICATION to <see cref="WorldModel.Classify"/> but pinned two facts to false
+    /// (`DialogueUp`, `Eating`) because its caller took loose flags - so a dialogue that outlived its
+    /// menu, which is the window <see cref="WorldModel"/> documents, classified as Idle here while
+    /// admission saw Modal. Reading the facts removes that divergence at its source.
+    /// </summary>
+    internal static LocalDispositionKind ClassifyLocalDisposition(Farmer actor)
     {
-        ActorDisposition disposition = WorldModel.Classify(
-            new ActorWorldFacts(
-                EventUp: eventUp,
-                MenuType: menuOpen ? "menu" : null,
-                DialogueUp: false,
-                TimeOfDay: timeOfDay,
-                Stamina: stamina,
-                FreezePaused: freezePaused,
-                Eating: false,
-                UsingTool: usingTool,
-                ToolCharged: false));
-        return disposition.Kind switch
+        LocalDispositionKind disposition = WorldModel.Classify(WorldModel.ReadFacts(actor)).Kind switch
         {
             ActorDispositionKind.Event => LocalDispositionKind.Event,
             ActorDispositionKind.Modal => LocalDispositionKind.Modal,
@@ -1090,6 +1084,11 @@ internal sealed class StardewBodyController
             ActorDispositionKind.Transient => LocalDispositionKind.Transient,
             _ => LocalDispositionKind.Idle,
         };
+        // Any remaining movement lock (knockback, warp transition, an animation the facts cannot name)
+        // stays non-Idle exactly as the pre-convergence !CanMove check decided.
+        if (disposition == LocalDispositionKind.Idle && !actor.CanMove)
+            return LocalDispositionKind.Transient;
+        return disposition;
     }
 
     /// <summary>
