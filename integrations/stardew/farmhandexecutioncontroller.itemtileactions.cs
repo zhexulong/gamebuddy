@@ -151,6 +151,9 @@ internal sealed partial class ExecutionManager
     /// so the actor always stands beside it rather than on it.
     /// </summary>
     internal const int PanNativeReachTiles = 2;
+    /// <summary>The claim own reach, used by BOTH the discovery filter and the execution check so a published
+    /// mailbox is one a claim will accept.</summary>
+    internal const int MailboxClaimReachTiles = 1;
 
     /// <summary>
     /// The warp-totem id -> destination mapping, read out of `Object.totemWarpForReal`'s
@@ -431,7 +434,10 @@ internal sealed partial class ExecutionManager
         BridgePanSiteTarget? site = ReadLivePanSite(location);
         if (site is null)
             return Array.Empty<BridgePanSiteTarget>();
-        if (!IsTileWithinChebyshevRadius(player, site.X, site.Y, TargetDiscoveryRadius))
+        // The publish radius IS the execution radius (PanNativeReachTiles, the native accept window
+        // Pan.beginUsing enforces). A wider radius would advertise a site the same request then refuses
+        // with pan_site_out_of_range, which tells the Agent about a target it could never have used.
+        if (!IsTileWithinChebyshevRadius(player, site.X, site.Y, PanNativeReachTiles))
             return Array.Empty<BridgePanSiteTarget>();
         return new[] { site };
     }
@@ -632,7 +638,9 @@ internal sealed partial class ExecutionManager
             {
                 if (!IsMailboxTile(location, x, y))
                     continue;
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius))
+                // Publish radius = execution radius (the claim requires Chebyshev 1), so a mailbox the
+                // Agent can see in the list is one the claim will accept from where it is standing.
+                if (!IsTileWithinChebyshevRadius(player, x, y, MailboxClaimReachTiles))
                     continue;
                 result.Add(new BridgeMailboxTarget(
                     BuildMailboxTargetId(location, x, y, pending, head),
@@ -716,7 +724,7 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, MailboxClaimReachTiles))
             return this.RememberTerminal(
                 requestId,
                 executionId,
