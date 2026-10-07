@@ -63,6 +63,10 @@ type FixtureOptions = Readonly<{
     entries: readonly Readonly<{ scope: "companion" | "setting"; publicTitle: string; summary: string }>[];
     selectedRevision?: number;
   }>;
+  /** The companion's OWN world book, as production binds it: a native binding whose metadata is read from
+   * the very file the runtime will read (no `source` field, which is what distinguishes it from a managed
+   * World Info binding). This is the path `createManifestDerivedInitialChatExactContentPort` takes. */
+  ownWorldBookPath?: string;
 }>;
 
 async function fixture(options: FixtureOptions = {}) {
@@ -89,6 +93,30 @@ async function fixture(options: FixtureOptions = {}) {
       options.worldInfo.publicTitle,
       options.worldInfo.selectedRevision ?? created.revision,
     );
+  } else if (options.ownWorldBookPath !== undefined) {
+    const { copyFile } = await import("node:fs/promises");
+    const { readWorldBook, worldBookMetadata } = await import("../worldbook.js");
+    const { identityKey } = await import("../runtime-identity.js");
+    // The RUNTIME CWD, not the root: `runtime-identity.ts:107` puts the cwd at
+    // `<root>/contexts/<identityKey(identity)>`, provisioning writes the book there
+    // (`new-companion-service.ts:202`), and construction reads it there
+    // (`continuity-semantic-chat-runtime-construction.internal.ts:306`). Writing it to the root instead is the
+    // defect this fixture now guards against: the book was on disk, the runtime never read it, and the
+    // companion answered as if it had no book at all.
+    const runtimeCwd = join(runtimeRoot, "contexts", identityKey(principal));
+    await mkdir(runtimeCwd, { recursive: true });
+    const bookPath = join(runtimeCwd, "worldbook.json");
+    await copyFile(options.ownWorldBookPath, bookPath);
+    const book = await readWorldBook(bookPath);
+    const metadata = worldBookMetadata(book);
+    worldBookBinding = Object.freeze({
+      worldBookId: book.worldBookId,
+      revision: metadata.revision,
+      canonicalHash: metadata.canonicalHash,
+      // Required by the store's validator: a native binding carries its provenance (the reviewed card import
+      // is "reviewed-import"; omitting it fails with `invalid_tavern_worldbook_binding`).
+      provenance: "reviewed-import" as const,
+    }) as never;
   }
   const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
   const profile = Object.freeze({
@@ -317,6 +345,79 @@ test("Chat construction refuses an unreadable language preference instead of gue
     await assert.rejects(
       () => resolveCompanionLocale(value.runtimeRoot),
       /invalid_player_preference_store/u,
+    );
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+// REMOVED (diagnosing-bugs Phase 3, hypothesis (a) confirmed): the test that stood here asserted that a
+// keyword-gated entry from the companion's own world book reaches the STABLE catalog. It was red, but its
+// red was not the product's behaviour: the fixture creates the thread through
+// `createProfileAwareChatThreadCreationCapability` directly, while production creates it through
+// `createManifestDerivedInitialChatExactContentPort`, whose `createExplicit` binds the companion's own book
+// when the request carries none (`host/src/tavern/initial-chat-exact-content-port.ts:139-141`,
+// `companionOwnWorldBookBinding`). With no binding on the thread, `resolveBoundWorldBookSource` is never
+// called — a valid probe showed exactly that — so the assertion could never have been green, and removing
+// the `constant === true` filter (the other candidate) legitimately changed nothing.
+//
+// The real seam for this symptom is therefore the PRODUCTION path: thread created through that port (native
+// binding present) → construction → `resolveBoundWorldBookSource` forwards only `constant: true` entries
+// (that file's L317) → 1 of the reviewed card's 37 entries reaches the context and the other 36
+// (keyword-gated, e.g. the 大肥鱼 shyness and the two sisters) do not. The regression test belongs at that
+// seam, with the volatile/per-turn channel in scope, and must state which channel it asserts.
+
+// The seam this asserts is the PRODUCTION one: a thread carrying a NATIVE binding for the companion's own
+// world book — what `createManifestDerivedInitialChatExactContentPort` binds when the request carries none —
+// so `materializeContextForPiSession` reaches
+// `resolveBoundWorldBookSource(effectiveBinding, runtimeCwd)`. Two directions: the always-on entry (control,
+// which proves the machinery is reached at all) and a keyword-gated one (the reported symptom, where the
+// companion answered as if it had no book).
+test("Chat construction materializes the companion's own world book (always-on control + keyword-gated)", async () => {
+  const { existsSync } = await import("node:fs");
+  const { resolve: resolvePath } = await import("node:path");
+  const { readWorldBook } = await import("../worldbook.js");
+  let repoRoot: string | undefined;
+  for (const candidate of [process.cwd(), resolvePath(process.cwd(), ".."), resolvePath(process.cwd(), "..", "..")]) {
+    if (existsSync(resolvePath(candidate, "assets/tavern/presets/deepseek-chan/worldbook.json"))) {
+      repoRoot = candidate;
+      break;
+    }
+  }
+  assert.ok(repoRoot !== undefined, "the reviewed card must be findable from the test cwd");
+  const bookPath = resolvePath(repoRoot, "assets/tavern/presets/deepseek-chan/worldbook.json");
+  const book = await readWorldBook(bookPath);
+  const constantEntry = book.entries.find((entry) => entry.constant === true);
+  const keywordEntry = book.entries.find((entry) => entry.constant !== true);
+  assert.ok(constantEntry !== undefined && keywordEntry !== undefined, "the reviewed card has both kinds of entry");
+  const value = await fixture({ ownWorldBookPath: bookPath });
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    // The DESIRED channel: in "mounted" mode a binding that has not been applied yet resolves to the
+    // applied (undefined) one — that is the mount service's job, not construction's — so a fresh thread's
+    // own book is reached through the desired materialization, which is exactly where
+    // `resolveBoundWorldBookSource` runs.
+    const catalog = await prepared.materializeDesiredStableContextForPiSession("pi_session_own_book");
+    const materialized = catalog.stableSources.map((source) => source.content).join("\n");
+    assert.equal(
+      materialized.includes(constantEntry.content.slice(0, 12)),
+      true,
+      "control: the book's always-on entry reaches the materialization",
+    );
+    // A keyword-gated entry belongs to the PER-TURN channel: `deriveVolatileWorldInfoSources` exposes it as
+    // a volatile selection candidate, and Magic Context selects it when the turn's text matches its key.
+    // Asserting it on the stable channel (where the tests previously looked) asked the wrong question.
+    const volatileContent = catalog.volatileSources.map((source) => source.content).join("\n");
+    assert.equal(
+      volatileContent.includes(keywordEntry.content.slice(0, 12)),
+      true,
+      "a keyword-gated fact from the companion's own world book must become a volatile per-turn candidate",
     );
   } finally {
     await value.binding.close();
