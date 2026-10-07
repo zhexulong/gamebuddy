@@ -1416,3 +1416,96 @@ test("CompanionLoop still propagates a non-presentation drain error", async () =
   });
   await assert.rejects(() => loop.flush(), /unexpected_drain_failure/);
 });
+
+
+test("a turn whose provider stream failed resolves as error, never as a completed answer", async () => {
+  // The exact shape measured in a real ladder-6 run: the final assistant message carried
+  // `stopReason: "error"` and zero usage. Pi already classified it; this loop used to throw that away
+  // (`onRejected: () => undefined`), so the caller saw an ordinary accepted turn and the run's own verdict
+  // said the companion had chosen not to speak.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown): void => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const session = {
+    async sendUserMessage(text: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+      emit({ type: "message_start", message: { role: "assistant", content: [] } });
+      emit({ type: "message_end", message: { role: "assistant", stopReason: "error", content: [] } });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+  const loop = new CompanionLoop(session as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  } as never);
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_failed_turn",
+    eventId: "player_failed_turn",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: Date.now(),
+  });
+  assert.equal(await loop.flush(), "error");
+
+  // And the same transport classification as an abort.
+  const aborting = {
+    ...session,
+    async sendUserMessage(text: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+      emit({ type: "message_start", message: { role: "assistant", content: [] } });
+      emit({ type: "message_end", message: { role: "assistant", stopReason: "aborted", content: [] } });
+      emit({ type: "agent_settled" });
+    },
+  };
+  const abortingLoop = new CompanionLoop(aborting as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  } as never);
+  abortingLoop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_aborted_turn",
+    eventId: "player_aborted_turn",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: Date.now(),
+  });
+  assert.equal(await abortingLoop.flush(), "aborted");
+
+  // A turn that answered normally is still `completed`: the outcome must not turn every reply into a failure.
+  const answering = {
+    ...session,
+    async sendUserMessage(text: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+      emit({ type: "message_start", message: { role: "assistant", content: [] } });
+      emit({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "我在这儿。" }] } });
+      emit({ type: "agent_settled" });
+    },
+  };
+  const answeringLoop = new CompanionLoop(answering as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  } as never);
+  answeringLoop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_answered_turn",
+    eventId: "player_answered_turn",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: Date.now(),
+  });
+  assert.equal(await answeringLoop.flush(), "completed");
+});

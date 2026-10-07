@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresenter } from "./companion-loop.js";
-import type { WorldFact } from "./event-pump.js";
+import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import type {
   CompanionTextPort,
@@ -15,8 +15,7 @@ import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
-/** Frozen disposition singletons: one shared value, never a fresh object per call. */
-const ACCEPTED_PLAYER_INPUT: PlayerInputDisposition = Object.freeze({ accepted: true } as const);
+/** Frozen refusal singletons: one shared value, never a fresh object per call. */
 const REFUSED_PLAYER_INPUT = Object.freeze({
   session_closed: Object.freeze({ accepted: false, reasonCode: "player_input_session_closed" }),
   integration_unavailable: Object.freeze({ accepted: false, reasonCode: "player_input_integration_unavailable" }),
@@ -60,12 +59,15 @@ export type PlayerInputRefusalCode =
 
 /**
  * Admission outcome of one player message. `accepted` means ENQUEUED for
- * delivery, never "the model answered": a later transport/provider failure is
- * still reported by throwing, because then the message was admitted but not
- * delivered.
+ * delivery, and it is returned only after that delivery ran to settlement, so
+ * it also carries how the turn ENDED (`turnOutcome`). A provider/runtime failure
+ * is no longer indistinguishable from an answer: it used to be discarded at the
+ * Game loop's content observer (`onRejected`) and reached the caller as an
+ * ordinary accepted message. A later transport failure before consumption still
+ * throws, because then the message was admitted but never delivered.
  */
 export type PlayerInputDisposition =
-  | Readonly<{ accepted: true }>
+  | Readonly<{ accepted: true; turnOutcome: CompanionTurnOutcome }>
   | Readonly<{ accepted: false; reasonCode: PlayerInputRefusalCode }>;
 
 /** Source-owned settlement emitted only after exact Host/Mod STOP correlation. */
@@ -292,6 +294,12 @@ export class CompanionHostService {
   /** Voice-local note consumed by the next prompt assembly; never Chat/Game state. */
   #voiceInterruptionNote: Readonly<{ atMs: number; speechJobId: string | undefined }> | undefined;
   #flushScheduled = false;
+  /**
+   * How the most recent delivered turn ended, as reported by the loop. `accepted` player input is
+   * returned after the turn settled, so the caller can be told whether the companion actually answered;
+   * `unobserved` until a turn has been delivered (and whenever a flush had nothing to deliver).
+   */
+  #lastTurnOutcome: CompanionTurnOutcome = "unobserved";
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelayMs = 50;
   #closed = false;
@@ -393,7 +401,7 @@ export class CompanionHostService {
       timestampMs: input.timestampMs ?? Date.now(),
     });
     await this.flushSoon();
-    return ACCEPTED_PLAYER_INPUT;
+    return Object.freeze({ accepted: true, turnOutcome: this.#lastTurnOutcome });
   }
 
   /** Internal callers without authenticated ingress receive a fresh Host event id. */
@@ -881,7 +889,10 @@ export class CompanionHostService {
       // An overflow can occur after this work was scheduled. Admission is the
       // Host-owned cancellation fence for scheduled and retry flushes.
       if (!this.#closed && this.#integrationAdmissionOpen) {
-        await this.loop.flush();
+        // The loop reports how the delivered turn ended (or nothing when there was nothing to deliver).
+        // Retained so a caller that awaits player input can report it instead of guessing from silence.
+        const outcome = await this.loop.flush();
+        this.#lastTurnOutcome = outcome ?? "unobserved";
       }
       this.#retryDelayMs = 50;
     } catch (error) {

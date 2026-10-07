@@ -1,7 +1,7 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import { attachNativeCompanionContent, type NativeCompanionContentObserver } from "./native-companion-content.js";
-import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
+import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
 import { chunkCompanionSpeech } from "./companion-speech-chunker.js";
 
 export type NativeGameCompanionContent = Readonly<{
@@ -39,7 +39,7 @@ export type CompanionPiSession = Pick<AgentSession, "sendUserMessage"> &
 export class CompanionLoop {
   readonly #pump = new CompanionEventPump();
   #turnObserver: CompanionTurnObserver | undefined;
-  #inFlight: Promise<void> | undefined;
+  #inFlight: Promise<CompanionTurnOutcome> | undefined;
   #cancelQueuedDelivery: (() => void) | undefined;
   #queuedPlayerDelivery = false;
   public constructor(
@@ -104,8 +104,13 @@ export class CompanionLoop {
     await this.session.waitForIdle();
   }
 
-  public async flush(): Promise<void> {
-    await this.#pump.flush({
+  /**
+   * Flush the pending batch. Resolves with how the delivered turn ended, or `undefined` when there was
+   * nothing to deliver (or a delivery is already in flight) — callers must treat `undefined` as
+   * `unobserved`, never as success.
+   */
+  public async flush(): Promise<CompanionTurnOutcome | undefined> {
+    return await this.#pump.flush({
       deliver: async (batch, disposition) => {
         // Only the real Pi-consumed batch may activate presentation lineage.
         const parsed = JSON.parse(batch) as SerializedBatch;
@@ -114,7 +119,7 @@ export class CompanionLoop {
         const completion = this.#deliverAndObserve(batch, disposition, sourceEventId, batchId);
         this.#inFlight = completion;
         try {
-          await completion;
+          return await completion;
         } finally {
           if (this.#inFlight === completion) this.#inFlight = undefined;
         }
@@ -127,9 +132,12 @@ export class CompanionLoop {
     disposition: Exclude<DeliveryDisposition, "hold">,
     sourceEventId: string | undefined,
     batchId: string | undefined,
-  ): Promise<void> {
+  ): Promise<CompanionTurnOutcome> {
     let accepted = false;
     let settled = false;
+    // Pi's own final-message classification, which used to be thrown away here (`onRejected: () =>
+    // undefined`). It is the only thing that can tell a caller the turn FAILED rather than answered.
+    let turnOutcome: CompanionTurnOutcome | undefined;
     let beganPresentation = false;
     let beganVoice = false;
     let voiceBegin: Promise<void> | undefined;
@@ -155,13 +163,14 @@ export class CompanionLoop {
       this.#cancelQueuedDelivery = resolveCancelled;
       if (this.session.subscribe === undefined) {
         // Tests and non-production adapters without Pi's event stream retain
-        // legacy send completion semantics; they cannot mint live evidence.
+        // legacy send completion semantics; they cannot mint live evidence, and
+        // they cannot say how the turn ended either — `unobserved`, not success.
         if (sourceEventId !== undefined) {
           this.#turnObserver?.beginPlayerBatch(sourceEventId, batchId);
           beganPresentation = true;
         }
         await this.session.sendUserMessage(batch, { deliverAs: disposition === "steer" ? "steer" : "followUp" });
-        return;
+        return "unobserved";
       }
       unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
@@ -251,7 +260,12 @@ export class CompanionLoop {
                   }
                   if (lastPresentation !== undefined) nativeContentFinal = lastPresentation;
                 },
-                onRejected: () => undefined,
+                onRejected: (reason) => {
+                  // `aborted`/`error` are the transport-level endings; the remaining reasons are
+                  // content rejections (empty, tool-only, identity mismatch) that all mean the turn
+                  // produced nothing presentable — recorded as a failure, never as a quiet success.
+                  turnOutcome = reason === "aborted" || reason === "error" ? reason : "error";
+                },
               });
               nativeContentObserver.open();
               // Previews unlock the delta lane for every Game surface, not only
@@ -311,12 +325,14 @@ export class CompanionLoop {
           }
         }
         await deliveryObserved;
-        return;
+        // STOP cancelled this batch before Pi consumed it: nothing ran, so there is no turn outcome to
+        // report (and reporting `completed` here would be the same swallowed failure in a new shape).
+        return "unobserved";
       }
       await deliveryObserved;
       // An abort that clears an unstarted queued message is terminal without a
       // Pi-consumption claim. An accepted turn instead must reach Pi settlement.
-      if (!accepted) return;
+      if (!accepted) return "unobserved";
       await completed;
       if (!settled) throw new Error("pi_turn_settlement_missing");
       // The final observer callback is serialized independently of Pi's
@@ -344,6 +360,9 @@ export class CompanionLoop {
         // presentation errors still surface through the observer chain.
         if (!isSettledTailPresentationFailure(error)) throw error;
       }
+      // The turn settled. If Pi classified its final message as abort/error the outcome says so; otherwise
+      // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
+      return turnOutcome ?? "completed";
     } finally {
       if (this.#cancelQueuedDelivery === resolveCancelled) this.#cancelQueuedDelivery = undefined;
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;

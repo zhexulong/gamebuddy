@@ -312,7 +312,7 @@ test("Host service does not microtask-spin on a held snapshot after its initial 
   const originalFlush = loop.flush.bind(loop);
   loop.flush = async () => {
     flushes++;
-    await originalFlush();
+    return await originalFlush();
   };
   const service = new CompanionHostService(loop, adapter.events);
   adapter.emit(snapshot(7));
@@ -1392,7 +1392,7 @@ test("an older STOP cannot reopen admission after a newer STOP takes over", asyn
   assert.equal(interruption.capture().open, true);
   assert.deepEqual(
     await service.acceptPlayerInput({ sourceEventId: "after_latest_stop", text: "must be admitted", locale: "en-US" }),
-    { accepted: true },
+    { accepted: true, turnOutcome: "unobserved" },
   );
   assert.equal(harness.inputs.length, 1);
   service.close();
@@ -1818,4 +1818,39 @@ test("Host STOP settlement observer unsubscribe and close make subscription and 
     }),
   ]);
   assert.deepEqual(closedObserved, []);
+});
+
+
+test("accepted player input reports the turn's own outcome when the session fails", async () => {
+  // The service returns AFTER the turn settled, so it knows how it ended. Reporting only `accepted: true`
+  // told a caller that a turn whose provider stream failed had answered normally.
+  const adapter = eventHarness();
+  const loop = new CompanionLoop(reducedSession(async () => undefined) as never);
+  loop.flush = async () => "error";
+  const service = new CompanionHostService(loop, adapter.events);
+  try {
+    adapter.emit(snapshot(11));
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+    assert.deepEqual(
+      await service.acceptPlayerInput({ sourceEventId: "source_failed_turn", text: "still there?", locale: "en-US" }),
+      { accepted: true, turnOutcome: "error" },
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test("a flush that delivered nothing reports unobserved rather than a completed turn", async () => {
+  const adapter = eventHarness();
+  const loop = new CompanionLoop(reducedSession(async () => undefined) as never);
+  loop.flush = async () => undefined;
+  const service = new CompanionHostService(loop, adapter.events);
+  try {
+    assert.deepEqual(
+      await service.acceptPlayerInput({ sourceEventId: "source_unknown_turn", text: "hello", locale: "en-US" }),
+      { accepted: true, turnOutcome: "unobserved" },
+    );
+  } finally {
+    await service.close();
+  }
 });
