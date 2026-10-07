@@ -114,8 +114,16 @@ public sealed class ActionPolicyEngineTests
         withoutOptIn.Should().Contain("ride_minecart");
         enabled.Should().NotContain("non_existent_action");
         enabled.Should().NotContain("sop_composite_pipeline");
-        enabled.Should().BeEquivalentTo(withoutOptIn,
-            "with no experimental registrations the opt-in list can only ever be a no-op");
+        // The invariant is NOT that the two sets are equal — that was only true while the
+        // experimental rung happened to be empty. The invariant is that naming an id in the opt-in
+        // list grants nothing the partition does not already grant: every id it enables is an
+        // Experimental registration that the list can only ever be naming because it is experimental.
+        enabled.Should().BeEquivalentTo(
+            withoutOptIn.Concat(FarmhandActionCatalog.Registrations
+                .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
+                .Select(registration => registration.ActionId))
+                .Distinct(),
+            "the opt-in list may only add actions that are already on the experimental rung");
 
         // The promotion recorded as a pin rather than as prose. Both were promoted because WIA's
         // interrupt -> breakpoint -> continuation design DEADLOCKS an Agent that cannot answer or

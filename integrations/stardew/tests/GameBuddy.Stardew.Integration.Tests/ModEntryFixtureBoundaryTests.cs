@@ -24,6 +24,8 @@ public sealed class ModEntryFixtureBoundaryTests
     private static readonly IReadOnlySet<string> FixtureMethodWhitelist = new HashSet<string>(StringComparer.Ordinal)
     {
         "TryInitializeNativeLocalPlayerFixture", "TryBootstrapNativeLocalPlayerFixture",
+        "InitializeNativeLocalWithdrawSiloHayFixture",
+        "InstallNativeLocalUseObeliskFixture",
         "TryCompleteNativeLocalPlayerFixtureBootstrap", "TryInitializeNativeLocalPlayerFixtureScenario",
         "InitializeNativeLocalInteractNpcWithItemFixture", "InitializeNativeLocalJodiHarvestDeliverFixture",
         "InitializeNativeLocalStrawberryCovenantFixture",

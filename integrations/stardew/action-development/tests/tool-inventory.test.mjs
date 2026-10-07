@@ -21,7 +21,11 @@ function assertRejected(mutator, expected) {
 
 test("validates the checked-in inventory against supplied governed paths", () => {
   const report = validateToolInventory(inventory, { trackedPaths });
-  assert.equal(report.fileCount, 124);
+  // The inventory's own size, not the repository's tracked-tool count: this
+  // assertion only checks that entries and trackedPathBaseline agree and that
+  // every entry is classified. The real `git ls-files` comparison runs in
+  // `src/tool-inventory.mjs`'s main().
+  assert.equal(report.fileCount, 126);
   assert.equal(report.pilotLegacyClosureCount, 14);
   assert.equal(Object.values(report.countsByClassification).reduce((sum, count) => sum + count, 0), report.fileCount);
 });

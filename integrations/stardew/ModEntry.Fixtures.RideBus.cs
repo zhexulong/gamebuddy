@@ -34,13 +34,19 @@ public sealed partial class ModEntry
         if (player.Money < ticketPrice)
             throw new InvalidOperationException("fixture_native_local_ride_bus_fare_unaffordable");
 
-        // The driver must sit on the native on-duty tile, otherwise the action refuses
-        // with no_driver.
-        NPC? driver = bus.characters.FirstOrDefault(character => character is not null && character.Name == "Pam");
+        // The driver must sit on the native on-duty tile: BusStop.answerDialogue
+        // checks BOTH `characters.Contains(Pam)` and her tile (BusStop.cs:136-137),
+        // because the ticket branch refuses with BusStop_NoDriver otherwise. The
+        // template save is a FarmHouse morning, so Pam is still on her own schedule:
+        // putting her on the BusStop character list at the on-duty tile is the same
+        // world fact her afternoon schedule produces, and is disposable fixture state.
+        NPC? driver = Game1.getCharacterFromName("Pam");
         if (driver is null)
             throw new InvalidOperationException("fixture_native_local_ride_bus_driver_missing");
+        if (!bus.characters.Contains(driver))
+            bus.characters.Add(driver);
         driver.Position = new Vector2(21 * 64f, 10 * 64f);
-        if (driver.TilePoint.X != 21 || driver.TilePoint.Y != 10)
+        if (!bus.characters.Contains(driver) || driver.TilePoint.X != 21 || driver.TilePoint.Y != 10)
             throw new InvalidOperationException("fixture_native_local_ride_bus_driver_not_on_duty");
 
         if (!TryFindBusTicketMachine(bus, out int ticketX, out int ticketY))

@@ -320,6 +320,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     public long Revision => this.revision;
 
     /// <summary>Game-thread truth used only for typed post-STOP observation publication.</summary>
+    /// <summary>
+    /// Whether one embodied actor is free. This is the same ownership set the admission path refuses
+    /// on (see the body_owned chain below), because a body the admission path calls busy must never
+    /// be reported as settled: ModEntry.cs:1970 uses this to decide whether a STOP "body settled"
+    /// event may be published, and claiming settled during a mount, a bus ride or an owned overnight
+    /// would tell the Host the actor is idle while an execution still owns it.
+    /// </summary>
     public bool IsBodySettled => this.active is null
         && this.activeTravel is null
         && this.activePet is null
@@ -328,6 +335,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         && this.activeItemPickup is null
         && this.activeToolApproach is null
         && this.activeNavigate is null
+        && this.activeMountTransport is null
+        && this.activeBusRide is null
+        && this.activeDayAdvance is null
+        && this.activePedestalTaking is null
         && !this.controller.HasActiveExecution;
 
     public long CurrentRevision => this.revision;
@@ -637,6 +648,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // through this path: two executions owning one body. Each of those actions
             // checked only its own slot inline, so nothing caught the overlap.
             || this.activeMountTransport is not null || this.activeBusRide is not null
+            // activeNavigate is added for the same reason those three were: a navigation in
+            // AwaitingWarp has released active/activeTravel but still owns the body, and
+            // IsBodySettled counts it. This chain and IsBodySettled now cover the SAME ownership
+            // set — keep them that way, because they answer the same question and a divergence means
+            // one of them is lying: this one refuses an action, that one tells the Host the actor is
+            // idle. (An earlier version of this comment claimed four slots were missing from THIS
+            // list; they were not, and the real gap was the other way round.)
+            || this.activeNavigate is not null
             || this.activeDayAdvance is not null || this.controller.HasActiveExecution))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
 
@@ -1820,7 +1839,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("clear_cask", StringComparer.Ordinal) ? DiscoverCaskTargets(player) : null,
             advertisedCapabilities.Contains("dress_mannequin", StringComparer.Ordinal) ? DiscoverMannequinTargets(player) : null,
             advertisedCapabilities.Contains("set_sign_display", StringComparer.Ordinal) ? DiscoverSignTargets(player) : null,
-            advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) ? DiscoverSiloTargets(player) : null,
+            advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) || advertisedCapabilities.Contains("withdraw_silo_hay", StringComparer.Ordinal) ? DiscoverSiloTargets(player) : null,
             advertisedCapabilities.Contains("toggle_tool_light", StringComparer.Ordinal) ? DiscoverLanternSlots(player) : null,
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
@@ -1864,7 +1883,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             PresentationLocale: string.Empty,
             RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
             HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null);
+            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
+            // Last parameter, defaulted, so it can be named here without disturbing the
+            // positional arguments above it (CS1744 if the declaration moves earlier).
+            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null);
     }
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
@@ -1883,7 +1905,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, ChestStoreTargets: null, ChestRetrieveTargets: null, InventoryItemFacts: null, FoodTargets: null,
-        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
+        ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
         // admission rejects with world_not_ready, so no consumer plans from this.

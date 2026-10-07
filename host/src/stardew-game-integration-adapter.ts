@@ -226,6 +226,53 @@ function hasStardewCompletionEvidence(
             e.after === e.expected,
         )
       );
+    case "withdraw_silo_hay":
+      // Evidence literal: farmhandexecutioncontroller.silohaywithdrawactions.cs:96 —
+      // target;item;silo_hay_before;silo_hay_after;silo_hay_decreased;carried_before;
+      // carried_after;carried_hay_increased;inventory_inserted.
+      // The transfer is two-sided, so the rule requires BOTH halves to be visible in the receipt and
+      // not merely implied by the terminal code.
+      return (
+        receipt.reasonCode === "silo_hay_taken" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "item",
+            "silo_hay_before",
+            "silo_hay_after",
+            "silo_hay_decreased",
+            "carried_before",
+            "carried_after",
+            "carried_hay_increased",
+            "inventory_inserted",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.item === "(O)178" &&
+            decremented(e.silo_hay_before, e.silo_hay_after) &&
+            e.silo_hay_decreased === "true" &&
+            incremented(e.carried_before, e.carried_after) &&
+            e.carried_hay_increased === "true" &&
+            e.inventory_inserted === "true",
+        )
+      );
+    case "use_obelisk":
+      // The arrival is minted by the shared travel path (movementactions.cs), whose evidence is the
+      // expected/actual destination pair. The tile is deliberately absent: the native layout chooses
+      // the landing tile, so only the location can be asserted — the same rule the sibling
+      // enter_mine / select_mine_elevator_floor terminals use.
+      return (
+        receipt.reasonCode === "obelisk_arrived" &&
+        exactEvidence(
+          detail,
+          ["expected", "actual"],
+          (e) =>
+            hasOpaqueEvidenceValue(e.expected) &&
+            hasOpaqueEvidenceValue(e.actual) &&
+            e.expected.split(":")[0] === e.actual.split(":")[0],
+        )
+      );
     case "till_soil":
       return (
         receipt.reasonCode === "soil_tilled" &&
@@ -403,6 +450,16 @@ function decremented(
   const left = integerEvidenceValue(before);
   const right = integerEvidenceValue(after);
   return left !== null && right !== null && right === left - 1;
+}
+
+/** The exact +1 counterpart of `decremented`, for a transfer's receiving side. */
+function incremented(
+  before: string | undefined,
+  after: string | undefined,
+): boolean {
+  const left = integerEvidenceValue(before);
+  const right = integerEvidenceValue(after);
+  return left !== null && right !== null && right === left + 1;
 }
 
 function hasNavigationCompletionEvidence(detail: string): boolean {

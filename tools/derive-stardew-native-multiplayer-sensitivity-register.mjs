@@ -512,6 +512,18 @@ const TABLE = {
     "mp-insensitive",
     "writes piecesOfHay on the shared farm; the body reads no multiplayer token",
   ],
+  withdraw_silo_hay: [
+    "StardewValley/GameLocation.cs",
+    "public static Object GetHayFromAnySilo(GameLocation currentLocation)",
+    "mp-insensitive",
+    "decrements piecesOfHay on the shared farm and mints the hay object without inserting it; the body reads no multiplayer token",
+  ],
+  use_obelisk: [
+    "StardewValley.Buildings/Building.cs",
+    "public static void PerformObeliskWarp(string destination, int warp_x, int warp_y, bool force_dismount, Farmer who)",
+    "mp-insensitive",
+    "warps the local player to a fixed destination via obeliskWarpForReal, which also force-dismounts; warping is per-actor and the body reads no multiplayer token",
+  ],
   toggle_tool_light: [
     "StardewValley.Tools/Lantern.cs",
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",

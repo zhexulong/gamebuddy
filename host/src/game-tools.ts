@@ -527,6 +527,19 @@ export function buildCandidateToolSchema(
     );
   }
 
+  if (actionId === "withdraw_silo_hay" || actionId === "use_obelisk") {
+    // Same shape as ride_minecart: the tile plus the opaque target from the most
+    // recent observation, both copied verbatim.
+    return Type.Object(
+      {
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+      },
+      { additionalProperties: false },
+    );
+  }
+
   throw new Error(`Unsupported candidate action: ${actionId}`);
 }
 
@@ -1545,6 +1558,50 @@ export function createStardewActionTools(
             "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
           parameters: schema,
           action: "ride_bus",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "withdraw_silo_hay",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("withdraw_silo_hay", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("withdraw_silo_hay", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.withdraw_silo_hay,
+          label: "Take hay from a silo",
+          description:
+            "Withdraw one hay from a discovered silo. Stand within reach of the silo first. The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
+          parameters: schema,
+          action: "withdraw_silo_hay",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "use_obelisk",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("use_obelisk", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("use_obelisk", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.use_obelisk,
+          label: "Use a warp obelisk",
+          description:
+            "Activate a discovered warp obelisk. Stand within reach of it first. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
+          parameters: schema,
+          action: "use_obelisk",
           toArgs: () => ({}),
         }),
       );

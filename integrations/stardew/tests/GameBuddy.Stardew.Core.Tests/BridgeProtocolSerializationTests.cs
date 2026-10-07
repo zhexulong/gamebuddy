@@ -173,7 +173,10 @@ public sealed class BridgeProtocolSerializationTests
     [Fact]
     public void AdmissionChallenge_RejectsOversizedFrame()
     {
-        var wire = AdmissionEnvelope().Payload with { CanonicalBoundArgs = Enumerable.Range(0, 32).ToDictionary(i => "arg_" + i, _ => new BodyNodeAdmissionCanonicalValueWire("string", new string('x', 1024))) };
+        // Sized from the live constant, not from a literal: the previous 32 x 1024 sat exactly on
+        // the old 32 KiB bound, so the test silently stopped testing anything when the bound moved.
+        int argChars = BridgeProtocol.MaximumMessageBytes / 24;
+        var wire = AdmissionEnvelope().Payload with { CanonicalBoundArgs = Enumerable.Range(0, 32).ToDictionary(i => "arg_" + i, _ => new BodyNodeAdmissionCanonicalValueWire("string", new string('x', argChars))) };
         var envelope = AdmissionEnvelope() with { Payload = wire };
         BridgeProtocol.TrySerialize(envelope, out _, out string reason).Should().BeFalse();
         reason.Should().Be("message_too_large");

@@ -1,0 +1,3506 @@
+{
+  "schema": "gamebuddy-stardew-action-source-projection/v1",
+  "developmentOnly": true,
+  "gameId": "stardew",
+  "sources": [
+    {
+      "category": "canonical_action_surface",
+      "path": "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"
+    },
+    {
+      "category": "mod_bridge_session",
+      "path": "integrations/stardew/BridgeSession.cs"
+    },
+    {
+      "category": "mod_execution_controller",
+      "path": "integrations/stardew/farmhandexecutioncontroller.cs"
+    },
+    {
+      "category": "mod_router",
+      "path": "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"
+    },
+    {
+      "category": "mod_handler_farming",
+      "path": "integrations/stardew/Handlers/FarmingActionHandler.cs"
+    },
+    {
+      "category": "mod_handler_gathering",
+      "path": "integrations/stardew/Handlers/GatheringActionHandler.cs"
+    },
+    {
+      "category": "mod_handler_movement",
+      "path": "integrations/stardew/Handlers/MovementActionHandler.cs"
+    },
+    {
+      "category": "mod_handler_machines_animals",
+      "path": "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"
+    },
+    {
+      "category": "mod_handler_resource_tools",
+      "path": "integrations/stardew/Handlers/ResourceToolActionHandler.cs"
+    },
+    {
+      "category": "host_registry",
+      "path": "host/src/action-registry.ts"
+    },
+    {
+      "category": "host_game_tools",
+      "path": "host/src/game-tools.ts"
+    },
+    {
+      "category": "host_protocol",
+      "path": "host/src/protocol.ts"
+    },
+    {
+      "category": "protocol_schema",
+      "path": "protocol/bridge-v1.schema.json"
+    },
+    {
+      "category": "gate_descriptors",
+      "path": "tools/stardew-action-gate-descriptors.mjs"
+    },
+    {
+      "category": "runner_sources",
+      "path": "tools"
+    }
+  ],
+  "mod": {
+    "registrations": [
+      {
+        "actionId": "move_to_tile",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "move_to_tile",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "equip_tool",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "equip_tool",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "tool": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "travel",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "travel",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "ride_minecart",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "ride_minecart",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "minecart_ride_completed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "use_raft",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "use_raft",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "raft_launched"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "mount_transport",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "mount_transport",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "horse_mounted"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "enter_mine",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "enter_mine",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "mine_entered"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "enter_exit",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "enter_exit",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "till_soil",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "till_soil",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "pickup_forage",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "pickup_forage",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "pickup_item",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "pickup_item",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "water_crop",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "water_crop",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "plant_seed",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "plant_seed",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "fertilize_tile",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "fertilize_tile",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "machine_inspect",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "machine_inspect",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {
+            "machine_target_id": "string"
+          },
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "read",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "machine_load",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "machine_load",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "machine_collect_output",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "machine_collect_output",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "collect_animal_product",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "collect_animal_product",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "feed_animal",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "feed_animal",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "use_item",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "use_item",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "harvest_crop",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "harvest_crop",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "place_wood_fence",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "place_wood_fence",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "place_crab_pot",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "place_crab_pot",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "bait_crab_pot",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "bait_crab_pot",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chop_tree_source",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chop_tree_source",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "break_rock_source",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "break_rock_source",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_hoedirt",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_hoedirt",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "dig_artifact_spot",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "dig_artifact_spot",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "refill_watering_can",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "refill_watering_can",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "inspect_world_map",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "descriptor": {
+          "actionId": "inspect_world_map",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "read_only",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": []
+          },
+          "effect": "read",
+          "postcondition": {
+            "name": "observation_complete"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "find_destination",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "descriptor": {
+          "actionId": "find_destination",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "read_only",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": []
+          },
+          "effect": "read",
+          "postcondition": {
+            "name": "observation_complete"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "observe_scene",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only",
+        "descriptor": {
+          "actionId": "observe_scene",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "read_only",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": []
+          },
+          "effect": "read",
+          "postcondition": {
+            "name": "observation_complete"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "navigate_to_destination",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "navigate_to_destination",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "destination": {
+              "type": "destination_selector"
+            }
+          },
+          "outputFacts": {
+            "arrival": "destination_arrival"
+          },
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "arrived_at_destination"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_debris",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_debris",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "npc_relationship",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "npc_relationship",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "pet_animal",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "pet_animal",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "water_pet_bowl",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "water_pet_bowl",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "water_slime_hutch_trough",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "water_slime_hutch_trough",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "interact_npc_with_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "interact_npc_with_item",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "express_emote",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "express_emote",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "emote": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "emote_started"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "face_direction",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "face_direction",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "direction": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "actor_facing_matches"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chest_store",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chest_store",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chest_retrieve",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chest_retrieve",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "chop_stump",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "chop_stump",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "plant_sapling",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "plant_sapling",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "cut_weeds",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "cut_weeds",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "cut_grass",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "cut_grass",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_cask",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_cask",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "cask_cleared"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "dress_mannequin",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "dress_mannequin",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "mannequin_dressed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "set_sign_display",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "set_sign_display",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "sign_display_set"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "deposit_silo_hay",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "deposit_silo_hay",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "silo_hay_deposited"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "toggle_tool_light",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "toggle_tool_light",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "tool_light_toggled"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "scythe_crop",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "scythe_crop",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "harvest_bush",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "harvest_bush",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "harvest_fruit_tree",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "harvest_fruit_tree",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "shake_tree",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "shake_tree",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "take_pedestal_item",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "take_pedestal_item",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "toggle_fence_gate",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "toggle_fence_gate",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "craft_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "craft_item",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "cook_recipe",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "cook_recipe",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "collect_crab_pot_output",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "collect_crab_pot_output",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "ship_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "ship_item",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "dismiss_modal",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "dismiss_modal",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "modal_dismissed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "answer_dialogue",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "answer_dialogue",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "responseKey": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "answer_dialogue_answered"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "advance_day",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "advance_day",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "day_advanced"
+          }
+        },
+        "handlerGroup": null
+      }
+    ],
+    "publishedExecutionActionIds": [
+      "move_to_tile",
+      "equip_tool",
+      "travel",
+      "ride_minecart",
+      "enter_exit",
+      "till_soil",
+      "pickup_forage",
+      "pickup_item",
+      "water_crop",
+      "plant_seed",
+      "fertilize_tile",
+      "machine_inspect",
+      "machine_load",
+      "machine_collect_output",
+      "collect_animal_product",
+      "feed_animal",
+      "use_item",
+      "harvest_crop",
+      "place_wood_fence",
+      "place_crab_pot",
+      "bait_crab_pot",
+      "chop_tree_source",
+      "break_rock_source",
+      "clear_hoedirt",
+      "dig_artifact_spot",
+      "refill_watering_can",
+      "navigate_to_destination",
+      "clear_debris",
+      "npc_relationship",
+      "pet_animal",
+      "water_pet_bowl",
+      "water_slime_hutch_trough",
+      "interact_npc_with_item",
+      "express_emote",
+      "face_direction",
+      "chest_store",
+      "chest_retrieve",
+      "chop_stump",
+      "plant_sapling",
+      "cut_weeds",
+      "scythe_crop",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "ship_item",
+      "advance_day"
+    ],
+    "executableActionIds": [
+      "move_to_tile",
+      "equip_tool",
+      "travel",
+      "ride_minecart",
+      "enter_exit",
+      "till_soil",
+      "pickup_forage",
+      "pickup_item",
+      "water_crop",
+      "plant_seed",
+      "fertilize_tile",
+      "machine_inspect",
+      "machine_load",
+      "machine_collect_output",
+      "collect_animal_product",
+      "feed_animal",
+      "use_item",
+      "harvest_crop",
+      "place_wood_fence",
+      "place_crab_pot",
+      "bait_crab_pot",
+      "chop_tree_source",
+      "break_rock_source",
+      "clear_hoedirt",
+      "dig_artifact_spot",
+      "refill_watering_can",
+      "navigate_to_destination",
+      "clear_debris",
+      "npc_relationship",
+      "pet_animal",
+      "water_pet_bowl",
+      "water_slime_hutch_trough",
+      "interact_npc_with_item",
+      "express_emote",
+      "face_direction",
+      "chest_store",
+      "chest_retrieve",
+      "chop_stump",
+      "plant_sapling",
+      "cut_weeds",
+      "scythe_crop",
+      "craft_item",
+      "cook_recipe",
+      "collect_crab_pot_output",
+      "ship_item",
+      "advance_day"
+    ],
+    "readOnlyActionIds": [
+      "inspect_world_map",
+      "find_destination",
+      "observe_scene"
+    ],
+    "experimentalActionIds": [
+      "use_raft",
+      "mount_transport",
+      "enter_mine",
+      "cut_grass",
+      "clear_cask",
+      "dress_mannequin",
+      "set_sign_display",
+      "deposit_silo_hay",
+      "toggle_tool_light",
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
+      "dismiss_modal",
+      "answer_dialogue"
+    ],
+    "helloAdvertisement": "catalog_projection",
+    "capabilityProvenance": {
+      "snapshotCapabilitiesFromCapabilitySet": true,
+      "worldNotReadyFallback": true
+    }
+  },
+  "host": {
+    "adapterActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "enter_exit",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "ship_item",
+      "till_soil",
+      "travel",
+      "use_item",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "toolActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "toolRouteActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "requestValidatorActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "envelopeValidatorActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "executionRequestUnionActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "bridgeMessageTypes": [
+      "hello",
+      "hello_ack",
+      "observe_request",
+      "navigation_read_request",
+      "navigation_read_result",
+      "observe_scene_request",
+      "observe_scene_result",
+      "snapshot",
+      "catalog_update",
+      "execution_request",
+      "body_node_admission_challenge",
+      "body_node_admission_grant",
+      "body_node_admission_result",
+      "execution_receipt_query",
+      "cancel_request",
+      "companion_presentation_request",
+      "system_notice_request",
+      "system_notice_receipt",
+      "companion_presentation_receipt",
+      "player_control_receipt",
+      "execution_receipt",
+      "program_submit",
+      "program_submit_result",
+      "program_status",
+      "program_status_result",
+      "program_events",
+      "program_events_result",
+      "error",
+      "semantic_event",
+      "lifecycle",
+      "world_fact"
+    ],
+    "semanticEventKinds": [
+      "body_idle",
+      "body_settled",
+      "connection_state",
+      "execution_invalidated",
+      "execution_settled_cancelled",
+      "execution_settled_failed",
+      "execution_settled_succeeded",
+      "execution_started",
+      "execution_state",
+      "lifecycle",
+      "player_input",
+      "route_progress",
+      "snapshot_changed",
+      "stop_all"
+    ]
+  },
+  "protocol": {
+    "schemaMessageTypes": [
+      "hello",
+      "hello_ack",
+      "observe_request",
+      "observe_scene_request",
+      "observe_scene_result",
+      "navigation_read_request",
+      "navigation_read_result",
+      "snapshot",
+      "catalog_update",
+      "execution_request",
+      "body_node_admission_challenge",
+      "body_node_admission_grant",
+      "body_node_admission_result",
+      "execution_receipt_query",
+      "cancel_request",
+      "companion_presentation_request",
+      "system_notice_request",
+      "system_notice_receipt",
+      "companion_presentation_receipt",
+      "player_control_receipt",
+      "execution_receipt",
+      "error",
+      "semantic_event",
+      "lifecycle",
+      "world_fact"
+    ],
+    "schemaSemanticEventKinds": [
+      "body_idle",
+      "body_settled",
+      "connection_state",
+      "execution_invalidated",
+      "execution_settled_cancelled",
+      "execution_settled_failed",
+      "execution_settled_succeeded",
+      "execution_started",
+      "execution_state",
+      "lifecycle",
+      "player_input",
+      "route_progress",
+      "snapshot_changed",
+      "stop_all"
+    ],
+    "schemaExecutionActionIds": [
+      "advance_day",
+      "answer_dialogue",
+      "bait_crab_pot",
+      "break_rock_source",
+      "chest_retrieve",
+      "chest_store",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "clear_hoedirt",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dismiss_modal",
+      "dress_mannequin",
+      "enter_exit",
+      "enter_mine",
+      "equip_tool",
+      "express_emote",
+      "face_direction",
+      "feed_animal",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "npc_relationship",
+      "pet_animal",
+      "pickup_forage",
+      "pickup_item",
+      "place_crab_pot",
+      "place_wood_fence",
+      "plant_sapling",
+      "plant_seed",
+      "refill_watering_can",
+      "ride_minecart",
+      "scythe_crop",
+      "set_sign_display",
+      "shake_tree",
+      "ship_item",
+      "take_pedestal_item",
+      "till_soil",
+      "toggle_fence_gate",
+      "toggle_tool_light",
+      "travel",
+      "use_item",
+      "use_raft",
+      "water_crop",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ]
+  },
+  "router": {
+    "tryExecuteGuardOrder": [
+      "envelope_auth",
+      "structural",
+      "game_thread",
+      "capability",
+      "freshness",
+      "idempotency",
+      "router_route"
+    ],
+    "tryRouteGuardOrder": [
+      "game_thread",
+      "replay_lookup",
+      "handler_lookup",
+      "action_bind",
+      "handler_execute"
+    ]
+  },
+  "nativeOwnership": {
+    "Farming": [
+      "clear_hoedirt",
+      "fertilize_tile",
+      "harvest_bush",
+      "harvest_crop",
+      "harvest_fruit_tree",
+      "plant_sapling",
+      "plant_seed",
+      "scythe_crop",
+      "shake_tree",
+      "till_soil",
+      "water_crop"
+    ],
+    "Gathering": [
+      "pickup_forage",
+      "pickup_item"
+    ],
+    "Movement": [
+      "enter_exit",
+      "enter_mine",
+      "face_direction",
+      "mount_transport",
+      "move_to_tile",
+      "navigate_to_destination",
+      "ride_minecart",
+      "travel",
+      "use_raft"
+    ],
+    "MachinesAndAnimals": [
+      "chest_retrieve",
+      "chest_store",
+      "collect_animal_product",
+      "collect_crab_pot_output",
+      "cook_recipe",
+      "craft_item",
+      "feed_animal",
+      "interact_npc_with_item",
+      "machine_collect_output",
+      "machine_inspect",
+      "machine_load",
+      "npc_relationship",
+      "pet_animal",
+      "ship_item",
+      "take_pedestal_item",
+      "use_item",
+      "water_pet_bowl",
+      "water_slime_hutch_trough"
+    ],
+    "ResourceTools": [
+      "bait_crab_pot",
+      "break_rock_source",
+      "chop_stump",
+      "chop_tree_source",
+      "clear_cask",
+      "clear_debris",
+      "cut_grass",
+      "cut_weeds",
+      "deposit_silo_hay",
+      "dig_artifact_spot",
+      "dress_mannequin",
+      "equip_tool",
+      "place_crab_pot",
+      "place_wood_fence",
+      "refill_watering_can",
+      "set_sign_display",
+      "toggle_fence_gate",
+      "toggle_tool_light"
+    ]
+  },
+  "runnerFixtureParity": {
+    "actions": [
+      {
+        "actionId": "move_to_tile",
+        "runner": "run-stardew-native-local-player-move-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "equip_tool",
+        "runner": "run-stardew-native-local-player-equip-tool-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "travel",
+        "runner": "run-stardew-native-local-player-travel-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "enter_exit",
+        "runner": "run-stardew-native-local-player-enter-exit-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "till_soil",
+        "runner": "run-stardew-native-local-player-till-soil-smoke.mjs",
+        "fixtureScenario": "native_till_soil_v1"
+      },
+      {
+        "actionId": "pickup_forage",
+        "runner": "run-stardew-native-local-player-pickup-forage-smoke.mjs",
+        "fixtureScenario": "native_pickup_forage_v1"
+      },
+      {
+        "actionId": "pickup_item",
+        "runner": "run-stardew-native-local-player-pickup-item-smoke.mjs",
+        "fixtureScenario": "native_pickup_item_v1"
+      },
+      {
+        "actionId": "water_crop",
+        "runner": "run-stardew-native-local-player-water-crop-smoke.mjs",
+        "fixtureScenario": "native_water_crop_v1"
+      },
+      {
+        "actionId": "plant_seed",
+        "runner": "run-stardew-native-local-player-plant-seed-smoke.mjs",
+        "fixtureScenario": "native_plant_seed_v1"
+      },
+      {
+        "actionId": "fertilize_tile",
+        "runner": "run-stardew-native-local-player-fertilize-tile-smoke.mjs",
+        "fixtureScenario": "native_fertilize_tile_v1"
+      },
+      {
+        "actionId": "machine_inspect",
+        "runner": "run-stardew-native-local-player-machine-inspect-smoke.mjs",
+        "fixtureScenario": "native_machine_inspect_v1"
+      },
+      {
+        "actionId": "machine_load",
+        "runner": "run-stardew-native-local-player-machine-load-smoke.mjs",
+        "fixtureScenario": "native_machine_coffee_load_v1"
+      },
+      {
+        "actionId": "machine_collect_output",
+        "runner": "run-stardew-native-local-player-machine-collect-output-smoke.mjs",
+        "fixtureScenario": "native_machine_coffee_load_v1"
+      },
+      {
+        "actionId": "collect_animal_product",
+        "runner": "run-stardew-native-local-player-collect-animal-product-smoke.mjs",
+        "fixtureScenario": "native_collect_animal_product_v1"
+      },
+      {
+        "actionId": "feed_animal",
+        "runner": "run-stardew-native-local-player-feed-animal-smoke.mjs",
+        "fixtureScenario": "native_feed_animal_v1"
+      },
+      {
+        "actionId": "use_item",
+        "runner": "run-stardew-native-local-player-use-item-smoke.mjs",
+        "fixtureScenario": "native_use_item_v1"
+      },
+      {
+        "actionId": "harvest_crop",
+        "runner": "run-stardew-native-local-player-harvest-crop-smoke.mjs",
+        "fixtureScenario": "native_harvest_crop_v1"
+      },
+      {
+        "actionId": "refill_watering_can",
+        "runner": "run-stardew-native-local-player-refill-watering-can-smoke.mjs",
+        "fixtureScenario": "native_refill_watering_can_v1"
+      },
+      {
+        "actionId": "break_rock_source",
+        "runner": "run-stardew-native-local-player-break-rock-source-smoke.mjs",
+        "fixtureScenario": "native_break_rock_source_v1"
+      },
+      {
+        "actionId": "clear_hoedirt",
+        "runner": "run-stardew-native-local-player-clear-hoedirt-smoke.mjs",
+        "fixtureScenario": "native_clear_hoedirt_v1"
+      },
+      {
+        "actionId": "dig_artifact_spot",
+        "runner": "run-stardew-native-local-player-dig-artifact-spot-smoke.mjs",
+        "fixtureScenario": "native_dig_artifact_spot_v1"
+      },
+      {
+        "actionId": "chop_tree_source",
+        "runner": "run-stardew-native-local-player-chop-tree-source-smoke.mjs",
+        "fixtureScenario": "native_chop_tree_source_v1"
+      },
+      {
+        "actionId": "place_wood_fence",
+        "runner": "run-stardew-native-local-player-place-wood-fence-smoke.mjs",
+        "fixtureScenario": "native_place_wood_fence_v1"
+      },
+      {
+        "actionId": "place_crab_pot",
+        "runner": "run-stardew-native-local-player-place-crab-pot-smoke.mjs",
+        "fixtureScenario": "native_place_crab_pot_v1"
+      },
+      {
+        "actionId": "bait_crab_pot",
+        "runner": "run-stardew-native-local-player-bait-crab-pot-smoke.mjs",
+        "fixtureScenario": "native_bait_crab_pot_v1"
+      },
+      {
+        "actionId": "express_emote",
+        "runner": "run-stardew-native-local-player-expression-smoke.mjs",
+        "fixtureScenario": "native_express_emote_v1"
+      },
+      {
+        "actionId": "face_direction",
+        "runner": "run-stardew-native-local-player-expression-smoke.mjs",
+        "fixtureScenario": "native_express_emote_v1"
+      },
+      {
+        "actionId": "pet_animal",
+        "runner": "run-stardew-native-local-player-pet-animal-smoke.mjs",
+        "fixtureScenario": "native_pet_animal_v1"
+      },
+      {
+        "actionId": "interact_npc_with_item",
+        "runner": "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+        "fixtureScenario": "native_interact_npc_with_item_v1"
+      },
+      {
+        "actionId": "advance_day",
+        "runner": "run-stardew-native-local-player-advance-day-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "clear_debris",
+        "runner": "run-stardew-native-local-player-clear-debris-smoke.mjs",
+        "fixtureScenario": "native_clear_debris_resource_clump_v1"
+      },
+      {
+        "actionId": "npc_relationship",
+        "runner": "run-stardew-native-local-player-npc-relationship-smoke.mjs",
+        "fixtureScenario": "native_npc_relationship_v1"
+      },
+      {
+        "actionId": "water_pet_bowl",
+        "runner": "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
+        "fixtureScenario": "native_water_pet_bowl_v1"
+      },
+      {
+        "actionId": "water_slime_hutch_trough",
+        "runner": "run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
+        "fixtureScenario": "native_water_slime_hutch_trough_v1"
+      },
+      {
+        "actionId": "chest_store",
+        "runner": "run-stardew-native-local-player-chest-store-smoke.mjs",
+        "fixtureScenario": "native_chest_store_v1"
+      },
+      {
+        "actionId": "chest_retrieve",
+        "runner": "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+        "fixtureScenario": "native_chest_retrieve_v1"
+      },
+      {
+        "actionId": "chop_stump",
+        "runner": "run-stardew-native-local-player-chop-stump-smoke.mjs",
+        "fixtureScenario": "native_chop_stump_v1"
+      },
+      {
+        "actionId": "plant_sapling",
+        "runner": "run-stardew-native-local-player-plant-sapling-smoke.mjs",
+        "fixtureScenario": "native_plant_sapling_v1"
+      },
+      {
+        "actionId": "cut_weeds",
+        "runner": "run-stardew-native-local-player-cut-weeds-smoke.mjs",
+        "fixtureScenario": "native_cut_weeds_v1"
+      },
+      {
+        "actionId": "scythe_crop",
+        "runner": "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+        "fixtureScenario": "native_scythe_crop_v1"
+      },
+      {
+        "actionId": "craft_item",
+        "runner": "run-stardew-native-local-player-craft-item-smoke.mjs",
+        "fixtureScenario": "native_craft_item_v1"
+      },
+      {
+        "actionId": "cook_recipe",
+        "runner": "run-stardew-native-local-player-cook-recipe-smoke.mjs",
+        "fixtureScenario": "native_cook_recipe_v1"
+      },
+      {
+        "actionId": "collect_crab_pot_output",
+        "runner": "run-stardew-native-local-player-crab-pot-collect-smoke.mjs",
+        "fixtureScenario": "native_crab_pot_collect_v1"
+      },
+      {
+        "actionId": "ship_item",
+        "runner": "run-stardew-native-local-player-ship-item-smoke.mjs",
+        "fixtureScenario": "native_ship_item_v1"
+      },
+      {
+        "actionId": "ride_minecart",
+        "runner": "run-stardew-native-local-player-ride-minecart-smoke.mjs",
+        "fixtureScenario": "native_ride_minecart_v1"
+      }
+    ],
+    "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",
+    "obsoleteRunnerFilenamesAbsent": [
+      "run-stardew-move-probe.mjs",
+      "run-stardew-clear-debris-smoke.mjs",
+      "run-stardew-collect-animal-product-smoke.mjs",
+      "run-stardew-enter-exit-smoke.mjs",
+      "run-stardew-equip-tool-smoke.mjs",
+      "run-stardew-feed-animal-smoke.mjs",
+      "run-stardew-fertilize-tile-smoke.mjs",
+      "run-stardew-harvest-crop-fixture-smoke.mjs",
+      "run-stardew-harvest-crop-smoke.mjs",
+      "run-stardew-machine-inspect-fixture-smoke.mjs",
+      "run-stardew-machine-inspect-smoke.mjs",
+      "run-stardew-npc-relationship-fixture-smoke.mjs",
+      "run-stardew-npc-relationship-smoke.mjs",
+      "run-stardew-pet-animal-smoke.mjs",
+      "run-stardew-pickup-forage-fixture-smoke.mjs",
+      "run-stardew-pickup-forage-smoke.mjs",
+      "run-stardew-pickup-item-fixture-smoke.mjs",
+      "run-stardew-pickup-item-smoke.mjs",
+      "run-stardew-plant-seed-fixture-smoke.mjs",
+      "run-stardew-plant-seed-smoke.mjs",
+      "run-stardew-till-soil-fixture-smoke.mjs",
+      "run-stardew-till-soil-smoke.mjs",
+      "run-stardew-travel-smoke.mjs",
+      "run-stardew-use-item-smoke.mjs",
+      "run-stardew-water-crop-smoke.mjs"
+    ]
+  },
+  "guardOrder": [
+    "schema",
+    "development_scope",
+    "game_id",
+    "sources_pinned",
+    "canonical_action_metadata",
+    "lifecycle_partition",
+    "host_union",
+    "protocol_union",
+    "router_guard_order",
+    "native_ownership",
+    "runner_fixture_parity",
+    "guard_order_pinned",
+    "obsolete_route_absence"
+  ],
+  "absentRoutes": [
+    "adoption",
+    "dual_read",
+    "fallback",
+    "legacy",
+    "migration",
+    "read_repair",
+    "withdrawn"
+  ]
+}

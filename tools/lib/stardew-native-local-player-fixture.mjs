@@ -551,6 +551,8 @@ export function fixtureActions(action) {
   if (action === "dress_mannequin") return ["dress_mannequin"];
   if (action === "set_sign_display") return ["set_sign_display"];
   if (action === "deposit_silo_hay") return ["deposit_silo_hay"];
+  if (action === "withdraw_silo_hay") return ["withdraw_silo_hay"];
+  if (action === "use_obelisk") return ["use_obelisk"];
   // toggle_tool_light runs the Lantern tool itself; the fixture supplies the
   // Lantern in the selected slot and the actor is already standing.
   if (action === "toggle_tool_light") return ["toggle_tool_light"];
@@ -730,6 +732,8 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("dress_mannequin")) return "native_dress_mannequin_v1";
   if (actions.includes("set_sign_display")) return "native_set_sign_display_v1";
   if (actions.includes("deposit_silo_hay")) return "native_deposit_silo_hay_v1";
+  if (actions.includes("withdraw_silo_hay")) return "native_withdraw_silo_hay_v1";
+  if (actions.includes("use_obelisk")) return "native_use_obelisk_v1";
   if (actions.includes("toggle_tool_light")) return "native_toggle_tool_light_v1";
   if (actions.includes("harvest_bush")) return "native_harvest_bush_v1";
   if (actions.includes("harvest_fruit_tree")) return "native_harvest_fruit_tree_v1";

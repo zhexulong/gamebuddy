@@ -73,6 +73,7 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
             // pure function of live MineShaft.lowestLevelReached, re-derived on the game
             // thread, so no client coordinate or raw level is trusted.
             "select_mine_elevator_floor" => this.executions.RequestLocalSelectMineElevatorFloor(request, ledger),
+            "use_obelisk" => this.executions.RequestLocalUseObelisk(request, ledger),
             "face_direction" => this.executions.RequestLocalFaceDirection(request, ledger),
 
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),

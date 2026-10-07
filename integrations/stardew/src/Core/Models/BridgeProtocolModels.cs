@@ -489,7 +489,10 @@ public sealed record BridgeSnapshot(
     string PresentationLocale,
     IReadOnlyList<BridgeRaftTarget>? RaftTargets = null,
     IReadOnlyList<BridgeHorseTarget>? HorseTargets = null,
-    IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null
+    IReadOnlyList<BridgeMineEntranceTarget>? MineEntranceTargets = null,
+    // Defaulted and LAST on purpose: the three siblings above already end the positional list, so
+    // inserting anywhere earlier silently re-binds their existing positional arguments.
+    IReadOnlyList<BridgeObeliskTarget>? ObeliskTargets = null
     );
 
 public sealed record BridgeActiveExecution(
@@ -596,6 +599,16 @@ public sealed class BridgeExecutionArgs
 /// quote the game rather than invent a reason.
 /// </para>
 /// </summary>
+public sealed record BridgeObeliskTarget(
+    string TargetId,
+    string Route,
+    string Location,
+    int X,
+    int Y,
+    string DisplayName,
+    string Destination,
+    bool ForceDismount);
+
 public sealed record BridgeShopTarget(
     string TargetId,
     string ShopId,

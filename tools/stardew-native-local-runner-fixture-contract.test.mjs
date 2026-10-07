@@ -64,6 +64,10 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // drivers keyed on the action they exercise, matching the gate table entries.
   "run-stardew-native-local-player-clear-cask-smoke.mjs": "clear_cask",
   "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs": "deposit_silo_hay",
+  // 2026-10-06: the two facility/transport actions wired this session. Same rule as the wave
+  // above — keyed on the action the runner exercises.
+  "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
+  "run-stardew-native-local-player-use-obelisk-smoke.mjs": "use_obelisk",
   "run-stardew-native-local-player-dress-mannequin-smoke.mjs": "dress_mannequin",
   "run-stardew-native-local-player-enter-mine-smoke.mjs": "enter_mine",
   "run-stardew-native-local-player-harvest-bush-smoke.mjs": "harvest_bush",

@@ -2,9 +2,19 @@ import { randomUUID } from "node:crypto";
 
 const PROTOCOL_VERSION = 1;
 // Mirrors BridgeProtocol.MaximumMessageBytes (C#): hello_ack carries the
-// complete published action catalog (~16.7 KiB at 34 actions), so the frame
-// bound must admit the full publication plus growth.
-export const MAX_MESSAGE_BYTES = 32 * 1024;
+// complete published action catalog, so the frame bound must admit the full
+// publication plus growth.
+//
+// RAISED 2026-10-07 from 32 KiB, which the catalog had outgrown: it crossed the
+// old bound at 70 registered actions and every live gate began failing with
+// message_too_large, because every runner's first call is hello. The previous
+// justification (~16.7 KiB at 34 actions) recorded the surface as it stood, not a
+// bound derived from one; the catalog costs ~365 bytes per action. Both sides of
+// the pipe MUST move together, or one end will reject what the other accepts.
+//
+// Not a security boundary — the frame travels over a local, authenticated,
+// owner-scoped named pipe. Its job is to bound one allocation per frame.
+export const MAX_MESSAGE_BYTES = 128 * 1024;
 /** World-fact JSON is bounded below the frame limit so conversion never accepts an unbounded raw blob. */
 export const MAX_WORLD_FACT_PAYLOAD_JSON_BYTES = 8 * 1024;
 export const MAX_EVENTS_PER_WINDOW = 32;
@@ -556,6 +566,11 @@ activeExecution?: ActiveExecution | null;
    raftTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
    horseTargets?: readonly Readonly<{ targetId: string; x: number; y: number; name: string }>[];
    mineEntranceTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+   /** Warp obelisks the actor can reach. `route` names which native path reaches it (a
+    * Data/Buildings obelisk building, or the island farm obelisk tile) and the opaque id
+    * carries it, so an island-tile target can never be replayed against a building. */
+   obeliskTargets?: readonly Readonly<{ targetId: string; route: string; location: string; x: number;
+     y: number; displayName: string; destination: string; forceDismount: boolean }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -571,6 +586,8 @@ export type ExecutionRequest = Readonly<{
     | "ride_minecart"
     | "select_mine_elevator_floor"
     | "ride_bus"
+  | "withdraw_silo_hay"
+  | "use_obelisk"
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
@@ -1154,6 +1171,7 @@ const SNAPSHOT_KEYS = [
   "cookingStationTargets",
   "shopTargets",
   "mineElevatorFloorTargets",
+  "obeliskTargets",
   "minecartTargets",
   "bushTargets",
   "fruitTreeTargets",
@@ -1163,6 +1181,7 @@ const SNAPSHOT_KEYS = [
   "weather",
    "minecartTargets",
     "mineElevatorFloorTargets",
+    "obeliskTargets",
     "raftTargets",
     "horseTargets",
     "mineEntranceTargets",
@@ -1666,6 +1685,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "travel" &&
      value.action !== "ride_minecart" &&
      value.action !== "ride_bus" &&
+     value.action !== "withdraw_silo_hay" &&
+     value.action !== "use_obelisk" &&
      value.action !== "shop_purchase" &&
      value.action !== "select_mine_elevator_floor" &&
      value.action !== "use_raft" &&
@@ -1796,6 +1817,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_shop_target";
     if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
     if (!Number.isSafeInteger(value.args.quantity) || (value.args.quantity as number) < 1) return "invalid_quantity";
+  } else if (value.action === "withdraw_silo_hay" || value.action === "use_obelisk") {
+    // Both take the shared { x, y, expectedTargetId } shape and no slot.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2608,6 +2632,11 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     (!Array.isArray(value.mineEntranceTargets) || value.mineEntranceTargets.length > 16 || !value.mineEntranceTargets.every(isMineEntranceTargetFact))
   )
     return "invalid_snapshot:mineEntranceTargets";
+  if (
+    value.obeliskTargets !== undefined &&
+    (!Array.isArray(value.obeliskTargets) || value.obeliskTargets.length > 32 || !value.obeliskTargets.every(isObeliskTargetFact))
+  )
+    return "invalid_snapshot:obeliskTargets";
   return "accepted";
 }
 
@@ -2837,6 +2866,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.mineElevatorFloorTargets) &&
         value.mineElevatorFloorTargets.length <= 32 &&
         value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))) &&
+    (value.obeliskTargets === undefined ||
+      (Array.isArray(value.obeliskTargets) && value.obeliskTargets.length <= 32 && value.obeliskTargets.every(isObeliskTargetFact))) &&
     (value.minecartTargets === undefined ||
      (Array.isArray(value.minecartTargets) &&
        value.minecartTargets.length <= 24 &&
@@ -2867,6 +2898,8 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "select_mine_elevator_floor" ||
       value.action === "shop_purchase" ||
        value.action === "ride_bus" ||
+    value.action === "withdraw_silo_hay" ||
+    value.action === "use_obelisk" ||
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
        value.action === "enter_mine" ||
@@ -4265,6 +4298,24 @@ function isShopTargetFact(value: unknown): boolean {
     value.stockCount >= 0
     && isStringArray(value.stockItemIds)
     && (value.stockItemIds as readonly string[]).length <= 16
+  );
+}
+
+function isObeliskTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "route", "location", "x", "y", "displayName", "destination", "forceDismount"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.route === "string" &&
+    typeof value.location === "string" &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.displayName === "string" &&
+    typeof value.destination === "string" &&
+    typeof value.forceDismount === "boolean"
   );
 }
 
