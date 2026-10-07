@@ -2752,6 +2752,34 @@
             "$ref": "#/$defs/mineEntranceTarget"
           },
           "maxItems": 16
+        },
+        "mineElevatorFloorTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mineElevatorFloorTarget"
+          },
+          "maxItems": 64
+        },
+        "obeliskTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/obeliskTarget"
+          },
+          "maxItems": 64
+        },
+        "animalDoorTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animalDoorTarget"
+          },
+          "maxItems": 64
+        },
+        "shopTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shopTarget"
+          },
+          "maxItems": 32
         }
       }
     },
@@ -4542,27 +4570,27 @@
       "maxProperties": 0
     },
     "obeliskAndSiloArgs": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "x",
-          "y",
-          "expectedTargetId"
-        ],
-        "properties": {
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "expectedTargetId": {
-            "type": "string",
-            "minLength": 1
-          }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "expectedTargetId": {
+          "type": "string",
+          "minLength": 1
         }
-      },
-      "shopPurchaseArgs": {
+      }
+    },
+    "shopPurchaseArgs": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -6027,7 +6055,8 @@
             "ship_item",
             "water_pet_bowl",
             "water_slime_hutch_trough",
-            "dismiss_modal",             "ride_bus",
+            "dismiss_modal",
+            "ride_bus",
             "answer_dialogue",
             "advance_day",
             "harvest_bush",
@@ -7147,6 +7176,172 @@
       "type": "object",
       "additionalProperties": false,
       "maxProperties": 0
+    },
+    "mineElevatorFloorTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "floor",
+        "isCurrentFloor",
+        "isMineEntrance"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "floor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "isCurrentFloor": {
+          "type": "boolean"
+        },
+        "isMineEntrance": {
+          "type": "boolean"
+        }
+      }
+    },
+    "shopTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "shopId",
+        "ownerName",
+        "location",
+        "ownerTileX",
+        "ownerTileY",
+        "ownerInReach",
+        "stockCount",
+        "stockItemIds"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "shopId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "ownerTileX": {
+          "$ref": "#/$defs/tile"
+        },
+        "ownerTileY": {
+          "$ref": "#/$defs/tile"
+        },
+        "ownerInReach": {
+          "type": "boolean"
+        },
+        "stockCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stockItemIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 256
+        }
+      }
+    },
+    "obeliskTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "route",
+        "location",
+        "x",
+        "y",
+        "displayName",
+        "destination",
+        "forceDismount"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "forceDismount": {
+          "type": "boolean"
+        }
+      }
+    },
+    "animalDoorTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "buildingType",
+        "isOpen"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "buildingType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "isOpen": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

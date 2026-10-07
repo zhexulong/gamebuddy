@@ -1584,7 +1584,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.withdraw_silo_hay,
           label: "Take hay from a silo",
           description:
-            "Withdraw one hay from a discovered silo. Stand within reach of the silo first. The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
+            "Withdraw one hay from a discovered silo. Stand within reach of the silo first. Read the opaque target id, its tile and the stored `hay` count from the `siloTargets` entries of the most recent observation (the same list `deposit_silo_hay` reads). The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
           parameters: schema,
           action: "withdraw_silo_hay",
           toArgs: () => ({}),
@@ -1606,7 +1606,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.toggle_animal_door,
           label: "Toggle an animal door",
           description:
-            "Open or close a barn or coop animal door. Stand within reach of the building first. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
+            "Open or close a barn or coop animal door. Stand within reach of the building first. Read the opaque target id, its tile and the current `isOpen` state from the `animalDoorTargets` entries of the most recent observation. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
           parameters: schema,
           action: "toggle_animal_door",
           toArgs: () => ({}),
@@ -1628,7 +1628,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.use_obelisk,
           label: "Use a warp obelisk",
           description:
-            "Activate a discovered warp obelisk. Stand within reach of it first. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
+            "Activate a discovered warp obelisk. Stand within reach of it first. Read the opaque target id, `route`, tile and `destination` from the `obeliskTargets` entries of the most recent observation. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
           parameters: schema,
           action: "use_obelisk",
           toArgs: () => ({}),
@@ -1650,7 +1650,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.shop_purchase,
           label: "Buy from a shop",
           description:
-            "Buy goods from a shop whose owner is standing within reach. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. Move into reach first; the action does not walk.",
+            "Buy goods from a shop whose owner is standing within reach. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. Move into reach first; the action does not walk.",
           parameters: schema,
           action: "shop_purchase",
           toArgs: () => ({}),
@@ -1672,7 +1672,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.select_mine_elevator_floor,
           label: "Use the Mine Elevator",
           description:
-            "Select an already-reached floor on the mine elevator. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
+            "Select an already-reached floor on the mine elevator. Read the opaque target id, `floor` and `isCurrentFloor` from the `mineElevatorFloorTargets` entries of the most recent observation. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
           parameters: schema,
           action: "select_mine_elevator_floor",
           toArgs: () => ({}),
