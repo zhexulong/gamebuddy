@@ -51,6 +51,9 @@ jobs:
       - run: pnpm check:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary
       - run: pnpm typecheck
+      # `pnpm typecheck` reads the working tree, so it cannot see a commit that only compiles
+      # because another lane's uncommitted work is present. This checks the commit itself.
+      - run: pnpm check:head-typecheck
       - run: node tools/check-publint.mjs
       - run: pnpm report:clones
       # This builds only the browser's contributor-quality bundle; ordinary CI
