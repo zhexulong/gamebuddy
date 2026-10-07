@@ -399,6 +399,7 @@ export type TavernConnectionSetupFieldV1 = "apiKey" | "apiShape" | "baseUrl" | "
  */
 export const CONNECTION_API_SHAPES = [
   "anthropic-messages",
+  "azure-openai-responses",
   "openai-completions",
   "openai-responses",
   "openai-codex-responses",
@@ -406,9 +407,11 @@ export const CONNECTION_API_SHAPES = [
   "google-vertex",
   "bedrock-converse-stream",
   "mistral-conversations",
-] as const;
-export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
-export type TavernConnectionThinkingLevelV1 = "low" | "medium" | "high" | "xhigh" | "max";
+  "pi-messages",
+  ] as const;
+  export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
+  /** Derived from the one list, so the type cannot drift from the validator's. */
+  export type TavernConnectionThinkingLevelV1 = (typeof CONNECTION_THINKING_LEVELS)[number];
 export type TavernConnectionReadinessV1 = "unconfigured" | "configured" | "ready" | "failed";
 export type TavernConnectionFailureV1 =
   | "invalid_endpoint"

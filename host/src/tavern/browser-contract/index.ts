@@ -340,6 +340,7 @@ export const TavernConnectionSetupFieldV1Schema = Type.Union([
  */
 export const TavernConnectionApiShapeV1Schema = Type.Union([
   Type.Literal("anthropic-messages"),
+  Type.Literal("azure-openai-responses"),
   Type.Literal("openai-completions"),
   Type.Literal("openai-responses"),
   Type.Literal("openai-codex-responses"),
@@ -347,6 +348,7 @@ export const TavernConnectionApiShapeV1Schema = Type.Union([
   Type.Literal("google-vertex"),
   Type.Literal("bedrock-converse-stream"),
   Type.Literal("mistral-conversations"),
+  Type.Literal("pi-messages"),
 ]);
 /**
  * The thinking levels the embedded runtime accepts, in pi's own order.

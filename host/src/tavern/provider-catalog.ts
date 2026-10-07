@@ -14,15 +14,20 @@ import type { CompanionThinkingLevel } from "../runtime-identity.js";
  */
 
 /**
- * The exact `api` shapes Pi's own chat provider adapters speak (pi-ai
- * `KnownApi`), in the one Host-side copy of that list. The value is written
- * verbatim into the `models.json` provider entry's `api` field, so a shape Pi
- * cannot speak must never be admitted: a typo here would hand the Pi runtime
- * an API id it has no adapter for. The escape hatch is the only caller that
- * gets to pick one; every other catalog entry pins its own.
+ * The exact `api` shapes Pi's own chat adapters register, in the one Host-side copy of
+ * that list. The value is written verbatim into the `models.json` provider entry's `api`
+ * field, so a shape Pi cannot speak must never be admitted: a typo here would hand the Pi
+ * runtime an API id it has no adapter for. The escape hatch is the only caller that gets
+ * to pick one; every other catalog entry pins its own.
+ *
+ * Authority: `@earendil-works/pi-ai`'s runtime registry (the ids it actually builds
+ * adapters for, `BUILTIN_APIS`) and its `KnownApi` union. Both are in the installed
+ * package, and `provider-catalog.test.ts` asserts this list equals that registry, so a
+ * shape added or removed upstream fails a test instead of silently going missing here.
  */
 export const TAVERN_PI_API_SHAPES = Object.freeze([
   "anthropic-messages",
+  "azure-openai-responses",
   "openai-completions",
   "openai-responses",
   "openai-codex-responses",
@@ -30,6 +35,7 @@ export const TAVERN_PI_API_SHAPES = Object.freeze([
   "google-vertex",
   "bedrock-converse-stream",
   "mistral-conversations",
+  "pi-messages",
 ] as const);
 
 /** Pi API shape a provider entry contributes to `models.json`. */
@@ -87,7 +93,17 @@ export type TavernCatalogProvider = Readonly<{
   allowedPlayerModels: readonly TavernCatalogModel[];
   /** True only for the single OpenAI-compatible escape hatch entry. */
   escapeHatch: boolean;
-  authHeader: boolean;
+  /**
+   * Whether the HOST-OWNED liveness probe authenticates its `GET /models` with
+   * `Authorization: Bearer <key>`.
+   *
+   * This is the probe's own request shape, not the runtime's: the runtime's adapter
+   * authenticates itself from the resolved `apiKey` (every adapter in pi-ai 1.0.0
+   * requires that key and installs its own scheme — `x-api-key`, `api-key`, SigV4,
+   * or the SDK's Bearer), which is also why the provider entry written for Pi never
+   * carries an `authHeader` flag.
+   */
+  probeBearerAuth: boolean;
 }>;
 
 const defineModel = (
@@ -128,7 +144,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
       defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high", "deepseek"),
     ],
     escapeHatch: false,
-    authHeader: true,
+    probeBearerAuth: true,
   }),
   defineProvider({
     providerId: "deepseek",
@@ -143,7 +159,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
       defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek"),
     ],
     escapeHatch: false,
-    authHeader: false,
+    probeBearerAuth: false,
   }),
   defineProvider({
     providerId: "openai",
@@ -158,7 +174,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
       defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native"),
     ],
     escapeHatch: false,
-    authHeader: false,
+    probeBearerAuth: false,
   }),
   defineProvider({
     providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
@@ -173,7 +189,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"],
     allowedPlayerModels: [],
     escapeHatch: true,
-    authHeader: true,
+    probeBearerAuth: true,
   }),
 ]);
 
