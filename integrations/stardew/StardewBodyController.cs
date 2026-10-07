@@ -140,7 +140,11 @@ internal sealed class StardewBodyController
                 searchOutcome = assessed.ComponentContainsTarget
                     ? "planner_null_with_cardinal_route"
                     : "no_cardinal_route";
-                evidence += $";path_search={searchOutcome};budget={NativePathNodeBudget}";
+                // The native API exposes only a null path, not whether its bound was exhausted. Keep the
+                // configured bound visible, but never publish it as a measured cause: an earlier version
+                // reported `native_budget_exhausted` here, and a measurement at 10000, 40000 and 400000
+                // expansions returned null identically — the limit was never the variable.
+                evidence += $";measurement=cardinal_flood;path_search={searchOutcome};budget=undecided";
                 // A staging step must be inside the component the PLANNER can walk, so prefer the tile the
                 // cardinal flood itself reports as the closest one it reached, and fall back to the cardinal
                 // neighbour scan only when the flood offers nothing. Measured reason: an eight-neighbour
