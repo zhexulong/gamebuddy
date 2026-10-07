@@ -95,6 +95,17 @@ const TARGET_FIELD = Object.freeze({
   // cut_grass targets the TerrainFeature `Grass`, whose discovery field is
   // `grassTargets` — distinct from the Object-layer `cut_weeds`/`weedTargets`.
   cut_grass: "GrassTargets",
+  // Actions added by the neighbouring lanes after this table was written. Their
+  // snapshot fields already existed (`MineElevatorFloorTargets`, `ShopTargets`,
+  // `ObeliskTargets`, `AnimalDoorTargets`) and `withdraw_silo_hay` shares the
+  // `SiloTargets` list that `deposit_silo_hay` reads; only this declaration was
+  // missing, so the audit could not verify their discovery leg at all. Declared
+  // here rather than left out, so the remaining hops are checked for real.
+  select_mine_elevator_floor: "MineElevatorFloorTargets",
+  withdraw_silo_hay: "SiloTargets",
+  use_obelisk: "ObeliskTargets",
+  toggle_animal_door: "AnimalDoorTargets",
+  shop_purchase: "ShopTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */
