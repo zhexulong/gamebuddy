@@ -75,6 +75,15 @@ test("descriptor runner identity names the native-local shared-harness runner fo
   // the shared-harness runner. Any parallel/legacy runner ID is stale.
   const expectedRunners = Object.freeze({
     toggle_animal_door: "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
+    claim_mail_attachment: "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
+    pan_ore: "run-stardew-native-local-player-pan-ore-smoke.mjs",
+    use_warp_item: "run-stardew-native-local-player-use-warp-item-smoke.mjs",
+    dismount_transport: "run-stardew-native-local-player-dismount-transport-smoke.mjs",
+    unequip_wearable: "run-stardew-native-local-player-unequip-wearable-smoke.mjs",
+    equip_wearable: "run-stardew-native-local-player-equip-wearable-smoke.mjs",
+    break_container_source: "run-stardew-native-local-player-break-container-source-smoke.mjs",
+    remove_placed_item: "run-stardew-native-local-player-remove-placed-item-smoke.mjs",
+    place_owned_object: "run-stardew-native-local-player-place-owned-object-smoke.mjs",
     use_obelisk: "run-stardew-native-local-player-use-obelisk-smoke.mjs",
     withdraw_silo_hay: "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
     move_to_tile: "run-stardew-native-local-player-move-smoke.mjs",
@@ -277,6 +286,15 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "enter_mine",
       "dismiss_modal",
         "answer_dialogue",
+      "place_owned_object",
+      "remove_placed_item",
+      "break_container_source",
+      "equip_wearable",
+      "unequip_wearable",
+      "dismount_transport",
+      "use_warp_item",
+      "pan_ore",
+      "claim_mail_attachment",
     ],
   );
   assert.deepEqual(

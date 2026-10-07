@@ -264,6 +264,16 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // is the runner's verdict, not the action's terminal.
   gate("dismiss_modal", 1, "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs", "modal_dismissed", "native_wia_modal_dismiss_chain_v1"),
   gate("answer_dialogue", 1, "run-stardew-native-local-player-wia-answer-question-smoke.mjs", "answer_dialogue_answered", "native_wia_answer_question_v1"),
+  // Promoted to live-verified on 2026-10-08 after their native-local gates passed.
+  gate("place_owned_object", 1, "run-stardew-native-local-player-place-owned-object-smoke.mjs", "owned_object_placed", "native_world_object_v1"),
+  gate("remove_placed_item", 1, "run-stardew-native-local-player-remove-placed-item-smoke.mjs", "placed_item_removed", "native_world_object_v1"),
+  gate("break_container_source", 1, "run-stardew-native-local-player-break-container-source-smoke.mjs", "container_source_broken", "native_world_object_v1"),
+  gate("equip_wearable", 1, "run-stardew-native-local-player-equip-wearable-smoke.mjs", "wearable_equipped", "native_equip_wearable_v1"),
+  gate("unequip_wearable", 1, "run-stardew-native-local-player-unequip-wearable-smoke.mjs", "wearable_unequipped", "native_unequip_wearable_v1"),
+  gate("dismount_transport", 1, "run-stardew-native-local-player-dismount-transport-smoke.mjs", "transport_dismounted", "native_dismount_transport_v1"),
+  gate("use_warp_item", 1, "run-stardew-native-local-player-use-warp-item-smoke.mjs", "warp_item_arrived", "native_use_warp_item_v1"),
+  gate("pan_ore", 1, "run-stardew-native-local-player-pan-ore-smoke.mjs", "ore_panned", "native_pan_ore_v1"),
+  gate("claim_mail_attachment", 1, "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs", "mail_claimed", "native_claim_mail_attachment_v1"),
 ]);
 
 /**
@@ -279,9 +289,6 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
 export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // Experimental until their live gates pass (moved out of the published table,
   // which the promotion gate correctly refuses for a non-published action).
-  place_owned_object: "run-stardew-native-local-player-place-owned-object-smoke.mjs",
-  remove_placed_item: "run-stardew-native-local-player-remove-placed-item-smoke.mjs",
-  break_container_source: "run-stardew-native-local-player-break-container-source-smoke.mjs",
   // The loop-closure pilot: cut grass tufts (TerrainFeature Grass) through the
   // native scythe seam. Registered as Experimental in the Mod catalog until its
   // live gate passes; the runner is the scythe-family contract shape.
@@ -346,9 +353,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
   // The actor's own attachment state, Experimental: each ships with its own shared-harness runner
   // and its own fixture scenario. A runner is neither a capability grant nor a success claim.
-  equip_wearable: "run-stardew-native-local-player-equip-wearable-smoke.mjs",
-  unequip_wearable: "run-stardew-native-local-player-unequip-wearable-smoke.mjs",
-  dismount_transport: "run-stardew-native-local-player-dismount-transport-smoke.mjs",
   // The building-chest pair (Data/Buildings BuildingData.Chests): the building's own Load and
   // Collect chests, which chest_store/chest_retrieve and machine_* cannot reach. Experimental in
   // the Mod catalog, so they live in this map rather than in the published gate table.
@@ -386,9 +390,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // shared-harness runner and its own fixture scenario. A runner is neither a capability grant
   // nor a success claim: each still owes its own native-local live gate, and promotion moves it
   // into STARDEW_PUBLISHED_ACTION_GATES and out of this map.
-  use_warp_item: "run-stardew-native-local-player-use-warp-item-smoke.mjs",
-  pan_ore: "run-stardew-native-local-player-pan-ore-smoke.mjs",
-  claim_mail_attachment: "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
   // ride_bus was listed here as well until it was promoted; the entry is removed because a key
   // present in BOTH this map and STARDEW_PUBLISHED_ACTION_GATES makes
   // resolve-stardew-action-gate-runner.test.mjs fail ('ride_bus must not enter the published

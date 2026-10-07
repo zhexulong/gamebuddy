@@ -804,7 +804,7 @@
       {
         "actionId": "place_owned_object",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -840,7 +840,7 @@
       {
         "actionId": "remove_placed_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -873,7 +873,7 @@
       {
         "actionId": "break_container_source",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1868,7 +1868,7 @@
       {
         "actionId": "use_warp_item",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -1895,7 +1895,7 @@
       {
         "actionId": "pan_ore",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -1925,7 +1925,7 @@
       {
         "actionId": "claim_mail_attachment",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -2345,7 +2345,7 @@
       {
         "actionId": "equip_wearable",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -2375,7 +2375,7 @@
       {
         "actionId": "unequip_wearable",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "slot": {
@@ -2402,7 +2402,7 @@
       {
         "actionId": "dismount_transport",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {},
         "outputFacts": {},
@@ -2518,6 +2518,9 @@
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
+      "place_owned_object",
+      "remove_placed_item",
+      "break_container_source",
       "chop_tree_source",
       "break_rock_source",
       "clear_hoedirt",
@@ -2546,6 +2549,9 @@
       "withdraw_silo_hay",
       "use_obelisk",
       "toggle_animal_door",
+      "use_warp_item",
+      "pan_ore",
+      "claim_mail_attachment",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2557,6 +2563,9 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "equip_wearable",
+      "unequip_wearable",
+      "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
       "advance_day"
@@ -2567,18 +2576,9 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "place_owned_object",
-      "remove_placed_item",
-      "break_container_source",
       "talk_to_npc",
-      "use_warp_item",
-      "pan_ore",
-      "claim_mail_attachment",
       "load_building_chest",
-      "collect_building_chest_output",
-      "equip_wearable",
-      "unequip_wearable",
-      "dismount_transport"
+      "collect_building_chest_output"
     ]
   },
   "protocol": {
@@ -2625,6 +2625,9 @@
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
+      "place_owned_object",
+      "remove_placed_item",
+      "break_container_source",
       "chop_tree_source",
       "break_rock_source",
       "clear_hoedirt",
@@ -2653,6 +2656,9 @@
       "withdraw_silo_hay",
       "use_obelisk",
       "toggle_animal_door",
+      "use_warp_item",
+      "pan_ore",
+      "claim_mail_attachment",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2664,6 +2670,9 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "equip_wearable",
+      "unequip_wearable",
+      "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
       "advance_day"
