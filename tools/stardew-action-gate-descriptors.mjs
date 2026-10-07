@@ -330,6 +330,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // the fixture scenario are both unchanged; the runner drives the published
   // action from farther away. Not a new action; it grants no capability.
   chop_tree_approach: "run-stardew-native-local-player-chop-tree-approach-smoke.mjs",
+  // The widening contract: a Warp Action present in the LIVE map layer but absent from the
+  // cached doors table. Experimental until its live gate passes.
+  enter_exit_warp_action: "run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs",
   // Move-stall probe: drives the SAME published move_to_tile action over a fixture
   // that stands a native blocker (Pet or parked Horse) on the route, measuring
   // whether the native pushing/pass-through mechanisms resolve the block before
