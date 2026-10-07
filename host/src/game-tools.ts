@@ -492,6 +492,20 @@ export function buildCandidateToolSchema(
     );
   }
 
+  if (actionId === "talk_to_npc") {
+    // The NPC family's shape: the opaque NPC target id and the tile it was published at,
+    // both copied verbatim from the most recent npcRelationshipTargets observation and
+    // never synthesized by the tool.
+    return Type.Object(
+      {
+        x: Type.Integer({ minimum: 0, maximum: 1000 }),
+        y: Type.Integer({ minimum: 0, maximum: 1000 }),
+        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+      },
+      { additionalProperties: false },
+    );
+  }
+
   if (actionId === "pet_animal") {
     // Identity-locked target: the opaque pet target id is copied verbatim from
     // the most recent observation, while x/y are the observed geometry.
@@ -1472,6 +1486,32 @@ export function createStardewActionTools(
             x: params.x,
             y: params.y,
             expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "talk_to_npc",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("talk_to_npc", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("talk_to_npc", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.talk_to_npc,
+          label: "Talk to Villager",
+          description:
+            "Talk to an adjacent villager: the Mod drives the game's own NPC.checkAction talk branch, so the villager's real dialogue is what appears. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Empty your hands first: with an item in hand the game takes the gift path instead and the action refuses with hands_not_empty, and a villager who is asleep or out of reach is refused too. Returns talk_to_npc_talked when the dialogue is open; the actor stays inside that dialogue until it is closed (dismiss_modal, or answer_dialogue for a question).",
+          parameters: schema,
+          action: "talk_to_npc",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
             expectedTargetId: params.expectedTargetId,
           }),
         }),

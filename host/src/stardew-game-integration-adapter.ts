@@ -439,6 +439,41 @@ function hasStardewCompletionEvidence(
         receipt.reasonCode === "hay_placed_in_trough" &&
         hasFeedAnimalCompletionEvidence(detail)
       );
+    case "talk_to_npc":
+      // Evidence literal: farmhandexecutioncontroller.npcactions.cs - location;target;npc;tile;
+      // native_handled;dialogue_up_before;dialogue_up_after;dialogue_box_after;menu_open_after;
+      // talked_to_today_before;talked_to_today_after;points_before;points_after;player_can_move_after.
+      // The seam returns bool, so the raw handled flag proves nothing on its own: the rule also
+      // requires the dialogue to have come UP - that is the world change - and it reports that the
+      // actor is left NOT movable, which is the native end state rather than a hidden failure.
+      return (
+        receipt.reasonCode === "talk_to_npc_talked" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "npc",
+            "tile",
+            "native_handled",
+            "dialogue_up_before",
+            "dialogue_up_after",
+            "dialogue_box_after",
+            "menu_open_after",
+            "talked_to_today_before",
+            "talked_to_today_after",
+            "points_before",
+            "points_after",
+            "player_can_move_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.native_handled === "true" &&
+            e.dialogue_up_before === "false" &&
+            e.dialogue_up_after === "true" &&
+            e.dialogue_box_after === "true",
+        )
+      );
     case "use_item":
       return (
         receipt.reasonCode === "item_used" &&

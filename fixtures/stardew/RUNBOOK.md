@@ -2184,3 +2184,122 @@ native work resolves synchronously answers with an **immediate terminal** instea
 once, and `enter_exit` on this tile returned `rejected/door_gate_refused` at once. Both phases
 demanded `accepted` and threw on a correct run — the same mistake `dismiss_modal` and `ride_bus`
 each produced once. A phase must accept either shape, and only then assert the terminal.
+
+## `enter_mine` — descending a mine LADDER (the second gate for an already-verified action)
+
+```text
+fixture  native_mine_enter_ladder_v1   (actor inside UndergroundMine1, a generated ladder in range)
+runner   tools/run-stardew-native-local-player-enter-mine-ladder-smoke.mjs
+result   passed · reasonCode=mine_entered · 23 s · teardown restored + cleaned
+```
+
+The published `enter_mine` gate covers the `Mine` ENTRANCE map. The ladder INSIDE a shaft is a
+different tile and a different level computation, so it carries its own gate:
+
+```text
+receipt   : succeeded / mine_entered · revision 3
+ladder    : mine_entrance_57d092e8be319837 at 10,5     standing: 10,4
+before    : UndergroundMine1   level 1
+after     : UndergroundMine2   level 2      <- read from a FRESH snapshot, not inferred
+evidence  : expected=UndergroundMine2:6,6;actual=UndergroundMine2:4,5;level=2
+```
+
+`actual=4,5` rather than the nominal `6,6` is the game choosing the landing tile, the same honest
+shape the entrance gate already records. The descent level is derived from the LIVE shaft
+(`shaft.mineLevel + 1`), never supplied by the client, and the runner's expectation is derived from
+its own observation so it cannot be hard-coded to a level.
+
+### How the fixture establishes its Given, and why that way
+
+It does NOT trust a found ladder. A freshly generated level carries no tile 173 at all
+(`doCreateLadderDown` runs only when a stone is broken or a monster is cleared), and the production
+finder returns the first 173 in row-major order — so a found-but-not-mine ladder could not be
+attributed. Instead the fixture:
+
+1. resolves the shaft through `MineShaft.GetMine(GetLevelName(1))`, the same lookup `Game1.enterMine`
+   uses, and reads the arrival tile from the game's own `shaft.mineEntrancePosition(player)`;
+2. picks the first of that tile's eight neighbours the game's own `isTileClearForMineObjects` accepts,
+   so the choice is the game's definition of clear mine floor, not the Mod's;
+3. places the ladder through the game's own generator, `shaft.createLadderDown(x, y)`, then asserts the
+   product's `ExecutionManager.TryFindMineLadderTile` returns exactly that tile — a finder that
+   disagreed would fail loudly rather than produce a green run about the wrong tile.
+
+Level 1 is deliberate: `MineShaft.adjustLevelChances` zeroes `monsterChance` when `mineLevel == 1`,
+so the Given does not depend on surviving monsters. The descent lands in level 2, which does have
+them; the postcondition is read within 10 s of the terminal, the same pattern as the live-verified
+elevator gate.
+
+### Runner lesson, applied
+
+Both phases accept an IMMEDIATE terminal as well as `accepted`-then-terminal. That rule cost three
+other gates a failed attempt each (see the `enter_exit` section above), so this runner was written
+with it from the start and its offline tests pin both shapes.
+
+## `talk_to_npc` — walk up to a villager and talk
+
+```text
+fixture  native_talk_to_npc_v1   (actor in the Saloon, empty-handed, one tile from Gus)
+runner   tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs
+result   passed · reasonCode=talk_to_npc_talked · teardown restored + cleaned
+```
+
+The action exists because `NPC.checkAction` (NPC.cs:2464) does two things and only one of them was
+covered: the GIFTING branch needs an ActiveObject and is what `interact_npc_with_item` mirrors, whose
+`slot` and `expectedQualifiedItemId` are REQUIRED arguments. Talking empty-handed had no action, which
+is the default thing a player does to a villager. The two intents are orthogonal, so talking is its
+own action rather than an optional argument — the protocol has no optional arguments at all.
+
+```text
+receipt   : succeeded / talk_to_npc_talked · revision 2
+evidence  : location=Saloon;target=npc_relationship_4478..;npc=Gus;tile=0,15;native_handled=true;
+            dialogue_up_before=false;dialogue_up_after=true;dialogue_box_after=true;
+            menu_open_after=DialogueBox;talked_to_today_before=false;talked_to_today_after=true;
+            points_before=0;points_after=20;player_can_move_after=false
+negative 1: unknown target  -> rejected / talk_to_npc_target_not_found, actor still actionable
+negative 2: repeat while the dialogue is open -> rejected / player_not_actionable
+```
+
+Two things are stated rather than hidden. The seam returns a bool, so `native_handled` alone would
+prove nothing: the postcondition is the dialogue coming UP (`dialogue_up_after`, `dialogue_box_after`),
+with the friendship pair as corroboration. And the actor is deliberately left NOT movable with a
+DialogueBox mounted — that is the native end state of talking, reported as
+`player_can_move_after=false` and `menu_open_after=DialogueBox`, not smoothed into an idle actor.
+
+### Three runner defects the live gate found, all in the runner rather than the product
+
+1. **The wire field is `npcName`, not `name`.** The record is
+   `BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, ...)`, so the runner
+   read `entry.name` as `undefined` and silently filtered EVERY villager out, reporting
+   `no_adjacent_villager` while a target sat on the adjacent tile. Both sibling runners already read
+   `target.npcName`. The offline fake carried the same wrong key, so nine green tests proved nothing —
+   the same "the fake encodes my assumption" failure this project has now hit three times.
+2. **`activeExecution` must be compared LOOSELY.** The Mod serializes with `WhenWritingNull`, so
+   "no active execution" arrives as an ABSENT property (`undefined`), and the guard written as
+   `after.activeExecution !== null` is TRUE for `undefined` — it failed a correct run. Every
+   pre-existing runner uses `!= null` / `== null` for exactly this reason.
+3. The failure messages now carry the observed facts. `no_adjacent_villager` alone was not
+   actionable; made to print the tile, location, actionable flag and every candidate, it immediately
+   showed `targets=?@0,15` — an unnamed target on the right tile, which is what located defect 1.
+
+### Fixture choice, and why it cannot drift with the clock
+
+The Saloon with Gus, reached by a direct native warp. Gus is placed at his own workplace, and the
+fixture asserts the placement is durable (`characters.Contains`, the tile matches, and the schedule is
+pinned with `followSchedule=false` / `ignoreScheduleToday=true`). The decisive extra fact is that the
+declared Given alone is not sufficient: NPC.cs:2748 also needs
+`flag4 || endOfRouteMessage || location override`, and the plain location-keyed dialogue is what
+supplies it — so the fixture asks the game's own `TryGetDialogue` for the `Saloon` key and refuses to
+run without it. That key has no day, season or heart suffix and the `noPreface` retry drops the season
+preface, so no weekday, season, story flag, mail, festival or schedule can select or lose the branch.
+`talkedToToday` is set explicitly to false, which is what makes the receipt's own pair deterministic
+(`talked_to_today false->true`, `points 0->20`) instead of depending on the save's clock.
+
+### Multiplayer classification
+
+`mp-semantic`, and the checker is why: an initial `mp-insensitive` claim copied from the sibling entry
+was REFUSED — `mp_sensitivity_classification_drift`, because NPC.cs reads `Game1.multiplayer`,
+`IsLocalPlayer` and `IsMultiplayer` in the same body. The semantic effect now recorded is that the
+branch is gated on the local player and `movementPause` is 1000 ms in a shared world against 10 ms
+solo: neither changes which dialogue is chosen nor whether friendship is granted. The register carries
+this as an acknowledged unverified shared-world scope, so promotion beyond Experimental should come
+with shared-world evidence or an explicit ruling.

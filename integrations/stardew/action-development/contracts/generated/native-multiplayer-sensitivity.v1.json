@@ -4,6 +4,14 @@
   "note": "Multiplayer scope is DERIVED from the exact decompiled game source plus the Mod's own admission guards. The pinned statement (not the authored memory) is what the checker trusts.",
   "scopeAcknowledgements": [
     {
+      "defect": "unverified_scope",
+      "actions": [
+        "talk_to_npc"
+      ],
+      "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. These actions are pinned here only until their own shared-world live run lands; that run is the evidence, so reaching `live_verified` retires the pin.",
+      "owner": "stardew-integration"
+    },
+    {
       "defect": "unverified_mechanism_scope",
       "mechanisms": [
         "sleep"
@@ -90,6 +98,7 @@
     "water_pet_bowl",
     "water_slime_hutch_trough",
     "interact_npc_with_item",
+    "talk_to_npc",
     "express_emote",
     "face_direction",
     "chest_store",
@@ -806,6 +815,23 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "talk_to_npc",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/NPC.cs",
+          "signature": "public virtual bool checkAction(",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "the conversation branch is gated on who.IsLocalPlayer, so only the local farmer can trigger it, and the same method sets movementPause = Game1.IsMultiplayer ? 1000 : 10, so the actor stays paused 100x longer after the call in a shared world. Neither changes which dialogue is chosen nor whether conversation friendship is granted; they change who may trigger the branch and how long the pause lasts afterward."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
     },
     {
       "actionId": "express_emote",

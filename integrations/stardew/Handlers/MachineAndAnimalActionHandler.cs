@@ -46,6 +46,13 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "talk_to_npc" => this.executions.RequestLocalTalkToNpc(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "interact_npc_with_item" => this.executions.RequestLocalInteractNpcWithItem(
                 request.RequestId,
                 request.Args.Slot ?? 0,

@@ -133,6 +133,17 @@ public static class FarmhandActionCatalog
         E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified),
         E("water_slime_hutch_trough", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified),
         E("interact_npc_with_item", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
+        // Talking is the OTHER half of NPC.checkAction (NPC.cs:2464) and is its own
+        // action rather than an optional argument on the gift action, because the
+        // protocol has no optional arguments and the two intents are orthogonal
+        // (owner ruling: method-layer verdict NPC.checkAction@2464 ->
+        // newPrimitive("talk_to_npc"), stardew-action-inventory-reconciliation.mjs:406).
+        // Same {x,y,expectedTargetId} shape as npc_relationship: the actor names the
+        // villager through the NPC family's opaque target id and the Mod re-resolves
+        // the person on the game thread. Experimental: it stays off the default Agent
+        // surface until it passes its own native-local live gate, and the promotion to
+        // LiveVerified is a separate catalog edit owned by the parent.
+        E("talk_to_npc", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "npc_talked", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
         E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_started", "Farmer.doEmote"), FarmhandActionLifecycle.LiveVerified),
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),

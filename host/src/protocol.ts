@@ -613,6 +613,7 @@ export type ExecutionRequest = Readonly<{
     | "machine_load"
     | "machine_collect_output"
     | "npc_relationship"
+    | "talk_to_npc"
     | "pet_animal"
     | "collect_animal_product"
     | "feed_animal"
@@ -1721,6 +1722,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "machine_load" &&
     value.action !== "machine_collect_output" &&
     value.action !== "npc_relationship" &&
+    value.action !== "talk_to_npc" &&
     value.action !== "pet_animal" &&
     value.action !== "collect_animal_product" &&
     value.action !== "feed_animal" &&
@@ -2036,6 +2038,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_npc_relationship_target";
+  } else if (value.action === "talk_to_npc") {
+    // The NPC family's shared shape: the opaque family target id names the villager and
+    // x/y is only the published tile the walk leg heads for. The Mod re-resolves the person
+    // from the id on the game thread, so there is nothing else to model here.
+    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_npc_talk_target";
   } else if (value.action === "pet_animal") {
     if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
     
@@ -2948,6 +2962,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "machine_load" ||
       value.action === "machine_collect_output" ||
       value.action === "npc_relationship" ||
+      value.action === "talk_to_npc" ||
       value.action === "pet_animal" ||
       value.action === "collect_animal_product" ||
       value.action === "feed_animal" ||

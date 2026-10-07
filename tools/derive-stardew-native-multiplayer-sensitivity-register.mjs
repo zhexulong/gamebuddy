@@ -375,6 +375,17 @@ const TABLE = {
     "the container is resolved per player: GlobalInventoryId returns a team-shared inventory, and a MiniShippingBin chest returns that player's own separate-wallet inventory; the Mod calls the no-arg overload, which resolves Game1.player.UniqueMultiplayerID, so the target container depends on who is asking",
   ],
   interact_npc_with_item: ["StardewValley/NPC.cs", "public virtual void receiveGift(", "mp-insensitive"],
+  // NOT mp-insensitive: NPC.cs reads Game1.multiplayer / IsLocalPlayer / IsMultiplayer in the
+  // same checkAction body (`movementPause = Game1.IsMultiplayer ? 1000 : 10`), and the register
+  // checker refuses an mp-insensitive claim whose exact source reads a decisive token. Talking
+  // needs shared-world evidence before it can leave Experimental - unlike its sibling
+  // interact_npc_with_item, whose declared seam (receiveGift) reads no such token.
+  talk_to_npc: [
+    "StardewValley/NPC.cs",
+    "public virtual bool checkAction(",
+    "mp-semantic",
+    `the conversation branch is gated on who.IsLocalPlayer, so only the local farmer can trigger it, and the same method sets movementPause = Game1.IsMultiplayer ? 1000 : 10, so the actor stays paused 100x longer after the call in a shared world. Neither changes which dialogue is chosen nor whether conversation friendship is granted; they change who may trigger the branch and how long the pause lasts afterward.`,
+  ],
   npc_relationship: ["mod_owned", "Farmer.friendshipData"],
   // ---------------- read-only / no native mutation ----------------
   inspect_world_map: ["mod_owned", "WorldMap"],
