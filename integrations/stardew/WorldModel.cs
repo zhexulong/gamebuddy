@@ -103,6 +103,25 @@ internal static class WorldModel
     /// <item>Idle.</item>
     /// </list>
     /// </summary>
+    /// <summary>
+    /// The wire spelling of a disposition kind, which is a CLOSED set the Host validates against. It cannot
+    /// be `Kind.ToString().ToLowerInvariant()`: the C# member is `PassOut`, which lowercases to `passout`,
+    /// while the contract says `pass_out` - so the projection would have closed the bridge with
+    /// `invalid_snapshot:actorDispositionKind:passout` exactly when the actor faints.
+    ///
+    /// An unmapped kind THROWS rather than defaulting: adding a variant without teaching this method about it
+    /// should fail loudly at the snapshot, not silently publish a label no consumer can interpret.
+    /// </summary>
+    public static string KindForWire(ActorDispositionKind kind) => kind switch
+    {
+        ActorDispositionKind.Idle => "idle",
+        ActorDispositionKind.Modal => "modal",
+        ActorDispositionKind.Event => "event",
+        ActorDispositionKind.PassOut => "pass_out",
+        ActorDispositionKind.Transient => "transient",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "no wire spelling for this disposition kind"),
+    };
+
     internal static ActorDisposition Classify(in ActorWorldFacts facts)
     {
         if (facts.EventUp)

@@ -516,7 +516,16 @@ public sealed record BridgeSnapshot(
         // free slot names; the occupant fields say which are filled. Defaulted and LAST for the same
         // reason as its siblings above: the positional list is already closed by the parameters
         // before it.
-        IReadOnlyList<BridgeWearableTarget>? WearableTargets = null
+        IReadOnlyList<BridgeWearableTarget>? WearableTargets = null,
+        // The World Model's disposition for this tick - the single authority every consumer reads
+        // instead of re-deriving the body's environment (WIA rev C). `Kind` is one of idle, modal,
+        // event, pass_out, transient; `Detail` names the modal class or transient kind when the kind
+        // carries one, and is null otherwise; `ActionOwned` is the L0 binary for a modal, true when the
+        // newest execution opened it and false when the world did. Published so the Agent can see WHAT
+        // is holding the body rather than only that it cannot act.
+        string ActorDispositionKind = "idle",
+        string? ActorDispositionDetail = null,
+        bool ActorDispositionActionOwned = false
     );
 
 public sealed record BridgeActiveExecution(

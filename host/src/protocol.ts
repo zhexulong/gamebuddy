@@ -114,6 +114,12 @@ inventorySlots?: number;
  * did not send it. The world-not-ready snapshot sends false.
  */
 exhausted: boolean;
+  /** The World Model’s disposition for this snapshot’s tick: which of idle / modal / event / pass_out /
+   * transient holds the body. `actorDispositionDetail` names the modal class or transient kind when the kind
+   * carries one. Published so a planner can see WHAT is holding the actor, not only that it is held. */
+  actorDispositionKind?: string;
+  actorDispositionDetail?: string | null;
+  actorDispositionActionOwned?: boolean;
 activeExecution?: ActiveExecution | null;
   /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
   presentationLocale: string;
@@ -1144,6 +1150,9 @@ const SNAPSHOT_KEYS = [
   "tile",
   "stamina",
   "exhausted",
+  "actorDispositionKind",
+  "actorDispositionDetail",
+  "actorDispositionActionOwned",
   "health",
   "currentTool",
   "inventorySlots",
@@ -2420,6 +2429,19 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     return "invalid_snapshot:tile";
   if (!isFiniteNumber(value.stamina)) return "invalid_snapshot:stamina";
   if (typeof value.exhausted !== "boolean") return "invalid_snapshot:exhausted";
+  // The disposition is a CLOSED set, checked where the decision is made: a planner that switched on an
+  // unknown kind would silently treat it as not-a-disposition. An earlier version of this check landed in
+  // `diagnoseSnapshot` instead - the two functions share the `exhausted` line, and the edit took the first
+  // occurrence - so the decision path accepted a kind the diagnostic would have named.
+  if (value.actorDispositionKind !== undefined) {
+    if (typeof value.actorDispositionKind !== "string") return "invalid_snapshot:actorDispositionKind";
+    if (!["idle", "modal", "event", "pass_out", "transient"].includes(value.actorDispositionKind))
+      return `invalid_snapshot:actorDispositionKind:${value.actorDispositionKind}`;
+    if (value.actorDispositionDetail !== undefined && value.actorDispositionDetail !== null && typeof value.actorDispositionDetail !== "string")
+      return "invalid_snapshot:actorDispositionDetail";
+    if (value.actorDispositionActionOwned !== undefined && typeof value.actorDispositionActionOwned !== "boolean")
+      return "invalid_snapshot:actorDispositionActionOwned";
+  }
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
   if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
@@ -2828,6 +2850,15 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.buildingChestTargets.every(isBuildingChestTargetFact))
   )
     return "invalid_snapshot:buildingChestTargets";
+  // The key set, which this function did NOT check: an unexpected key therefore made it return its
+  // "accepted" sentinel, the bridge's guard discarded that, and the operator saw a bare
+  // `invalid_snapshot` naming nothing. Keys are schema names, so naming them leaks no player data.
+  if (!hasOnlyKeys(value, SNAPSHOT_KEYS)) {
+    const unexpected = Object.keys(value).filter((key) => !(SNAPSHOT_KEYS as readonly string[]).includes(key)).sort();
+    if (unexpected.length > 0) return `invalid_snapshot:unexpected_keys:${unexpected.join(",")}`;
+    return "invalid_snapshot:missing_required_key";
+  }
+
   return "accepted";
 }
 
@@ -2852,6 +2883,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     isFiniteNumber(value.tile.y) &&
     isFiniteNumber(value.stamina) &&
     typeof value.exhausted === "boolean" &&
+    (value.actorDispositionKind === undefined || typeof value.actorDispositionKind === "string") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&

@@ -2438,7 +2438,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.equip_wearable,
           label: "Equip a wearable",
           description:
-            "Put a wearable Farmhand inventory item into the body slot it belongs to. slot, expectedQualifiedItemId and expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result; the target id names the body slot, so a stale id is refused. A repeat of the same equip is an idempotent success, not an error.",
+            "Put a wearable Farmhand inventory item into the body slot it belongs to. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot (hat, shirt, pants, boots, left_ring, right_ring), so a stale id is refused. slot and expectedQualifiedItemId must be copied from the inventoryItemFacts entry of that same result: that is the pack slot holding the item to wear. A repeat of the same equip is an idempotent success, not an error.",
           parameters: schema,
           action: "equip_wearable",
           toArgs: (params) => ({ slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }),
@@ -2460,7 +2460,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.unequip_wearable,
           label: "Unequip a wearable",
           description:
-            "Take the wearable out of a body slot and put it into the named free inventory slot. slot and expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result AND from toolSlots for the destination. The action refuses when the pack is full rather than losing the item, and emptying an already-empty slot is an idempotent success.",
+            "Take the wearable out of a body slot and put it into a free pack slot. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot to empty, so a stale id is refused. slot is the DESTINATION pack slot and must be a slot that the same result does not list in inventoryItemFacts (that list holds only OCCUPIED slots) and that is below inventorySlots. The action refuses when the pack is full rather than losing the item, and emptying an already-empty body slot is an idempotent success.",
           parameters: schema,
           action: "unequip_wearable",
           toArgs: (params) => ({ slot: params.slot, expectedTargetId: params.expectedTargetId }),

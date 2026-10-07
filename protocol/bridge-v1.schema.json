@@ -2230,6 +2230,9 @@
         "stamina": {
           "type": "number"
         },
+        "actorDispositionKind": { "type": "string", "enum": ["idle", "modal", "event", "pass_out", "transient"] },
+        "actorDispositionDetail": { "type": ["string", "null"] },
+        "actorDispositionActionOwned": { "type": "boolean" },
         "exhausted": {
           "type": "boolean"
         },
