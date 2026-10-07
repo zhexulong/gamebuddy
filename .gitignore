@@ -201,3 +201,6 @@ voice-gateway/scripts/player-turn-*.wav
 # Any stray live-run evidence directory (the capture root must be the repo
 # root; this also catches a mis-resolved root so evidence can never be staged).
 .live-runs/
+
+# The reconciliation tests write these beside themselves and do not always clean up.
+integrations/stardew/action-development/tests/.tmp-recon-*
