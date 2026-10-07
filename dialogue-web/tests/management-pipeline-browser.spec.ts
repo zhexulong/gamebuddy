@@ -1496,7 +1496,12 @@ test("management browser imports a reviewed character card and provisions the co
     await expect(cardImport).toContainText("Imported Rae");
 
     await cardImport.getByRole("button", { name: "Confirm & create companion" }).click();
-    await expect(cardImport.getByRole("status")).toContainText("Imported companion created.");
+  		// Provisioning is real work (identity, profile, greeting, the card's own world book, history),
+		// and the default five-second budget timed out under a full suite with the panel still in its
+		// `Creating…` state - the outcome is what this asserts, not the latency.
+		await expect(cardImport.getByRole("status")).toContainText("Imported companion created.", {
+			timeout: 15_000,
+		});
 
     // The provisioned companion joins the library under the name the card
     // carried: approving the reviewed name is what makes that true.
@@ -1554,7 +1559,12 @@ test("management browser shows a durable loss report for a confirmed card import
     await cardImport.locator("textarea").fill(JSON.stringify(IMPORTED_CARD));
     await cardImport.getByRole("button", { name: "Review card" }).click();
     await cardImport.getByRole("button", { name: "Confirm & create companion" }).click();
-    await expect(cardImport.getByRole("status")).toContainText("Imported companion created.");
+  		// Provisioning is real work (identity, profile, greeting, the card's own world book, history),
+		// and the default five-second budget timed out under a full suite with the panel still in its
+		// `Creating…` state - the outcome is what this asserts, not the latency.
+		await expect(cardImport.getByRole("status")).toContainText("Imported companion created.", {
+			timeout: 15_000,
+		});
 
     // The record is durable evidence by the time confirm returns, so exactly one
     // entry appears without a reload: the card name the import carried, when,
