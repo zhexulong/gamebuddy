@@ -230,6 +230,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
   // runner proves the terminal, the world arriving on the requested LEVEL, and the
   // floor-set projection following. Live evidence: fixtures/stardew/RUNBOOK.md 36.
+  gate("toggle_animal_door", 1, "run-stardew-native-local-player-toggle-animal-door-smoke.mjs", "animal_door_toggled", "native_toggle_animal_door_v1"),
   gate("select_mine_elevator_floor", 1, "run-stardew-native-local-player-mine-elevator-smoke.mjs", "mine_elevator_floor_selected", "native_mine_elevator_v1"),
   // Promoted to live_verified (2026-10-04): each of these produced a real
   // target-version native-local run with its own receipt and fresh postcondition

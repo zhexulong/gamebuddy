@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isDescriptorDerivedActionId, isModDescriptorComplete } from "./action-registry.js";
-
 /**
  * The gate these tests pin decides VISIBILITY, TOOL MOUNTING and COMPLETION JUDGING at once
  * (action-registry.ts:740-765). Its failure mode is silence: a descriptor-derived action with no arm
@@ -41,6 +40,33 @@ test("both new actions are enrolled as descriptor-derived", () => {
   // checking a rule nothing enforces.
   assert.equal(isDescriptorDerivedActionId("withdraw_silo_hay"), true);
   assert.equal(isDescriptorDerivedActionId("use_obelisk"), true);
+});
+
+test("toggle_animal_door is enrolled, and its gate opens in both legal shapes", () => {
+  // Enrolled: without this the arm below is dead code and the action is invisible with no error.
+  assert.equal(isDescriptorDerivedActionId("toggle_animal_door"), true);
+  for (const make of [wireDescriptor, surfaceDescriptor]) {
+    assert.equal(
+      isModDescriptorComplete("toggle_animal_door", make({ names: xyz, postcondition: "animal_door_toggled" })),
+      true,
+    );
+    // Shut on each wrong fact, so the arm is not simply accepting everything.
+    assert.equal(
+      isModDescriptorComplete("toggle_animal_door", make({ names: xyz, postcondition: "silo_hay_taken" })),
+      false,
+    );
+    assert.equal(
+      isModDescriptorComplete("toggle_animal_door", make({ names: ["x", "y"], postcondition: "animal_door_toggled" })),
+      false,
+    );
+    assert.equal(
+      isModDescriptorComplete(
+        "toggle_animal_door",
+        make({ names: xyz, postcondition: "animal_door_toggled", effect: "read" }),
+      ),
+      false,
+    );
+  }
 });
 
 test("the gate opens for both actions in the wire descriptor shape", () => {

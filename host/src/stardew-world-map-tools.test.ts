@@ -92,7 +92,7 @@ test("observe-scene tool mounts only from a fresh Mod read-only capability and r
       };
     },
   };
-  const tool = createStardewObservationTools(scene).find((candidate) => candidate.name === "stardew_observe_scene");
+  const tool = createStardewObservationTools(scene).find((candidate) => candidate.name === "stardew_read_scene");
   assert.ok(tool);
   const result = await tool.execute("scene_01", {}, new AbortController().signal, () => {}, {} as never);
   assert.equal(calls, 1);

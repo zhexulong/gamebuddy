@@ -1886,7 +1886,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
             // Last parameter, defaulted, so it can be named here without disturbing the
             // positional arguments above it (CS1744 if the declaration moves earlier).
-            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null);
+            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null,
+                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player) : null);
     }
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)

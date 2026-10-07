@@ -569,7 +569,11 @@ activeExecution?: ActiveExecution | null;
    /** Warp obelisks the actor can reach. `route` names which native path reaches it (a
     * Data/Buildings obelisk building, or the island farm obelisk tile) and the opaque id
     * carries it, so an island-tile target can never be replayed against a building. */
-   obeliskTargets?: readonly Readonly<{ targetId: string; route: string; location: string; x: number;
+   /** A building's animal door. `isOpen` is published because the action's postcondition is that the
+   * state FLIPPED, and a target whose identity ignores its state cannot be verified. */
+  animalDoorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
+    buildingType: string; isOpen: boolean }>[];
+  obeliskTargets?: readonly Readonly<{ targetId: string; route: string; location: string; x: number;
      y: number; displayName: string; destination: string; forceDismount: boolean }>[];
 }>;
 
@@ -588,6 +592,7 @@ export type ExecutionRequest = Readonly<{
     | "ride_bus"
   | "withdraw_silo_hay"
   | "use_obelisk"
+  | "toggle_animal_door"
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
@@ -1171,6 +1176,7 @@ const SNAPSHOT_KEYS = [
   "cookingStationTargets",
   "shopTargets",
   "mineElevatorFloorTargets",
+  "animalDoorTargets",
   "obeliskTargets",
   "minecartTargets",
   "bushTargets",
@@ -1181,6 +1187,7 @@ const SNAPSHOT_KEYS = [
   "weather",
    "minecartTargets",
     "mineElevatorFloorTargets",
+    "animalDoorTargets",
     "obeliskTargets",
     "raftTargets",
     "horseTargets",
@@ -1687,6 +1694,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "ride_bus" &&
      value.action !== "withdraw_silo_hay" &&
      value.action !== "use_obelisk" &&
+     value.action !== "toggle_animal_door" &&
      value.action !== "shop_purchase" &&
      value.action !== "select_mine_elevator_floor" &&
      value.action !== "use_raft" &&
@@ -1817,8 +1825,12 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_shop_target";
     if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
     if (!Number.isSafeInteger(value.args.quantity) || (value.args.quantity as number) < 1) return "invalid_quantity";
-  } else if (value.action === "withdraw_silo_hay" || value.action === "use_obelisk") {
-    // Both take the shared { x, y, expectedTargetId } shape and no slot.
+  } else if (
+    value.action === "withdraw_silo_hay" ||
+    value.action === "use_obelisk" ||
+    value.action === "toggle_animal_door"
+  ) {
+    // All three take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
@@ -2633,6 +2645,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:mineEntranceTargets";
   if (
+    value.animalDoorTargets !== undefined &&
+    (!Array.isArray(value.animalDoorTargets) ||
+      value.animalDoorTargets.length > 32 ||
+      !value.animalDoorTargets.every(isAnimalDoorTargetFact))
+  )
+    return "invalid_snapshot:animalDoorTargets";
+  if (
     value.obeliskTargets !== undefined &&
     (!Array.isArray(value.obeliskTargets) || value.obeliskTargets.length > 32 || !value.obeliskTargets.every(isObeliskTargetFact))
   )
@@ -2866,6 +2885,10 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.mineElevatorFloorTargets) &&
         value.mineElevatorFloorTargets.length <= 32 &&
         value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))) &&
+    (value.animalDoorTargets === undefined ||
+      (Array.isArray(value.animalDoorTargets) &&
+        value.animalDoorTargets.length <= 32 &&
+        value.animalDoorTargets.every(isAnimalDoorTargetFact))) &&
     (value.obeliskTargets === undefined ||
       (Array.isArray(value.obeliskTargets) && value.obeliskTargets.length <= 32 && value.obeliskTargets.every(isObeliskTargetFact))) &&
     (value.minecartTargets === undefined ||
@@ -2900,6 +2923,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
        value.action === "ride_bus" ||
     value.action === "withdraw_silo_hay" ||
     value.action === "use_obelisk" ||
+    value.action === "toggle_animal_door" ||
        value.action === "use_raft" ||
        value.action === "mount_transport" ||
        value.action === "enter_mine" ||
@@ -4298,6 +4322,22 @@ function isShopTargetFact(value: unknown): boolean {
     value.stockCount >= 0
     && isStringArray(value.stockItemIds)
     && (value.stockItemIds as readonly string[]).length <= 16
+  );
+}
+
+function isAnimalDoorTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "buildingType", "isOpen"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.buildingType === "string" &&
+    typeof value.isOpen === "boolean"
   );
 }
 

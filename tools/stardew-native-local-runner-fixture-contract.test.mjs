@@ -67,6 +67,7 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // 2026-10-06: the two facility/transport actions wired this session. Same rule as the wave
   // above — keyed on the action the runner exercises.
   "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs": "withdraw_silo_hay",
+  "run-stardew-native-local-player-toggle-animal-door-smoke.mjs": "toggle_animal_door",
   "run-stardew-native-local-player-use-obelisk-smoke.mjs": "use_obelisk",
   "run-stardew-native-local-player-dress-mannequin-smoke.mjs": "dress_mannequin",
   "run-stardew-native-local-player-enter-mine-smoke.mjs": "enter_mine",

@@ -330,7 +330,10 @@ export function createStardewObservationTools(
   { // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
-        name: "stardew_observe_scene",
+        // Renamed from stardew_observe_scene: sharing the stardew_observe prefix with the per-turn
+        // context tool made two different observations look like one family at selection time. The
+        // wire action id is unchanged.
+        name: "stardew_read_scene",
         label: "Observe Stardew Scene",
         description: "Read the Mod-advertised live Stardew scene projection. Scene references are observational only and never authorize mutation.",
         parameters: Type.Object({}, { additionalProperties: false }),
@@ -527,7 +530,11 @@ export function buildCandidateToolSchema(
     );
   }
 
-  if (actionId === "withdraw_silo_hay" || actionId === "use_obelisk") {
+  if (
+    actionId === "withdraw_silo_hay" ||
+    actionId === "use_obelisk" ||
+    actionId === "toggle_animal_door"
+  ) {
     // Same shape as ride_minecart: the tile plus the opaque target from the most
     // recent observation, both copied verbatim.
     return Type.Object(
@@ -1580,6 +1587,28 @@ export function createStardewActionTools(
             "Withdraw one hay from a discovered silo. Stand within reach of the silo first. The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
           parameters: schema,
           action: "withdraw_silo_hay",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "toggle_animal_door",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("toggle_animal_door", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("toggle_animal_door", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.toggle_animal_door,
+          label: "Toggle an animal door",
+          description:
+            "Open or close a barn or coop animal door. Stand within reach of the building first. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
+          parameters: schema,
+          action: "toggle_animal_door",
           toArgs: () => ({}),
         }),
       );

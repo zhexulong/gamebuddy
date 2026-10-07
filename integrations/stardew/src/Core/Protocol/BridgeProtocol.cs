@@ -1855,6 +1855,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
         "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
+                "toggle_animal_door" => new[] { "x", "y", "expectedTargetId" },
         "use_obelisk" => new[] { "x", "y", "expectedTargetId" },
         "toggle_tool_light" => new[] { "slot", "x", "y" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },

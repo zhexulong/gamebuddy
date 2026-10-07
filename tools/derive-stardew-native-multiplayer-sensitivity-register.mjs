@@ -512,6 +512,12 @@ const TABLE = {
     "mp-insensitive",
     "writes piecesOfHay on the shared farm; the body reads no multiplayer token",
   ],
+  toggle_animal_door: [
+    "StardewValley.Buildings/Building.cs",
+    "public virtual void ToggleAnimalDoor(Farmer who)",
+    "mp-insensitive",
+    "flips the building's own animalDoorOpen NetBool and plays the open/close sound; the body reads no multiplayer token",
+  ],
   withdraw_silo_hay: [
     "StardewValley/GameLocation.cs",
     "public static Object GetHayFromAnySilo(GameLocation currentLocation)",

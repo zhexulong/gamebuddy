@@ -1704,6 +1704,36 @@
         }
       },
       {
+        "actionId": "toggle_animal_door",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "animal_door_toggled"
+        }
+      },
+      {
         "actionId": "scythe_crop",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2156,6 +2186,7 @@
       "toggle_tool_light",
       "withdraw_silo_hay",
       "use_obelisk",
+      "toggle_animal_door",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2249,6 +2280,7 @@
       "toggle_tool_light",
       "withdraw_silo_hay",
       "use_obelisk",
+      "toggle_animal_door",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",

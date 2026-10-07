@@ -39,11 +39,19 @@ namespace GameBuddy.Stardew;
 /// Discovery reports targets for the CURRENT location only, because the owner's presence is
 /// what makes a shop usable — so the Agent can tell "this shop is not on the map I am on"
 /// from "this shop is here but closed", which are different problems with different fixes.
+/// A shop whose native counter is a TILE rather than an NPC (the tile-opened stalls) is
+/// discovered from that tile for the same reason: the counter's presence is what makes it
+/// usable, and the tile is where the actor has to stand.
 /// </summary>
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
     /// <summary>The native interaction radius for a shop owner (Chebyshev, Utility.cs:4100).</summary>
     private const int ShopOwnerInteractionRadius = 1;
+    /// <summary>The Host's published cap on <c>shopTargets</c> (host/src/protocol.ts), which the
+    /// one snapshot contract enforces; exceeding it invalidates the WHOLE snapshot.</summary>
+    private const int MaxShopTargets = 32;
+    /// <summary>How many tile-opened shops one location may contribute.</summary>
+    private const int MaxTileShopTargets = 8;
 
     internal static string ShopTargetId(string shopId, string ownerName) =>
         $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName))).ToLowerInvariant()[..16]}";
@@ -87,28 +95,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 bool inReach = Utility.tileWithinRadiusOfPlayer(
                     npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);
 
-                // What this shop can actually sell right now, so a caller does not have to
-                // guess an item id. Same call the purchase itself uses, so discovery and
-                // execution cannot disagree about what is on offer.
-                int stockCount = 0;
-                List<string> stockItemIds = new();
-                try
-                {
-                    Dictionary<ISalable, ItemStockInformation>? here = ShopBuilder.GetShopStock(shopId, shopData);
-                    if (here is not null)
-                    {
-                        stockCount = here.Count;
-                        foreach (ISalable item in here.Keys)
-                        {
-                            if (!string.IsNullOrEmpty(item.QualifiedItemId) && stockItemIds.Count < 16)
-                                stockItemIds.Add(item.QualifiedItemId);
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    stockCount = 0;
-                }
+                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds);
 
                 targets.Add(new BridgeShopTarget(
                     ShopTargetId(shopId, owner.Name),
@@ -122,7 +109,160 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     stockItemIds));
             }
         }
-        return targets;
+
+        // A shop whose owner entry is NOT a named NPC standing in the room (AnyOrNone /
+        // None, which is what the tile-opened stalls use) is reachable only through the
+        // tile that opens it, so that is where it is discovered. The reachable set is the
+        // tile set, not every non-NamedNpc owner entry: an owner entry nothing in the
+        // world opens has no counter to walk up to and must not be advertised.
+        targets.AddRange(DiscoverTileShopTargets(location, player));
+        return targets.Take(MaxShopTargets).ToArray();
+    }
+
+    /// <summary>
+    /// What a shop can actually sell right now, so a caller does not have to guess an item
+    /// id. Same call the purchase itself uses, so discovery and execution cannot disagree
+    /// about what is on offer.
+    /// </summary>
+    private static void ReadShopStock(string shopId, ShopData shopData, out int stockCount, out List<string> stockItemIds)
+    {
+        stockCount = 0;
+        stockItemIds = new List<string>();
+        try
+        {
+            Dictionary<ISalable, ItemStockInformation>? here = ShopBuilder.GetShopStock(shopId, shopData);
+            if (here is null)
+                return;
+            stockCount = here.Count;
+            foreach (ISalable item in here.Keys)
+            {
+                if (!string.IsNullOrEmpty(item.QualifiedItemId) && stockItemIds.Count < 16)
+                    stockItemIds.Add(item.QualifiedItemId);
+            }
+        }
+        catch (Exception)
+        {
+            stockCount = 0;
+        }
+    }
+
+    /// <summary>
+    /// Shops opened by a Buildings-layer Action tile instead of by an NPC the actor stands
+    /// next to. Their execution seam is exactly the one this action already dispatches
+    /// (<c>Utility.TryOpenShopMenu</c>), but their owner entry is not a named NPC in the
+    /// room, so the owner scan above can never see them.
+    ///
+    /// The tile IS the counter: <c>ownerTileX/Y</c> is the tile the actor has to stand
+    /// within the native click radius of, and <c>ownerName</c> is empty because no NPC owns
+    /// the stall. That empty name is not a missing fact -- every one of these native cases
+    /// opens the shop with a null owner, which the game documents as "no NPC
+    /// portrait/dialogue" (Utility.cs:4174).
+    /// </summary>
+    private static IEnumerable<BridgeShopTarget> DiscoverTileShopTargets(GameLocation location, Farmer player)
+    {
+        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
+        if (buildings is null)
+            yield break;
+
+        Dictionary<string, ShopData> shops;
+        try
+        {
+            shops = DataLoader.Shops(Game1.content);
+        }
+        catch (Exception)
+        {
+            yield break;
+        }
+
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        int found = 0;
+        for (int y = 0; y < buildings.LayerHeight && found < MaxTileShopTargets; y++)
+        {
+            for (int x = 0; x < buildings.LayerWidth && found < MaxTileShopTargets; x++)
+            {
+                var tile = buildings.Tiles[x, y];
+                if (tile is null || !tile.Properties.TryGetValue("Action", out var actionValue))
+                    continue;
+                string action = actionValue.ToString();
+                // One target per shop: two tiles of the same stall would mint the same
+                // target id twice and make the request ambiguous.
+                if (!TryResolveTileShop(action, out string shopId)
+                    || !shops.TryGetValue(shopId, out ShopData? shopData) || shopData is null
+                    || !seen.Add(shopId))
+                    continue;
+
+                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds);
+                found++;
+                yield return new BridgeShopTarget(
+                    ShopTargetId(shopId, string.Empty),
+                    shopId,
+                    string.Empty,
+                    location.NameOrUniqueName,
+                    x,
+                    y,
+                    Utility.tileWithinRadiusOfPlayer(x, y, ShopOwnerInteractionRadius, player),
+                    stockCount,
+                    stockItemIds);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The shop a Buildings-layer Action tile opens, resolved through the selectors whose
+    /// native case dispatches the SAME <c>Utility.TryOpenShopMenu(shopId, null, ...)</c>
+    /// overload this action dispatches (GameLocation.performAction). A selector that opens
+    /// no shop at all is left out rather than forced:
+    ///
+    /// <list type="bullet">
+    /// <item><c>ColaMachine</c> (GameLocation.cs:9231) buys one Joja Cola inside its own
+    /// answer handler -- no shop menu is ever built.</item>
+    /// <item><c>QiCoins</c> (:9932) and <c>ClubSeller</c> (:9946) are question dialogues
+    /// whose answers exchange money for club coins or an item; neither opens a shop.</item>
+    /// <item><c>IceCreamStand</c> (:9234) and every <c>OpenShop</c> form carrying a
+    /// direction, an opening window or an owner area (:9061-9110) run the LOCATION overload with
+    /// those gates, which this action does not reproduce -- opening anyway would be a gate
+    /// bypass of the same kind backlog item "enter_exit could pass through a native door gate"
+    /// is. The GATE-FREE two-token <c>OpenShop &lt;shopId&gt;</c> IS included, and the handler
+    /// dispatches it through that same location overload (no owner area, forceOpen), so even
+    /// its closed-message refusal stays native.</item>
+    /// </list>
+    ///
+    /// <c>Bookseller</c> (:8727) is the one included selector with a gate of its own; the
+    /// handler re-reads that gate and refuses rather than opening a shop a real click would
+    /// not have opened.
+    /// </summary>
+    internal static bool TryResolveTileShop(string? action, out string shopId)
+    {
+        shopId = string.Empty;
+        if (string.IsNullOrWhiteSpace(action))
+            return false;
+
+        string[] tokens = ArgUtility.SplitBySpace(action);
+        switch (tokens[0])
+        {
+            case "JojaShop":
+                shopId = "Joja";
+                return true;
+            case "ClubShop":
+                shopId = "Casino";
+                return true;
+            case "QiGemShop":
+                shopId = "QiGemShop";
+                return true;
+            case "Bookseller":
+                shopId = "Bookseller";
+                return true;
+            case "OpenShop":
+                // Only the gate-free two-token form. The native case parses a direction, an
+                // opening window and an owner area out of the remaining arguments and
+                // returns without opening on each of them.
+                if (tokens.Length != 2)
+                    return false;
+                shopId = tokens[1];
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
@@ -233,6 +373,46 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
         }
 
+        // A tile-opened shop's counter is the tile. The counter's own Action, re-read on the
+        // game thread, decides which native call this target's case makes: the fixed
+        // selectors all dispatch the STRING overload with a null owner (listed in
+        // TryResolveTileShop), while `OpenShop` without arguments dispatches the LOCATION
+        // overload with no owner area and forceOpen -- and only that form reproduces the
+        // case's own closed-message refusal (Utility.cs:4305-4317). Opening a gated stall
+        // anyway would be a gate bypass.
+        bool tileOpened = target.OwnerName.Length == 0;
+        string? counterAction = tileOpened
+            ? ReadBuildingsLayerAction(location, new Microsoft.Xna.Framework.Point(target.OwnerTileX, target.OwnerTileY))
+            : null;
+        bool counterIsOpenShop = counterAction is not null
+            && string.Equals(
+                ArgUtility.SplitBySpace(counterAction).FirstOrDefault(),
+                "OpenShop",
+                StringComparison.Ordinal);
+
+        if (tileOpened && string.Equals(target.ShopId, "Bookseller", StringComparison.Ordinal))
+        {
+            // Bookseller is the only advertised tile selector whose native case has a gate
+            // of its own (GameLocation.cs:8727-8744): it opens only on the season's
+            // bookseller days, and otherwise asks a Buy/Trade/Leave question instead. This
+            // seam reproduces neither, so it refuses rather than opening a shop a real
+            // click would not have opened.
+            if (!Utility.getDaysOfBooksellerThisSeason().Contains(Game1.dayOfMonth))
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "shop_tile_gate_refused",
+                    $"shop={target.ShopId};counter={target.OwnerTileX},{target.OwnerTileY};day={Game1.dayOfMonth};gate=bookseller_day");
+            if (Game1.player.mailReceived.Contains("read_a_book"))
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "shop_tile_requires_dialogue",
+                    $"shop={target.ShopId};counter={target.OwnerTileX},{target.OwnerTileY};gate=bookseller_choice");
+        }
+
         // The stock the game would actually offer right now.
         // Filled by the click loop below and reported in the receipt, so a swallowed click
         // is diagnosable from the evidence instead of requiring another live round.
@@ -301,14 +481,33 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         ShopMenu? menu = null;
         try
         {
-            if (!Utility.TryOpenShopMenu(target.ShopId, target.OwnerName))
+            // A tile-opened shop needs no owner name: the game documents a null owner as
+            // "open the shop with no NPC portrait/dialogue" (Utility.cs:4174) and each fixed
+            // selector's native case calls it that way. The suppression states the game's
+            // own contract, and naming the argument also selects the string overload.
+            bool shopOpened = !tileOpened
+                ? Utility.TryOpenShopMenu(target.ShopId, target.OwnerName)
+                : counterIsOpenShop
+                    ? Utility.TryOpenShopMenu(target.ShopId, location, ownerArea: null, maxOwnerY: null, forceOpen: true)
+                    : Utility.TryOpenShopMenu(shopId: target.ShopId, ownerName: null!);
+            if (!shopOpened)
             {
+                // The location overload's closed-message path mounts the game's own
+                // DialogueBox before returning false. Leaving it mounted would make every
+                // later action reject as modal_open, so it is closed with the public step
+                // the native input paths use and its text goes into the refusal instead.
+                string tileClosedMessage = Game1.activeClickableMenu is DialogueBox closedBox
+                    ? string.Join(" | ", closedBox.dialogues)
+                    : string.Empty;
+                if (Game1.activeClickableMenu is DialogueBox)
+                    ((DialogueBox)Game1.activeClickableMenu).closeDialogue();
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
                     ExecutionState.Rejected,
                     "shop_open_refused",
-                    $"shop={target.ShopId};owner={target.OwnerName}"
+                    $"shop={target.ShopId};owner={target.OwnerName};counter={target.OwnerTileX},{target.OwnerTileY}"
+                        + (string.IsNullOrEmpty(tileClosedMessage) ? string.Empty : $";closed_message={tileClosedMessage}")
                         + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
             }
 
@@ -484,8 +683,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         int gained = ownedAfter - ownedBefore;
         bool menuClosed = Game1.activeClickableMenu is not ShopMenu;
 
+        string entryKind = tileOpened ? "tile_action" : "npc_owner";
         string evidence =
-            $"shop={target.ShopId};owner={target.OwnerName};item={expectedItemId};"
+            $"shop={target.ShopId};owner={target.OwnerName};entry={entryKind};item={expectedItemId};"
             + $"requested={quantity};purchased={purchasable};unit_price={unitPrice};"
             + $"money_before={moneyBefore};money_after={moneyAfter};"
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
