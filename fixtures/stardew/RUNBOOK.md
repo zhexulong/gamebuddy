@@ -2110,3 +2110,67 @@ the artefact report **what it actually did** rather than by reasoning about what
   owner entry is currently eligible, and a live run picked `DesertFestival_Pierre` — a
   festival stall — because the content data lists it first. Demonstrating "buy something"
   must not depend on that ordering.
+
+## `enter_exit` — the door-gate widening, and what it actually closes
+
+```text
+fixture  native_enter_exit_warp_action_v1   (Farm, tile 78,19 carries Action "WarpCommunityCenter")
+runner   tools/run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs
+result   passed · reasonCode=door_gate_refused · 383 ms · teardown restored + cleaned
+```
+
+The receipt, verbatim in the parts that matter:
+
+```text
+doorTableHoldsTarget : false
+standing             : 78,18      target: 78,19
+receipt              : rejected / door_gate_refused · revision 2
+evidence             : source=78,19;gate=refused;entry=perform_action;dialogue=锁上了。
+before               : Farm (78,18)  actionable=true
+after                : Farm (78,18)  actionable=true
+```
+
+### What the widening is, precisely
+
+`DispatchNativeDoor` no longer asks `location.doors.ContainsKey(tile)`; it reads the **live**
+Buildings layer and admits a tile whose Action contains `Warp` — the predicate `updateDoors`
+itself applies (`GameLocation.cs:17601`). Those two are not the same set, and an earlier reading of
+this change overstated the difference:
+
+* `updateDoors` (:17586-17641) returns early when `Game1.IsClient`, then clears and rebuilds
+  `doors` — a network-synced `NetPointDictionary` (:273). `WarpBoatTunnel`, `WarpCommunityCenter`
+  and `Warp_Sunroom_Door` are added **unconditionally** through explicit `case … doors.Add(…);
+  continue;` arms (:17609-17617); the other warp actions, and anything merely *containing* "Warp",
+  must reach the token-3 read (:17631-17638). So on a normally-loaded map the old predicate already
+  admitted those three, and the old code **did** run their gate.
+* The disagreement is **staleness**: a Warp Action present in the live layer but absent from the
+  cache — written after the last `updateDoors`. In that case the old code fell through to
+  `ResolveDoorWarp` (`farmhandexecutioncontroller.cs:1918-1932`), and `getWarpFromDoor` resolves
+  `WarpCommunityCenter` **explicitly** (`GameLocation.cs:2211-2212`) — so it warped, skipping the
+  `ccDoorUnlock` check `performAction`'s own case performs. That is the bypass, and it is narrower
+  than "the gate never ran for warp tiles".
+
+The fixture reproduces exactly that disagreement — it writes the Action **after** the location loaded,
+so `doors` lacks the tile while the live layer has it — and asserts both halves before attachment:
+the tile is not a key of `farm.doors` (`doorTableHoldsTarget=false` above), **and**
+`farm.getWarpFromDoor(T)` returns a non-null warp targeting `CommunityCenter` — the fact proving the
+old fallback would have warped. Without the second assertion the run would not distinguish "the gate
+refused" from "nothing was there".
+
+The negative that carries the weight is `after: Farm (78,18)`. A bypass end state is a warp to the
+Community Center; the actor never left the Farm, and `actionable` stayed true because the refusal
+draws a dialogue that something must clean.
+
+`WarpGreenhouse` is *not* a weaker version of this case — it is untestable. It falls to the
+`default:` arm, which needs tokens 1..3, so a single-token action resolves to null; `enter_exit`
+then refuses before dispatch (`RequestLocalDoorTransition`, :299-303) and pre- and post-widening
+both answer `door_not_available`, with no observable difference.
+
+### The runner lesson, third time
+
+Two live attempts failed on **the runner**, not the product, for the same reason: a request whose
+native work resolves synchronously answers with an **immediate terminal** instead of `accepted`.
+`move_to_tile` to the tile the actor already stands on returned `succeeded/target_reached` at
+once, and `enter_exit` on this tile returned `rejected/door_gate_refused` at once. Both phases
+demanded `accepted` and threw on a correct run — the same mistake `dismiss_modal` and `ride_bus`
+each produced once. A phase must accept either shape, and only then assert the terminal.
