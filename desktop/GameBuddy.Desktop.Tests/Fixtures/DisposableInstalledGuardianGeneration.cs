@@ -5,8 +5,26 @@ using System.Text.Json;
 namespace GameBuddy.Desktop.Tests.Fixtures;
 
 /// <summary>Test-only consumer of the canonical Host production artifact publisher.</summary>
+/// <remarks>
+/// The installed generation can come from two places. By default it is published here and now through
+/// the canonical publisher, which typechecks the whole Host production closure — so a lane part-way
+/// through an unrelated Host edit reddens every test in this assembly. Setting
+/// <see cref="PrebuiltGenerationRootEnvironmentVariable"/> to an already-published generation payload
+/// root installs THAT generation instead and never reaches the publisher, which is what a run that is
+/// only about the launcher needs. There is no fallback between the two: a fixture path that is set but
+/// unusable fails closed, so a misconfigured harness can never hide behind a fresh build.
+/// </remarks>
 internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
 {
+    /// <summary>
+    /// Optional path to a directory shaped like the publisher's output root: `current.json` plus exactly
+    /// one `generations/&lt;id&gt;/`. Point it at the output of
+    /// `node host/scripts/build-desktop-launcher-test-generation.mjs &lt;root&gt; &lt;runtime&gt; --full-runtime-tree`.
+    /// The native guardian fixture pair under `host/native/windows-bootstrap-guardian/.dist/fixtures` must
+    /// already exist (that is a .NET artifact of this repository's own helper, not a Host source artifact).
+    /// </summary>
+    internal const string PrebuiltGenerationRootEnvironmentVariable = "GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT";
+
     private static readonly Lazy<Task<string>> CanonicalProgramRoot = new(BuildCanonicalProgramRootAsync);
     private readonly string root;
     private string? generationsJunction;
@@ -47,22 +65,55 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
 
     private static readonly Lazy<Task<string>> CanonicalFixtureRoot = new(BuildCanonicalFixtureRootAsync);
 
-    private static async Task<string> BuildCanonicalFixtureRootAsync()
+    private static Task<string> BuildCanonicalFixtureRootAsync()
     {
-        _ = await CanonicalProgramRoot.Value.ConfigureAwait(false);
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-bootstrap-guardian", ".dist", "fixtures"));
+        // The guardian fixture pair is this repository's own native helper built by
+        // `buildWindowsBootstrapGuardian()`, which the canonical publisher runs for its own Host build and
+        // the prebuilt-generation path deliberately does not. It is a .NET artifact of the helper's
+        // sources, not of the Host TypeScript closure, so it does not couple a run to other lanes' Host
+        // edits either way; it only has to exist.
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "native", "windows-bootstrap-guardian", ".dist", "fixtures"));
+        if (!File.Exists(Path.Combine(root, "GameBuddy.WindowsBootstrapGuardian.Test.exe")))
+            throw new InvalidOperationException($"desktop_test_guardian_fixture_missing:{root} (run `node host/scripts/build-windows-bootstrap-guardian.mjs`)");
+        return Task.FromResult(root);
     }
 
     private static async Task<string> BuildCanonicalProgramRootAsync()
     {
         var templateRoot = Path.Combine(Path.GetTempPath(), "GameBuddy.Desktop.Tests", "canonical-host-generation", Guid.NewGuid().ToString("N"));
         var programRoot = Path.Combine(templateRoot, "Programs", "GameBuddy");
+        var prebuilt = Environment.GetEnvironmentVariable(PrebuiltGenerationRootEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(prebuilt))
+        {
+            CopyDirectory(RequirePublishedGenerationRoot(prebuilt), programRoot);
+            return programRoot;
+        }
         var script = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "host", "scripts", "build-desktop-launcher-test-generation.mjs"));
         var fixtureRuntimeRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "ExactChildBootstrapFixture");
         if (!File.Exists(Path.Combine(fixtureRuntimeRoot, "node.exe")))
             throw new InvalidOperationException("The self-contained exact-child fixture was not published.");
         await RunHostPublisherAsync(script, programRoot, fixtureRuntimeRoot).ConfigureAwait(false);
         return programRoot;
+    }
+
+    /// <summary>Structural admission for a fixture generation root; every refusal names what is wrong.</summary>
+    internal static string RequirePublishedGenerationRoot(string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) throw new InvalidOperationException("desktop_test_generation_fixture_path_empty");
+        string root;
+        try { root = Path.GetFullPath(candidate); }
+        catch (Exception error) { throw new InvalidOperationException($"desktop_test_generation_fixture_path_invalid:{candidate}", error); }
+        if (!File.Exists(Path.Combine(root, "current.json")))
+            throw new InvalidOperationException($"desktop_test_generation_fixture_current_pointer_missing:{root}");
+        var generationsRoot = Path.Combine(root, "generations");
+        string[] generations = Directory.Exists(generationsRoot) ? Directory.GetDirectories(generationsRoot) : [];
+        if (generations.Length != 1)
+            throw new InvalidOperationException($"desktop_test_generation_fixture_generation_count:{generations.Length}");
+        if (!File.Exists(Path.Combine(generations[0], "host-runtime-admission.json")))
+            throw new InvalidOperationException($"desktop_test_generation_fixture_host_runtime_admission_missing:{generations[0]}");
+        if (!File.Exists(Path.Combine(generations[0], "runtime", "node.exe")))
+            throw new InvalidOperationException($"desktop_test_generation_fixture_runtime_missing:{generations[0]}");
+        return root;
     }
 
     internal void ReplaceHostRuntimeWithFixture()
