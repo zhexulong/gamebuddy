@@ -26,6 +26,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "TryInitializeNativeLocalPlayerFixture", "TryBootstrapNativeLocalPlayerFixture",
         "InitializeNativeLocalWithdrawSiloHayFixture",
         "InitializeNativeLocalToggleAnimalDoorFixture",
+        "InitializeNativeLocalEnterExitWarpActionFixture",
         "PlaceNativeLocalToggleAnimalDoorFixtureBuilding",
         "FindNativeLocalToggleAnimalDoorStandingTile",
         "InstallNativeLocalUseObeliskFixture",
