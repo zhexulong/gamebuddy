@@ -338,3 +338,44 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             baselineCaptured: true).Should().BeTrue();
     }
 }
+
+/// <summary>
+/// The bed walk is the one movement the lifecycle performs itself, so its shape is pinned here: it must use
+/// a form of the native path finder that PLANS, and it must record what it planned.
+///
+/// PathFindController.cs:133-136 teleports the character onto the end point instead of searching when the
+/// goal predicate is exactly isAtEndPoint and the location currently holds no farmers. That branch leaves
+/// pathToEndPoint null, so a caller reading only that field cannot tell a silent placement from a failed
+/// search. A predicate of our own cannot take the branch, which is why the walk passes one.
+///
+/// A behaviour test is impossible here (it needs a live FarmHouse and farmer), so this reads the source and
+/// says so.
+/// </summary>
+public sealed class SleepBedWalkShapeTests
+{
+    private static string Source(string relativePath) =>
+        File.ReadAllText(Path.Combine(RepositorySourcePath(), relativePath));
+
+    private static string RepositorySourcePath()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AGENTS.md")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new InvalidOperationException("repository root not found");
+        return directory.FullName;
+    }
+
+    [Fact]
+    public void BedWalk_DoesNotUseTheTeleportCapableConstructor()
+    {
+        string source = Source("integrations/stardew/SleepAndAdvanceDayLifecycle.cs");
+
+        source.Should().Contain("pathfind_to_bed_tile", "the trace must still name the walk");
+        source.Should().NotContain(
+            "new PathFindController(Game1.player, farmHouse, bedSpot, Game1.player.FacingDirection)",
+            "that overload passes isAtEndPoint, whose constructor can teleport the actor instead of planning");
+        source.Should().Contain("planned_tiles=", "the plan must be recorded so zero tiles cannot read as arrival");
+        source.Should().Contain("bed_walk_unplanned");
+    }
+}
