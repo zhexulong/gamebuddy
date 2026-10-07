@@ -210,4 +210,61 @@ public sealed class ReachabilityProbeTests
         verdict!.Value.ComponentContainsTarget.Should().BeTrue();
         verdict.Value.TargetEnclosed.Should().BeFalse();
     }
+
+    // ---- the staged-walk arrival contract ----------------------------------
+
+    [Fact]
+    public void StagingStep_IsAlwaysACardinalStepTowardsTheTarget()
+    {
+        // The planner moves cardinally (`PathFindController.cs:45-51`), so a staged step must be a cardinal
+        // neighbour: only then is it guaranteed to be one planner step away when it is walkable. The measured
+        // failure this replaces: the old eight-neighbour scan chose the DIAGONALLY adjacent 4,8 for an actor at
+        // 3,9, the planner produced a one-node path, the actor never moved, and the action refused with
+        // `did_not_arrive` after promising an adjacent approach.
+        Point actor = new(3, 9);
+        Point target = new(4, 7);
+
+        bool found = StardewBodyController.TrySelectCardinalStagingStep(actor, target, _ => true, out Point staging);
+
+        found.Should().BeTrue();
+        (Math.Abs(staging.X - actor.X) + Math.Abs(staging.Y - actor.Y)).Should().Be(1);
+        // And the step is real progress, not a sideways shuffle.
+        Math.Max(Math.Abs(staging.X - target.X), Math.Abs(staging.Y - target.Y))
+            .Should().BeLessThan(Math.Max(Math.Abs(actor.X - target.X), Math.Abs(actor.Y - target.Y)));
+    }
+
+    [Fact]
+    public void StagingStep_IsRejectedWhenNoCardinalStepReducesTheDistance()
+    {
+        // The companion case: every cardinal neighbour is walkable, but all of them are blocked as far as the
+        // caller is concerned, so there is nothing honest to stage.
+        Point actor = new(3, 9);
+        Point target = new(4, 7);
+
+        StardewBodyController.TrySelectCardinalStagingStep(actor, target, _ => false, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void StagingStep_IgnoresADiagonalTileEvenWhenItIsTheClosest()
+    {
+        // The diagonal 4,8 is Chebyshev-1 from 4,7 and would win a pure-distance contest, but it is not a
+        // cardinal step for an actor at 3,9 and the planner cannot walk it.
+        Point actor = new(3, 9);
+        Point target = new(4, 7);
+        bool walkableOnlyDiagonally(Point tile) => tile == new Point(4, 8);
+
+        StardewBodyController.TrySelectCardinalStagingStep(actor, target, walkableOnlyDiagonally, out _).Should().BeFalse();
+    }
+
+    [Theory]
+    // A staged walk is finished only where the caller can act: the requested tile itself, or Chebyshev-1 of it.
+    [InlineData(4, 7, true)]
+    [InlineData(4, 8, true)]
+    [InlineData(3, 9, false)]
+    [InlineData(4, 9, false)]
+    [InlineData(6, 7, false)]
+    public void StagedWalk_IsFinishedOnlyWithinReachOfTheRequestedTile(int tileX, int tileY, bool expected)
+    {
+        StardewBodyController.IsStagedWalkFinished(new Point(tileX, tileY), new Point(4, 7)).Should().Be(expected);
+    }
 }

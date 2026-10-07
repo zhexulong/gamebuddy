@@ -31,7 +31,11 @@ internal sealed record LocalMoveSpec(
     // Every receipt that names the target also names the request, so a `target_reached` can never
     // be read as "the requested tile was reached" when it was not.
     Vector2? RequestedTile = null,
-    bool StagedApproach = false);
+    bool StagedApproach = false,
+    // How many single-tile steps this staged walk has already taken towards `RequestedTile`. Bounded so a
+    // walk that cannot make progress stops instead of re-planning for ever, and reported so a receipt can
+    // say how far the actor actually got.
+    int StagedSteps = 0);
 
 internal sealed record LocalTravelSpec(
     string ExecutionId,

@@ -142,44 +142,44 @@ internal sealed class StardewBodyController
                     : "no_cardinal_route";
                 evidence += $";path_search={searchOutcome};budget={NativePathNodeBudget}";
                 // A staging step must be inside the component the PLANNER can walk, so prefer the tile the
-                // cardinal flood itself reports as the closest one it reached, and fall back to the neighbour
-                // heuristic only when the flood offers nothing. Measured reason: the heuristic can pick a
-                // diagonally-adjacent tile the cardinal planner cannot reach either, which is how a staged
-                // approach ended at `did_not_arrive`.
-                bool hasStaging = assessed.ClosestToTarget is Point;
-                Point staging = hasStaging ? assessed.ClosestToTarget!.Value : default;
-                if (!hasStaging)
-                    hasStaging = TryFindStagingStep(localPlayer, specification.TargetTile, out staging);
-                if (!assessed.TargetEnclosed && hasStaging)
+                // cardinal flood itself reports as the closest one it reached, and fall back to the cardinal
+                // neighbour scan only when the flood offers nothing. Measured reason: an eight-neighbour
+                // heuristic can pick a diagonally-adjacent tile the cardinal planner cannot reach either, which
+                // is how a staged approach ended at `did_not_arrive` after a step the actor never took.
+                Point? floodStaging = assessed.ClosestToTarget;
+                if (!assessed.TargetEnclosed && floodStaging is Point fromFlood)
                 {
-                    LocalMoveSpec staged = specification with
+                    LocalMoveSpec floodStep = specification with
                     {
-                        TargetTile = new Vector2(staging.X, staging.Y),
+                        TargetTile = new Vector2(fromFlood.X, fromFlood.Y),
                         AllowAdjacentArrival = true,
                         RequestedTile = specification.TargetTile,
                         StagedApproach = true,
+                        StagedSteps = specification.StagedSteps + 1,
                     };
-                    PathFindController stagedPath = this.BuildNativePath(staged, localPlayer);
-                    if (stagedPath.pathToEndPoint is { Count: > 0 })
+                    PathFindController floodPath = this.BuildNativePath(floodStep, localPlayer);
+                    if (floodPath.pathToEndPoint is { Count: > 1 })
                     {
-                        // The native finder does the moving; only the DESTINATION differs, and
-                        // the receipt names both so the caller can see the difference. One
-                        // productive step is what turns "unreachable far goal" into progress
-                        // the companion can build on: its next observation is closer.
-                        evidence += $";staged_approach=true;staged_target={staging.X},{staging.Y};requested={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y}";
-                        this.active = staged;
-                        this.pathController = stagedPath;
-                        localPlayer.controller = stagedPath;
-                        this.lastTile = localPlayer.Tile;
-                        this.lastProgressTick = tick;
-                        this.hasEmittedRunning = false;
-                        this.hasEmittedStalledWaiting = false;
-                        this.isStallWaiting = false;
-                        this.stallWaitStartedTick = 0;
-                        this.transientSinceMs = 0;
+                        evidence += $";staged_approach=true;staged_target={fromFlood.X},{fromFlood.Y};staged_source=cardinal_flood;staged_steps={floodStep.StagedSteps};requested={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y}";
+                        this.InstallStagedStep(floodStep, floodPath, localPlayer, tick);
                         reasonCode = "accepted";
                         return true;
                     }
+                    evidence += ";cardinal_flood_step_unroutable=true";
+                }
+                if (!assessed.TargetEnclosed
+                    && this.TryStageTowards(specification, specification.TargetTile, localPlayer, out LocalMoveSpec staged, out PathFindController stagedPath, out string stagedEvidence))
+                {
+                    // The native finder does the moving; only the DESTINATION differs, and the receipt names both
+                    // so the caller can see the difference. One productive step is what turns "unreachable far
+                    // goal" into progress the companion can build on: its next observation is closer.
+                    evidence += $";staged_approach=true;staged_target={FormatTile(staged.TargetTile)};{stagedEvidence}";
+                    this.InstallStagedStep(staged, stagedPath, localPlayer, tick);
+                    reasonCode = "accepted";
+                    return true;
+                }
+                else if (!assessed.TargetEnclosed)
+                {
                     evidence += ";staged_approach_failed=true";
                 }
             }
@@ -344,6 +344,18 @@ internal sealed class StardewBodyController
         {
             if (exactArrival || adjacentArrival)
             {
+                // A staged step stops at a tile the caller never asked for: only continue (or finish) when the
+                // actor can now act on the REQUESTED tile.
+                if (this.TryAdvanceStagedApproach(specification, currentTile, localPlayer, tick, out string advanced))
+                    return;
+                if (specification is { StagedApproach: true, RequestedTile: Vector2 stagedGoal }
+                    && !IsWithinRequestedReach(currentTile, stagedGoal))
+                {
+                    this.Fail(
+                        "target_out_of_reach",
+                        $"tile={FormatTile(currentTile)};requested={FormatTile(stagedGoal)};reach=1;approach=did_not_arrive;{advanced}");
+                    return;
+                }
                 localPlayer.Halt();
                 this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native{FormatStagedMarker(specification)}");
                 this.active = null;
@@ -369,6 +381,16 @@ internal sealed class StardewBodyController
         }
         if (exactArrival || adjacentArrival)
         {
+            if (this.TryAdvanceStagedApproach(specification, currentTile, localPlayer, tick, out string advanced))
+                return;
+            if (specification is { StagedApproach: true, RequestedTile: Vector2 stagedGoal }
+                && !IsWithinRequestedReach(currentTile, stagedGoal))
+            {
+                this.Fail(
+                    "target_out_of_reach",
+                    $"tile={FormatTile(currentTile)};requested={FormatTile(stagedGoal)};reach=1;approach=did_not_arrive;{advanced}");
+                return;
+            }
             localPlayer.Halt();
             localPlayer.controller = null;
             this.pathController = null;
@@ -485,6 +507,12 @@ internal sealed class StardewBodyController
     /// The planner's own step set: cardinal only (`PathFindController.cs:45-51`). Shared so the reachability
     /// flood and the cardinal-neighbour tests cannot drift from the graph the native finder actually searches.
     /// </summary>
+    /// <summary>
+    /// How many single-tile staged steps one walk may take. Strictly-decreasing distance already terminates a
+    /// walk, so this is the bound that keeps a pathological field from re-planning indefinitely.
+    /// </summary>
+    private const int MaxStagedSteps = 24;
+
     private static readonly Point[] CardinalOffsets =
     {
         new(0, -1), new(1, 0), new(0, 1), new(-1, 0),
@@ -696,6 +724,30 @@ internal sealed class StardewBodyController
     /// the probe says the target is actually reachable, so this is "get closer and re-plan",
     /// never "wander at a severed target".
     /// </summary>
+    /// <summary>
+    /// The choice itself, with the world reduced to a walkability predicate, so it can be tested without a live
+    /// location: a CARDINAL (Manhattan-1) step that strictly reduces the Chebyshev distance to the target.
+    /// </summary>
+    internal static bool TrySelectCardinalStagingStep(Point actor, Point target, Func<Point, bool> isWalkable, out Point staging)
+    {
+        staging = default;
+        int bestDistance = ChebyshevDistance(actor, target);
+        bool found = false;
+        foreach (Point offset in CardinalOffsets)
+        {
+            Point candidate = new(actor.X + offset.X, actor.Y + offset.Y);
+            if (candidate == target)
+                continue;
+            int distance = ChebyshevDistance(candidate, target);
+            if (distance >= bestDistance || !isWalkable(candidate))
+                continue;
+            staging = candidate;
+            bestDistance = distance;
+            found = true;
+        }
+        return found;
+    }
+
     internal static bool TryFindStagingStep(Farmer localPlayer, Vector2 targetTile, out Point staging)
     {
         staging = default;
@@ -705,29 +757,120 @@ internal sealed class StardewBodyController
 
         Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
         Point target = new((int)targetTile.X, (int)targetTile.Y);
-        int currentDistance = ChebyshevDistance(actor, target);
-        Point[] candidates =
-        {
-            new(-1, -1), new(0, -1), new(1, -1),
-            new(-1, 0),                  new(1, 0),
-            new(-1, 1),  new(0, 1),  new(1, 1),
-        };
+        // CARDINAL (Manhattan-1) candidates only, because that is the planner's own step set
+        // (`PathFindController.cs:45-51`). A cardinal neighbour that is walkable is always reachable in one
+        // planner step, which is what makes the step real progress rather than a claim. The previous version
+        // scanned the full eight-neighbour ring, so a diagonally-adjacent tile could be chosen by distance and
+        // still be unreachable: the staged path was then a single node, the actor never left its tile, and the
+        // action refused with `did_not_arrive` after promising an adjacent approach (measured live).
+        return TrySelectCardinalStagingStep(
+            actor,
+            target,
+            candidate => IsWalkableTile(location, localPlayer, new Vector2(candidate.X, candidate.Y)),
+            out staging);
+    }
 
-        int bestDistance = currentDistance;
-        bool found = false;
-        foreach (Point offset in candidates)
+    /// <summary>Installs a staged step and resets the per-route bookkeeping, so both staging paths share one
+    /// shape and cannot drift.</summary>
+    private void InstallStagedStep(LocalMoveSpec staged, PathFindController path, Farmer localPlayer, int tick)
+    {
+        this.active = staged;
+        this.pathController = path;
+        localPlayer.controller = path;
+        this.lastTile = localPlayer.Tile;
+        this.lastProgressTick = tick;
+        this.hasEmittedRunning = false;
+        this.hasEmittedStalledWaiting = false;
+        this.isStallWaiting = false;
+        this.stallWaitStartedTick = 0;
+        this.transientSinceMs = 0;
+    }
+
+    /// <summary>
+    /// Builds the next step of a walk towards <paramref name="requested"/>, or says why there is none.
+    ///
+    /// The step is only accepted when the native planner produces a path of MORE THAN ONE node: one node means
+    /// "already standing there", which is not movement, and the earlier code accepted exactly that as a staged
+    /// arrival (the actor stayed put while the receipt claimed an approach).
+    /// </summary>
+    private bool TryStageTowards(
+        LocalMoveSpec specification,
+        Vector2 requested,
+        Farmer localPlayer,
+        out LocalMoveSpec staged,
+        out PathFindController path,
+        out string evidence)
+    {
+        staged = specification;
+        path = null!;
+        if (specification.StagedSteps >= MaxStagedSteps)
         {
-            Point candidate = new(actor.X + offset.X, actor.Y + offset.Y);
-            if (candidate == target)
-                continue;
-            int distance = ChebyshevDistance(candidate, target);
-            if (distance >= bestDistance || !IsWalkableTile(location, localPlayer, new Vector2(candidate.X, candidate.Y)))
-                continue;
-            staging = candidate;
-            bestDistance = distance;
-            found = true;
+            evidence = $"staged_steps_exhausted={specification.StagedSteps}";
+            return false;
         }
-        return found;
+        if (!TryFindStagingStep(localPlayer, requested, out Point staging))
+        {
+            evidence = "no_cardinal_staging_step";
+            return false;
+        }
+
+        LocalMoveSpec candidate = specification with
+        {
+            TargetTile = new Vector2(staging.X, staging.Y),
+            AllowAdjacentArrival = true,
+            RequestedTile = requested,
+            StagedApproach = true,
+            StagedSteps = specification.StagedSteps + 1,
+        };
+        PathFindController candidatePath = this.BuildNativePath(candidate, localPlayer);
+        if (candidatePath.pathToEndPoint is not { Count: > 1 })
+        {
+            evidence = $"staged_step_not_walkable={staging.X},{staging.Y}";
+            return false;
+        }
+
+        staged = candidate;
+        path = candidatePath;
+        evidence = $"staged_step={staging.X},{staging.Y};staged_steps={candidate.StagedSteps}"
+            + $";requested={(int)requested.X},{(int)requested.Y}";
+        return true;
+    }
+
+    /// <summary>
+    /// Installs the next staged step when the current one has arrived somewhere the caller cannot act from.
+    /// Returns false when the actor is already within reach of <paramref name="requested"/> (the walk is done),
+    /// or when no further cardinal step exists.
+    /// </summary>
+    private bool TryAdvanceStagedApproach(
+        LocalMoveSpec specification,
+        Vector2 currentTile,
+        Farmer localPlayer,
+        int tick,
+        out string evidence)
+    {
+        evidence = string.Empty;
+        if (specification is not { StagedApproach: true, RequestedTile: Vector2 requested })
+            return false;
+        if (IsWithinRequestedReach(currentTile, requested))
+            return false;
+        if (!this.TryStageTowards(specification, requested, localPlayer, out LocalMoveSpec staged, out PathFindController path, out evidence))
+            return false;
+
+        this.active = staged;
+        this.pathController = path;
+        localPlayer.controller = path;
+        this.lastTile = localPlayer.Tile;
+        this.lastProgressTick = tick;
+        this.hasEmittedRunning = false;
+        this.hasEmittedStalledWaiting = false;
+        this.isStallWaiting = false;
+        this.stallWaitStartedTick = 0;
+        this.transientSinceMs = 0;
+        this.transition(
+            ExecutionState.Running,
+            "staged_approach_continued",
+            $"tile={FormatTile(currentTile)};target={FormatTile(staged.TargetTile)};{evidence}");
+        return true;
     }
 
     private static int ChebyshevDistance(Point left, Point right) =>
@@ -862,10 +1005,30 @@ internal sealed class StardewBodyController
     /// </summary>
     internal static bool IsArrivalDelta(int deltaX, int deltaY, bool allowAdjacentArrival)
     {
+        // Signed deltas are accepted here on purpose: every caller today passes Math.Abs(...), and a future one
+        // that forgot would otherwise read `dx = -3` as "within one tile" (`-3 <= 1`), reporting an arrival
+        // three tiles away.
+        deltaX = Math.Abs(deltaX);
+        deltaY = Math.Abs(deltaY);
         if (deltaX == 0 && deltaY == 0)
             return true;
         return allowAdjacentArrival && deltaX <= 1 && deltaY <= 1;
     }
+
+    /// <summary>
+    /// True when the actor can act on <paramref name="requested"/> from its current tile: the adjacent-arrival
+    /// rule applied to the REQUESTED tile. A staged walk is only finished when this holds, because a staged
+    /// step stops at an intermediate tile the caller never asked for.
+    /// </summary>
+    private static bool IsWithinRequestedReach(Vector2 currentTile, Vector2 requested) =>
+        IsArrivalDelta(
+            Math.Abs((int)currentTile.X - (int)requested.X),
+            Math.Abs((int)currentTile.Y - (int)requested.Y),
+            allowAdjacentArrival: true);
+
+    /// <summary>The reach rule a staged walk is finished by, exposed so the contract can be tested directly.</summary>
+    internal static bool IsStagedWalkFinished(Point currentTile, Point requested) =>
+        IsWithinRequestedReach(new Vector2(currentTile.X, currentTile.Y), new Vector2(requested.X, requested.Y));
 
     /// <summary>
     /// The runtime arrival test used by <see cref="Update"/>: a neighbouring tile
