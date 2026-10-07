@@ -95,11 +95,11 @@ const desktopGuardianSessionCapabilities = new WeakSet<object>();
 const desktopGuardianSessionBindings = new WeakMap<object, DesktopGuardianSessionBinding>();
 
 /** One-shot private bootstrap sequence invoked only by the fixed host entry. */
-export async function runDesktopHostBootstrap(moduleDirectory: string): Promise<void> {
+export async function runDesktopHostBootstrap(artifactRoot: string): Promise<void> {
   if (process.platform !== "win32") throw unavailable();
 
   const frame = parseBootstrapFrame(await readBootstrapFrame());
-  const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory);
+  const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot);
   const voice = await connectOptionalVoiceSurface();
   const assemblyInput = await loadDesktopHostAssemblyInput(
     publishCompositionReady,
@@ -187,7 +187,7 @@ function parseRootLayout(value: unknown): DesktopRootLayout {
   });
 }
 
-async function validateRootLayout(layout: DesktopRootLayout, moduleDirectory: string): Promise<DesktopRootLayout> {
+async function validateRootLayout(layout: DesktopRootLayout, artifactRoot: string): Promise<DesktopRootLayout> {
   const localAppData = process.env.LOCALAPPDATA;
   if (!validPath(localAppData)) throw unavailable();
   const expected = Object.freeze({
@@ -203,8 +203,8 @@ async function validateRootLayout(layout: DesktopRootLayout, moduleDirectory: st
     layout.presentationRoot !== expected.presentationRoot
   ) throw unavailable();
 
-  if (!strictlyContains(layout.programRoot, moduleDirectory)) throw unavailable();
-  const inspector = await createPublishedWindowsReparseInspector(moduleDirectory);
+  if (!strictlyContains(layout.programRoot, artifactRoot)) throw unavailable();
+  const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
   const roots = [layout.programRoot, layout.dataRoot, layout.operationalRoot, layout.presentationRoot] as const;
   const [chains, securities] = await Promise.all([
     Promise.all(roots.map((root) => inspectWindowsPathIdentityChain(inspector, root))),
@@ -217,7 +217,7 @@ async function validateRootLayout(layout: DesktopRootLayout, moduleDirectory: st
     securities.some((security, index) => !validRootSecurity(security, chains[index]!.at(-1), volume))
   ) throw unavailable();
   for (const mutableRoot of [layout.dataRoot, layout.operationalRoot, layout.presentationRoot]) {
-    if (strictlyContains(moduleDirectory, mutableRoot) || mutableRoot === moduleDirectory) throw unavailable();
+    if (strictlyContains(artifactRoot, mutableRoot) || mutableRoot === artifactRoot) throw unavailable();
   }
   for (let index = 0; index < roots.length; index += 1) {
     for (let other = index + 1; other < roots.length; other += 1) {

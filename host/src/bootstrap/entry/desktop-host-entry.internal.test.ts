@@ -104,7 +104,7 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
   if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
   try {
-    const moduleDirectory = join(fixtureRoot, "Programs", "GameBuddy", "generation");
+    const generationRoot = join(fixtureRoot, "Programs", "GameBuddy", "generation");
     const rootLayout = {
       schema: "gamebuddy-windows-root-layout/v1",
       programRoot: join(fixtureRoot, "Programs", "GameBuddy"),
@@ -112,25 +112,27 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
       operationalRoot: join(fixtureRoot, "GameBuddy", "operational"),
       presentationRoot: join(fixtureRoot, "GameBuddy", "presentation"),
     };
-    await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
-    await mkdir(join(moduleDirectory, "bootstrap", "entry"), { recursive: true });
-    await mkdir(join(moduleDirectory, "bootstrap", "wire"), { recursive: true });
-    await mkdir(join(moduleDirectory, "composition"), { recursive: true });
-    const entryModule = join(moduleDirectory, "bootstrap", "entry", "desktop-host-entry.internal.js");
+    await Promise.all([generationRoot, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
+    await mkdir(join(generationRoot, "bootstrap", "entry"), { recursive: true });
+    await mkdir(join(generationRoot, "bootstrap", "wire"), { recursive: true });
+    await mkdir(join(generationRoot, "composition"), { recursive: true });
+    const entryModule = join(generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
     await writeFile(entryModule, await readFile(compiledEntry));
-    await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
+    await writeFile(join(generationRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
     // The wire binds the production composition statically; this fixture provides
     // only the narrow facade the wire imports. These scenarios must fail at root
     // or guardian-session admission, never reach composition construction, so an
     // invocation here is a regression and fails the child loudly.
-    await writeFile(join(moduleDirectory, "composition", "desktop-host-composition.js"), "export async function createDesktopProductComposition() { throw new Error(\"fixture_composition_unexpectedly_constructed\"); }\n");
-    await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
-    await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
-    await cp(resolve(sourceDirectory, "..", "..", "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
-    // moduleDirectory for the wire is dirname(import.meta.url) of the entry, so the
-    // native reparse inspector must sit under the entry's own directory, mirroring
-    // the production generation layout (bootstrap/entry + bootstrap/wire).
-    await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(moduleDirectory, "bootstrap", "entry", "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
+    await writeFile(join(generationRoot, "composition", "desktop-host-composition.js"), "export async function createDesktopProductComposition() { throw new Error(\"fixture_composition_unexpectedly_constructed\"); }\n");
+    await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(generationRoot, "windows-reparse-inspector"), { recursive: true });
+    await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(generationRoot, "strict-json-reader.js"));
+    await cp(resolve(sourceDirectory, "..", "..", "deployment-manifest.js"), join(generationRoot, "deployment-manifest.js"));
+    // The wire resolves the native reparse inspector pair from the artifact root - the
+    // generation directory that contains both `bootstrap` and `native` - exactly as the
+    // published generation lays them out. This fixture previously placed the pair under
+    // the entry's own directory, which mirrored the defect rather than the artifact, so
+    // no assertion here could ever have observed it.
+    await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(generationRoot, "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
 
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
@@ -174,8 +176,8 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /inspectWindowsPathIdentityChain/);
   assert.match(source, /inspectWindowsPathSecurity/);
   assert.match(source, /currentUserOwner/);
-  assert.match(source, /strictlyContains\(layout\.programRoot, moduleDirectory\)/);
-  assert.match(source, /strictlyContains\(moduleDirectory, mutableRoot\)/);
+  assert.match(source, /strictlyContains\(layout\.programRoot, artifactRoot\)/);
+  assert.match(source, /strictlyContains\(artifactRoot, mutableRoot\)/);
   assert.match(source, /new WeakSet<object>/);
   assert.match(source, /new WeakMap<object, DesktopRootLayout>/);
   assert.doesNotMatch(source, /host-runtime-admission/);
@@ -186,7 +188,7 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
-  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, moduleDirectory)");
+  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, generationRoot)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
   const mint = source.indexOf("const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame)");
