@@ -10,6 +10,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_clear_hoedirt_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
@@ -149,7 +150,7 @@ export async function runClearHoeDirtSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runClearHoeDirtSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

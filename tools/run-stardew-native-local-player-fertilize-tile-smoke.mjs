@@ -11,6 +11,7 @@ import {
   waitForStableRevision,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_fertilize_tile_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "fertilize_tile", "inspect_self", "move_to_tile", "travel"];
@@ -130,7 +131,7 @@ export async function runFertilizeTileSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runFertilizeTileSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

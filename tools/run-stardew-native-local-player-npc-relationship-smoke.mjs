@@ -10,6 +10,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_npc_relationship_v1";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "npc_relationship"];
@@ -123,7 +124,7 @@ export async function runNpcRelationshipSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runNpcRelationshipSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

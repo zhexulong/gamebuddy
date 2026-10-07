@@ -9,6 +9,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const ACTION = "interact_npc_with_item";
 const SCENARIO = "native_interact_npc_with_item_v1";
@@ -310,7 +311,7 @@ function parseStrictEvidence(evidence) {
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runInteractNpcWithItemSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));

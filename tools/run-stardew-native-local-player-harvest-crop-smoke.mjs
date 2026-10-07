@@ -9,6 +9,7 @@ import {
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
 
@@ -130,7 +131,7 @@ export async function runHarvestCropSmoke(
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config);
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
   try {
     const result = await runHarvestCropSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
@@ -243,8 +244,14 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
   snapshot = await observeHarvestActionable(client);
   assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
-  if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
-  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+  // A move to a tile the actor can already act from IS the requested outcome: the coordinator answers
+  // `succeeded/target_reached` with `already_at_target=true` in one round trip instead of accepting and then
+  // walking. Treating only `accepted` as progress made this phase fail with
+  // `move_to_native_harvest_crop_fixture_not_accepted:target_reached` while the receipt it rejected was the
+  // success it was waiting for.
+  const alreadyThere = accepted.state === "succeeded" && accepted.reasonCode === "target_reached";
+  if (accepted.state !== "accepted" && !alreadyThere) throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
+  const terminal = alreadyThere ? accepted : await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
     throw new Error(`move_failed:${terminal.reasonCode}`);
   return waitForFreshSnapshot(client, {
