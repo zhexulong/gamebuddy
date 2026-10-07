@@ -5,7 +5,13 @@ import { Format } from "typebox/format";
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
 
-const MAX_TEXT_UTF8_BYTES = 16_384;
+/**
+ * Ceiling for NFC UTF-8 text the browser may send (message text and other player-authored
+ * strings). Exported because a transport body limit has to be derived from it rather than
+ * guessed: the check runs on the DECODED string, so a valid body can be up to six times this
+ * (JSON escapes one character as `\uXXXX`).
+ */
+export const MAX_TEXT_UTF8_BYTES = 16_384;
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const OPAQUE_HANDLE_PATTERN = "^[A-Za-z0-9_-]{22,128}$";
 // A model id and a thinking level are the player's own input (design/28 §2.3.1):
