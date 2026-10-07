@@ -46,7 +46,7 @@ public sealed class RecoveryLaunchWiringTests
     public void Production_entry_mounts_the_trigger_before_the_command_loop_starts()
     {
         var program = File.ReadAllText(Source("Program.cs"));
-        var productionPath = program[program.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        var productionPath = program[program.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync", StringComparison.Ordinal)..];
 
         var start = productionPath.IndexOf("await runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
         var mount = productionPath.IndexOf("host.AttachRecoveryLaunch(new RecoveryLaunchTrigger(image, guardianSupervisor));", StringComparison.Ordinal);

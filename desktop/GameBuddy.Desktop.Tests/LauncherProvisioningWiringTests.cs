@@ -76,6 +76,79 @@ public sealed class LauncherProvisioningWiringTests
     }
 
     [Fact]
+    public void Production_entry_reports_the_failing_step_own_reason_instead_of_discarding_it()
+    {
+        var productionPath = ProductionEntry();
+
+        // The launch stage's catch must bind the exception and carry its category
+        // out with the named failure: catching it unnamed is exactly how the reason
+        // was lost before. (The Voice catch inside this path stays unnamed on
+        // purpose - a Voice child that cannot start is not a launch failure at all.)
+        Assert.Contains("catch (GuardianLaunchUnavailableException exception)", productionPath, StringComparison.Ordinal);
+        Assert.Contains("return new LaunchOutcome(named, exception.Category, exception.Diagnostic);", productionPath, StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(productionPath, "exception.Category"));
+        Assert.Equal(1, CountOccurrences(productionPath, "exception.Diagnostic"));
+    }
+
+    [Fact]
+    public void A_launch_step_that_reported_its_own_reason_reports_that_reason_beside_the_primary_code()
+    {
+        // The reason is the failing step's own category, appended rather than
+        // substituted, so the blocker is named without the launch stage's code
+        // changing shape for consumers that match on it.
+        Assert.Equal(
+            "guardian_launch_unavailable:host_runtime_unavailable",
+            Program.OutcomeCode(DesktopLaunchResult.GuardianLaunchUnavailable, "host_runtime_unavailable"));
+        Assert.Equal(
+            "guardian_launch_unavailable:voice_launch_unavailable",
+            Program.OutcomeCode(DesktopLaunchResult.GuardianLaunchUnavailable, "voice_launch_unavailable"));
+        Assert.Equal(
+            "host_generation_unavailable:host_runtime_unavailable",
+            Program.OutcomeCode(DesktopLaunchResult.HostGenerationUnavailable, "host_runtime_unavailable"));
+    }
+
+    [Fact]
+    public void The_default_category_is_withheld_so_the_line_never_states_a_reason_it_does_not_have()
+    {
+        // `guardian_launch_unavailable` is both a primary code and the default
+        // category, but the two mean different things: as a primary code it names
+        // the launch stage, and as a default category it names no reason at all.
+        // Reporting it for the stage would read as a specific second fact.
+        Assert.Equal(
+            "generation_admission_refused",
+            Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, GuardianLaunchUnavailableException.DefaultCategory));
+        Assert.Equal(
+            "generation_admission_refused",
+            Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, reason: null));
+        Assert.Equal(
+            "generation_admission_refused",
+            Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, reason: ""));
+        // Nothing else may reach the launcher's one channel either: no path, no
+        // prose, no mixed case, no punctuation.
+        Assert.Equal("generation_admission_refused", Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, "C:\\Users\\someone\\AppData\\Local"));
+        Assert.Equal("generation_admission_refused", Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, "Guardian launch unavailable"));
+        Assert.Equal("generation_admission_refused", Program.OutcomeCode(DesktopLaunchResult.GenerationAdmissionRefused, "Host_Runtime_Unavailable"));
+    }
+
+    [Fact]
+    public void The_primary_code_is_unchanged_for_consumers_that_match_on_it()
+    {
+        // Every failure member still reports exactly its own code when no reason is
+        // carried: the appended reason is additive, never a replacement.
+        foreach (var result in Enum.GetValues<DesktopLaunchResult>())
+        {
+            var withoutReason = Program.OutcomeCode(result);
+            Assert.Equal(withoutReason, Program.OutcomeCode(result, reason: null));
+            if (withoutReason is null) continue;
+            Assert.StartsWith(withoutReason + ":", Program.OutcomeCode(result, "host_runtime_unavailable"), StringComparison.Ordinal);
+            Assert.Equal(withoutReason, withoutReason.Split(':')[0]);
+        }
+
+        Assert.Equal("guardian_launch_unavailable", Program.OutcomeCode(DesktopLaunchResult.GuardianLaunchUnavailable));
+        Assert.Equal("host_session_failed", Program.OutcomeCode(DesktopLaunchResult.HostSessionFailed));
+    }
+
+    [Fact]
     public void Every_named_launch_failure_has_its_own_bounded_outcome_code()
     {
         // The no-claim value stays the only silent one.
@@ -155,9 +228,16 @@ public sealed class LauncherProvisioningWiringTests
         Assert.DoesNotContain("selection.", identitySource, StringComparison.Ordinal);
     }
 
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        for (var index = source.IndexOf(value, StringComparison.Ordinal); index >= 0; index = source.IndexOf(value, index + value.Length, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
     private static string ProductionEntry()
     {
         var source = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "Program.cs")));
-        return source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        return source[source.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync", StringComparison.Ordinal)..];
     }
 }

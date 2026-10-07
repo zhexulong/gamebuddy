@@ -67,31 +67,38 @@ internal static class Program
     /// code keeps matching - so it is carried beside it and only appended to the
     /// line.
     /// </summary>
-    private readonly record struct LaunchOutcome(DesktopLaunchResult Result, string? Reason)
+    private readonly record struct LaunchOutcome(DesktopLaunchResult Result, string? Reason, string? Diagnostic)
     {
         /// <summary>The no-claim value: the admitted session ran to its end unnamed.</summary>
-        internal static readonly LaunchOutcome NoClaim = new(DesktopLaunchResult.Unavailable, null);
+        internal static readonly LaunchOutcome NoClaim = new(DesktopLaunchResult.Unavailable, null, null);
 
-        internal static LaunchOutcome Of(DesktopLaunchResult result) => new(result, null);
+        internal static LaunchOutcome Of(DesktopLaunchResult result) => new(result, null, null);
     }
 
     /// <summary>
-    /// The entry's entire observable result: the exit status, and at most one
-    /// bounded outcome-code line on stderr naming how the launch ended. A code is
+    /// The entry's entire observable result: the exit status, and at most one bounded
+    /// outcome-code line on stderr naming how the launch ended. A code is
     /// always accompanied by a non-zero exit status, and the line carries no path,
     /// no secret and no stack. A step that reported its own specific reason appends
     /// it after the primary code (`primary:reason`) so the reason is recoverable
-    /// without changing what the primary code already said.
+    /// without changing what the primary code already said; a step that captured what
+    /// the failing child wrote about the same refusal appends that excerpt last.
     /// </summary>
-    internal static string? OutcomeCode(DesktopLaunchResult result) => OutcomeCode(result, reason: null);
+    internal static string? OutcomeCode(DesktopLaunchResult result) => OutcomeCode(result, reason: null, diagnostic: null);
 
-    private static string? OutcomeCode(LaunchOutcome outcome) => OutcomeCode(outcome.Result, outcome.Reason);
+    private static string? OutcomeCode(LaunchOutcome outcome) => OutcomeCode(outcome.Result, outcome.Reason, outcome.Diagnostic);
 
-    internal static string? OutcomeCode(DesktopLaunchResult result, string? reason)
+    internal static string? OutcomeCode(DesktopLaunchResult result, string? reason) => OutcomeCode(result, reason, diagnostic: null);
+
+    internal static string? OutcomeCode(DesktopLaunchResult result, string? reason, string? diagnostic)
     {
         var primary = PrimaryOutcomeCode(result);
-        if (primary is null || !IsReportableReason(reason, primary)) return primary;
-        return $"{primary}:{reason}";
+        if (primary is null) return primary;
+        var line = IsReportableReason(reason, primary) ? $"{primary}:{reason}" : primary;
+        // The child's own diagnostic is appended after both codes so it can never be
+        // mistaken for a second machine-readable code: it begins with a label, and the
+        // excerpt behind it is already one redacted line.
+        return string.IsNullOrEmpty(diagnostic) ? line : $"{line} {diagnostic}";
     }
 
     private static string? PrimaryOutcomeCode(DesktopLaunchResult result) => result switch
@@ -291,9 +298,9 @@ internal static class Program
                 _ => DesktopLaunchResult.HostSessionFailed,
             };
             // The launch stage names where the launch was; the exception's own
-            // category names which blocker refused there. Both survive: the stage
-            // is the primary code, the category is appended beside it.
-            return new LaunchOutcome(named, exception.Category);
+            // category names which blocker refused there, and the diagnostic carries
+            // what the refused child itself wrote about it. All three survive.
+            return new LaunchOutcome(named, exception.Category, exception.Diagnostic);
         }
         catch (RootRegistrationUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootRegistrationUnavailable); }
         catch (RootLayoutUnavailableException) { return LaunchOutcome.Of(DesktopLaunchResult.RootLayoutUnavailable); }

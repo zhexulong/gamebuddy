@@ -7,7 +7,7 @@ public sealed class ProductionEntryBoundaryTests
     {
         var source = File.ReadAllText(DesktopProgramSource());
 
-        var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        var productionPath = source[source.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync", StringComparison.Ordinal)..];
         Assert.Contains("CurrentUserRootLayout.DeriveForCurrentUser()", productionPath, StringComparison.Ordinal);
         Assert.Contains("InstalledGenerationSelection.Acquire(layout.ProgramRoot)", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("DeriveForTesting", productionPath, StringComparison.Ordinal);
@@ -27,7 +27,7 @@ public sealed class ProductionEntryBoundaryTests
     public void Host_only_testing_entry_bootstraps_host_without_admitting_or_attaching_a_guardian()
     {
         var source = File.ReadAllText(DesktopProgramSource());
-        var hostEntry = source[source.IndexOf("internal static async Task<DesktopLaunchResult> RunHostForTestingAsync", StringComparison.Ordinal)..source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)];
+        var hostEntry = source[source.IndexOf("internal static async Task<DesktopLaunchResult> RunHostForTestingAsync", StringComparison.Ordinal)..source.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync", StringComparison.Ordinal)];
 
         Assert.Contains("supervisor.StartHostAsync(selection, runtime, layout, cancellationToken)", hostEntry, StringComparison.Ordinal);
         Assert.DoesNotContain("InstalledGenerationAdmission", hostEntry, StringComparison.Ordinal);
@@ -41,7 +41,7 @@ public sealed class ProductionEntryBoundaryTests
     public void Production_entry_admits_the_matching_guardian_then_attaches_it_only_after_host_bootstrap()
     {
         var source = File.ReadAllText(DesktopProgramSource());
-        var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        var productionPath = source[source.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync", StringComparison.Ordinal)..];
 
         var admit = productionPath.IndexOf("AdmitGuardianAsync(selection, cancellationToken)", StringComparison.Ordinal);
         var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
@@ -50,7 +50,7 @@ public sealed class ProductionEntryBoundaryTests
         Assert.True(admit >= 0 && host > admit && resident > host && attach > resident);
         Assert.Contains("await host.WaitForExitAsync(cancellationToken)", productionPath, StringComparison.Ordinal);
         Assert.Contains("if (resident is not null) await resident.DisposeAsync()", productionPath, StringComparison.Ordinal);
-        Assert.Contains("return DesktopLaunchResult.Unavailable;", productionPath, StringComparison.Ordinal);
+        Assert.Contains("return LaunchOutcome.NoClaim;", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("StartRecoveryAsync", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("GuardianStarted", productionPath, StringComparison.Ordinal);
     }
