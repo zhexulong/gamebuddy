@@ -14,6 +14,7 @@
     "test:all": "pnpm test && pnpm test:dialogue-web",
     "test:dialogue-web": "pnpm --filter @gamebuddy/dialogue-web test",
     "typecheck": "pnpm --dir vendor/pi-koe run typecheck:all && pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/dialogue-web typecheck",
+    "check:head-typecheck": "node tools/check-head-typecheck.mjs",
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
     "typecheck:voice-protocol": "pnpm --dir vendor/pi-koe run typecheck:protocol",
     "test:voice-protocol": "pnpm --dir vendor/pi-koe run test:protocol",
