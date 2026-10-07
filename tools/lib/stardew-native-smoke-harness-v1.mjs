@@ -79,8 +79,12 @@ export async function executeFreshAfterReobserve(client, options, { attempts = 3
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 8) throw new NativeSmokeHarnessError("invalid_native_reobserve_attempts");
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const snapshot = await observeFresh(client, { actionable: options.actionable === true });
+    // BOTH windows belong inside the try. The observation itself is the more likely one to go stale: the
+    // client can receive a pushed snapshot while the observe await is outstanding, and then
+    // `observeFresh`'s own check refuses the answer it just got. Leaving that call outside the try (as an
+    // earlier version did) made the helper useless - it rethrew instead of retrying.
     try {
+      const snapshot = await observeFresh(client, { actionable: options.actionable === true });
       return await executeFresh(client, { ...options, snapshot });
     } catch (error) {
       if (error instanceof NativeSmokeHarnessError && error.code === "stale_native_snapshot") {

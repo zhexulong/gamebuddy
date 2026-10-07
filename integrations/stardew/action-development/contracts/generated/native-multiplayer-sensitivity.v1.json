@@ -587,7 +587,7 @@
     },
     {
       "actionId": "place_owned_object",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -604,7 +604,7 @@
     },
     {
       "actionId": "remove_placed_item",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -621,7 +621,7 @@
     },
     {
       "actionId": "break_container_source",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1163,7 +1163,7 @@
     },
     {
       "actionId": "use_warp_item",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1180,7 +1180,7 @@
     },
     {
       "actionId": "pan_ore",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1197,7 +1197,7 @@
     },
     {
       "actionId": "claim_mail_attachment",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1455,7 +1455,7 @@
     },
     {
       "actionId": "equip_wearable",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1472,7 +1472,7 @@
     },
     {
       "actionId": "unequip_wearable",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1489,7 +1489,7 @@
     },
     {
       "actionId": "dismount_transport",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
