@@ -32,9 +32,11 @@ const counts = {
   memoryCreated: 0,
   worldInfoCreated: 0,
   repositoryCreated: 0,
+  connectionCreated: 0,
   managementClosed: 0,
   memoryClosed: 0,
   worldInfoClosed: 0,
+  connectionClosed: 0,
 };
 const observedProfileIds: Record<string, string | null> = {
   facade: null,
@@ -43,6 +45,8 @@ const observedProfileIds: Record<string, string | null> = {
   worldInfo: null,
 };
 let facadeSawWorldInfoService = false;
+let connectionAgentDir: string | null = null;
+let connectionSawTurnState = false;
 let repositoryRuntimeRoot: string | null = null;
 let eventStream: ReturnType<typeof createChatEventStream> | undefined;
 
@@ -101,6 +105,34 @@ const fakeWorldInfoService = Object.freeze({
   },
   close: async () => {
     counts.worldInfoClosed += 1;
+  },
+});
+/**
+ * Stand-in for the Host-owned connection service. The composition must hand it
+ * the exact agent directory of the mounted Chat runtime and a turn-state reader
+ * bound to the mounted lease, and must drain it on close.
+ */
+const fakeConnectionService = Object.freeze({
+  read: async () => {
+    throw new Error("unused_connection_read");
+  },
+  create: async () => {
+    throw new Error("unused_connection_create");
+  },
+  test: async () => {
+    throw new Error("unused_connection_test");
+  },
+  activate: async () => {
+    throw new Error("unused_connection_activate");
+  },
+  selectModel: async () => {
+    throw new Error("unused_connection_model");
+  },
+  remove: async () => {
+    throw new Error("unused_connection_remove");
+  },
+  close: async () => {
+    counts.connectionClosed += 1;
   },
 });
 
@@ -217,6 +249,24 @@ async function main(): Promise<void> {
     },
   );
   await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href,
+    {
+      namedExports: {
+        createTavernConnectionService: (options: {
+          readonly agentDir?: string;
+          readonly readTurnState?: () => Promise<unknown>;
+        }) => {
+          counts.connectionCreated += 1;
+          connectionAgentDir = options?.agentDir ?? null;
+          // The reader must be the facade-bound one; proving it resolves is
+          // enough here because the facade itself is the fixture's stub.
+          connectionSawTurnState = typeof options?.readTurnState === "function";
+          return fakeConnectionService;
+        },
+      },
+    },
+  );
+  await mock.module(
     pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-management", "world-info-management.js")).href,
     {
       namedExports: {
@@ -244,7 +294,14 @@ async function main(): Promise<void> {
   try {
     try {
       admission = await startTavernManagementPresentationAdmission({
-        manifest: Object.freeze({ runtimeRoot: observations.runtimeRoot }) as never,
+        manifest: Object.freeze({
+          runtimeRoot: observations.runtimeRoot,
+          principal: Object.freeze({
+            playerId: "player_fixture",
+            companionId: "companion_fixture",
+            continuityId: "continuity_fixture",
+          }),
+        }) as never,
         hostArtifactRoot: fixture.hostArtifactRoot,
         bootstrapToken,
         eventStream,
@@ -298,6 +355,8 @@ async function main(): Promise<void> {
       ...counts,
       observedProfileIds,
       facadeSawWorldInfoService,
+      connectionAgentDir,
+      connectionSawTurnState,
       repositoryRuntimeRoot,
       ...observations,
     })}\n`,

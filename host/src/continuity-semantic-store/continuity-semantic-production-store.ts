@@ -1776,7 +1776,8 @@ function recordChatSelectionIntent(
     )
       throw new Error("chat_selection_conflict");
     writeExpectedSelection(db, Object.freeze({ ...input.intent }));
-    return readChatCatalog(db, bootstrap);
+    validateMaterialization(db);
+    return readChatCatalogLocked(db, bootstrap.bootstrap.principal.continuityId);
   });
 }
 /** Clears an expectation the pre-mount settlement already satisfied. */
@@ -1792,7 +1793,8 @@ function clearChatSelectionIntent(
     rejectQuarantined(db);
     if (canonical(sagaVector(db)) !== canonical(input.expected)) throw new Error("chat_selection_conflict");
     writeExpectedSelection(db, null);
-    return readChatCatalog(db, bootstrap);
+    validateMaterialization(db);
+    return readChatCatalogLocked(db, bootstrap.bootstrap.principal.continuityId);
   });
 }
 function validChatInput(input: unknown): input is ProductionChatCommandInput {
@@ -2306,12 +2308,17 @@ function readChatCatalog(db: DatabaseSync, bootstrap: ProductionBootstrapContext
   return transaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
-    const principal = bootstrap.bootstrap.principal,
-      rows = db
+    return readChatCatalogLocked(db, bootstrap.bootstrap.principal.continuityId);
+  });
+}
+/** Catalog read for the commands that already hold the store's transaction. */
+function readChatCatalogLocked(db: DatabaseSync, continuityId: string): ProductionChatCatalog {
+  {
+    const rows = db
         .prepare(
           "SELECT t.chat_thread_id,t.chat_surface_session_id,t.lifecycle,t.content_receipt_json,t.content_receipt_digest,m.management_revision FROM production_continuity_thread t JOIN production_chat_lifecycle_metadata m ON m.chat_surface_session_id=t.chat_surface_session_id WHERE t.continuity_id=? ORDER BY t.chat_surface_session_id",
         )
-        .all(principal.continuityId) as any[];
+        .all(continuityId) as any[];
     const threads = rows.map((row) => {
       const receipt = row.content_receipt_json === null ? null : parse(row.content_receipt_json);
       if (
@@ -2336,7 +2343,7 @@ function readChatCatalog(db: DatabaseSync, bootstrap: ProductionBootstrapContext
       expectedSelection: readExpectedSelection(db),
       threads: Object.freeze(threads),
     });
-  });
+  }
 }
 function validateV35ChatExtension(
   db: DatabaseSync,

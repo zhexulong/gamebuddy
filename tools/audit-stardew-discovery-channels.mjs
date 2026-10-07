@@ -125,6 +125,11 @@ const TARGET_FIELD = Object.freeze({
   // (Data/Buildings -> BuildingData.Chests), published as `buildingChestTargets`.
   load_building_chest: "BuildingChestTargets",
   collect_building_chest_output: "BuildingChestTargets",
+  // The three newest discovery channels. Without these the audit reports the field as undeclared and
+  // cannot verify the payload against the frozen schema at all.
+  pan_ore: "PanSites",
+  use_warp_item: "WarpItemTargets",
+  claim_mail_attachment: "MailboxTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */
@@ -206,9 +211,16 @@ export function auditDiscoveryChannels({
       /description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/,
     );
     const text = desc ? desc[1] : "";
+    // The field names a description may legitimately name. The shape set has to cover every form the Mod
+    // publishes: most discovery arrays end in Targets or Slots, and the ore-pan channel is "PanSites" —
+    // which the original two patterns could never match, so pan_ore was reported as naming no field even
+    // though its description names panSites verbatim. Extend the SHAPE rather than rename the wire field to
+    // suit the checker.
     const named = [
       ...text.matchAll(/\b([a-zA-Z]+Targets)\b/g),
       ...text.matchAll(/\b([a-zA-Z]+Slots)\b/g),
+      ...text.matchAll(/\b([a-zA-Z]+Sites)\b/g),
+      ...text.matchAll(/\b([a-zA-Z]+Facts)\b/g),
     ].map((x) => x[1]);
     describedFields.set(visible[1], [...new Set(named)]);
   }

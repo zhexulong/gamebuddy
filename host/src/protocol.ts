@@ -579,11 +579,16 @@ activeExecution?: ActiveExecution | null;
    * 'removable_object', 'non_removable_object', 'breakable_container'); `slot` is the backpack
    * slot the named action must act through, or -1 when the actor owns no tool for it. */
   worldObjectTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
-  wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
-  warpItemTargets?: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number; destination: string; destinationX: number; destinationY: number }>[];
-  panSites?: readonly Readonly<{ x: number; y: number }>[];
-  mailboxTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; pendingCount: number }>[];
     y: number; slot: number; qualifiedItemId: string; displayName: string }>[];
+  /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
+   * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
+  wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
+  /** A held warp totem and the destination the totem ITSELF names. */
+  warpItemTargets?: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number; destination: string; destinationX: number; destinationY: number }>[];
+  /** The location's live ore-pan point; the game owns at most one per location. */
+  panSites?: readonly Readonly<{ x: number; y: number }>[];
+  /** One mailbox tile, with the number of letters waiting. */
+  mailboxTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; pendingCount: number }>[];
    /** A building's own declared chest (Data/Buildings -> BuildingData.Chests). `branch` is the native
    * branch the chest takes (`load` or `collect`; the Chest type is never published, because it can
    * only open a container menu) and `stackCount`/`itemCount` are the LIVE chest's own counts:

@@ -11,6 +11,8 @@ import {
   WindowsNamedMutexBroker,
   WindowsNamedMutexBrokerError,
   WindowsNamedMutexLease,
+  boundedSidecarDiagnostic,
+  resolvePowershellExecutable,
   windowsNamedMutexName,
 } from "./windows-named-mutex-broker.js";
 
@@ -28,7 +30,10 @@ async function reap(child: ChildProcess): Promise<void> {
 }
 async function retainedAbandon(name: string): Promise<ChildProcess> {
   const child = spawn(
-    "powershell.exe",
+    // Absolute path: a reduced or over-long PATH must not turn this into an
+    // ENOENT that reads as a product failure (same reason the broker itself
+    // now resolves the sidecar by absolute path).
+    resolvePowershellExecutable() ?? "powershell.exe",
     [
       "-NoLogo",
       "-NoProfile",
@@ -917,4 +922,43 @@ test("production broker exposes no request or killForTest control-plane API", as
   // emitted module that is actually executed rather than a source-only path.
   const source = await readFile(fileURLToPath(new URL("./windows-named-mutex-broker.js", import.meta.url)), "utf8");
   assert.doesNotMatch(source, /public\s+(?:async\s+)?(?:request|killForTest)\b/);
+});
+
+test("the sidecar is resolved by absolute path so a reduced PATH cannot fake an exit", () => {
+  // The Windows environment variable holding PATH is capped at ~8191 characters;
+  // this repository's inherited PATH already exceeds it. A bare `powershell.exe`
+  // therefore fails to launch and the broker could only report the generic
+  // `windows_named_mutex_broker_exit`, indistinguishable from a real crash.
+  const resolved = resolvePowershellExecutable({ SystemRoot: "C:\\Windows" });
+  assert.equal(resolved, join("C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+  // The repository-relative test harness must not depend on the ambient PATH.
+  assert.equal(existsSync(resolved!), true);
+  assert.equal(resolvePowershellExecutable({}), undefined);
+  assert.equal(resolvePowershellExecutable({ windir: "" }), undefined);
+  // Case-insensitive alias is honoured the way Windows exposes it.
+  assert.equal(
+    resolvePowershellExecutable({ SYSTEMROOT: "D:\\Win" }),
+    join("D:\\Win", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+  );
+});
+
+test("sidecar stderr is reduced to one bounded diagnostic token", () => {
+  // A real cause now reaches the caller: previously the sidecar's stderr was
+  // never read, so a parse error or missing asset was invisible.
+  assert.equal(boundedSidecarDiagnostic("windows_named_mutex_required"), "windows_named_mutex_required");
+  assert.equal(boundedSidecarDiagnostic("Error: windows_named_mutex_required"), "windows_named_mutex_required");
+  // The first bounded token wins, whatever line it is on.
+  assert.equal(
+    boundedSidecarDiagnostic("windows_named_mutex_required\nwindows_named_mutex_required_later"),
+    "windows_named_mutex_required",
+  );
+  // The message may carry a path and a stack never belongs on this boundary.
+  const leaky = "Cannot find file C:\\Users\\someone\\secret\\thing.ps1\n    at line:1 char:1";
+  const reduced = boundedSidecarDiagnostic(leaky);
+  assert.equal(reduced, "windows_named_mutex_sidecar_failed");
+  assert.doesNotMatch(reduced, /[\\/]|\s/);
+  assert.equal(boundedSidecarDiagnostic(""), "windows_named_mutex_sidecar_failed");
+  // An unbounded first line must not be forwarded even when a later line is fine
+  // only after trimming: the token regex decides, not line order.
+  assert.equal(boundedSidecarDiagnostic("x".repeat(500)), "windows_named_mutex_sidecar_failed");
 });
