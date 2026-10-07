@@ -423,7 +423,7 @@ public sealed class ActorStateActionTests
 
         registration.Should().NotBeNull("the wiring manifest registers equip_wearable in FarmhandActionDefinitions");
         registration!.FamilyId.Should().Be("body_tools");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.Kind.Should().Be(FarmhandOperationKind.Execution);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         registration.Descriptor!.Arguments.Select(argument => argument.Name)
@@ -441,7 +441,7 @@ public sealed class ActorStateActionTests
 
         registration.Should().NotBeNull("the wiring manifest registers unequip_wearable in FarmhandActionDefinitions");
         registration!.FamilyId.Should().Be("body_tools");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         // No expectedQualifiedItemId: the item is whatever the named body slot already holds, and
         // the protocol has no optional arguments.
@@ -459,7 +459,7 @@ public sealed class ActorStateActionTests
 
         registration.Should().NotBeNull("the wiring manifest registers dismount_transport in FarmhandActionDefinitions");
         registration!.FamilyId.Should().Be("animal_transport");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Movement);
         registration.Descriptor!.Arguments.Should().BeEmpty("its subject is the actor's own mount");
         registration.Descriptor.Postcondition.Should().Be("transport_dismounted");

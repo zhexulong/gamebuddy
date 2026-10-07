@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { type Static, type TObject, Type } from "typebox";
+import { type Static, type TObject, type TSchema, Type } from "typebox";
 import {
   type ActionPolicy,
   getArgumentEnum,
@@ -561,7 +561,47 @@ export function buildCandidateToolSchema(
     );
   }
 
-  throw new Error(`Unsupported candidate action: ${actionId}`);
+  // FALLBACK: derive the schema from the descriptor's own declared arguments.
+  //
+  // The explicit arms above are OVERRIDES for arguments that carry a real constraint (an enum, a range
+  // the Mod also enforces, an opaque id). Everything else derives. An earlier version threw here, and
+  // because `createStardewActionTools` has no try around its mount blocks, ONE descriptor-complete action
+  // without an arm made the entire tool set fail to build. That had happened for fifteen mounted ids
+  // (answer_dialogue, dismiss_modal, shop_purchase, select_mine_elevator_floor and the newest nine among
+  // them) and no test noticed, because a runner calls `execute` directly and never mounts a tool. A
+  // derived schema cannot drift from the Mod the way a hand-maintained list does.
+  const declaredNames = declaredArgumentNames(descriptor);
+  if (declaredNames === undefined)
+    throw new Error(`Unsupported candidate action: ${actionId}`);
+  const properties: Record<string, TSchema> = {};
+  for (const name of declaredNames) properties[name] = candidateArgumentSchema(name);
+  return Type.Object(properties, { additionalProperties: false });
+}
+
+/** The argument names a descriptor declares, in either shape the wire and the surface artifact use. */
+function declaredArgumentNames(descriptor: ActionRegistrationDescriptor): readonly string[] | undefined {
+  if (Array.isArray(descriptor.arguments)) {
+    const names = descriptor.arguments.map((argument) => argument?.name);
+    return names.every((name) => typeof name === "string" && name.length > 0) ? (names as string[]) : undefined;
+  }
+  if (descriptor.argumentSchema !== undefined && typeof descriptor.argumentSchema === "object" && descriptor.argumentSchema !== null) {
+    const properties = (descriptor.argumentSchema as { properties?: Record<string, unknown> }).properties;
+    if (properties !== undefined && typeof properties === "object" && properties !== null) return Object.keys(properties);
+  }
+  return undefined;
+}
+
+/**
+ * The tool-parameter schema for one declared argument, chosen by the convention the Mod's own argument
+ * names follow. Advisory: the Mod re-validates every argument on the game thread, so a wrong guess here
+ * cannot widen what an action accepts - it can only make the Host's description of the argument less exact.
+ */
+function candidateArgumentSchema(name: string): TSchema {
+  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
+  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
+  if (name === "quantity") return Type.Integer({ minimum: 1, maximum: 9999 });
+  if (name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
+  return Type.String({ minLength: 1, maxLength: 256 });
 }
 
 /**

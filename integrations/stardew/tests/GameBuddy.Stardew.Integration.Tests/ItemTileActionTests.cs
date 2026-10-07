@@ -234,7 +234,7 @@ public sealed class ItemTileActionTests
     {
         FarmhandActionRegistration warp = FindRegistration("use_warp_item");
         warp.FamilyId.Should().Be("inventory_items");
-        warp.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        warp.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         warp.Kind.Should().Be(FarmhandOperationKind.Execution);
         warp.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         warp.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal("slot", "expectedQualifiedItemId");
@@ -243,7 +243,7 @@ public sealed class ItemTileActionTests
 
         FarmhandActionRegistration pan = FindRegistration("pan_ore");
         pan.FamilyId.Should().Be("body_tools");
-        pan.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        pan.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         pan.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         pan.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal("slot", "x", "y");
         pan.Descriptor.Postcondition.Should().Be("ore_panned");
@@ -251,7 +251,7 @@ public sealed class ItemTileActionTests
 
         FarmhandActionRegistration mail = FindRegistration("claim_mail_attachment");
         mail.FamilyId.Should().Be("buildings_farm_management");
-        mail.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        mail.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         mail.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
         mail.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal("x", "y", "expectedTargetId");
         mail.Descriptor.Postcondition.Should().Be("mail_claimed");
