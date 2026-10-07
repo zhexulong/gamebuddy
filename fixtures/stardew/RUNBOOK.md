@@ -296,6 +296,16 @@ an alternate action runtime.
 
 ### A. Bootstrap an event-free template
 
+> **The fixture root is lane-private.** `%LOCALAPPDATA%\GameBuddy` used to hold the dev/QA
+> `stardew-profiles` and `stardew-fixtures` directories. On 2026-10-07 that path was re-created as the
+> product's partitioned layout (`data/`, `operational/`, `presentation/`) and the old contents were gone —
+> the template, the binding artifact and the Mod profile had disappeared while the game saves stayed in
+> `%APPDATA%\StardewValley\Saves`. Bootstrapping then failed with `no native-local binding for save …`.
+> Point the lane at its own root with `GAMEBUDDY_STARDEW_PROFILE_ROOT` (the resolver supports it for exactly
+> this reason — see `tools/lib/stardew-fixture-roots.mjs`) and bootstrap again. That rebuilds the environment
+> in about a minute: step A.2 with `-BootstrapNativeSave`, then step A.4 to capture the template. Record
+> the observed slot it prints; nothing else survives from the previous root.
+
 1. Use a dedicated Mods profile and an empty logical name matching
    `GameBuddyFixture[A-Za-z0-9]*`; never reuse a Farmhand fixture, a personal
    save, or a save whose route triggers an unbounded event/cutscene.
