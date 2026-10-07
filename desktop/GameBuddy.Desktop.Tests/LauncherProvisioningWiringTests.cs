@@ -32,7 +32,7 @@ public sealed class LauncherProvisioningWiringTests
         var productionPath = ProductionEntry();
 
         var admit = productionPath.IndexOf("AdmitGuardianAsync(selection, cancellationToken)", StringComparison.Ordinal);
-        var identity = productionPath.IndexOf("OperationalDeploymentManifest.Require(layout)", StringComparison.Ordinal);
+        var identity = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
         var host = productionPath.IndexOf("runtimeSupervisor.StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
 
         Assert.True(admit >= 0 && identity > admit, $"expected admit < identity, got admit={admit} identity={identity}");
@@ -40,16 +40,39 @@ public sealed class LauncherProvisioningWiringTests
     }
 
     [Fact]
-    public void Production_entry_never_writes_or_mints_a_deployment_manifest()
+    public void Production_entry_chooses_fresh_only_on_the_run_that_established_the_identity()
     {
         var productionPath = ProductionEntry();
 
-        // The identity is not the launcher's to create: minting it here would make the
-        // launcher the semantic-identity authority, which bootstrap does not own.
+        // The identity step reports whether this run minted the identity, and only
+        // that run may ask the Host to create a semantic authority: a later launch
+        // presenting the same identity must open the existing one as known.
+        var established = productionPath.IndexOf("DeploymentIdentity.EstablishForCurrentUser(layout)", StringComparison.Ordinal);
+        var mode = productionPath.IndexOf("GameSessionMode = mintedDeploymentIdentity", StringComparison.Ordinal);
+        Assert.True(established >= 0 && mode > established, $"expected establish < mode, got establish={established} mode={mode}");
+        Assert.Contains("HostBootstrapEnvironmentOptions.FreshGameSessionMode", productionPath, StringComparison.Ordinal);
+        Assert.Contains("HostBootstrapEnvironmentOptions.KnownGameSessionMode", productionPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_entry_writes_no_file_itself_and_names_no_manifest_path()
+    {
+        var productionPath = ProductionEntry();
+
+        // Establishing the identity is the launcher's step, but the entry is not the
+        // writer: no identity, path or file format is spelled out here, so the entry
+        // cannot grow a second write path or a hand-written manifest.
+        Assert.Contains("DeploymentIdentity.EstablishForCurrentUser(layout)", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("deployment-manifest.json", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("deployment-identity.json", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("WriteAllText", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriteAllBytes", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("File.Create", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileStream", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("StreamWriter", productionPath, StringComparison.Ordinal);
+        // No switch can force a mint or a re-mint: the entry takes no arguments at all.
+        Assert.DoesNotContain("string[] args", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("Environment.GetEnvironmentVariable", productionPath, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -79,17 +102,20 @@ public sealed class LauncherProvisioningWiringTests
         }
 
         // Every failure member is named, and no two share a code.
-        Assert.Equal(8, claimed.Count);
+        Assert.Equal(11, claimed.Count);
 
-        // The two codes this lane added, named for the event rather than borrowed.
+        // The codes this lane added, named for the event rather than borrowed.
         Assert.Equal("mutable_roots_unavailable", Program.OutcomeCode(DesktopLaunchResult.MutableRootsUnavailable));
         Assert.Equal("deployment_identity_unavailable", Program.OutcomeCode(DesktopLaunchResult.DeploymentIdentityUnavailable));
+        Assert.Equal("deployment_identity_mint_unavailable", Program.OutcomeCode(DesktopLaunchResult.DeploymentIdentityMintUnavailable));
+        Assert.Equal("deployment_identity_establish_unavailable", Program.OutcomeCode(DesktopLaunchResult.DeploymentIdentityEstablishUnavailable));
+        Assert.Equal("deployment_identity_conflict", Program.OutcomeCode(DesktopLaunchResult.DeploymentIdentityConflict));
         Assert.True(claimed.ContainsKey("root_layout_unavailable"));
         Assert.True(claimed.ContainsKey("guardian_launch_unavailable"));
     }
 
     [Fact]
-    public void The_provisioning_and_identity_steps_never_write_files()
+    public void The_provisioning_step_never_writes_files()
     {
         foreach (var file in new[] { "CurrentUserRootLayout.cs", "OperationalDeploymentManifest.cs" })
         {
@@ -107,6 +133,26 @@ public sealed class LauncherProvisioningWiringTests
         var layoutSource = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "CurrentUserRootLayout.cs")));
         Assert.Contains("Directory.CreateDirectory(path);", layoutSource, StringComparison.Ordinal);
         Assert.Contains("createMissing: true", layoutSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_identity_owner_is_the_one_place_the_launcher_writes_an_identity()
+    {
+        var identitySource = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "DeploymentIdentity.cs")));
+
+        // One ordinary create per file, and never an adoption of something that is
+        // already there: a re-mint must fail rather than silently replace an identity.
+        Assert.Contains("FileMode.CreateNew", identitySource, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileMode.Create,", identitySource, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileMode.OpenOrCreate", identitySource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Replace(", identitySource, StringComparison.Ordinal);
+        // No identity value comes from the environment, an override or a default
+        // principal, and the forbidden fallback name appears nowhere.
+        Assert.DoesNotContain("Environment.GetEnvironmentVariable", identitySource, StringComparison.Ordinal);
+        Assert.DoesNotContain("local_default", identitySource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Registry", identitySource, StringComparison.Ordinal);
+        // The launcher may not write a generation-derived identity either.
+        Assert.DoesNotContain("selection.", identitySource, StringComparison.Ordinal);
     }
 
     private static string ProductionEntry()

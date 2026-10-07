@@ -18,10 +18,21 @@ internal enum DesktopLaunchResult
     HostGenerationUnavailable,
     GenerationAdmissionRefused,
     GuardianLaunchUnavailable,
-    // The operational deployment manifest is absent or unusable: the launch can
-    // never enter Host composition. Its own member, because the launcher neither
-    // supplies that identity nor may it treat a missing one as a layout problem.
+    // The operational deployment manifest is absent or unusable and no identity
+    // could be established for it: the launch can never enter Host composition. Its
+    // own member, because the launcher neither supplies that identity nor may it
+    // treat a missing one as a layout problem.
     DeploymentIdentityUnavailable,
+    // Establishing the first deployment identity failed. Named apart from the member
+    // above because the event is the opposite one: there was nothing to find, and the
+    // single attempt to mint the first identity did not complete.
+    DeploymentIdentityMintUnavailable,
+    // The identity could not be read, written, or projected onto the operational
+    // manifest - a durable record or filesystem failure, not a missing identity.
+    DeploymentIdentityEstablishUnavailable,
+    // An operational manifest and the durable identity record both exist and disagree.
+    // Nothing is overwritten and neither side is chosen.
+    DeploymentIdentityConflict,
     HostSessionFailed,
 }
 
@@ -65,6 +76,9 @@ internal static class Program
         DesktopLaunchResult.GenerationAdmissionRefused => "generation_admission_refused",
         DesktopLaunchResult.GuardianLaunchUnavailable => "guardian_launch_unavailable",
         DesktopLaunchResult.DeploymentIdentityUnavailable => "deployment_identity_unavailable",
+        DesktopLaunchResult.DeploymentIdentityMintUnavailable => "deployment_identity_mint_unavailable",
+        DesktopLaunchResult.DeploymentIdentityEstablishUnavailable => "deployment_identity_establish_unavailable",
+        DesktopLaunchResult.DeploymentIdentityConflict => "deployment_identity_conflict",
         DesktopLaunchResult.HostSessionFailed => "host_session_failed",
         _ => UnattributedLaunchFailureCode,
     };
@@ -135,11 +149,13 @@ internal static class Program
             await using var guardianSupervisor = new GuardianSupervisor();
 
             // The operational deployment manifest is the admitted Host child's
-            // deployment identity. The launcher only refuses here - it neither
-            // supplies nor repairs that identity - so an absent or unusable manifest
-            // is named before any child is launched instead of surfacing later as an
-            // opaque launch failure.
-            OperationalDeploymentManifest.Require(layout);
+            // deployment identity. The manifest must exist before the child does,
+            // because the supervisor requires that file and the Host reads it as
+            // input, so a writer inside the child cannot produce it: this step
+            // establishes the identity exactly once - minting it only when neither
+            // the manifest nor the durable record exists, otherwise projecting the
+            // durable record - and never overwrites an existing manifest.
+            var mintedDeploymentIdentity = DeploymentIdentity.EstablishForCurrentUser(layout);
 
             // From here the admitted children are launched: Voice first (the Host
             // child is handed its port/token pair), then the Host runtime and the
@@ -181,6 +197,16 @@ internal static class Program
 
             var hostOptions = new HostBootstrapEnvironmentOptions
             {
+                // `fresh` creates the semantic authority and `known` opens the one that
+                // already exists (host/src/composition/desktop-host-composition.ts:152).
+                // Only the run that minted the deployment identity may ask for a fresh
+                // authority: every later launch presents the identity the authority was
+                // created with, so it opens it as known. The launcher previously never
+                // set this and relied on the `fresh` default, which would have opened an
+                // existing authority as fresh on the second launch.
+                GameSessionMode = mintedDeploymentIdentity
+                    ? HostBootstrapEnvironmentOptions.FreshGameSessionMode
+                    : HostBootstrapEnvironmentOptions.KnownGameSessionMode,
                 VoicePort = voiceLease is null ? null : voiceLaunch!.Port,
                 VoiceToken = voiceLease is null ? null : voiceLaunch!.Token,
             };
@@ -223,5 +249,8 @@ internal static class Program
         catch (RootLayoutUnavailableException) { return DesktopLaunchResult.RootLayoutUnavailable; }
         catch (MutableRootsUnavailableException) { return DesktopLaunchResult.MutableRootsUnavailable; }
         catch (DeploymentIdentityUnavailableException) { return DesktopLaunchResult.DeploymentIdentityUnavailable; }
+        catch (DeploymentIdentityMintUnavailableException) { return DesktopLaunchResult.DeploymentIdentityMintUnavailable; }
+        catch (DeploymentIdentityEstablishUnavailableException) { return DesktopLaunchResult.DeploymentIdentityEstablishUnavailable; }
+        catch (DeploymentIdentityConflictException) { return DesktopLaunchResult.DeploymentIdentityConflict; }
     }
 }

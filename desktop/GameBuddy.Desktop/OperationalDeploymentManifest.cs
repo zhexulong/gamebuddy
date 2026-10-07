@@ -19,24 +19,31 @@ internal sealed class DeploymentIdentityUnavailableException : Exception
 }
 
 /// <summary>
-/// The Host-owned operational deployment identity the admitted Host child loads
-/// from <c>&lt;operationalRoot&gt;\deployment-manifest.json</c>.
+/// The five semantic-identity values a deployment manifest carries: the three
+/// principal identifiers, the bootstrap operation identifier and the authority
+/// generation. The durable identity record holds these same five values, which is
+/// why the comparison between the two is one value comparison and not a field
+/// walk repeated in two places.
+/// </summary>
+internal sealed record DeploymentIdentityValues(
+    string ContinuityId,
+    string CompanionId,
+    string PlayerId,
+    string BootstrapOperationId,
+    int AuthorityGeneration);
+
+/// <summary>
+/// The schema reader for the operational deployment manifest, the one file the
+/// admitted Host child loads from <c>&lt;operationalRoot&gt;\deployment-manifest.json</c>.
 ///
 /// The content authority stays with Host: <c>host/src/deployment-manifest.ts</c>
 /// defines the schema and the child revalidates the loaded document through
 /// <c>loadHostDeploymentManifest</c> before any mutable owner opens. This type
-/// therefore does exactly two things and no more: it refuses a launch that can
-/// never enter composition (absent, unreadable, or not an exact v2 manifest) and
-/// it leaves an existing manifest byte-for-byte untouched.
-///
-/// It deliberately does not create, write, rewrite or repair the manifest. The
-/// manifest's principal, bootstrap operation and authority generation are the
-/// deployment's semantic identity: the store compares them field by field against
-/// its durable rows, so whichever component writes the first manifest becomes the
-/// semantic-identity authority. Bootstrap does not own that decision (it does not
-/// choose the principal or the authority generation, and no default principal may
-/// be invented when semantic authority is absent), so the launcher must not mint
-/// one here.
+/// therefore only reads: it returns the five semantic-identity values of an exact
+/// v2 manifest, refuses one that is absent, unreadable or not exact, and writes
+/// nothing. Establishing, projecting or minting the identity belongs to
+/// <see cref="DeploymentIdentity"/>, which is the component that owns the durable
+/// record's relationship with this file.
 /// </summary>
 internal static class OperationalDeploymentManifest
 {
@@ -44,12 +51,12 @@ internal static class OperationalDeploymentManifest
     // GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST; there is no second path or alias.
     internal const string FileName = "deployment-manifest.json";
 
-    private const int SchemaVersion = 2;
-    private const string Topology = "independent_chat_and_game_surfaces";
+    internal const int SchemaVersion = 2;
+    internal const string Topology = "independent_chat_and_game_surfaces";
 
     // The Host schema is closed: exactly these keys, in both objects, with no
     // extra key tolerated (host/src/deployment-manifest.ts).
-    private static readonly string[] TopLevelKeys =
+    internal static readonly string[] TopLevelKeys =
     [
         "schemaVersion",
         "topology",
@@ -59,7 +66,7 @@ internal static class OperationalDeploymentManifest
         "authorityGeneration",
     ];
 
-    private static readonly string[] PrincipalKeys = ["continuityId", "companionId", "playerId"];
+    internal static readonly string[] PrincipalKeys = ["continuityId", "companionId", "playerId"];
 
     /// <summary>
     /// Requires an exact operational deployment manifest for this layout and leaves
@@ -67,7 +74,16 @@ internal static class OperationalDeploymentManifest
     /// step's own outcome rather than the later, opaque launch failure it would
     /// otherwise become.
     /// </summary>
-    internal static void Require(CurrentUserRootLayout layout)
+    internal static void Require(CurrentUserRootLayout layout) => _ = Read(layout);
+
+    /// <summary>
+    /// Reads the exact operational deployment manifest and returns its five semantic
+    /// identity values. This is the schema's one reader: <see cref="Require"/> is this
+    /// read with the result discarded, and the identity owner compares the durable
+    /// record against these values instead of re-deriving the schema. It writes
+    /// nothing and leaves the file exactly as it is.
+    /// </summary>
+    internal static DeploymentIdentityValues Read(CurrentUserRootLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         var path = Path.Combine(layout.OperationalRoot, FileName);
@@ -92,6 +108,14 @@ internal static class OperationalDeploymentManifest
             {
                 throw new DeploymentIdentityUnavailableException();
             }
+
+            var principal = manifest.GetProperty("principal");
+            return new DeploymentIdentityValues(
+                principal.GetProperty("continuityId").GetString()!,
+                principal.GetProperty("companionId").GetString()!,
+                principal.GetProperty("playerId").GetString()!,
+                manifest.GetProperty("bootstrapOperationId").GetString()!,
+                manifest.GetProperty("authorityGeneration").GetInt32());
         }
         catch (DeploymentIdentityUnavailableException)
         {
@@ -105,10 +129,12 @@ internal static class OperationalDeploymentManifest
 
     // The three principal identifiers, the bootstrap operation identifier and the
     // Host-side identifier pattern: 1-128 of [A-Za-z0-9_-].
-    private static bool OpaqueIdentifier(JsonElement value) =>
-        value.ValueKind == JsonValueKind.String &&
-        value.GetString() is { Length: >= 1 and <= 128 } text &&
+    internal static bool OpaqueIdentifier(string? text) =>
+        text is { Length: >= 1 and <= 128 } &&
         text.All(static character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-');
+
+    private static bool OpaqueIdentifier(JsonElement value) =>
+        value.ValueKind == JsonValueKind.String && OpaqueIdentifier(value.GetString());
 
     private static bool IntegerEquals(JsonElement value, int expected) =>
         value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var actual) && actual == expected;
