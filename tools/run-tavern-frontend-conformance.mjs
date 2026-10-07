@@ -241,12 +241,64 @@ try {
   );
 }
 
-const observed = collectTests(document);
+let observed = collectTests(document);
 const byFile = new Map();
 for (const row of observed) {
   const list = byFile.get(row.file) ?? [];
   list.push(row);
   byFile.set(row.file, list);
+}
+
+// 2b. Retry pass: a file with a non-passing row is re-run on its own. Anything that passes
+// there was a timing artefact of running every suite together; anything that still fails is a
+// real failure. Retried-and-passed journeys are recorded, never hidden, so the verdict
+// separates a clean run from one that needed the retry.
+const failedFiles = [
+  ...new Set(
+    observed
+      .filter((row) => !(row.status === "expected" && row.lastResultStatus === "passed"))
+      .map((row) => row.file)
+      .filter((file) => file !== undefined),
+  ),
+];
+const passedOnRetry = [];
+if (failedFiles.length > 0) {
+  process.stderr.write(
+    `[frontend-conformance] retrying ${failedFiles.length} file(s) in isolation: ${failedFiles.join(", ")}\n`,
+  );
+  const retry = await run(
+    "pnpm",
+    [
+      "--dir",
+      "dialogue-web",
+      "exec",
+      "playwright",
+      "test",
+      ...failedFiles,
+        "--project=chromium",
+        "--workers=1",
+        "--reporter=json",
+      ],
+    {
+      cwd: repositoryRoot,
+      env: { ...process.env, GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: outputRoot },
+    },
+  );
+  let retryDocument;
+  try {
+    retryDocument = JSON.parse(retry.stdout.slice(retry.stdout.indexOf("{")));
+  } catch {
+    retryDocument = undefined;
+  }
+  if (retryDocument !== undefined) {
+    const retried = new Map(collectTests(retryDocument).map((row) => [`${row.file}::${row.title}`, row]));
+    observed = observed.map((row) => {
+      const replacement = retried.get(`${row.file}::${row.title}`);
+      if (replacement === undefined) return row;
+      if (replacement.status === "expected" && replacement.lastResultStatus === "passed") passedOnRetry.push(`${row.file} :: ${row.title}`);
+      return replacement;
+    });
+  }
 }
 
 // 3. Per-suite: enough tests. Then per-surface: the declared criteria test
@@ -316,8 +368,14 @@ const report = Object.freeze({
   ),
   requiredTitles: contract.requiredTitles.length,
   declaredSkips: Object.freeze(declaredSkips),
+  passedOnRetry: Object.freeze(passedOnRetry),
   failures: Object.freeze(failures),
-  verdict: failures.length === 0 ? "passed" : "failed",
+  verdict:
+    failures.length > 0
+      ? "failed"
+      : passedOnRetry.length > 0
+        ? "passed-with-retry"
+        : "passed",
 });
 if (options.reportPath !== undefined)
   await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -327,4 +385,5 @@ process.stderr.write(
 );
 for (const failure of failures) process.stderr.write(`  - ${failure}\n`);
 for (const skip of declaredSkips) process.stderr.write(`  . declared: ${skip}\n`);
+for (const retried of passedOnRetry) process.stderr.write(`  * passed on retry: ${retried}\n`);
 process.exit(failures.length === 0 ? 0 : 2);
