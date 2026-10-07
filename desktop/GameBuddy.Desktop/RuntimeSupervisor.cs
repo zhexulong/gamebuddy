@@ -28,7 +28,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         SafeFileHandle? parentStdinWriter = null;
         SafeFileHandle? parentStdoutReader = null;
         SafeFileHandle? childStdoutWriter = null;
+        SafeFileHandle? parentStderrReader = null;
+        SafeFileHandle? childStderrWriter = null;
         WindowsNative.SafeProcessHandle? process = null;
+        ChildStderrCapture? childStderr = null;
         IntPtr attributeList = IntPtr.Zero;
         IntPtr attributeSize = IntPtr.Zero;
         var attributeListInitialized = false;
@@ -40,7 +43,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         try
         {
             runtime.VerifyStillLocked();
-            CreateBootstrapPipes(out childStdinReader, out parentStdinWriter, out parentStdoutReader, out childStdoutWriter);
+            CreateBootstrapPipes(out childStdinReader, out parentStdinWriter, out parentStdoutReader, out childStdoutWriter, out parentStderrReader, out childStderrWriter);
             var environmentBlock = BuildBootstrapEnvironment(layout, options);
             environment = Marshal.StringToHGlobalUni(environmentBlock);
 
@@ -48,10 +51,15 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             attributeList = Marshal.AllocHGlobal(attributeSize);
             if (!WindowsNative.InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeSize)) WindowsNative.ThrowLastError("host_runtime_unavailable");
             attributeListInitialized = true;
-            handleList = Marshal.AllocHGlobal(checked(IntPtr.Size * 2));
+            // The child inherits exactly the three pipe endpoints it needs: the two
+            // handshake directions and its own stderr, which is where a refusal before
+            // the acknowledgement is written and which is therefore the launcher's only
+            // diagnostic when the handshake never completes.
+            handleList = Marshal.AllocHGlobal(checked(IntPtr.Size * 3));
             Marshal.WriteIntPtr(handleList, 0, childStdinReader.DangerousGetHandle());
             Marshal.WriteIntPtr(handleList, IntPtr.Size, childStdoutWriter.DangerousGetHandle());
-            if (!WindowsNative.UpdateProcThreadAttribute(attributeList, 0, (IntPtr)WindowsNative.ProcThreadAttributeHandleList, handleList, (IntPtr)(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero)) WindowsNative.ThrowLastError("host_runtime_unavailable");
+            Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, childStderrWriter.DangerousGetHandle());
+            if (!WindowsNative.UpdateProcThreadAttribute(attributeList, 0, (IntPtr)WindowsNative.ProcThreadAttributeHandleList, handleList, (IntPtr)(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero)) WindowsNative.ThrowLastError("host_runtime_unavailable");
 
             runtime.VerifyStillLocked();
             var bootstrapId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -64,7 +72,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
                     dwFlags = WindowsNative.StartfUseStdHandles,
                     hStdInput = childStdinReader.DangerousGetHandle(),
                     hStdOutput = childStdoutWriter.DangerousGetHandle(),
-                    hStdError = IntPtr.Zero,
+                    hStdError = childStderrWriter.DangerousGetHandle(),
                 },
                 AttributeList = attributeList,
             };
@@ -79,6 +87,12 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             childStdinReader = null;
             childStdoutWriter.Dispose();
             childStdoutWriter = null;
+            childStderrWriter.Dispose();
+            childStderrWriter = null;
+            // From the child's first moment its stderr is drained, so the capture can
+            // never become the reason the child blocks.
+            childStderr = ChildStderrCapture.Begin(parentStderrReader);
+            parentStderrReader = null;
 
             VerifyCreatedProcessBeforeFrame(process, processInformation.ProcessId, runtime.RuntimePath);
             if (BeforeFrameWriteForTesting is not null) await BeforeFrameWriteForTesting().ConfigureAwait(false);
@@ -104,14 +118,22 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             process = null;
             return lease;
         }
-        catch (GuardianLaunchUnavailableException) { throw; }
+        catch (GuardianLaunchUnavailableException exception)
+        {
+            await AttachChildStderrAsync(exception, childStderr).ConfigureAwait(false);
+            throw;
+        }
         catch (OperationCanceledException exception)
         {
-            throw new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
+            var unavailable = new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
+            await AttachChildStderrAsync(unavailable, childStderr).ConfigureAwait(false);
+            throw unavailable;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or OutOfMemoryException or JsonException)
         {
-            throw new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
+            var unavailable = new GuardianLaunchUnavailableException("host_runtime_unavailable", exception);
+            await AttachChildStderrAsync(unavailable, childStderr).ConfigureAwait(false);
+            throw unavailable;
         }
         finally
         {
@@ -136,23 +158,44 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             parentStdinWriter?.Dispose();
             parentStdoutReader?.Dispose();
             childStdoutWriter?.Dispose();
+            parentStderrReader?.Dispose();
+            childStderrWriter?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Binds the launched child's own stderr to the failure the launch is about to
+    /// report. The category is untouched: the excerpt is what the child said about the
+    /// same blocker, appended where an operator can read it. A failure that happened
+    /// before any child existed carries no excerpt at all, and a capture that retained
+    /// nothing says so instead of pretending the child was silent. It runs at most once
+    /// per exception.
+    /// </summary>
+    private static async Task AttachChildStderrAsync(GuardianLaunchUnavailableException exception, ChildStderrCapture? capture)
+    {
+        if (capture is null || exception.Diagnostic is not null) return;
+        exception.Diagnostic = ChildStderrExcerpt.Format(await capture.ExcerptAsync().ConfigureAwait(false));
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private static void CreateBootstrapPipes(out SafeFileHandle childStdinReader, out SafeFileHandle parentStdinWriter, out SafeFileHandle parentStdoutReader, out SafeFileHandle childStdoutWriter)
+    private static void CreateBootstrapPipes(out SafeFileHandle childStdinReader, out SafeFileHandle parentStdinWriter, out SafeFileHandle parentStdoutReader, out SafeFileHandle childStdoutWriter, out SafeFileHandle parentStderrReader, out SafeFileHandle childStderrWriter)
     {
         parentStdoutReader = null!;
         childStdoutWriter = null!;
+        parentStderrReader = null!;
+        childStderrWriter = null!;
         if (!WindowsNative.CreatePipe(out childStdinReader, out parentStdinWriter, IntPtr.Zero, 0)) WindowsNative.ThrowLastError("host_runtime_unavailable");
         try
         {
             if (!WindowsNative.CreatePipe(out parentStdoutReader, out childStdoutWriter, IntPtr.Zero, 0)) WindowsNative.ThrowLastError("host_runtime_unavailable");
+            if (!WindowsNative.CreatePipe(out parentStderrReader, out childStderrWriter, IntPtr.Zero, 0)) WindowsNative.ThrowLastError("host_runtime_unavailable");
             if (!WindowsNative.SetHandleInformation(childStdinReader, WindowsNative.HandleFlagInherit, WindowsNative.HandleFlagInherit) ||
                 !WindowsNative.SetHandleInformation(childStdoutWriter, WindowsNative.HandleFlagInherit, WindowsNative.HandleFlagInherit) ||
+                !WindowsNative.SetHandleInformation(childStderrWriter, WindowsNative.HandleFlagInherit, WindowsNative.HandleFlagInherit) ||
                 !WindowsNative.SetHandleInformation(parentStdinWriter, WindowsNative.HandleFlagInherit, 0) ||
-                !WindowsNative.SetHandleInformation(parentStdoutReader, WindowsNative.HandleFlagInherit, 0))
+                !WindowsNative.SetHandleInformation(parentStdoutReader, WindowsNative.HandleFlagInherit, 0) ||
+                !WindowsNative.SetHandleInformation(parentStderrReader, WindowsNative.HandleFlagInherit, 0))
                 WindowsNative.ThrowLastError("host_runtime_unavailable");
         }
         catch
@@ -165,6 +208,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             parentStdoutReader = null!;
             childStdoutWriter?.Dispose();
             childStdoutWriter = null!;
+            parentStderrReader?.Dispose();
+            parentStderrReader = null!;
+            childStderrWriter?.Dispose();
+            childStderrWriter = null!;
             throw;
         }
     }
@@ -388,6 +435,29 @@ internal static class HostBootstrapPipeIo
             using var stream = new FileStream(writer, FileAccess.Write, bufferSize: 4096, isAsync: false);
             stream.Write(frame, 0, frame.Length);
             stream.Flush();
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads one endpoint to its end, handing each block to the sink, on the same
+    /// cancellable synchronous worker the handshake uses. It is how the child's stderr
+    /// is drained for as long as the child lives, and it never blocks the launch: the
+    /// caller abandons it when the endpoint reaches its end.
+    /// </summary>
+    internal static Task DrainUntilEndAsync(SafeFileHandle reader, Action<byte[], int> sink, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(sink);
+        return RunSynchronousIoAsync(reader, () =>
+        {
+            using var stream = new FileStream(reader, FileAccess.Read, bufferSize: 4096, isAsync: false);
+            var buffer = new byte[4096];
+            while (true)
+            {
+                var count = stream.Read(buffer, 0, buffer.Length);
+                if (count == 0) return;
+                sink(buffer, count);
+            }
         }, cancellationToken);
     }
 

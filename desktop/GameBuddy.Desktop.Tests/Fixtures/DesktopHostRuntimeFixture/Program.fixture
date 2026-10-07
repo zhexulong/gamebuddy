@@ -42,6 +42,22 @@ try
         return;
 
     var dataRoot = frame.GetProperty("rootLayout").GetProperty("dataRoot").GetString()!;
+    // Test-only refusal path: the trigger file's exact bytes are written to this
+    // process's own standard error and the process then exits before it ever writes
+    // the bootstrap acknowledgement. That is a real child refusing mid-handshake with
+    // real standard-error bytes, which is the only way to observe that the launcher
+    // retained and surfaced what the child said about itself.
+    var refusal = Path.Combine(dataRoot, "desktop-host-runtime-fixture.refuse");
+    if (File.Exists(refusal))
+    {
+        var message = File.ReadAllBytes(refusal);
+        using (var standardError = new FileStream(new SafeFileHandle(WindowsNative.GetStdHandle(-12), ownsHandle: true), FileAccess.Write, bufferSize: 0))
+        {
+            standardError.Write(message);
+            standardError.Flush();
+        }
+        return;
+    }
     // Signal steady state before the bootstrap acknowledgement: the fixture
     // is alive and ready to serve after it parsed the frame, so the test's
     // one-shot ready read never races the ack/EOF handshake.

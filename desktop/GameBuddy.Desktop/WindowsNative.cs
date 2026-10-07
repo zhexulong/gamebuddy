@@ -231,6 +231,14 @@ internal sealed class GuardianLaunchUnavailableException : Exception
         : base(category, innerException) { }
 
     /// <summary>
+    /// What the launched child itself wrote about the same refusal, as one bounded and
+    /// redacted line, or <c>null</c> when no child was ever created. It is set at most
+    /// once, by the launch step that failed, and it never replaces the category: the
+    /// category names the blocker, the diagnostic is the child's own words about it.
+    /// </summary>
+    internal string? Diagnostic { get; set; }
+
+    /// <summary>
     /// The specific reason this launch step refused, as one bounded code. It is the
     /// exception's own reason rather than the entry's classification: callers that
     /// need to name which blocker was hit read it here instead of replacing it with

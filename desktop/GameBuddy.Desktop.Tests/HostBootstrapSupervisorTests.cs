@@ -139,9 +139,14 @@ public sealed class HostBootstrapSupervisorTests
         var write = source.IndexOf("HostBootstrapPipeIo.WriteOneFrameAsync(parentStdinWriter, frame", StringComparison.Ordinal);
 
         Assert.True(authentication >= 0 && authentication < write);
-        Assert.Contains("Marshal.AllocHGlobal(checked(IntPtr.Size * 2))", source, StringComparison.Ordinal);
+        // The child inherits exactly three endpoints: the two handshake directions and
+        // its own stderr, which is where a refusal before the acknowledgement is
+        // written and therefore the only diagnostic the launcher can report.
+        Assert.Contains("Marshal.AllocHGlobal(checked(IntPtr.Size * 3))", source, StringComparison.Ordinal);
         Assert.Contains("childStdinReader.DangerousGetHandle()", source, StringComparison.Ordinal);
         Assert.Contains("childStdoutWriter.DangerousGetHandle()", source, StringComparison.Ordinal);
+        Assert.Contains("hStdError = childStderrWriter.DangerousGetHandle()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("hStdError = IntPtr.Zero", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.GetProcessId(process) != expectedProcessId", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.OpenProcessToken(child", source, StringComparison.Ordinal);
         Assert.Contains("WindowsNative.EqualSid(currentSid, childSid)", source, StringComparison.Ordinal);
