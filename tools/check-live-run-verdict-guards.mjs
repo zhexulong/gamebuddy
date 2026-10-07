@@ -58,6 +58,20 @@ const ABSENCE_PASS = /\?\s*true\b|\?\?\s*true\b/;
 const ALT_ABSENCE_PASS = /:\s*true\s*;?\s*(?:\/\/.*)?$/;
 /** The deliberate-exception marker, which requires a reason. */
 const MARKER = /absence-as-pass:\s*\S/;
+/**
+ * The DISJUNCTION spelling: a pass-shaped name that is true when the observation is ABSENT.
+ *
+ * Measured 2026-10-06/07: the game ladder computed
+ * `const interactionPassed = interactionAssessment === null || interactionAssessment.passed;`
+ * — a boolean that cannot distinguish "assessed and fine" from "nobody assessed it", which is the exact
+ * presence/absence conflation this guard exists to catch. The two earlier rules (`? true`, `: true`) never
+ * looked at `||`, so it survived both.
+ *
+ * Scoped to an explicit absence TEST on the left of the disjunction (`=== null`, `=== undefined`,
+ * `!== undefined` is deliberately NOT matched, nor is a nullable read like `a?.ok`), because
+ * `a.flags.length > 0 || a.otherOk` is ordinary logic, not absence-as-pass.
+ */
+const DISJUNCT_ABSENCE = /(?:===\s*(?:null|undefined))\s*\|\||\?\?\s*[A-Za-z_$][\w$.]*\.(?:ok|passed|verified)\b/;
 
 function collectModules(root) {
   const files = [];
@@ -83,7 +97,8 @@ export function findAbsencePassBranches({ root }) {
       // a ternary (the mirror form the first version missed - it early-returned on the
       // narrow rule, so the widened check was dead code until a mutation test caught
       // it: removing a legitimately marked `: true` still reported zero findings).
-      if (!ABSENCE_PASS.test(line) && !ALT_ABSENCE_PASS.test(line)) return;
+      const absentByDisjunction = DISJUNCT_ABSENCE.test(line);
+      if (!ABSENCE_PASS.test(line) && !ALT_ABSENCE_PASS.test(line) && !absentByDisjunction) return;
       // The exception must be declared ON the branch or the two lines above it,
       // and it must carry a reason on that same line: a bare marker is not an
       // exception (a reasonless exemption is the silent pass again).
@@ -99,6 +114,7 @@ export function findAbsencePassBranches({ root }) {
       findings.push({
         file: relative(repositoryRoot, file).replaceAll("\\", "/"),
         line: index + 1,
+        kind: absentByDisjunction ? "absence_by_disjunction" : "absence_default_true",
         snippet: line.trim().slice(0, 160),
       });
     });

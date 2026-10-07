@@ -48,15 +48,23 @@ const REASON_COMPONENT = Object.freeze({
 });
 
 /**
- * Rejection reasons can arrive both bare (`stale_snapshot`) and namespaced
- * (`execution_receipt_replay_rejected:non_monotonic_revision`). Match on the
- * leading token so a compound code still lands on its component instead of
- * silently falling through to `unclassified`.
+ * Reasons whose component depends on the EVIDENCE the refusal carried, not on the code alone.
+ *
+ * Measured: `move_to_tile` was refused as `no_native_path` — which the table maps to `observation` — while
+ * its own envelope said `route_exists=true; component_tiles=2404; probe_says_reachable=true;
+ * path_search=native_budget_exhausted; budget=40000`. That is the Mod's own planner exhausting its search
+ * budget on a route the Mod can prove exists: a native-state/budget fact, not an observation gap. Sending
+ * the audit to the observation layer would have "fixed" the wrong component.
  */
-function componentOf(reasonCode) {
+function componentOf(reasonCode, evidence) {
   if (typeof reasonCode !== "string" || reasonCode.length === 0) return "unclassified";
   const head = reasonCode.split(":", 1)[0];
-  return REASON_COMPONENT[head] ?? "unclassified";
+  const defaultComponent = REASON_COMPONENT[head] ?? "unclassified";
+  if (head === "no_native_path" && typeof evidence === "string") {
+    if (/path_search=native_budget_exhausted/.test(evidence)) return "native_state";
+    if (/probe_says_reachable=true/.test(evidence) || /route_exists=true/.test(evidence)) return "native_state";
+  }
+  return defaultComponent;
 }
 
 /**
@@ -64,7 +72,15 @@ function componentOf(reasonCode) {
 dispatch the run issued, including refusals that threw instead of returning a receipt
  * @returns {Readonly<{findings: readonly any[], summaries: Readonly<Record<string, number>>, rejectedCount: number, acceptedCount: number}>}
  */
-export function summarizeSystemFindings(actionTrace) {
+export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
+  // Evidence per reason code, so a finding can attribute by what the refusal SAID rather than by its name
+  // alone.
+  const evidenceByCode = {};
+  for (const entry of actionTrace) {
+    const code = entry?.reasonCode;
+    if (typeof code !== "string" || typeof entry?.evidence !== "string") continue;
+    (evidenceByCode[code] ??= []).push(entry.evidence);
+  }
   const rejected = actionTrace.filter((entry) => entry?.state === "rejected");
   const accepted = actionTrace.filter((entry) => entry?.state === "accepted" || entry?.state === "succeeded");
 
@@ -152,12 +168,39 @@ export function summarizeSystemFindings(actionTrace) {
     });
   }
 
+  // Finding 2b: an action dispatched repeatedly whose executions END in a failure terminal. The
+  // dispatch itself says `accepted`, so a refusal-only reading sees nothing; meanwhile the caller
+  // retried a request that had already failed authoritatively. Measured: three harvest executions ended
+  // in `target_out_of_reach` (two of them minutes apart) while the run's findings mentioned no retry at
+  // all.
+  for (const [action, failures] of Object.entries(executionFailures ?? {})) {
+    const codes = Object.entries(failures?.failedTerminalReasonCodes ?? {});
+    if (codes.length === 0) continue;
+    const count = codes.reduce((total, [, value]) => total + value, 0);
+    const component = componentOf(codes[0][0], evidenceByCode[codes[0][0]]?.[0]);
+    findings.push({
+      id: "accepted_then_failed",
+      component,
+      severity: count >= 2 ? "high" : "medium",
+      action,
+      count,
+      detail: `${count} execution(s) of ${action} were admitted and then ended in ${codes.map(([code, value]) => `${code} x${value}`).join(", ")}`,
+      mechanismHypothesis:
+        "the refusal/terminal envelope may not carry an actionable next step, so the caller has no gradient to change its approach",
+      falsificationCheck:
+        "falsified if the same action later succeeds from the same observation without any new information",
+      recommendation:
+        "treat an admitted-then-failed execution as a first-class outcome: report it, and check whether the terminal envelope names a reachable alternative",
+      sampleCodes: codes.map(([code]) => code),
+    });
+  }
+
   // Finding 3: dominant rejection reason (>=50% of all rejections, >=3 total).
   for (const [code, count] of Object.entries(reasonSummaries)) {
     if (count >= 3 && totalRejected >= 3 && count / totalRejected >= 0.5) {
       findings.push({
         id: "dominant_rejection",
-        component: componentOf(code),
+        component: componentOf(code, evidenceByCode[code]?.[0]),
         severity: "high",
         // `action` is an action id everywhere else in this shape; a reason code
         // here was a type lie that a reader (and any comparison tool) would take
@@ -166,7 +209,7 @@ export function summarizeSystemFindings(actionTrace) {
         reasonCode: code,
         count,
         detail: `${code} is ${Math.round((count / totalRejected) * 100)}% of ${totalRejected} rejections`,
-        recommendation: `a single reason dominating the rejection stream usually means a systemic precondition — audit ${componentOf(code)} layer`,
+        recommendation: `a single reason dominating the rejection stream usually means a systemic precondition — audit ${componentOf(code, evidenceByCode[code]?.[0])} layer`,
       });
     }
   }
@@ -191,7 +234,7 @@ export function summarizeSystemFindings(actionTrace) {
   // Counting thresholds must never hide this: one such rejection in a run is a
   // system defect, and the live trace that motivated this module showed exactly
   // this being reported as a clean run.
-  const deliveryRejections = rejected.filter((entry) => componentOf(entry?.reasonCode ?? "") === "delivery");
+  const deliveryRejections = rejected.filter((entry) => componentOf(entry?.reasonCode ?? "", entry?.evidence) === "delivery");
   if (deliveryRejections.length > 0) {
     const codes = [...new Set(deliveryRejections.map((entry) => entry?.reasonCode ?? "unknown"))];
     findings.push({
