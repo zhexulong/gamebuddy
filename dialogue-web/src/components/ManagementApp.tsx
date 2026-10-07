@@ -1345,8 +1345,18 @@ function ConnectionSettingsPanel({
                   onChange={(event) => setApiKey(event.target.value)}
                 />
                 <p className="field-hint">{labels.connectionApiKeyWriteOnly}</p>
-              </>
-            )}
+      </>
+    )}
+
+    {/*
+     * A local server that needs no credential still needs a value here, because the runtime
+     * rejects a provider with no key at all. pi's own documentation answers this with a
+     * placeholder ("the dummy key makes the model available to Pi; Ollama ignores it"), so the
+     * panel says that instead of leaving the player to guess.
+     */}
+    {selected?.escapeHatch === true && (
+      <p className="field-hint">{labels.connectionApiKeyLocalHint}</p>
+    )}
 
             {selected?.escapeHatch === true ? (
               <>
@@ -1473,6 +1483,8 @@ function ConnectionRow({
             <option key={level} value={level}>
               {
                 {
+                  off: labels.connectionLevelOff,
+                  minimal: labels.connectionLevelMinimal,
                   low: labels.connectionLevelLow,
                   medium: labels.connectionLevelMedium,
                   high: labels.connectionLevelHigh,

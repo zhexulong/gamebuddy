@@ -38,7 +38,7 @@ export async function probeTavernConnection(
       signal: controller.signal,
       headers: {
         accept: "application/json",
-        ...(input.provider.authHeader ? { authorization: `Bearer ${input.apiKey}` } : {}),
+        ...(input.provider.probeBearerAuth ? { authorization: `Bearer ${input.apiKey}` } : {}),
       },
     });
     // The listing is parsed only for model ids. An endpoint error may echo

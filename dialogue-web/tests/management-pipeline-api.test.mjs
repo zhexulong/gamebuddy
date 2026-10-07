@@ -332,6 +332,37 @@ test("the hand-written client mirror covers the Host contract's whole operation,
   }
 });
 
+test("the client mirror's API shape and thinking level lists are the Host contract's", async () => {
+  // Same reason as the vocabulary test above, for the two lists a player picks from. A
+  // missing shape is not cosmetic: the player cannot configure that endpoint at all, which is
+  // exactly how `azure-openai-responses` and `pi-messages` were absent on the Host side.
+  const { readFile } = await import("node:fs/promises");
+  const { TavernBrowserContractV1 } = await import("../../host/src/tavern/browser-contract/index.ts");
+  const literalsIn = (union) => {
+    const members = Array.isArray(union?.anyOf) ? union.anyOf : Array.isArray(union?.oneOf) ? union.oneOf : [];
+    return members.map((member) => member?.const).filter((value) => typeof value === "string");
+  };
+  const shapes = literalsIn(TavernBrowserContractV1.schemas.TavernConnectionApiShapeV1Schema);
+  const levels = literalsIn(TavernBrowserContractV1.schemas.TavernConnectionThinkingLevelV1Schema);
+  assert.deepEqual(shapes.length, 10, `the contract declares the runtime's own shape set, saw ${shapes.join(", ")}`);
+  assert.deepEqual(levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+  const mirror = await readFile(new URL("../src/management-pipeline-api.ts", import.meta.url), "utf8");
+  const listIn = (source, name) => {
+    const start = source.indexOf(name);
+    assert.notEqual(start, -1, `the mirror no longer declares ${name}`);
+    const end = source.indexOf("] as const", start);
+    assert.notEqual(end, -1, `${name} is no longer a const list`);
+    return [...source.slice(start, end).matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  };
+  assert.deepEqual(listIn(mirror, "const CONNECTION_API_SHAPES"), shapes, "the mirror's shape list drifted from the contract");
+  assert.deepEqual(
+    listIn(mirror, "const CONNECTION_THINKING_LEVELS"),
+    levels,
+    "the mirror's thinking level list drifted from the contract",
+  );
+});
+
 function modelProfiles(overrides = {}) {
   return {
     apiVersion: 1,

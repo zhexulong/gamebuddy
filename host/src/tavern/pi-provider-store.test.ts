@@ -29,7 +29,6 @@ const ZERO_CONFIG_DEEPSEEK = `{
       "baseUrl": "http://127.0.0.1:8317/v1",
       "api": "openai-completions",
       "apiKey": "$CPA_OAI_API_KEY",
-      "authHeader": true,
       "compat": {
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true
@@ -122,7 +121,6 @@ test("a second model keeps the frozen entry shape while the environment entry st
       "baseUrl",
       "api",
       "apiKey",
-      "authHeader",
       "compat",
       "models",
     ]);
@@ -223,13 +221,14 @@ test("the runtime provider entry follows the selected connection and its own end
     // The endpoint and the model id come from the player's record; the
     // credential never reaches `models.json`.
     assert.deepEqual(hatch?.entry, {
-      name: "OpenAI-compatible endpoint",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      api: "openai-completions",
-      authHeader: true,
-      models: [{ id: "qwen2.5-coder:7b", name: "qwen2.5-coder:7b" }],
-    });
-    assert.doesNotMatch(JSON.stringify(hatch?.entry), /sk-synthetic-hatch-key/);
+    name: "OpenAI-compatible endpoint",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    api: "openai-completions",
+    // No authHeader: the adapter installs `Authorization: Bearer` from the resolved key
+    // itself, and pi's default for the flag is false.
+    models: [{ id: "qwen2.5-coder:7b", name: "qwen2.5-coder:7b" }],
+  });
+  assert.doesNotMatch(JSON.stringify(hatch?.entry), /sk-synthetic-hatch-key/);
 
     // An unknown provider is not a provider entry.
     assert.equal(await modelProviderEntry(root, { provider: "invented", modelId: "x", thinkingLevel: "high" }), null);
@@ -272,7 +271,9 @@ test("the emitted provider entry carries the escape hatch's own API shape", asyn
       name: "OpenAI-compatible endpoint",
       baseUrl: "https://anthropic-gateway.example.com",
       api: "anthropic-messages",
-      authHeader: true,
+      // The decisive case for not writing authHeader: this shape authenticates with
+      // `x-api-key`, so a generic `Authorization: Bearer` would be a second header in a
+      // scheme the endpoint does not use.
       models: [{ id: "claude-3-5-sonnet", name: "claude-3-5-sonnet" }],
     });
 

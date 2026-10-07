@@ -60,7 +60,8 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
     baseUrl: "http://127.0.0.1:8317/v1",
     api: "openai-completions",
     apiKey: "$CPA_OAI_API_KEY",
-    authHeader: true,
+    // No `authHeader`: the OpenAI-compatible adapter installs `Authorization: Bearer`
+    // from the resolved key itself, so the flag would only duplicate that header.
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: true,
@@ -144,7 +145,11 @@ export async function modelProviderEntry(
       name: provider.label,
       baseUrl,
       api,
-      ...(provider.authHeader ? { authHeader: true } : {}),
+      // No `authHeader`: the adapter for the chosen shape authenticates itself from the
+      // resolved key (every adapter in pi-ai 1.0.0 requires `apiKey` and installs its own
+      // scheme — `x-api-key`, `api-key`, SigV4, or the SDK's own Bearer), and pi's default
+      // for the flag is false. A generic `Authorization: Bearer` written here would be a
+      // second, wrong-scheme header on the shapes that do not use Bearer.
       // A catalog provider's model metadata already ships with Pi; only the one
       // entry whose model the player named has to describe it here.
       ...(provider.baseUrl === null ? { models: [{ id: config.modelId, name: config.modelId }] } : {}),
