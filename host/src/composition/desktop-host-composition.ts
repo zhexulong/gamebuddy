@@ -175,9 +175,17 @@ export async function createDesktopProductComposition(
     // the mounted Chat lane and the shared semantic authority, and never
     // construct the Stardew coordinator, guardian, or folder picker; the
     // composed-reference-game surface below keeps the Game child.
+    // This module lives at `<artifact>/composition`, so the artifact root - the directory
+    // that holds both `bootstrap` and `native` - is exactly one level up. It is derived
+    // here, once, and shared by every surface below instead of being derived again where
+    // a path is needed. A second derivation for the folder picker previously went two
+    // levels up and therefore named the directory that contains the generation rather
+    // than the generation, so the picker helper at
+    // `<artifact>/native/windows-stardew-folder-picker/<rid>` was never found and every
+    // launch ended in windows_stardew_folder_picker_unavailable.
+    const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const surface = input.surface ?? "composed-reference-game";
     if (surface === "chat-only" || surface === "management") {
-      const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
       const variantInput = Object.freeze({
         manifest: input.manifest,
         hostArtifactRoot,
@@ -219,8 +227,7 @@ export async function createDesktopProductComposition(
     // and that admits the folder picker. The game adapter receives both as
     // opaque injected capabilities and never imports runtime/core, the auth
     // transport, or a raw Windows module itself.
-    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const folderPicker = await createPublishedWindowsStardewFolderPicker(artifactRoot);
+    const folderPicker = await createPublishedWindowsStardewFolderPicker(hostArtifactRoot);
     const runtimeCollaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       createDesktopGuardianGameRuntimePlatform(session),
     );
