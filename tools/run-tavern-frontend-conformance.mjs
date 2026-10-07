@@ -291,13 +291,17 @@ if (failedFiles.length > 0) {
     retryDocument = undefined;
   }
   if (retryDocument !== undefined) {
-    const retried = new Map(collectTests(retryDocument).map((row) => [`${row.file}::${row.title}`, row]));
-    observed = observed.map((row) => {
-      const replacement = retried.get(`${row.file}::${row.title}`);
-      if (replacement === undefined) return row;
-      if (replacement.status === "expected" && replacement.lastResultStatus === "passed") passedOnRetry.push(`${row.file} :: ${row.title}`);
-      return replacement;
-    });
+  		const retried = new Map(collectTests(retryDocument).map((row) => [`${row.file}::${row.title}`, row]));
+		observed = observed.map((row) => {
+			const replacement = retried.get(`${row.file}::${row.title}`);
+			// Only a PASSING retry row may stand in for the original. A later re-run that failed again
+			// carries no better information than the row already held, and letting a failing row overwrite
+			// a passing one is how the verdict came to blame a journey that had already passed its retry.
+			if (replacement === undefined) return row;
+			if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
+			passedOnRetry.push(`${row.file} :: ${row.title}`);
+			return replacement;
+		});
   }
 }
 
@@ -346,14 +350,14 @@ if (stillFailing.length > 0) {
     soloDocument = undefined;
   }
   if (soloDocument !== undefined) {
-    const soloRows = new Map(collectTests(soloDocument).map((row) => [`${row.file}::${row.title}`, row]));
-    observed = observed.map((row) => {
-      const replacement = soloRows.get(`${row.file}::${row.title}`);
-      if (replacement === undefined) return row;
-      if (replacement.status === "expected" && replacement.lastResultStatus === "passed")
-        passedOnRetry.push(`${row.file} :: ${row.title} (alone)`);
-      return replacement;
-    });
+  		const soloRows = new Map(collectTests(soloDocument).map((row) => [`${row.file}::${row.title}`, row]));
+		observed = observed.map((row) => {
+			const replacement = soloRows.get(`${row.file}::${row.title}`);
+			if (replacement === undefined) return row;
+			if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
+			passedOnRetry.push(`${row.file} :: ${row.title} (alone)`);
+			return replacement;
+		});
   }
 }
 
