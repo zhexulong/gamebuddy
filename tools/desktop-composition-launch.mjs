@@ -28,6 +28,15 @@ const BOOTSTRAP_SCHEMA = "gamebuddy-desktop-host-bootstrap/v1";
 const GUARDIAN_SESSION_SCHEMA = "gamebuddy-desktop-guardian-session/v1";
 const ROOT_LAYOUT_SCHEMA = "gamebuddy-windows-root-layout/v1";
 const READY_SCHEMA = "gamebuddy-desktop-composition-ready/v1";
+/**
+ * The Host now narrates startup on stdout before its acknowledgement: one bounded status frame per
+ * step (`gamebuddy-desktop-host-bootstrap-status/v1`, carrying a stage and maybe a waiting token).
+ * This launcher's whole job on that channel is to tell those frames from the acknowledgement - the
+ * acknowledgement is the first line that is not one of them. Reading the first line as the
+ * acknowledgement made every composed launch fail with `desktop_compose_bootstrap_ack_invalid` as
+ * soon as the status channel shipped (commit 2e8672d9).
+ */
+const BOOTSTRAP_STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
 const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
 const MAX_GUARDIAN_FRAME_BYTES = 16_384;
@@ -369,7 +378,7 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
   });
 }
 
-function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "") {
+function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "", onStatus = undefined) {
   return new Promise((resolveAck, rejectAck) => {
     let data = "";
     let settled = false;
@@ -382,12 +391,33 @@ function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "") {
       child.off("exit", onExit);
       fn(value);
     };
-    const onData = (chunk) => {
-      data += chunk.toString("utf8");
-      const newline = data.indexOf("\n");
-      if (newline < 0) return;
-      settle(resolveAck, data.slice(0, newline));
-    };
+  		const onData = (chunk) => {
+			data += chunk.toString("utf8");
+			// Frames arrive one per line. Consume every complete line, skipping the status narration:
+			// the first line that is not a status frame is the acknowledgement.
+			for (;;) {
+				const newline = data.indexOf("\n");
+				if (newline < 0) return;
+				const line = data.slice(0, newline);
+				data = data.slice(newline + 1);
+				if (line.trim().length === 0) continue;
+				let parsed;
+				try {
+					parsed = JSON.parse(line);
+				} catch {
+					// Not JSON at all: hand it to the caller's validator, which will refuse it with the
+					// precise error rather than this launcher inventing one.
+					settle(resolveAck, line);
+					return;
+				}
+				if (parsed !== null && typeof parsed === "object" && parsed.schema === BOOTSTRAP_STATUS_SCHEMA) {
+					if (typeof onStatus === "function") onStatus(parsed);
+					continue;
+				}
+				settle(resolveAck, line);
+				return;
+			}
+		};
     const onError = () => settle(rejectAck, new Error("desktop_compose_child_spawn_failed"));
     // The caller also captures a bounded stderr tail; use it so a pre-ack exit names
     // its product code here too, not just on the readiness waiter.
