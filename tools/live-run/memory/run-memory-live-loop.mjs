@@ -508,6 +508,28 @@ export async function seedMemory(origin, client, seedTexts, supersedeText) {
 }
 
 /**
+ * Read the chat state, tolerating a busy runtime.
+ *
+ * The composed child runs a provider turn in-process, so while a long turn is running its HTTP
+ * reads can exceed this harness's per-request deadline. That abort is a harness deadline, not a
+ * product failure, and letting it end the run reports the harness's impatience as a product fact.
+ */
+async function readChatState(origin, client, attempts = 8) {
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		try {
+			const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+				headers: { Cookie: client.cookie, Origin: origin },
+			});
+			return await response.json().catch(() => undefined);
+		} catch (error) {
+			if (attempt === attempts - 1) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 1_000));
+		}
+	}
+	return undefined;
+}
+
+/**
  * Wait (bounded) for the turn THIS harness just submitted to reach a terminal state.
  *
  * Two phases, because one is not enough: the projection lags the 202, so immediately after the
@@ -517,13 +539,7 @@ export async function seedMemory(origin, client, seedTexts, supersedeText) {
  * caller can report an honest gap instead of guessing.
  */
 async function awaitSubmittedTurnTerminal(origin, client) {
-	const readTurn = async () => {
-		const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
-			headers: { Cookie: client.cookie, Origin: origin },
-		});
-		const snapshot = await response.json().catch(() => undefined);
-		return snapshot?.chat?.turn ?? null;
-	};
+	const readTurn = async () => (await readChatState(origin, client))?.chat?.turn ?? null;
 	for (let attempt = 0; attempt < 60; attempt += 1) {
 		const seen = await readTurn();
 		if (seen === null) {
@@ -543,20 +559,20 @@ async function awaitSubmittedTurnTerminal(origin, client) {
 }
 
 /**
- * Wait (bounded) until no turn is in flight on this chat. Sending while the previous turn is
- * still running is refused with `turn_busy`, which is how a multi-turn harness dies on its
- * second filler: the projection can still report the finished turn as `queued` after its reply
- * has been committed.
+ * Wait (bounded) until no turn is in flight on this chat, and REFUSE to send if it never is.
+ *
+ * Sending while the previous turn is still running is refused with `turn_busy`. The budget is
+ * generous on purpose: a turn over a long context legitimately takes minutes, and the barrier's
+ * job is to wait for it, not to give up and create the very collision it exists to avoid.
+ * Returning "gave up" and then sending anyway was a harness bug - the barrier's answer has to be
+ * honoured.
  */
-async function awaitChatIdle(origin, client, attempts = 60) {
+async function awaitChatIdle(origin, client, attempts = 600) {
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
-		const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
-			headers: { Cookie: client.cookie, Origin: origin },
-		});
-		const snapshot = await response.json().catch(() => undefined);
+		const snapshot = await readChatState(origin, client);
 		const turn = snapshot?.chat?.turn ?? null;
 		if (turn === null || turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled") return true;
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
 	}
 	return false;
 }
@@ -573,11 +589,11 @@ async function awaitChatIdle(origin, client, attempts = 60) {
  * turn's answer and report a memory miss that never happened.
  */
 async function runChatTurn(origin, client, text) {
-	await awaitChatIdle(origin, client);
-	const stateResponse = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
-		headers: { Cookie: client.cookie, Origin: origin },
-	});
-	const state = await stateResponse.json().catch(() => undefined);
+	// Honour the barrier: if the previous turn never settles, the honest outcome is a harness
+	// failure, not a submission the product will refuse with `turn_busy`.
+	if (!(await awaitChatIdle(origin, client)))
+		throw new Error(`predecessor_turn_did_not_settle:${text.slice(0, 24)}`);
+	const state = await readChatState(origin, client);
 	const companionBefore = Array.isArray(state?.chat?.transcript)
 		? state.chat.transcript.filter((message) => message?.role === "companion").length
 		: 0;
@@ -648,10 +664,8 @@ async function runChatTurn(origin, client, text) {
  * count IS this turn's delta - there are no earlier turns to leak in.
  */
 async function readTurnOutcome(origin, client, streamTerminal, companionBefore) {
-  const snapshot = await (
-    await deadlineFetch(`${origin}/api/tavern/v1/state`, { headers: { Cookie: client.cookie, Origin: origin } })
-  ).json();
- 	const turnState = snapshot?.chat?.turn?.state ?? null;
+ 	const snapshot = await readChatState(origin, client);
+	const turnState = snapshot?.chat?.turn?.state ?? null;
 	const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
 	const companion = transcript.filter((message) => message?.role === "companion");
 	// The reply THIS turn added. A multi-turn run (the fixture's fillers, then the probe) has
@@ -772,8 +786,12 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   await mkdir(root, { recursive: true });
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
 
-  let stderr = "";
-  const pendingAppends = [];
+ 	let stderr = "";
+	// Keep the TAIL as well as the head: the head is what the startup narration prints, so a
+	// bounded head-only capture reports the beginning of the run, never the failure. The tail is
+	// what makes a failed run diagnosable at all.
+	let stderrTail = "";
+	const pendingAppends = [];
   // Marker channel (Class B, owner decision D-1): Magic Context reports its own
   // materialization facts on stderr, including which memory ids it assembled into
   // m[0]. We collect the lines here instead of only keeping a bounded diagnostic
@@ -791,8 +809,9 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
  		spawnImpl: (command, args, options) => {
  			const child = spawn(command, args, options);
  			child.stderr?.setEncoding?.("utf8");
- 			child.stderr?.on?.("data", (chunk) => {
- 				if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+					child.stderr?.on?.("data", (chunk) => {
+						if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+						stderrTail = `${stderrTail}${chunk}`.slice(-8_192);
  				// Harness-level capture: full child stderr lands in the run directory
  				// (git-ignored, local only), so a reviewer can see the real
  				// materialization narration instead of only the marker lines.
@@ -827,14 +846,18 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     // summary was written (audit NOTE-5).
     await Promise.allSettled(pendingAppends);
     return Object.freeze({ result, markers: Object.freeze([...markers]) });
-  } catch (error) {
-    const diagnostic = stderr.trim();
-    throw new Error(
-      diagnostic.length > 0
-        ? `${surface}:${error?.message ?? "surface_failed"}:${diagnostic}`
-        : `${surface}:${error?.message ?? "surface_failed"}`,
-    );
-  } finally {
+ 	} catch (error) {
+		// Flush what the child said BEFORE rethrowing. Flushing only on the success path meant a
+		// failed run left an empty capture directory - the evidence of the failure itself was the
+		// thing thrown away, which is exactly when it is needed.
+		await Promise.allSettled(pendingAppends);
+		const diagnostic = stderrTail.trim().length > 0 ? stderrTail.trim() : stderr.trim();
+		throw new Error(
+			diagnostic.length > 0
+				? `${surface}:${error?.message ?? "surface_failed"}:${diagnostic}`
+				: `${surface}:${error?.message ?? "surface_failed"}:child_stderr_empty`,
+		);
+	} finally {
     launch.dispose?.();
     await stopChildGracefully(launch.child);
   }
