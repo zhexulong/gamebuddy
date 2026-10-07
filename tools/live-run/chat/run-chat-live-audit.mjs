@@ -424,6 +424,19 @@ function normalizeKeywordText(value) {
 }
 
 /**
+ * The boundary reason a CONVERSATION turn contributes, or `undefined` when it settled cleanly.
+ *
+ * A `failed` terminal is as much a product fact as an unsettled one, and it used to leave the run
+ * reporting `collected` while one of its own turns had died — which is exactly the kind of silent
+ * downgrade this harness is forbidden to make. The per-turn state itself is recorded in the trace
+ * (`turn.terminal`, with its bounded `problemCode`); this decision only carries it into the run verdict.
+ */
+export function conversationTurnBoundaryReason(turn) {
+  if (turn?.terminal !== true) return "conversation_turn_not_terminal";
+  return turn.projection?.turnState === "failed" ? "conversation_turn_failed" : undefined;
+}
+
+/**
  * Deployment manifest for one audit run. The schema is the frozen Host
  * deployment identity (`host/src/deployment-manifest.ts`, schemaVersion 2).
  */
@@ -1444,7 +1457,8 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         ? SUBMIT_PROMPT_TEXT
         : CONVERSATION_PROMPTS[Math.min(index, CONVERSATION_PROMPTS.length - 1)];
       const turn = await runTurn({ cancel: false, message });
-      if (turn?.terminal !== true) environment.boundaryReason ??= "conversation_turn_not_terminal";
+      const boundary = conversationTurnBoundaryReason(turn);
+      if (boundary !== undefined) environment.boundaryReason ??= boundary;
     }
     await runTurn({ cancel: true });
   }
