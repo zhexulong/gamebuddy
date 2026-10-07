@@ -532,23 +532,28 @@ async function readChatState(origin, client, attempts = 8) {
 /**
  * Wait (bounded) for the turn THIS harness just submitted to reach a terminal state.
  *
- * Two phases, because one is not enough: the projection lags the 202, so immediately after the
- * send `/state` can still show NO turn - and treating "no turn" as "settled" reads the previous
- * turn's transcript and reports a memory miss for a turn that never ran. So first wait for the
- * turn to appear, then wait for it to reach a terminal state. Returns what it observed so the
- * caller can report an honest gap instead of guessing.
+ * The wait must identify the turn, not merely find one. `/state` keeps the LAST turn record, and it
+ * lags a submission, so "a turn exists and is terminal" is routinely the PREVIOUS turn - reading that
+ * as this turn's outcome reports the predecessor's state and an empty reply delta, which is how a
+ * turn that actually ran got recorded as failed. So the caller passes the handle it saw before
+ * sending, and this waits first for a DIFFERENT handle, then for that turn's own terminal.
  */
-async function awaitSubmittedTurnTerminal(origin, client) {
+async function awaitSubmittedTurnTerminal(origin, client, previousHandle) {
 	const readTurn = async () => (await readChatState(origin, client))?.chat?.turn ?? null;
-	for (let attempt = 0; attempt < 60; attempt += 1) {
+	for (let attempt = 0; attempt < 240; attempt += 1) {
 		const seen = await readTurn();
-		if (seen === null) {
+		if (seen === null || seen.handle === previousHandle) {
 			await new Promise((resolve) => setTimeout(resolve, 250));
 			continue;
 		}
 		for (let settled = 0; settled < 240; settled += 1) {
 			const turn = await readTurn();
 			if (turn === null) return Object.freeze({ observed: true, terminalState: "cleared" });
+			if (turn.handle !== seen.handle) {
+				// A different turn replaced it; report this one as unsettled rather than credit
+				// another turn's terminal to it.
+				return Object.freeze({ observed: true, terminalState: "superseded" });
+			}
 			if (turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled")
 				return Object.freeze({ observed: true, terminalState: turn.state });
 			await new Promise((resolve) => setTimeout(resolve, 500));
@@ -594,6 +599,9 @@ async function runChatTurn(origin, client, text) {
 	if (!(await awaitChatIdle(origin, client)))
 		throw new Error(`predecessor_turn_did_not_settle:${text.slice(0, 24)}`);
 	const state = await readChatState(origin, client);
+	// The handle of the turn that is currently on record; the wait below uses it to tell a NEW turn
+	// from the predecessor's lagging record.
+	const previousHandle = state?.chat?.turn?.handle ?? null;
 	const companionBefore = Array.isArray(state?.chat?.transcript)
 		? state.chat.transcript.filter((message) => message?.role === "companion").length
 		: 0;
@@ -643,7 +651,7 @@ async function runChatTurn(origin, client, text) {
 	// can mean "the PREVIOUS turn settled" - which read a queued probe turn as if it had no
 	// reply. The two-phase wait cannot be fooled that way: it first requires THIS turn to be
 	// visible, then waits for that turn's own terminal.
-	const terminal = await awaitSubmittedTurnTerminal(origin, client);
+	const terminal = await awaitSubmittedTurnTerminal(origin, client, previousHandle);
 	if (!terminal.observed) {
 		// Never surfaced. Report it as what it is rather than reading a reply that belongs to
 		// another turn.
