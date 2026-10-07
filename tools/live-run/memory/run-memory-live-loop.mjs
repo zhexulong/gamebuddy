@@ -39,7 +39,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile, readFile, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, copyFile, readdir } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
@@ -119,7 +119,7 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>]";
+  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>]";
 }
 
 function parseArguments(argv) {
@@ -129,8 +129,8 @@ function parseArguments(argv) {
     ["--question", undefined],
     ["--manifest", undefined],
     ["--card", undefined],
-    ["--language", undefined],
-  ]);
+  		["--language", undefined],
+	]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") return Object.freeze({ help: true });
@@ -142,9 +142,9 @@ function parseArguments(argv) {
     flags.set(flag, value);
     index += 1;
   }
-  const language = flags.get("--language");
-  if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
-    throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
+ 	const language = flags.get("--language");
+	if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
+		throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({
@@ -152,7 +152,7 @@ function parseArguments(argv) {
     reportPath: resolve(reportPath),
     manifestPath: flags.get("--manifest"),
     cardPath: flags.get("--card"),
-    language,
+  		language,
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -1148,7 +1148,13 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // teardown commit and this phase mount as a successor. Without it the product
     // rejects the mount with `chat_runtime_reentry_selection_invalid`; see the
     // blocked branch below for that case.
-    process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
+   	// (A lever for the historian's fold trigger deliberately does NOT live here. It is 65% of the
+	// model's usable range, so a fold needs ~487k tokens of context on the product's million-token
+	// model - unreachable in a test, and the declared window in `pi-agent/models.json` is rewritten at
+	// chat mount, so patching that file beforehand does nothing. Measured, not assumed: after five
+	// real turns Magic Context recorded compartments=0, times_execute_threshold_reached=0 and ~1% of
+	// the 750k usable range in use.)
+	process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
     let chatResult;
     try {
       chatResult = await withSurface({
@@ -1360,7 +1366,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (parsed.help) {
     process.stdout.write(`${usage()}\n`);
   } else {
-    requestedLanguage = parsed.language;
+   	requestedLanguage = parsed.language;
     const report = await runMemoryLiveLoop({
       reportPath: parsed.reportPath,
       manifestPath: parsed.manifestPath,
