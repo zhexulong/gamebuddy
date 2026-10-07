@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "./child-process-tool.mjs";
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
-import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, describeInventoryDifference, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
 import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule, stageFixtureRuntimeClosure } from "./production-artifact-test-support.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
@@ -1935,4 +1935,37 @@ test("the local-iteration seam is inert unless GAMEBUDDY_HOST_PRODUCTION_ROOT is
   // A pointer that tries to escape the opt-in root still fails closed.
   await writeFile(join(root, "current.json"), JSON.stringify({ generation: "../escape" }));
   await assert.rejects(() => resolveProductionEntry(args), /local_generation_pointer_invalid/);
+});
+
+test("an inventory mismatch names the entry and the field that differ", () => {
+  // A published generation failed re-verification and the error said only
+  // "production_inventory_mismatch_or_orphan", which cannot distinguish a tampered artifact from one that
+  // predates a config change. The second case is ordinary: the bundled runtime archive's hash lives in
+  // production-artifact.config.json, so updating that config makes every already-published generation fail
+  // every run that needs the production Host.
+  const entry = (path, archiveSha256, sha256 = "a".repeat(64)) => ({
+    path,
+    type: "file",
+    mode: "666",
+    sha256,
+    origin: { kind: "verified_host_bundled_node_runtime", sourceUrl: "https://nodejs.org/dist/x.zip", archiveSha256 },
+  });
+  const expected = { entries: [entry("runtime/CHANGELOG.md", "977ae99b"), entry("main.js", "cc", "b".repeat(64))] };
+
+  assert.match(
+    describeInventoryDifference({ entries: [entry("runtime/CHANGELOG.md", "6cac9ffb"), entry("main.js", "cc", "b".repeat(64))] }, expected),
+    /^published-runtime-archive-superseded:runtime\/CHANGELOG\.md \(origin:/,
+  );
+  assert.match(
+    describeInventoryDifference({ entries: [entry("runtime/CHANGELOG.md", "977ae99b"), entry("main.js", "cc", "d".repeat(64))] }, expected),
+    /^changed-entry:main\.js \(sha256: published="b+"/,
+  );
+  assert.match(
+    describeInventoryDifference({ entries: [entry("runtime/CHANGELOG.md", "977ae99b")] }, expected),
+    /^missing-entry:main\.js$/,
+  );
+  assert.match(
+    describeInventoryDifference({ entries: [...expected.entries, entry("extra.js", "ee")] }, expected),
+    /^unexpected-entry:extra\.js$/,
+  );
 });
