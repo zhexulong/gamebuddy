@@ -245,6 +245,17 @@ const en = {
   problemTemporarilyUnavailableDetail: "The chat state is temporarily unavailable.",
   problemReconciliationFailedTitle: "Unable to read chat",
   problemReconciliationFailedDetail: "The chat state could not be safely reconciled.",
+  problemSessionExpiredTitle: "Your session ended",
+  problemSessionExpiredDetail:
+    "Your GameBuddy session is gone, so there is nothing to read. Start GameBuddy again and reload the page it opens.",
+  problemRouteUnavailableTitle: "Unable to reach chat",
+  problemRouteUnavailableDetail:
+    "This GameBuddy build does not serve the route the page asked for. Update GameBuddy or reload the page.",
+  problemInternalErrorTitle: "Unable to read chat",
+  problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
+  problemInternalErrorCauseDetail:
+    "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
+  problemInternalErrorNoCode: "none reported",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -542,6 +553,17 @@ const zh: Messages = {
   problemTemporarilyUnavailableDetail: "聊天状态暂时不可用。",
   problemReconciliationFailedTitle: "无法读取聊天",
   problemReconciliationFailedDetail: "聊天状态未能安全对齐。",
+  problemSessionExpiredTitle: "会话已失效",
+  problemSessionExpiredDetail:
+    "你的 GameBuddy 会话已失效，因此没有可读取的内容。请重新启动 GameBuddy，并重新加载它打开的页面。",
+  problemRouteUnavailableTitle: "无法访问聊天",
+  problemRouteUnavailableDetail:
+    "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
+  problemInternalErrorTitle: "无法读取聊天",
+  problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
+  problemInternalErrorCauseDetail:
+    "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
+  problemInternalErrorNoCode: "未报告任何代码",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

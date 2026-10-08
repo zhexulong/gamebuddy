@@ -24,9 +24,6 @@ const COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME = "gamebuddy.game.preview" as cons
 const BASE64URL_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const OPAQUE_HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
-const STALE_CABIN_HANDOFF_CODE = "stardew_cabin_choice_stale" as const;
-const CABIN_CONFLICT_CODES = ["idempotency_conflict", "game_operation_in_progress"] as const;
-const UNCERTAIN_CABIN_HANDOFF_CODE = "stardew_manifest_handoff_uncertain" as const;
 const MAX_GAME_LABEL_LENGTH = 256;
 const MAX_CABIN_DISPLAY_LABEL_LENGTH = 128;
 const MAX_CABIN_CHOICES = 64;
@@ -56,22 +53,6 @@ const CONNECTION_STATUSES = [
 ] as const;
 const OUTCOMES = ["none", "succeeded", "failed", "cancelled"] as const;
 const ACTION_AUTHORITY_STATUSES = ["unavailable", "active", "paused"] as const;
-const PROBLEM_CODES = [
-  "closed",
-  "unauthorized",
-  "malformed_request",
-  "state_unavailable",
-  "not_found",
-  "game_attachment_conflict",
-  "game_runtime_unavailable",
-  "game_unavailable",
-  "game_instance_not_found",
-  "game_prerequisites_missing",
-  "game_storage_unavailable",
-  STALE_CABIN_HANDOFF_CODE,
-  ...CABIN_CONFLICT_CODES,
-  UNCERTAIN_CABIN_HANDOFF_CODE,
-] as const;
 const CABIN_CHOICES_KEYS = ["apiVersion", "choices"] as const;
 const CABIN_CHOICE_KEYS = ["displayLabel", "availability", "choiceHandle", "expiresAtMs"] as const;
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
@@ -166,14 +147,21 @@ export class ComposedReferenceGameProblemError extends Error {
   readonly status: number;
   readonly requestId: string | null;
   readonly retryable: boolean;
+  /**
+   * The bounded coordinator cause the shell named for a lifecycle refusal, or
+   * `null` when it named none. It is always a `stardew_*` snake_case code, so it
+   * can never carry producer text, a path or a token into the UI.
+   */
+  readonly causeCode: string | null;
 
-  constructor(code: string, status: number, requestId: string | null = null) {
+  constructor(code: string, status: number, requestId: string | null = null, causeCode: string | null = null) {
     super("composed reference game request was rejected");
     this.name = "ComposedReferenceGameProblemError";
     this.code = code;
     this.status = status;
     this.requestId = requestId;
     this.retryable = status >= 500 || code === "state_unavailable";
+    this.causeCode = causeCode;
   }
 }
 
@@ -594,9 +582,31 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * Bounded token shapes for the only two fields a composed refusal may carry.
+ * The shell's own vocabulary is closed, but a code this client build does not
+ * know is still a *bounded* code and is preserved and shown rather than being
+ * turned into an opaque protocol failure - that is the property that makes an
+ * unfamiliar refusal diagnosable. Anything that is not a bounded token (raw
+ * producer text, a path, a token, a space, a colon) is still refused outright.
+ */
+const PROBLEM_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+const PROBLEM_CAUSE_PATTERN = /^stardew_[a-z0-9_]{1,95}$/;
+
 function problemFromResponse(response: Response, value: unknown): ComposedReferenceGameProblemError {
-  if (!isRecord(value) || !hasExactKeys(value, ["code"]) || !isOneOf(value.code, PROBLEM_CODES)) {
+  if (
+    !isRecord(value) ||
+    (!hasExactKeys(value, ["code"]) && !hasExactKeys(value, ["code", "cause"])) ||
+    typeof value.code !== "string" ||
+    !PROBLEM_CODE_PATTERN.test(value.code)
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_problem");
+  }
+  if (Object.hasOwn(value, "cause")) {
+    if (typeof value.cause !== "string" || !PROBLEM_CAUSE_PATTERN.test(value.cause)) {
+      throw new ComposedReferenceGameProtocolError("invalid_problem");
+    }
+    return new ComposedReferenceGameProblemError(value.code, response.status, null, value.cause);
   }
   return new ComposedReferenceGameProblemError(value.code, response.status);
 }

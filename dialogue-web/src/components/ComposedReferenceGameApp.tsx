@@ -28,6 +28,7 @@ import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
+import { composedProblemView as problemView, type ProblemViewState } from "../composed-problem-view";
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { Composer } from "./Composer";
 import { ProblemView } from "./ProblemView";
@@ -71,7 +72,6 @@ type ReadyView = Readonly<{
   draft: BrowserDraftV1;
   locale: Locale;
 }>;
-type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 type CabinViewState =
   | Readonly<{ kind: "loading" }>
@@ -1419,11 +1419,4 @@ function GameProjection({ game }: { game: GameBrowserStateV1 | null }) {
       </dl>
     </div>
   );
-}
-
-function problemView(error: unknown, labels: ReturnType<typeof messages>): ProblemViewState {
-  if ((error instanceof TavernProblemError || error instanceof ComposedReferenceGameProblemError) && error.retryable) {
-    return { kind: "problem", title: labels.problemTemporarilyUnavailableTitle, detail: labels.problemTemporarilyUnavailableDetail };
-  }
-  return { kind: "problem", title: labels.problemReconciliationFailedTitle, detail: labels.problemReconciliationFailedDetail };
 }
