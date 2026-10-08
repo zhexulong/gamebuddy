@@ -94,6 +94,13 @@ async function captureMarkers(run: () => Promise<void>): Promise<readonly Marker
   }) as typeof process.stderr.write;
   try {
     await run();
+  } catch (error) {
+    // Carry the markers seen so far into the failure: a run that died mid-loop must not be
+    // indistinguishable from one whose historian never published (that hid a real error for a
+    // whole iteration earlier).
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} | markersBeforeFailure=${markers.length}`,
+    );
   } finally {
     process.stderr.write = original;
   }
@@ -125,6 +132,8 @@ test(
     const key = apiKey;
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     let runtime: Awaited<ReturnType<typeof createCompanionRuntime>> | undefined;
+    let cleanupError: unknown;
+    let bodyFailed = false;
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
     // Magic Context treats the fold trigger as a USER-tier trusted key, and its rule is explicit:
     // "a repository may only RAISE execute_threshold_tokens above the user's trusted token
@@ -219,28 +228,58 @@ test(
       // probe path failed, which this must report rather than read as "no fold".
       assert.ok(digests.length > 0, "the run reported no m[0] digest marker at all");
       assert.ok(chapterLines.length > 0, "the run reported no chapter marker at all");
-   			const chapterCounts = chapterLines.map((match) => Number(match?.[2] ?? "0"));
-      assert.ok(
-        Math.max(...chapterCounts) >= 1,
-        `no chapter reached m[0]; observed counts ${JSON.stringify(chapterCounts)}`,
-      );
+      let chapterCounts: number[] = [];
+      let revisionCount = 0;
+      try {
+        chapterCounts = chapterLines.map((match) => Number(match?.[2] ?? "0"));
+        assert.ok(
+          Math.max(...chapterCounts) >= 1,
+          `no chapter reached m[0]; observed counts ${JSON.stringify(chapterCounts)}`,
+        );
+      } catch (error) {
+        // Failure-path evidence. The previous version of this wait did its bookkeeping AFTER the point
+        // a failure occurred, so a failing run reported nothing but the assertion - which is how a run
+        // that was silently broken inside the prompt loop looked identical to one where the historian
+        // simply never published. Name what was actually observed.
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} | passes=${digests.length}` +
+            ` revisions=${revisionCount} chapterCounts=${JSON.stringify(chapterCounts)}` +
+            ` firstDigest=${digests[0]?.[1]?.slice(0, 12) ?? "none"}` +
+            ` lastDigest=${digests.at(-1)?.[1]?.slice(0, 12) ?? "none"}`,
+        );
+      }
       // Byte stability is judged PER REVISION: a revision change IS the fold, not a defect.
       const perRevision = new Map<string, Set<string>>();
-   			for (const match of digests) {
-				const digest = match?.[1];
-				const revision = match?.[2];
-				// Both are non-optional in the pattern above; this only keeps the types honest.
-				if (digest === undefined || revision === undefined) continue;
-				const set = perRevision.get(revision) ?? new Set<string>();
-				set.add(digest);
-				perRevision.set(revision, set);
-			}
+      for (const match of digests) {
+        const digest = match?.[1];
+        const revision = match?.[2];
+        // Both are non-optional in the pattern above; this only keeps the types honest.
+        if (digest === undefined || revision === undefined) continue;
+        const set = perRevision.get(revision) ?? new Set<string>();
+        set.add(digest);
+        perRevision.set(revision, set);
+      }
+      revisionCount = perRevision.size;
       for (const [revision, seen] of perRevision) {
         assert.equal(seen.size, 1, `revision ${revision} rendered ${seen.size} different m[0] byte images`);
       }
+    } catch (error) {
+      bodyFailed = true;
+      throw error;
     } finally {
-      // Without this the run's handles keep the test process alive after the assertions.
-      runtime?.session.dispose();
+      // Without this the run's handles keep the test process alive after the assertions. A cleanup
+      // failure must not MASK the fold evidence though: on this machine (2026-10-08) releasing the
+      // runtime's durable lock reports `durable_path_lock_release_failed:windows_reclaimer_unavailable`
+      // even with the reclaimer bound the same way `chat-transcript.test.ts` binds it, so it is
+      // reported alongside the verdict instead of replacing it.
+      try {
+        runtime?.session.dispose();
+      } catch (error) {
+        cleanupError = error;
+        process.stderr.write(
+          `[chapter-fold-fixture] dispose failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
       // Diagnosis aid: keep the root when asked, so Magic Context's own database can be read
       // afterwards (it is where the fold's reasons live: `session_meta`).
       if (process.env.GAMEBUDDY_CHAPTER_FOLD_KEEP_ROOT === "1") {
@@ -252,6 +291,13 @@ test(
       process.chdir(previousCwd);
       if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousConfigHome;
+      // Only when nothing else is failing: otherwise the fold verdict is already on its way out and
+      // replacing it with a cleanup error would hide the thing this fixture exists to measure.
+      if (cleanupError !== undefined && !bodyFailed) {
+        throw new Error(
+          `runtime cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
     }
   },
 );
