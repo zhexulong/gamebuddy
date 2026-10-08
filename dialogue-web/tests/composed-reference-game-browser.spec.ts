@@ -1508,3 +1508,137 @@ test("Retry, Cancel, and Start new game stay hidden outside the failed-resume su
     await expect(panel.locator("form")).toHaveCount(0);
   }
 });
+
+/**
+ * The staged projection the Host really produces once the lifecycle owns a
+ * staged Player Host (`game-browser-state-provider.test.ts` pins this exact
+ * shape): prerequisites met, no instance yet, and the one expected generation.
+ * It is the only wire signal that activation happened.
+ */
+const stagedGame = {
+  ...game,
+  game: {
+    ...game.game,
+    prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+    instance: { status: "none", gameTitle: null, generation: 1 },
+  },
+};
+
+test("a first run activates the lifecycle with a fieldless POST before launch is ever offered", async ({ page }) => {
+  let activationRequests = 0;
+  let activationBody: string | null | undefined;
+  let stateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/lifecycle/activate", async (route) => {
+    activationRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().headers()["content-type"]).toBe("application/json");
+    activationBody = route.request().postData();
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      // The first authoritative reread after activation is the staged projection.
+      body: JSON.stringify({ ...root, game: stagedGame }),
+    });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  // Before activation the coordinator owns no staged Player Host, so the exact
+  // expected generation is absent and launch must not be on offer at all.
+  await expect(panel.getByRole("button", { name: "Play with companion" })).toHaveCount(0);
+  const activate = panel.getByRole("button", { name: "Enable companion play" });
+  await expect(activate).toBeVisible();
+  await activate.click();
+  await expect.poll(() => activationRequests).toBe(1);
+  // The route refuses any body with 409; the admission alone names the session.
+  expect(activationBody).toBeNull();
+  await expect.poll(() => stateReads).toBe(1);
+  // 204 is the activation; the authoritative reread is what puts launch on offer.
+  await expect(panel.getByRole("button", { name: "Play with companion" })).toBeVisible();
+  await expect(activate).toHaveCount(0);
+});
+
+test("a launch refused as not staged names activation as the reason instead of an uncertain launch", async ({ page }) => {
+  let launchRequests = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: stagedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/launch", async (route) => {
+    launchRequests += 1;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "game_prerequisites_missing" }),
+    });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: stagedGame }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  await panel.getByRole("button", { name: "Play with companion" }).click();
+  await expect.poll(() => launchRequests).toBe(1);
+  await expect(panel).toContainText("Companion play is not ready yet. Enable companion play, then try again.");
+  await expect(panel).not.toContainText("The game launch result is uncertain");
+});
+
+test("an activation refusal stays a drawer fact with its own reason, and an unmounted seam says so", async ({ page }) => {
+  const scenarios = [
+    { refusal: { status: 409, code: "game_unavailable" }, expected: "Companion play could not be enabled" },
+    // The shell answers 404 when the owner mounted no activation seam at all;
+    // that is not the same thing as an activation that failed.
+    { refusal: { status: 404, code: "not_found" }, expected: "This build cannot enable companion play" },
+  ];
+  let current = scenarios[0];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/lifecycle/activate", (route) =>
+    route.fulfill({
+      status: current.refusal.status,
+      contentType: "application/json",
+      body: JSON.stringify({ code: current.refusal.code }),
+    }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  for (const [scenarioIndex, scenario] of scenarios.entries()) {
+    current = scenario;
+    await page.goto(`/?activation=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
+    const panel = page.getByRole("region", { name: "Game state" });
+    await panel.getByRole("button", { name: "Enable companion play" }).click();
+    await expect(panel).toContainText(scenario.expected);
+    // The refusal is a Game-drawer fact: the Chat surface is never replaced.
+    await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Enable companion play" })).toBeVisible();
+  }
+});

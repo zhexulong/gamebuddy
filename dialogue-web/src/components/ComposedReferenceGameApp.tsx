@@ -115,10 +115,15 @@ export function ComposedReferenceGameApp() {
   const eventSourceRef = useRef<{ close(): void } | null>(null);
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
   const cabinConfirmationActiveRef = useRef(false);
+  const gameActivationActiveRef = useRef(false);
+  const [gameActivationActive, setGameActivationActive] = useState(false);
+  const [gameActivationFailed, setGameActivationFailed] = useState(false);
+  const [gameActivationUnavailable, setGameActivationUnavailable] = useState(false);
   const gameSetupActiveRef = useRef(false);
   const gameSetupKeyRef = useRef<string | undefined>(undefined);
   const [gameSetupActive, setGameSetupActive] = useState(false);
   const [gameSetupFailed, setGameSetupFailed] = useState(false);
+  const [gameSetupNotStaged, setGameSetupNotStaged] = useState(false);
   const gameStopActiveRef = useRef(false);
   const gameStopKeysRef = useRef(new Map<number, string>());
   const [gameStopActive, setGameStopActive] = useState(false);
@@ -127,6 +132,7 @@ export function ComposedReferenceGameApp() {
   const gameLaunchKeysRef = useRef(new Map<number, string>());
   const [gameLaunchActive, setGameLaunchActive] = useState(false);
   const [gameLaunchFailed, setGameLaunchFailed] = useState(false);
+  const [gameLaunchNotStaged, setGameLaunchNotStaged] = useState(false);
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
   const [disconnectActive, setDisconnectActive] = useState(false);
@@ -482,6 +488,68 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  /**
+   * The coordinator refuses a first-run command whose lifecycle is not staged
+   * yet with `stardew_player_host_launch_not_staged`. On exactly the
+   * `game/prerequisites/setup` and `game/launch` routes that error is the only
+   * one mapped to the wire code `game_prerequisites_missing`, so on those routes
+   * the code IS the not-staged reason and must never be rendered as a generic
+   * failure.
+   */
+  const isNotStagedRefusal = (error: unknown): boolean =>
+    error instanceof ComposedReferenceGameProblemError &&
+    error.code === "game_prerequisites_missing";
+
+  /**
+   * First-run lifecycle activation. The composed Game projection carries no
+   * activation field of its own: the coordinator's `staged` state reaches the
+   * browser only as the launch-readiness shape (`prerequisites` met, `instance`
+   * none, exact expected generation >= 1). This control is offered in exactly
+   * that shape's pre-image and the coordinator's own refusal is the only other
+   * signal the client has. It sends no body; the route refuses one with 409.
+   */
+  const handleLifecycleActivate = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (
+      gameActivationActiveRef.current ||
+      current.kind !== "ready" ||
+      current.root.game === null ||
+      current.root.game.game.prerequisites.status !== "unknown" ||
+      current.root.game.game.instance.status !== "none" ||
+      current.root.game.game.instance.generation >= 1
+    ) return;
+    gameActivationActiveRef.current = true;
+    setGameActivationActive(true);
+    setGameActivationFailed(false);
+    setGameActivationUnavailable(false);
+    try {
+      await composedApiRef.current.activateLifecycle();
+      await reread();
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      // A conflict only means something already activated this lifecycle: the
+      // authoritative projection decides, so it is a failure only when staging
+      // is still not visible after the reread.
+      const staged = rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game !== null &&
+        fresh.root.game.game.instance.generation >= 1;
+      if (!staged) {
+        if (error instanceof ComposedReferenceGameProblemError && error.code === "not_found")
+          setGameActivationUnavailable(true);
+        else setGameActivationFailed(true);
+      }
+    } finally {
+      gameActivationActiveRef.current = false;
+      setGameActivationActive(false);
+    }
+  };
+
   const handleGameSetup = async (): Promise<void> => {
     const current = viewRef.current;
     if (gameSetupActiveRef.current || current.kind !== "ready" || current.root.game === null ||
@@ -491,12 +559,14 @@ export function ComposedReferenceGameApp() {
     gameSetupActiveRef.current = true;
     setGameSetupActive(true);
     setGameSetupFailed(false);
+    setGameSetupNotStaged(false);
     try {
       await composedApiRef.current.setupGame({ apiVersion: 1, idempotencyKey });
       await reread();
       if (viewRef.current.kind === "ready" && viewRef.current.root.game?.game.prerequisites.status === "unknown")
         gameSetupKeyRef.current = undefined;
     } catch (error) {
+      const notStaged = isNotStagedRefusal(error);
       let rereadSucceeded = false;
       try {
         await reread();
@@ -504,9 +574,11 @@ export function ComposedReferenceGameApp() {
       } catch {
         // Preserve the original key while the command outcome is uncertain.
       }
-      setGameSetupFailed(true);
+      setGameSetupNotStaged(notStaged);
+      setGameSetupFailed(!notStaged);
       const latest = viewRef.current;
       if (
+        !notStaged &&
         error instanceof ComposedReferenceGameProblemError &&
         error.code === "game_unavailable" &&
         rereadSucceeded &&
@@ -582,6 +654,7 @@ export function ComposedReferenceGameApp() {
     gameLaunchActiveRef.current = true;
     setGameLaunchActive(true);
     setGameLaunchFailed(false);
+    setGameLaunchNotStaged(false);
     try {
       await composedApiRef.current.launchGame({
         apiVersion: 1,
@@ -590,6 +663,7 @@ export function ComposedReferenceGameApp() {
       });
       await reread();
     } catch (error) {
+      const notStaged = isNotStagedRefusal(error);
       let rereadSucceeded = false;
       try {
         await reread();
@@ -597,6 +671,7 @@ export function ComposedReferenceGameApp() {
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
       if (
+        !notStaged &&
         error instanceof ComposedReferenceGameProblemError &&
         error.code === "game_unavailable" &&
         rereadSucceeded &&
@@ -608,7 +683,8 @@ export function ComposedReferenceGameApp() {
         gameLaunchKeysRef.current.delete(generation);
         gameSetupKeyRef.current = undefined;
       }
-      setGameLaunchFailed(true);
+      setGameLaunchNotStaged(notStaged);
+      setGameLaunchFailed(!notStaged);
     } finally {
       gameLaunchActiveRef.current = false;
       setGameLaunchActive(false);
@@ -1085,6 +1161,15 @@ export function ComposedReferenceGameApp() {
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  // The only honest wire signal that the lifecycle is NOT yet activated is the
+  // pre-staged shape: nothing detected, nothing launched, no expected Player Host
+  // generation. Launch is not offered before activation because
+  // `gameLaunchAvailable` requires the exact expected generation, which the
+  // coordinator projects solely while it owns a staged Player Host.
+  const gameActivationAvailable = view.kind === "ready" && view.root.game !== null &&
+    view.root.game.game.prerequisites.status === "unknown" &&
+    view.root.game.game.instance.status === "none" &&
+    view.root.game.game.instance.generation < 1;
   const gameSetupAvailable = view.kind === "ready" && view.root.game !== null &&
     view.root.game.game.prerequisites.status === "unknown" && view.root.game.game.instance.status === "none";
   const gameLaunchAvailable = view.kind === "ready" && view.root.game !== null &&
@@ -1156,18 +1241,35 @@ export function ComposedReferenceGameApp() {
               <section className="composed-game-drawer" aria-label={labels().gameState}>
                   <GameProjection game={view.root.game} />
                   {gameSyncing && <p role="status">{labels().gameSyncing}</p>}
+                  {gameActivationAvailable && (
+                    <button
+                      type="button"
+                      disabled={gameActivationActive}
+                      aria-label={labels().gameActivation}
+                      onClick={() => void handleLifecycleActivate()}
+                    >
+                      {labels().gameActivation}
+                    </button>
+                  )}
+                  {gameActivationActive && <p role="status">{labels().gameActivationInProgress}</p>}
+                  {gameActivationFailed && <p role="status">{labels().gameActivationFailed}</p>}
+                  {gameActivationUnavailable && <p role="status">{labels().gameActivationUnavailable}</p>}
                   {gameSetupAvailable && (
                     <button type="button" disabled={gameSetupActive} onClick={() => void handleGameSetup()}>
                       {labels().gameSetup}
                     </button>
                   )}
-                  {gameSetupFailed && <p role="status">{labels().gameSetupFailed}</p>}
+                  {gameSetupNotStaged
+                    ? <p role="status">{labels().gameActivationRequired}</p>
+                    : gameSetupFailed && <p role="status">{labels().gameSetupFailed}</p>}
                   {gameLaunchAvailable && (
                     <button type="button" disabled={gameLaunchActive} aria-label={labels().gameLaunch} onClick={() => void handleGameLaunch()}>
                       {labels().gameLaunch}
                     </button>
                   )}
-                  {gameLaunchFailed && <p role="status">{labels().gameLaunchFailed}</p>}
+                  {gameLaunchNotStaged
+                    ? <p role="status">{labels().gameActivationRequired}</p>
+                    : gameLaunchFailed && <p role="status">{labels().gameLaunchFailed}</p>}
                  {gameStopAvailable && (
                    <button type="button" disabled={gameStopActive} onClick={() => void handleGameStop()}>
                      {labels().gameStop}
