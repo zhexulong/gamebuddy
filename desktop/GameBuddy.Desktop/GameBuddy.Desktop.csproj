@@ -2,13 +2,24 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <!-- The tray is a platform shell surface: the product's own presence on the player's desktop
+         (design 103 section 6.1 / task 4). Windows Forms' NotifyIcon is the mature, supported
+         implementation of one tray icon and its menu; nothing else in this project may use it. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>    <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>GameBuddy.Desktop</AssemblyName>
     <RootNamespace>GameBuddy.Desktop</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
+  </ItemGroup>
+  <!-- Enabling Windows Forms adds its two namespaces to every implicit-using set, which made the
+       existing code ambiguous with its own platform names (Timer, Application, ...). The shell is
+       one file with its own explicit usings, so the namespaces stay out of everyone else's scope:
+       WinForms belongs to the tray and to nothing else in this project. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 </Project>

@@ -65,6 +65,10 @@ internal sealed class DesktopBrowserPresenter
     /// </summary>
     internal bool OpenOnce()
     {
+        // A launch with no entry has nothing to open, and that attempt does not spend the one
+        // automatic open: the entry is adopted after the acknowledgement, which is later than the
+        // shell is constructed.
+        if (entry is null) return false;
         if (Interlocked.Exchange(ref automatic, 1) != 0) return false;
         return Open();
     }

@@ -61,7 +61,14 @@ internal sealed class DesktopPresentationHandoff : IAsyncDisposable
         // requires: another user's process cannot open this endpoint at all, so the
         // process-identity check below is the second half of one boundary rather than
         // the only one.
-        server = new NamedPipeServerStream(PipeName(bootstrapId), PipeDirection.In, 1,
+        //
+        // The direction is InOut even though this end only ever reads. Node's own pipe client
+        // asks for read and write access when it opens a pipe, so an inbound-only instance is
+        // refused by the platform with access denied and the production child - which IS Node -
+        // can never connect to it. The broker's authenticated endpoint is duplex for the same
+        // reason. Duplex here describes what the platform must allow, not what this end does: the
+        // frame is still read, never written.
+        server = new NamedPipeServerStream(PipeName(bootstrapId), PipeDirection.InOut, 1,
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance,
             MaxFrameBytes, MaxFrameBytes);
     }
@@ -78,6 +85,14 @@ internal sealed class DesktopPresentationHandoff : IAsyncDisposable
 
     /// <summary>The exact private pipe name one bootstrap id owns.</summary>
     internal static string PipeName(string bootstrapId) => $"{PipeNamePrefix}{bootstrapId}";
+
+    /// <summary>
+    /// The same pipe as the platform-visible path the Host child computes
+    /// (<c>host/src/desktop-presentation-handoff.internal.ts</c>). The constructor above takes
+    /// the bare name, so this is the only place the two ends' spelling of one pipe is written
+    /// down; a test that makes a real client connect uses it rather than guessing.
+    /// </summary>
+    internal static string PipePath(string bootstrapId) => @"\\.\pipe\" + PipeName(bootstrapId);
 
     /// <summary>
     /// Reads the one frame this launch may carry. The connecting client must be the
@@ -223,7 +238,7 @@ internal sealed class DesktopPresentationHandoff : IAsyncDisposable
             var entry = value.GetProperty("launchUrl").GetString();
             if (entry is null || entry.Length == 0 || entry.Length > MaxEntryLength) return false;
             if (!Uri.TryCreate(entry, UriKind.Absolute, out var parsed)) return false;
-            if (parsed.Scheme != Uri.UriSchemeHttp || parsed.Host != "127.0.0.1" || parsed.Port is <= 0 or > 65_535 || parsed.UserInfo.Length != 0) return false;
+            if (parsed.Scheme != Uri.UriSchemeHttp || parsed.Host != "127.0.0.1" || parsed.IsDefaultPort || parsed.Port is <= 0 or > 65_535 || parsed.UserInfo.Length != 0) return false;
             launchUrl = parsed;
             return true;
         }
