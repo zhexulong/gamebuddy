@@ -187,7 +187,14 @@ test("composed profile fails closed on a malformed root", async ({ page }) => {
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
   await expect(page.getByRole("alert")).toContainText("Unable to read chat");
-  await expect(page.getByText("The chat state could not be safely reconciled.")).toBeVisible();
+  // The root was malformed, so this is an internal error and the presentation says
+  // so, naming the code the client actually got. It must not claim a reconciliation
+  // conflict: that wording sent the reader after a consistency fault that was not
+  // the fault.
+  await expect(page.getByRole("alert")).toContainText(
+    "GameBuddy reported an internal error (code invalid_composed_root).",
+  );
+  await expect(page.getByText("The chat state could not be safely reconciled.")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Game state" })).toHaveCount(0);
 });
 
