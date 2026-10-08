@@ -21,9 +21,14 @@
  * which the coordinator knows no launch was requested answers for itself:
  * `staged` is "ready to start, nothing running", which the browser contract
  * reads as `instance.status === "none"` carrying the exact expected generation
- * from the coordinator's launch-readiness reader. `undefined` remains only for
- * the states the coordinator does not own (inactive/stopped/unavailable), where
- * the facade's process-owner projection is authoritative.
+ * from the coordinator's launch-readiness reader.
+ *
+ * Every other state (inactive, reserving, staging, failed, closing, closed) is
+ * left to the facade's process-owner projection. In `reserving`/`staging` that
+ * projection still reports the reservation minted by activation as `pending`,
+ * which the browser reads as `launching`; that window lasts only while the
+ * activation command is in flight and the client shows its own
+ * activation-in-progress status there.
  */
 
 import type { StardewPrivateActivationSnapshot } from "./stardew-production-lifecycle-coordinator.internal.js";
