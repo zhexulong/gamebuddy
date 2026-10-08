@@ -155,6 +155,15 @@ public class MoveApproachSubstitutionTests
         // test green, because the formatter's own test never proved the refusal called it -- a formatter test is
         // not a wiring test.
         controller.Should().Contain("FormatReachableHint(assessed.ClosestToTarget");
+        // And a refusal must NAME what blocks a tile it refuses: resource clumps, large terrain features and
+        // buildings live outside objects/terrainFeatures, so asking only those answered "none" about a real wall
+        // (measured: live refusals read blocked_by=none for tiles the planner would not enter).
+        controller.Should().Contain("clump:",
+            "resource clumps block tiles and are not in objects or terrainFeatures");
+        controller.Should().Contain("large:",
+            "large terrain features block tiles and are not in objects or terrainFeatures");
+        controller.Should().Contain("building:",
+            "building footprints block tiles and are not in objects or terrainFeatures");
     }
 
     [Fact]
