@@ -277,8 +277,90 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
-function sendProblem(response: ServerResponse, statusCode: number, code: string): void {
-  sendJson(response, statusCode, { code });
+function sendProblem(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+  cause?: string,
+): void {
+  sendJson(response, statusCode, cause === undefined ? { code } : { code, cause });
+}
+
+/**
+ * Coordinator-owned bounded code. Every lifecycle fault the coordinator mints is
+ * one of these. OS text, an installation path, a token or a raw exception message
+ * never is, so this pattern is what decides whether a nested message may cross.
+ */
+const BOUNDED_LIFECYCLE_CODE_PATTERN = /^stardew_[a-z0-9_]+$/;
+
+/** Small fixed depth, so a cyclic or pathologically nested `cause` chain cannot make this walk unbounded. */
+const MAX_LIFECYCLE_CAUSE_DEPTH = 6;
+
+/**
+ * The bounded cause of a lifecycle refusal.
+ *
+ * The coordinator reports the *outer* fault as its exception message - a wrapper
+ * such as `stardew_player_host_launch_failed` - and names the fault underneath on
+ * `cause`. Dropping that left the one wrapper standing for a missing runtime
+ * collaborator, a failed guardian arm, an installation admission failure and a
+ * genuine native launch failure alike, so nobody - player, client or the person
+ * fixing it - could learn which had happened.
+ *
+ * This walks the `cause` chain and returns the first bounded coordinator code. A
+ * refusal that carries no cause falls back to its own bounded message, so every
+ * coordinator refusal is distinguishable from every other. Anything unbounded
+ * yields `undefined` and is never projected.
+ */
+function boundedLifecycleCause(error: unknown): string | undefined {
+  let current: unknown = error instanceof Error ? error.cause : undefined;
+  for (let depth = 0; depth < MAX_LIFECYCLE_CAUSE_DEPTH; depth += 1) {
+    if (!(current instanceof Error)) break;
+    if (BOUNDED_LIFECYCLE_CODE_PATTERN.test(current.message)) return current.message;
+    current = current.cause;
+  }
+  return error instanceof Error && BOUNDED_LIFECYCLE_CODE_PATTERN.test(error.message)
+    ? error.message
+    : undefined;
+}
+
+/**
+ * The bounded coordinator causes that name a fault more precisely than the generic
+ * wrapper code they arrive behind. Every value is an existing composed problem
+ * code: no new code is introduced and no existing code is given a second meaning.
+ */
+const BOUNDED_CAUSE_PROBLEM_CODE: Readonly<Record<string, string>> = Object.freeze({
+  stardew_player_host_launch_runtime_unavailable: "game_runtime_unavailable",
+  stardew_ai_client_launch_runtime_unavailable: "game_runtime_unavailable",
+});
+
+/**
+ * A wrapper code that stands for more than one fault consults the bounded cause so
+ * the distinct faults stay distinct; every mapping it is not taken through is
+ * exactly what it was.
+ */
+function distinguishableLifecycleProblemCode(error: unknown, wrapperCode: string): string {
+  const cause = boundedLifecycleCause(error);
+  return (cause === undefined ? undefined : BOUNDED_CAUSE_PROBLEM_CODE[cause]) ?? wrapperCode;
+}
+
+/**
+ * The bounded cause a refusal may carry. It is projected only where the composed
+ * code is itself the generic one - `game_unavailable` / `state_unavailable` - i.e.
+ * only where the code alone does not tell the faults apart. A refusal that already
+ * names its fault keeps exactly the body it had.
+ */
+function projectedLifecycleCause(error: unknown, code: string): string | undefined {
+  if (code !== "game_unavailable" && code !== "state_unavailable") return undefined;
+  return boundedLifecycleCause(error);
+}
+
+function sendLifecycleProblem(
+  response: ServerResponse,
+  statusCode: number,
+  error: unknown,
+  code: string,
+): void {
+  sendProblem(response, statusCode, code, projectedLifecycleCause(error, code));
 }
 
 function gameSetupProblemCode(error: unknown): string {
@@ -286,7 +368,7 @@ function gameSetupProblemCode(error: unknown): string {
   switch (error.message) {
     case "stardew_game_setup_idempotency_conflict": return "idempotency_conflict";
     case "stardew_game_setup_in_progress": return "game_operation_in_progress";
-    case "stardew_game_setup_failed": return "game_unavailable";
+    case "stardew_game_setup_failed": return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_player_host_launch_not_staged": return "game_prerequisites_missing";
     default: return "state_unavailable";
   }
@@ -297,7 +379,7 @@ function gameActivateProblemCode(error: unknown): string {
   switch (error.message) {
     case "stardew_lifecycle_activation_conflict": return "idempotency_conflict";
     case "stardew_lifecycle_activation_admission_invalid": return "unauthorized";
-    case "stardew_lifecycle_closing": return "game_unavailable";
+    case "stardew_lifecycle_closing": return distinguishableLifecycleProblemCode(error, "game_unavailable");
     default: return "state_unavailable";
   }
 }
@@ -312,7 +394,7 @@ function gameLaunchProblemCode(error: unknown): string {
     case "stardew_player_host_launch_not_staged": return "game_prerequisites_missing";
     case "stardew_player_host_launch_failed":
     case "stardew_player_host_launch_quarantined":
-    case "stardew_lifecycle_closing": return "game_unavailable";
+    case "stardew_lifecycle_closing": return distinguishableLifecycleProblemCode(error, "game_unavailable");
     default: return "state_unavailable";
   }
 }
@@ -356,12 +438,12 @@ function gameResumeCancelProblemCode(error: unknown): string {
     case "stardew_game_resume_cancel_idempotency_conflict":
       return "idempotency_conflict";
     case "stardew_game_resume_cancel_unavailable":
-      return "game_unavailable";
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_game_resume_cancel_conflict":
     case "stardew_game_attachment_generation_conflict":
       return "game_attachment_conflict";
     case "stardew_lifecycle_closing":
-      return "game_unavailable";
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
     default:
       return "state_unavailable";
   }
@@ -377,11 +459,11 @@ function gameCreateProblemCode(error: unknown): string {
     case "stardew_game_runtime_unavailable":
       return "game_runtime_unavailable";
     case "stardew_game_create_integration_conflict":
-      return "game_unavailable";
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_game_create_failed":
       return "game_storage_unavailable";
     case "stardew_lifecycle_closing":
-      return "game_unavailable";
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
     default:
       return "state_unavailable";
   }
@@ -1118,7 +1200,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (result === undefined) { sendProblem(response, 409, "state_unavailable"); return; }
         if (!GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(result)) { sendProblem(response, 409, "state_unavailable"); return; }
         sendJson(response, 200, result);
-      } catch { sendProblem(response, 503, "game_unavailable"); }
+      } catch (error) { sendLifecycleProblem(response, 503, error, "game_unavailable"); }
       return;
     }
     if (request.method === "POST" && [DISCOVERY_CONFIRM_PATH, DISCOVERY_RETRY_PATH, DISCOVERY_CANCEL_PATH, DISCOVERY_PICKER_PATH].includes(requestUrl.pathname)) {
@@ -1157,7 +1239,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
           : GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(result);
         if (!validResult) { sendProblem(response, 409, "state_unavailable"); return; }
         sendJson(response, 200, result);
-      } catch { sendProblem(response, 503, "game_unavailable"); }
+      } catch (error) { sendLifecycleProblem(response, 503, error, "game_unavailable"); }
       return;
     }
     if (requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH && request.method === "POST") {
@@ -1177,7 +1259,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         await options.gameActivate(admission);
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
         response.end();
-      } catch (error) { sendProblem(response, 409, gameActivateProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameActivateProblemCode(error)); }
       return;
     }
 
@@ -1198,7 +1280,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
       try {
         await options.gameSetup(admission, command as GamePrerequisitesSetupCommandV1);
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" }); response.end();
-      } catch (error) { sendProblem(response, 409, gameSetupProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameSetupProblemCode(error)); }
       return;
     }
 
@@ -1220,7 +1302,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         await options.gameLaunch(admission, command as GameLaunchCommandV1);
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
         response.end();
-      } catch (error) { sendProblem(response, 409, gameLaunchProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameLaunchProblemCode(error)); }
       return;
     }
 
@@ -1242,7 +1324,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         await options.gameStop(admission, command as GameStopCommandV1);
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
         response.end();
-      } catch (error) { sendProblem(response, 409, gameStopProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameStopProblemCode(error)); }
       return;
     }
 
@@ -1264,7 +1346,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.gameResume(admission, command as GameResumeCommandV1);
         if (!GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch (error) { sendProblem(response, 409, gameResumeProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameResumeProblemCode(error)); }
       return;
     }
 
@@ -1286,7 +1368,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.gameResumeCancel(admission, command as GameResumeCancelCommandV1);
         if (!GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch (error) { sendProblem(response, 409, gameResumeCancelProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameResumeCancelProblemCode(error)); }
       return;
     }
 
@@ -1308,7 +1390,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.gameCreate(admission, command as GameCreateCommandV1);
         if (!GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch (error) { sendProblem(response, 409, gameCreateProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameCreateProblemCode(error)); }
       return;
     }
 
@@ -1330,7 +1412,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.gameReopen(admission, command as GameReopenActionAuthorityCommandV1);
         if (!GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch (error) { sendProblem(response, 409, gameReopenProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameReopenProblemCode(error)); }
       return;
     }
 
@@ -1352,7 +1434,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         await options.gameDisconnect(admission, command as GameDisconnectCommandV1);
         response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
         response.end();
-      } catch (error) { sendProblem(response, 409, gameDisconnectProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameDisconnectProblemCode(error)); }
       return;
     }
 
@@ -1375,7 +1457,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const payload = Buffer.from(JSON.stringify(result), "utf8");
         response.writeHead(200, { "cache-control": "no-store", "content-type": "application/json", "content-length": String(payload.length) });
         response.end(payload);
-      } catch (error) { sendProblem(response, 409, gameEndgameProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, gameEndgameProblemCode(error)); }
       return;
     }
 
@@ -1390,7 +1472,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.stardewCabins.read(admission);
         if (!GameBrowserValidatorsV1.StardewCabinChoicesV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch { sendProblem(response, 409, "state_unavailable"); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, "state_unavailable"); }
       return;
     }
 
@@ -1412,7 +1494,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         const result = await options.stardewCabins.confirm(admission, command as StardewCabinConfirmCommandV1);
         if (!GameBrowserValidatorsV1.StardewCabinConfirmResultV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
-      } catch (error) { sendProblem(response, 409, stardewCabinProblemCode(error)); }
+      } catch (error) { sendLifecycleProblem(response, 409, error, stardewCabinProblemCode(error)); }
       return;
     }
 
