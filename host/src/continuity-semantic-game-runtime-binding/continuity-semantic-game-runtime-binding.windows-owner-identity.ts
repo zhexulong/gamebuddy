@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { resolveWindowsPowerShell } from "../windows-powershell-executable.js";
+import { describeOwnerIdentityQueryFailure } from "../windows-owner-identity-query-failure.js";
 import {
   brandRuntimeOwnerIdentity,
   type OpaqueRuntimeOwnerIdentity,
@@ -70,7 +71,9 @@ async function queryCurrentProcessCreationIdentity(
     if (!Number.isSafeInteger(processId) || processId <= 0 || match[2] === undefined)
       throw new Error("invalid_windows_owner_identity_output");
     return Object.freeze({ processId, creationTime100ns: match[2] });
-  } catch {
-    throw new Error("windows_runtime_owner_identity_query_failed");
+  } catch (error) {
+    // Name the cause. This used to be a blind catch, so a failed live run reported only that the query failed --
+    // not whether PowerShell timed out, was missing, or wrote to stderr.
+    throw new Error(`windows_runtime_owner_identity_query_failed:${describeOwnerIdentityQueryFailure(error)}`);
   }
 }

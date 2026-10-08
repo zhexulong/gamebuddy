@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { resolveWindowsPowerShell } from "../windows-powershell-executable.js";
+import { describeOwnerIdentityQueryFailure } from "../windows-owner-identity-query-failure.js";
 
 /**
  * Host-only Chat construction binding. It owns immutable deployment identity,
@@ -330,8 +331,9 @@ async function queryCurrentOwnerProof(attempt = 0): Promise<OwnerProofRecord> {
     const proof = Object.freeze({ processId, creationTime100ns: match[2] });
     assertOwnerProof(proof);
     return proof;
-  } catch {
+  } catch (error) {
     if (attempt === 0) return queryCurrentOwnerProof(1);
-    throw new Error("windows_runtime_owner_identity_query_failed");
+    // Same defect as the Game port had: the classification is the whole report of why the query failed.
+    throw new Error(`windows_runtime_owner_identity_query_failed:${describeOwnerIdentityQueryFailure(error)}`);
   }
 }
