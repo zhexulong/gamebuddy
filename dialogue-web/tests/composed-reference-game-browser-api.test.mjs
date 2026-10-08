@@ -436,6 +436,93 @@ test("Game launch preserves frozen typed problem outcomes", async () => {
   }
 });
 
+test("a launch refused as not staged keeps its own reason instead of collapsing into a retryable failure", async () => {
+  // The coordinator refuses a launch whose lifecycle is not staged with
+  // `stardew_player_host_launch_not_staged`, and the composed shell maps exactly
+  // that error to `game_prerequisites_missing` on the launch route alone. If the
+  // client reclassified it (or marked it retryable), the UI could not distinguish
+  // "activate first" from a transient launch failure and would show the generic
+  // uncertain-launch message.
+  const recorder = transport(
+    jsonResponse(root()),
+    jsonResponse({ code: "game_prerequisites_missing" }, 409),
+  );
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  await assert.rejects(
+    api.launchGame({ apiVersion: 1, idempotencyKey: "L".repeat(21) + "A", expectedInstanceGeneration: 1 }),
+    (error) =>
+      error instanceof ComposedReferenceGameProblemError &&
+      error.code === "game_prerequisites_missing" &&
+      error.status === 409 &&
+      error.retryable === false,
+  );
+});
+
+test("lifecycle activation posts the fieldless route with no body and accepts only 204 empty", async () => {
+  const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  await api.activateLifecycle();
+  assert.deepEqual(recorder.calls[1], {
+    input: "/api/composed-reference-game/v1/lifecycle/activate",
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      credentials: "same-origin",
+    },
+  });
+  // No body key at all: the shell answers 409 malformed_request to any body or
+  // query string, because the admission alone names what is being activated.
+  assert.equal("body" in recorder.calls[1].init, false);
+});
+
+test("lifecycle activation treats any non-204 answer as a refusal rather than success", async () => {
+  for (const response of [
+    new Response(null, { status: 200 }),
+    new Response(JSON.stringify({ code: "state_unavailable" }), { status: 200, headers: { "content-type": "application/json" } }),
+    // A 204 that nevertheless carries a token: `Response` cannot hold a body at
+    // 204, so this is the hand-rolled shape a mis-behaving producer would send.
+    { ok: true, status: 204, text: async () => "activated" },
+  ]) {
+    const recorder = transport(jsonResponse(root()), response);
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.activateLifecycle(),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "unexpected_status",
+    );
+  }
+});
+
+test("lifecycle activation preserves the shell's own refusal codes as typed problems", async () => {
+  for (const [code, status] of [
+    ["unauthorized", 401],
+    ["not_found", 404],
+    ["malformed_request", 409],
+    ["idempotency_conflict", 409],
+    ["game_unavailable", 409],
+    ["state_unavailable", 409],
+  ]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, status));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.activateLifecycle(),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code && error.status === status,
+    );
+  }
+});
+
+test("lifecycle activation needs the composed session before it will reach the route", async () => {
+  const recorder = transport();
+  await assert.rejects(
+    createComposedReferenceGameBrowserApi(recorder.fetch).activateLifecycle(),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "missing_composed_session",
+  );
+  assert.equal(recorder.calls.length, 0);
+});
+
 test("Game STOP client sends the exact generation-bound command and accepts only 204 empty", async () => {
   const key = "S".repeat(21) + "A";
   const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));

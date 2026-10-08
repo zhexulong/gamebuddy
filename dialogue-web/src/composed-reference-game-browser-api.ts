@@ -291,6 +291,7 @@ type StardewCabinConfirmationV1 = Readonly<{
 export type ComposedReferenceGameBrowserApi = Readonly<{
   bootstrap(bootstrapToken: string): Promise<ComposedReferenceGameBrowserRootV1>;
   readState(): Promise<ComposedReferenceGameBrowserRootV1>;
+  activateLifecycle(): Promise<void>;
   setupGame(request: GameSetupRequestV1): Promise<void>;
   launchGame(request: GameLaunchRequestV1): Promise<void>;
   stopGame(request: GameStopRequestV1): Promise<void>;
@@ -671,6 +672,17 @@ export function createComposedReferenceGameBrowserApi(
       );
       csrfToken = root.chat.csrfToken;
       return root;
+    },
+    async activateLifecycle(): Promise<void> {
+      // The route carries no command body: the admission already names the exact
+      // authenticated browser session, and the lifecycle owner derives the
+      // installation, registration and attempt from it. A body here (or a query
+      // string) is refused by the route with 409 malformed_request.
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/lifecycle/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      });
     },
     async setupGame(request: GameSetupRequestV1): Promise<void> {
       if (request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
