@@ -3789,18 +3789,16 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     {
         int width = farm.map.Layers[0].LayerWidth;
         int height = farm.map.Layers[0].LayerHeight;
-        // Outward from the actor's start: nearest eligible tile first, so the props sit beside the session
-        // rather than in whichever corner the map's origin happens to be.
-        foreach (Vector2 target in Enumerable.Range(0, width)
-            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y)))
-            .OrderBy(tile => Math.Max(Math.Abs(tile.X - start.X), Math.Abs(tile.Y - start.Y)))
-            .ThenBy(tile => tile.Y)
-            .ThenBy(tile => tile.X))
+        // Outward from the actor's start, never inside its ring: the ordering and the exclusion are pure rules
+        // (`PlaySessionFixturePlacement`) so their properties can be pinned without a live game.
+        var candidates = PlaySessionFixturePlacement.PlaceableCandidates(
+            Enumerable.Range(0, width)
+                .SelectMany(x => Enumerable.Range(0, height).Select(y => new Point(x, y))),
+            new Point((int)start.X, (int)start.Y));
+        foreach (Point candidate in candidates)
         {
+            Vector2 target = new(candidate.X, candidate.Y);
             if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
-                continue;
-            // Never in the actor's own ring: that is what fenced the companion in before.
-            if (Math.Abs(target.X - start.X) + Math.Abs(target.Y - start.Y) <= 1)
                 continue;
             Vector2[] cardinal =
             {
