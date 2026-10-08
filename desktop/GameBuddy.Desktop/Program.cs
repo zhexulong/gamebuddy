@@ -34,6 +34,10 @@ internal enum DesktopLaunchResult
     // Nothing is overwritten and neither side is chosen.
     DeploymentIdentityConflict,
     HostSessionFailed,
+    // A second invocation of the product entry found a live primary instance and could not
+    // deliver its one bounded open/focus intent. It names the fact instead of starting a
+    // second Host: the presentation is the primary instance's to own.
+    PrimaryInstanceUnavailable,
 }
 
 internal static class Program
@@ -115,6 +119,7 @@ internal static class Program
         DesktopLaunchResult.DeploymentIdentityEstablishUnavailable => "deployment_identity_establish_unavailable",
         DesktopLaunchResult.DeploymentIdentityConflict => "deployment_identity_conflict",
         DesktopLaunchResult.HostSessionFailed => "host_session_failed",
+        DesktopLaunchResult.PrimaryInstanceUnavailable => "primary_instance_unavailable",
         _ => UnattributedLaunchFailureCode,
     };
 
@@ -174,6 +179,25 @@ internal static class Program
     }
 
     /// <summary>
+    /// Waits for the one thing that ends an admitted session: the exact child exiting, or the
+    /// player asking the primary instance to quit. On a quit this flow STOPS rather than reaping
+    /// the child here, because the lease's own close is the single path that terminates that exact
+    /// child and waits its bounded time for it; the tray has already said "closing", and no part of
+    /// this entry claims a Chat or Game close it cannot prove.
+    /// </summary>
+    private static async Task<bool> WaitForSessionEndAsync(RuntimeSupervisorLease host, CancellationToken quitRequested, CancellationToken cancellationToken)
+    {
+        var exit = host.WaitForExitAsync(cancellationToken);
+        using var quit = new CancellationTokenSource();
+        var playerQuit = Task.Delay(Timeout.Infinite, quitRequested);
+        using (quitRequested.Register(static state => ((CancellationTokenSource)state!).Cancel(), quit))
+        {
+            if (await Task.WhenAny(exit, playerQuit).ConfigureAwait(false) == playerQuit) return true;
+        }
+        return await exit.ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// The step whose failure ended a launch. Registration and layout failures
     /// arrive as their own exception types; every other step fails with the
     /// admitted-child launch exception, so the entry records where it was in
@@ -186,6 +210,21 @@ internal static class Program
         var stage = LaunchStage.GenerationSelection;
         try
         {
+            // The app-instance authority comes first, before a generation is selected and before
+            // any root is resolved: exactly one primary instance may start Host/runtime, and a
+            // second invocation may ask it to open the presentation and nothing else. It owns no
+            // Chat continuity, Game, guardian or path lock and is not a substitute for one.
+            using var appInstance = AppInstanceOwner.Acquire(AppInstanceOwner.InstalledPartition);
+            if (!appInstance.IsPrimary)
+            {
+                // A secondary invocation starts nothing: no generation, no root layout, no child,
+                // and it accepts no bootstrap material from anywhere. Its one action is a bounded
+                // intent, and a primary that cannot be reached is reported rather than papered over
+                // by becoming a second product.
+                return await AppInstanceOwner.RequestOpenAsync(cancellationToken).ConfigureAwait(false)
+                    ? LaunchOutcome.NoClaim
+                    : LaunchOutcome.Of(DesktopLaunchResult.PrimaryInstanceUnavailable);
+            }
             // The launcher owns this step, before anything is launched and before the
             // generation is admitted. The data, operational and presentation roots are
             // derived rather than registered and no product component creates them, so
@@ -305,7 +344,29 @@ internal static class Program
             // The Host child owns the session: the entry is done when that exact
             // child has exited. A wait that could not reap it is a failed session
             // rather than one more silent success.
-            if (!await host.WaitForExitAsync(cancellationToken).ConfigureAwait(false)) return LaunchOutcome.Of(DesktopLaunchResult.HostSessionFailed);
+            //
+            // The shell is the player's own presence on their desktop, so the tray exists once
+            // the Host is serving: a launch that never reached readiness never opens a tray, and
+            // a tray that cannot be created never affects the session. Quit is the only thing it
+            // owns here, and it ends this flow - which is what seals ingress and ends the exact
+            // admitted child - instead of claiming a per-surface close the launcher cannot prove.
+            using var quit = new CancellationTokenSource();
+            using var tray = TrayShell.Start(new ShellIntentRouter(
+                () => runtimeSupervisor.Presentation.Open(),
+                () =>
+                {
+                    try
+                    {
+                        quit.Cancel();
+                        return true;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return false;
+                    }
+                }));
+            if (!await WaitForSessionEndAsync(host, quit.Token, cancellationToken).ConfigureAwait(false))
+                return LaunchOutcome.Of(DesktopLaunchResult.HostSessionFailed);
             return LaunchOutcome.NoClaim;
         }
         catch (GuardianLaunchUnavailableException exception)
