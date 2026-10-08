@@ -596,9 +596,19 @@ test("composed shell mounts game.launch to the lifecycle owner and returns 204",
   }
 });
 
-test("composed shell binds the private lifecycle issuer without returning it or adding a route", async () => {
+test("composed shell dispatches the lifecycle activation route to the mounted owner seam", async () => {
+  // What this test used to pin: the route did not exist. POST /lifecycle/activate answered 404
+  // not_found, because the composed shell bound the private lifecycle issuer for the
+  // coordinator's own use and deliberately exposed no producer for it. That reason no longer
+  // holds. The admission vocabulary already issued a `lifecycle_activation` operation for
+  // exactly this path, and the owner already owned the real activation path (reserve the owned
+  // player-host bootstrap, stage the owned profile), so the missing producer was the dispatch
+  // branch itself. The route is now supported and answers a compliant status; the owner's
+  // private activation snapshot never crosses the wire, and an owner that mounts no activation
+  // seam at all - the sink this test used to supply - is the only case that still answers 404.
   const fixture = await artifactFixture();
   let bound: object | undefined;
+  let activations = 0;
   const server = await startComposedReferenceGameStaticShellComposition({
     profile,
     bootstrapToken: token,
@@ -608,11 +618,64 @@ test("composed shell binds the private lifecycle issuer without returning it or 
     inspector: inspector(),
     lifecycleActivationBindingSink: Object.freeze({
       bindBrowserAdmissionIssuer(issuer: object) { bound = issuer; },
+      async activate(admission) {
+        activations += 1;
+        const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          bound as any,
+          admission,
+          "lifecycle_activation",
+          () => Object.freeze({ schemaVersion: 1, state: "staged" }),
+        );
+        assert.notEqual(consumed, undefined);
+      },
     }),
   });
   try {
     assert.notEqual(bound, undefined);
     assert.deepEqual(Object.keys(server).sort(), ["close", "closeAllConnections", "launchUrl", "origin"]);
+    const lifecycleResponse = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+    });
+    assert.equal(lifecycleResponse.status, 401);
+    assert.equal(activations, 0);
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const root = await bootstrap.json();
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
+      method: "POST",
+      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": root.chat.csrfToken },
+    });
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), "");
+    assert.equal(activations, 1);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
+test("composed shell leaves the lifecycle activation route absent when the owner mounts no activation seam", async () => {
+  // The half of the old assertion that still describes the truth: a lifecycle owner with nothing
+  // to activate must not expose a route that pretends otherwise.
+  const fixture = await artifactFixture();
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: Object.freeze({
+      bindBrowserAdmissionIssuer() {},
+    }),
+  });
+  try {
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
       method: "POST",
       headers: { Origin: server.origin, "Content-Type": "application/json" },

@@ -2118,3 +2118,93 @@ test("unmounted game.resume.cancel route stays unavailable", async () => {
     assert.equal(response.status, 404);
   } finally { await server.close(); }
 });
+
+test("the lifecycle activation route stages through the mounted owner seam and refuses every other caller", async () => {
+  // Failure caught: the route the admission vocabulary already issues for
+  // `POST /api/composed-reference-game/v1/lifecycle/activate` having no dispatch branch, so the
+  // browser's first activation step answers 404 not_found and the product can never leave
+  // `inactive`; and a branch that would accept an unauthenticated caller or a body that tries to
+  // say what to activate when the admission is the only thing that names it.
+  const calls: string[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameActivate: async (admission) => {
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "lifecycle_activation",
+        () => { calls.push("activate"); return Object.freeze({ schemaVersion: 1, state: "staged" }); },
+      );
+      if (consumed === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const path = `${server.origin}/api/composed-reference-game/v1/lifecycle/activate`;
+
+    const unauthenticated = await fetch(path, {
+      method: "POST",
+      headers: { origin: server.origin, "content-type": "application/json" },
+    });
+    assert.equal(unauthenticated.status, 401);
+    assert.deepEqual(calls, []);
+
+    const withBody = await fetch(path, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1 }),
+    });
+    assert.equal(withBody.status, 409);
+    assert.deepEqual(calls, []);
+
+    const activated = await fetch(path, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+    });
+    assert.equal(activated.status, 204);
+    assert.equal(await activated.text(), "");
+    assert.deepEqual(calls, ["activate"]);
+  } finally { await server.close(); }
+});
+
+test("the lifecycle activation route refuses an admission issued for another operation", async () => {
+  // Failure caught: activation reachable through a grant that was issued for a different
+  // operation, which would let the browser stage a player host with an admission that never
+  // named staging. The mounted seam consumes the exact `lifecycle_activation` operation, so an
+  // admission the route issues for anything else is refused before any staging could start.
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameActivate: async (admission) => {
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_setup",
+        () => "staged",
+      );
+      if (consumed === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "unauthorized" });
+  } finally { await server.close(); }
+});

@@ -51,6 +51,18 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   readGame?: (
     context: ComposedReferenceGameBrowserReadContext,
   ) => Promise<GameBrowserStateV1>;
+  /**
+   * The lifecycle activation seam: stage the owned player host for this authenticated
+   * presentation session. It is the one command on this wire that carries no browser
+   * command body at all, because everything it acts on is already authenticated here -
+   * the admission names the exact browser session, and the owner derives the install,
+   * registration and attempt from it. Its outcome stays private for the same reason:
+   * the caller learns the staged state from the existing game state projection, not
+   * from a second, invented lifecycle DTO.
+   */
+  gameActivate?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ) => Promise<void>;
   gameSetup?: (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GamePrerequisitesSetupCommandV1,
@@ -113,6 +125,14 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
  */
 export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+  /**
+   * Lifecycle-owner activation seam. The owner returns its private activation
+   * snapshot; the browser callback discards it, exactly as the launch seam's
+   * private result is discarded.
+   */
+  activate?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ) => Promise<unknown>;
   setupPlayerHost?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameSetup"]>;
   /** The lifecycle owner may return a private snapshot; the browser callback discards it. */
   launchPlayerHost?: (
@@ -268,6 +288,16 @@ function gameSetupProblemCode(error: unknown): string {
     case "stardew_game_setup_in_progress": return "game_operation_in_progress";
     case "stardew_game_setup_failed": return "game_unavailable";
     case "stardew_player_host_launch_not_staged": return "game_prerequisites_missing";
+    default: return "state_unavailable";
+  }
+}
+
+function gameActivateProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_lifecycle_activation_conflict": return "idempotency_conflict";
+    case "stardew_lifecycle_activation_admission_invalid": return "unauthorized";
+    case "stardew_lifecycle_closing": return "game_unavailable";
     default: return "state_unavailable";
   }
 }
@@ -1130,6 +1160,27 @@ export function createComposedReferenceGameBrowserRequestHandler(
       } catch { sendProblem(response, 503, "game_unavailable"); }
       return;
     }
+    if (requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameActivate === undefined) {
+        sendProblem(response, options.gameActivate === undefined ? 404 : 409, options.gameActivate === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      // The command carries nothing: the session, the install and the attempt are the
+      // admission's to name, and a body here would be a second, unauthenticated way to
+      // say what to activate.
+      let body: Buffer;
+      try { body = await readBody(request, 0); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (body.length !== 0) { sendProblem(response, 409, "malformed_request"); return; }
+      try {
+        await options.gameActivate(admission);
+        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
+        response.end();
+      } catch (error) { sendProblem(response, 409, gameActivateProblemCode(error)); }
+      return;
+    }
+
     if (requestUrl.pathname === GAME_SETUP_PATH && request.method === "POST") {
       if (!isEmptyQuery(requestUrl) || options.gameSetup === undefined) {
         sendProblem(response, options.gameSetup === undefined ? 404 : 409, options.gameSetup === undefined ? "not_found" : "malformed_request");
