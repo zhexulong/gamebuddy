@@ -90,6 +90,18 @@ export async function startComposedReferenceGameStaticShellComposition(
     bootstrapToken: options.bootstrapToken,
     readChat,
     ...(options.readGame === undefined ? {} : { readGame: options.readGame }),
+    ...(options.lifecycleActivationBindingSink === undefined ||
+    options.lifecycleActivationBindingSink.activate === undefined
+      ? {}
+      : {
+          gameActivate: async (
+            admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+          ): Promise<void> => {
+            // The owner's private activation snapshot stops here: the browser learns the
+            // staged state from the game state projection, not from a lifecycle DTO.
+            await options.lifecycleActivationBindingSink!.activate!(admission);
+          },
+        }),
     ...(options.lifecycleActivationBindingSink?.setupPlayerHost === undefined
       ? {}
       : { gameSetup: options.lifecycleActivationBindingSink.setupPlayerHost.bind(options.lifecycleActivationBindingSink) }),
