@@ -622,6 +622,27 @@ if (movementDisposition != LocalDispositionKind.Idle)
     }
 
     /// <summary>
+    /// Whether a published action exists to clear this occupant, so a refusal can say "the wall is a twig" instead of
+    /// only "blocked". Delegates to the native predicates the clearing actions themselves use, so the two cannot
+    /// disagree: twig litter (axe), breakable stone (pickaxe), weeds (scythe).
+    /// </summary>
+    internal static bool IsRemovableLitter(StardewValley.Object item) =>
+        item is not null
+        && (NativeItemPredicates.IsTwigLitter(item) || NativeItemPredicates.IsBreakableStone(item) || item.IsWeeds());
+
+    /// <summary>
+    /// One approach entry, as text. Split out so the four shapes are testable without a live location.
+    /// </summary>
+    internal static string FormatApproachEntry(string direction, bool walkable, string occupant, bool removable)
+    {
+        if (walkable)
+            return $"{direction}:open";
+        if (occupant == "none")
+            return $"{direction}:blocked";
+        return removable ? $"{direction}:{occupant}[removable]" : $"{direction}:{occupant}";
+    }
+
+    /// <summary>
     /// The four cardinal approaches to a tile, each with its blocker, as one bounded token.
     ///
     /// A refusal that says `target_standable=true; target_walkable=true; blocked_by=none` next to
@@ -651,11 +672,13 @@ if (movementDisposition != LocalDispositionKind.Idle)
             }
             string occupant = DescribeTargetOccupant(location, neighbourTile);
             bool walkable = IsWalkableTile(location, actor, neighbourTile);
-            // Three readable states. `open` = the planner walks there. Otherwise the blocker is named when it is an
-            // object or terrain feature, and `blocked` when the planner refuses a tile that carries neither -- map
-            // collision or a building -- because reporting `none` there read as "nothing is wrong" for a tile the
-            // planner will not enter.
-            parts.Add(walkable ? $"{direction}:open" : occupant == "none" ? $"{direction}:blocked" : $"{direction}:{occupant}");
+            // A blocked tile that holds a REMOVABLE object is a different message from one that does not: the first
+            // tells the caller the wall can be taken down with a tool it already has, the second that it cannot. The
+            // distinction is what turns "no route" into a next step, and it costs no reachability query at all.
+            bool removable = !walkable
+                && location.objects.TryGetValue(neighbourTile, out StardewValley.Object? blockedItem)
+                && IsRemovableLitter(blockedItem);
+            parts.Add(FormatApproachEntry(direction, walkable, occupant, removable));
         }
         return string.Join(",", parts);
     }

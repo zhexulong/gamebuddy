@@ -164,6 +164,10 @@ public class MoveApproachSubstitutionTests
             "large terrain features block tiles and are not in objects or terrainFeatures");
         controller.Should().Contain("building:",
             "building footprints block tiles and are not in objects or terrainFeatures");
+        // And a refusal must say when the wall is REMOVABLE, because "no route" and "no route until you chop the
+        // twig" are different messages. The predicates are the same ones the clearing actions use.
+        controller.Should().Contain("IsRemovableLitter(blockedItem)");
+        controller.Should().Contain("IsTwigLitter(item) || NativeItemPredicates.IsBreakableStone(item) || item.IsWeeds()");
     }
 
     [Fact]
@@ -172,6 +176,21 @@ public class MoveApproachSubstitutionTests
         Vector2 target = new(10f, 10f);
         ExecutionManager.SelectStandingApproachTile(target, new Vector2(1f, 1f), _ => false)
             .Should().BeNull();
+    }
+
+    [Fact]
+    public void ApproachEntriesSeparateTheFourShapes()
+    {
+        // Measured live, in one refusal: `west:(O)294@34,49` (a twig), `north:(O)2@35,54` (a stone) and
+        // `east:blocked` (map-level). The first two can be taken down with a tool the companion already has; the
+        // third cannot. The entry text has to keep those apart.
+        StardewBodyController.FormatApproachEntry("west", true, "none", false).Should().Be("west:open");
+        StardewBodyController.FormatApproachEntry("east", false, "none", false).Should().Be("east:blocked");
+        StardewBodyController.FormatApproachEntry("north", false, "(O)2@35,54", false).Should().Be("north:(O)2@35,54");
+        StardewBodyController.FormatApproachEntry("west", false, "(O)294@34,49", true)
+            .Should().Be("west:(O)294@34,49[removable]");
+        // A wall that is walkable is open regardless of what occupies it decoratively: the planner decides.
+        StardewBodyController.FormatApproachEntry("south", true, "terrain:HoeDirt@35,55", true).Should().Be("south:open");
     }
 
     [Fact]
