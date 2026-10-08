@@ -28,6 +28,7 @@ import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
+import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { Composer } from "./Composer";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
@@ -1161,20 +1162,19 @@ export function ComposedReferenceGameApp() {
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
-  // The only honest wire signal that the lifecycle is NOT yet activated is the
-  // pre-staged shape: nothing detected, nothing launched, no expected Player Host
-  // generation. Launch is not offered before activation because
-  // `gameLaunchAvailable` requires the exact expected generation, which the
-  // coordinator projects solely while it owns a staged Player Host.
-  const gameActivationAvailable = view.kind === "ready" && view.root.game !== null &&
-    view.root.game.game.prerequisites.status === "unknown" &&
-    view.root.game.game.instance.status === "none" &&
-    view.root.game.game.instance.generation < 1;
-  const gameSetupAvailable = view.kind === "ready" && view.root.game !== null &&
-    view.root.game.game.prerequisites.status === "unknown" && view.root.game.game.instance.status === "none";
-  const gameLaunchAvailable = view.kind === "ready" && view.root.game !== null &&
-    view.root.game.game.prerequisites.status === "met" && view.root.game.game.instance.status === "none" &&
-    view.root.game.game.instance.generation >= 1;
+  // The three lifecycle controls are one derivation owned by
+  // `game-lifecycle-controls.ts`, which reads the frozen Host vocabulary
+  // directly: the activated-but-not-launched shape the coordinator publishes is
+  // `prerequisites: "met"` with `instance.status: "none"` and the exact expected
+  // generation, and that is where the launch control belongs.
+  const {
+    activationAvailable: gameActivationAvailable,
+    setupAvailable: gameSetupAvailable,
+    launchAvailable: gameLaunchAvailable,
+  } = deriveGameLifecycleControlAvailability({
+    ready: view.kind === "ready",
+    game: view.kind === "ready" ? view.root.game : null,
+  });
   const gameStopAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
