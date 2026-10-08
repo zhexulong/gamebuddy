@@ -107,6 +107,23 @@ const gameProfileWithDiscovery = composeGameProfile({
   navigationItemIds: ["game"],
 });
 
+/** The coordinator's own bounded code shape: the only nested message that may cross. */
+const BOUNDED_COORDINATOR_CODE = /^stardew_[a-z0-9_]+$/;
+
+/**
+ * A lifecycle refusal's exact body. A refusal whose composed code is itself the
+ * generic `game_unavailable` / `state_unavailable` carries the bounded coordinator
+ * code as `cause` (that is what keeps distinct faults distinct); a refusal whose
+ * code already names its fault keeps exactly the body it had, and a message that is
+ * not one of the coordinator's own bounded codes is never projected at all.
+ */
+function lifecycleProblemBody(internalMessage: string, expectedCode: string) {
+  const generic = expectedCode === "game_unavailable" || expectedCode === "state_unavailable";
+  return generic && BOUNDED_COORDINATOR_CODE.test(internalMessage)
+    ? { code: expectedCode, cause: internalMessage }
+    : { code: expectedCode };
+}
+
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   const base = TavernBrowserFixtureV1.snapshot();
   return {
@@ -570,10 +587,96 @@ test("game.launch maps only frozen typed outcomes without leaking internal error
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
+});
+
+/** Issues one launch on a fresh composed surface whose launch throws `thrown`. */
+async function launchRefusal(thrown: unknown): Promise<string> {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithLaunch }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameLaunch: async () => { throw thrown; },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }),
+    });
+    assert.equal(response.status, 409);
+    return await response.text();
+  } finally { await server.close(); }
+}
+
+test("the launch wrapper's distinct causes stop collapsing into one masked answer", async () => {
+  // The failure this test exists for: `game_unavailable` stood for a quarantined
+  // lifecycle, a closing lifecycle, a wrapper whose cause named an absent runtime
+  // collaborator, and a wrapper whose cause was an OS-level spawn failure - so the
+  // player, the client and the person fixing it all got the same unactionable
+  // answer. Every case below must now answer distinguishably.
+  const wrapped = (cause: unknown) => new Error("stardew_player_host_launch_failed", { cause });
+  const nested = new Error("native role launch failed");
+  (nested as { cause?: unknown }).cause = new Error("stardew_contained_runtime_arm_unavailable");
+  const osLevel = new Error("spawn E:\\Steam\\Stardew Valley\\StardewModdingAPI.exe ENOENT");
+
+  const cases: readonly (readonly [Error, Record<string, string>])[] = [
+    // A known cause with an honest existing composed code of its own: the code itself
+    // now names the fault, so nothing is stacked on top of it.
+    [wrapped(new Error("stardew_player_host_launch_runtime_unavailable")), { code: "game_runtime_unavailable" }],
+    // An unknown cause keeps the wrapper's code and is told apart by its own bounded name.
+    [wrapped(new Error("stardew_owned_player_host_bootstrap_owner_quarantined")), { code: "game_unavailable", cause: "stardew_owned_player_host_bootstrap_owner_quarantined" }],
+    [wrapped(new Error("stardew_installation_admission_failed")), { code: "game_unavailable", cause: "stardew_installation_admission_failed" }],
+    // The bounded code may sit deeper than the first cause.
+    [wrapped(nested), { code: "game_unavailable", cause: "stardew_contained_runtime_arm_unavailable" }],
+    // An OS-level failure is not a coordinator code: only the wrapper may cross.
+    [wrapped(osLevel), { code: "game_unavailable", cause: "stardew_player_host_launch_failed" }],
+    // Refusals that carry no cause fall back to their own bounded name.
+    [new Error("stardew_player_host_launch_quarantined"), { code: "game_unavailable", cause: "stardew_player_host_launch_quarantined" }],
+    [new Error("stardew_lifecycle_closing"), { code: "game_unavailable", cause: "stardew_lifecycle_closing" }],
+  ];
+
+  const observed = new Set<string>();
+  for (const [thrown, expectedBody] of cases) {
+    const text = await launchRefusal(thrown);
+    assert.deepEqual(JSON.parse(text), expectedBody);
+    // Nothing but bounded tokens may cross: no OS text, no path, no raw cause message.
+    assert.equal(text.includes("Steam"), false);
+    assert.equal(text.includes("ENOENT"), false);
+    assert.equal(text.includes("native role launch failed"), false);
+    observed.add(text);
+  }
+  assert.equal(observed.size, cases.length, "two collapsed launch faults still answer identically");
+});
+
+test("the bounded-cause walk terminates on a cyclic cause chain", async () => {
+  // A `cause` chain is attacker-shaped in the general case, so the walk is
+  // depth-limited: a cycle must not make the projection unbounded, and the
+  // refusal's own bounded message is what such a chain falls back to.
+  const first = new Error("native role launch failed");
+  const second = new Error("another unbounded producer message");
+  (first as { cause?: unknown }).cause = second;
+  (second as { cause?: unknown }).cause = first;
+  const text = await launchRefusal(new Error("stardew_player_host_launch_failed", { cause: first }));
+  assert.deepEqual(JSON.parse(text), {
+    code: "game_unavailable",
+    cause: "stardew_player_host_launch_failed",
+  });
 });
 
 test("game.stop mount is exact and cannot drift from its production callback", () => {
@@ -1191,8 +1294,10 @@ test("game.prerequisites.setup maps only frozen typed outcomes without leaking i
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
       assert.equal(text.includes("Stardew Valley"), false);
     } finally { await server.close(); }
   }
@@ -1225,8 +1330,10 @@ test("game.stop maps only frozen typed outcomes without leaking internal errors"
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
@@ -1259,8 +1366,10 @@ test("game.disconnect maps only frozen typed outcomes without leaking internal e
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
@@ -1305,7 +1414,7 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
         }),
       });
       assert.equal(response.status, 409);
-      assert.deepEqual(await response.json(), { code: expectedCode });
+      assert.deepEqual(await response.json(), lifecycleProblemBody(internalMessage, expectedCode));
     } finally {
       await server.close();
     }
@@ -1570,8 +1679,10 @@ test("game.resume maps only frozen typed outcomes without leaking internal error
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
@@ -1744,8 +1855,10 @@ test("game.reopen maps only frozen typed outcomes without leaking internal error
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
@@ -1927,8 +2040,10 @@ test("game.create maps only frozen typed outcomes without leaking internal error
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
@@ -2092,8 +2207,10 @@ test("game.resume.cancel maps only frozen typed outcomes without leaking interna
       });
       assert.equal(response.status, 409);
       const text = await response.text();
-      assert.deepEqual(JSON.parse(text), { code: expectedCode });
-      assert.equal(text.includes(internalMessage), false);
+      assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
+      // An unbounded internal message must still be provably absent from the body.
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
+        assert.equal(text.includes(internalMessage), false);
     } finally { await server.close(); }
   }
 });
