@@ -32,14 +32,23 @@
  * This fixture now supplies all of them from an isolated user tier (its own XDG_CONFIG_HOME), which
  * also makes it hermetic - otherwise it silently inherits the operator's own user config, and this
  * machine's sets an 800k threshold, so no fold could ever happen.
- * 
- * The fold STILL does not fire: `protected_tokens_effective` now honors the fixture (4000), and after
- * twenty real turns `last_input_tokens = 10898` - far past the 6000 threshold - yet
- * `times_execute_threshold_reached = 0`. So one more condition remains. The most likely candidate is
- * that the pressure decision needs a context-usage reading the Pi session supplies at request time
- * (the same run reports `detected_context_limit_provenance = unknown` while carrying a usable window),
- * i.e. that a bare in-process session never crosses it however much text it holds. The next probe is
- * to log the handler's own trigger inputs on one pass, rather than reason about them.
+ *
+ * With that fixed, probing the vendor's own decision (an ESM-safe global, since patching its bundle
+ * with `require` silently swallows the writes) answered where it was stuck:
+ *
+ *   pass  1: "compartment trigger: not firing at 0.1% because unsummarized tail from 1 is too small"
+ *   ...
+ *   pass 29: "compartment trigger: proactive fire at 2.2% (floor=0% projected post-drop=none ...)"
+ *
+ * So the trigger DOES fire - but only once the ELIGIBLE tail above the protected boundary outgrows the
+ * budget (about 1.4% of the 750k window here, a few turns after the raw usage first crossed the
+ * threshold), and the historian then runs ASYNCHRONOUSLY: the firing pass is never the pass that shows
+ * a chapter. The chapter appears in a m[0] rendered after the historian publishes.
+ *
+ * What remains is therefore mechanical, not mysterious: keep turning until a chapter marker appears
+ * (the loop below does, bounded), and confirm the fixture both waits correctly and stays honest when
+ * the historian never publishes. That last verification is NOT finished - this test still reports the
+ * open finding rather than a verdict, and must not be read as evidence either way.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -115,6 +124,7 @@ test(
     if (apiKey === undefined) throw new Error("requires CPA_OAI_API_KEY");
     const key = apiKey;
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+    let runtime: Awaited<ReturnType<typeof createCompanionRuntime>> | undefined;
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
     // Magic Context treats the fold trigger as a USER-tier trusted key, and its rule is explicit:
     // "a repository may only RAISE execute_threshold_tokens above the user's trusted token
@@ -162,7 +172,7 @@ test(
         "utf8",
       );
       const markers = await captureMarkers(async () => {
-        const runtime = await createCompanionRuntime(
+        runtime = await createCompanionRuntime(
           identity,
           root,
           undefined,
@@ -178,9 +188,26 @@ test(
           // in a test. The trigger alone is not enough - see `historianProtectedTokens`.
           { historianExecuteThresholdTokens: 6_000, historianProtectedTokens: 4_000 },
         );
-      for (let index = 1; index <= 20; index += 1) {
-        await runtime.session.prompt(filler(index));
-      }
+        // Thirty turns, and the number is measured rather than guessed. Magic Context's own log gives
+        // the reason on each pass it declines:
+        //   "compartment trigger: not firing at 0.4% because unsummarized tail from 1 is too small"
+        //   "compartment trigger: proactive fire at 1.4% (floor=0% projected post-drop=none target=0.6%)"
+        // So the trigger needs the ELIGIBLE tail (above the protected boundary) to reach the budget,
+        // which at this window geometry happens around 1.4% of 750k tokens - a few turns past the
+        // moment the raw usage first crossed the threshold. The historian then runs asynchronously and
+        // the chapter appears in a LATER pass's m[0], which is why the loop keeps prompting.
+        for (let index = 1; index <= 30; index += 1) {
+          await runtime.session.prompt(filler(index));
+        }
+        // The historian runs ASYNCHRONOUSLY (fire-and-forget), so the chapter can only appear in a m[0]
+        // rendered AFTER it publishes - the pass that fires is not the pass that shows it. Wait for it
+        // with cheap turns (each one re-renders m[0] and emits a fresh chapter marker) rather than by
+        // guessing how long a historian call takes.
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          if (markers.some(({ line }) => /^\[probe:m0_chapters\]\s+\S+\s+[1-9]/u.test(line))) break;
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          await runtime.session.prompt("Still here?");
+        }
       });
       const chapterLines = markers
         .map(({ line }) => /^\[probe:m0_chapters\]\s+(\S+)\s+(\d+)\s+(\S+)$/u.exec(line))
@@ -212,6 +239,8 @@ test(
         assert.equal(seen.size, 1, `revision ${revision} rendered ${seen.size} different m[0] byte images`);
       }
     } finally {
+      // Without this the run's handles keep the test process alive after the assertions.
+      runtime?.session.dispose();
       // Diagnosis aid: keep the root when asked, so Magic Context's own database can be read
       // afterwards (it is where the fold's reasons live: `session_meta`).
       if (process.env.GAMEBUDDY_CHAPTER_FOLD_KEEP_ROOT === "1") {
