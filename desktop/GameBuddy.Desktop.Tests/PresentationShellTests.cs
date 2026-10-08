@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json;
 
 namespace GameBuddy.Desktop.Tests;
 
@@ -167,6 +168,180 @@ public sealed class PresentationShellTests
     }
 
     /// <summary>
+    /// The dev browser hook exists in a launch only when a launch says so, and it says so with one
+    /// exact token. Catches: a GAMEBUDDY_DESKTOP_BROWSER_COMMAND left in a developer's or a
+    /// player's environment taking the entry over, a flag spelling that is treated as "close
+    /// enough" ("0", "true", "yes", an empty value, or "1" with anything around it), and a
+    /// command that is consulted before the flag decided - a variable that is only read where it
+    /// can never matter is the same as one that is never read.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("true")]
+    [InlineData("yes")]
+    [InlineData(" 1")]
+    [InlineData("1 ")]
+    public void The_dev_browser_hook_is_ignored_unless_the_enable_flag_is_exactly_one(string? flag)
+    {
+        var opened = new List<Uri>();
+        var association = new Func<Uri, bool>(url => { opened.Add(url); return true; });
+        var environment = new EnvironmentProbe(flag, NominatedProgramFixture());
+
+        var choice = DesktopDevBrowserHook.Choose(environment.ReadName, association);
+
+        // The player's own association, untouched, and the nominated command not even read.
+        Assert.Same(association, choice.Opener);
+        Assert.Equal(DesktopBrowserPresenter.UnavailableCategory, choice.FailureCategory);
+        Assert.DoesNotContain(environment.ReadNames, name => name == DesktopDevBrowserHook.CommandVariable);
+
+        var presenter = DesktopBrowserPresenter.CreateForTesting(environment.ReadName, association);
+        presenter.Adopt(new Uri(Entry));
+        Assert.True(presenter.OpenOnce());
+        Assert.Equal(new[] { Entry }, opened.Select(url => url.AbsoluteUri));
+        Assert.Equal(1, presenter.OpenCount);
+        Assert.Equal(DesktopBrowserPresenter.OpenedCategory, presenter.ResultCategory());
+    }
+
+    [Fact]
+    public void The_dev_browser_hook_names_the_variables_and_the_bounded_category_it_reports()
+    {
+        // The two names are the whole operator contract of this affordance, and the category is
+        // what a launch that could not hand the entry over says instead of a reason that would
+        // have to carry the entry.
+        Assert.Equal("GAMEBUDDY_DEV_BROWSER_HOOK", DesktopDevBrowserHook.EnableVariable);
+        Assert.Equal("GAMEBUDDY_DESKTOP_BROWSER_COMMAND", DesktopDevBrowserHook.CommandVariable);
+        Assert.Equal("1", DesktopDevBrowserHook.EnableValue);
+        Assert.Equal("presentation_dev_browser_unavailable", DesktopDevBrowserHook.UnavailableCategory);
+        Assert.NotEqual(DesktopBrowserPresenter.UnavailableCategory, DesktopDevBrowserHook.UnavailableCategory);
+    }
+
+    /// <summary>
+    /// An enabled hook with no program named runs nothing and does not fall back to the player's
+    /// association. Catches: a silent fallback, which would spend this launch's one-time admission
+    /// on exactly the undrivable browser the affordance exists to remove, and a refusal that takes
+    /// the launch (or the admitted Host session behind it) down with it.
+    ///
+    /// (The brief this work came from asked for "the hook is ignored" in this case as well. It
+    /// cannot be: an ignored hook takes the association path, and the requirement for an enabled
+    /// hook with nothing named - as for one whose program cannot start - is this bounded category.
+    /// The flag is an explicit statement of intent, so it is honoured rather than second-guessed.)
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_enabled_dev_browser_hook_without_a_named_program_runs_nothing_and_reports_its_own_category(string? command)
+    {
+        var opened = new List<Uri>();
+        var association = new Func<Uri, bool>(url => { opened.Add(url); return true; });
+        var environment = new EnvironmentProbe("1", command);
+
+        var choice = DesktopDevBrowserHook.Choose(environment.ReadName, association);
+        Assert.NotSame(association, choice.Opener);
+        Assert.Equal(DesktopDevBrowserHook.UnavailableCategory, choice.FailureCategory);
+        Assert.False(choice.Opener(new Uri(Entry)));
+
+        var presenter = DesktopBrowserPresenter.CreateForTesting(environment.ReadName, association);
+        presenter.Adopt(new Uri(Entry));
+        Assert.False(presenter.OpenOnce());
+        Assert.Empty(opened);
+        Assert.Equal(0, presenter.OpenCount);
+        Assert.Equal(DesktopDevBrowserHook.UnavailableCategory, presenter.ResultCategory());
+        // The launch is still alive and still answerable: the entry stays adopted, and the tray's
+        // Open is answered with the same bounded category rather than an exception.
+        Assert.True(presenter.HasEntry);
+        Assert.False(presenter.Open());
+        Assert.Equal(DesktopDevBrowserHook.UnavailableCategory, presenter.ResultCategory());
+    }
+
+    /// <summary>
+    /// With both variables set, the nominated program - a real executable image - is started
+    /// exactly once by the automatic path and receives the entry as its only argument. Catches: an
+    /// entry that is split, quoted, decorated or handed over through a command line, an automatic
+    /// open that happens twice, and an association that is consulted even though the launch asked
+    /// for a nominated program.
+    /// </summary>
+    [Fact]
+    public async Task The_nominated_program_is_started_once_with_the_entry_as_its_only_argument()
+    {
+        var report = ResetNominatedProgramReport();
+        var environment = new EnvironmentProbe("1", NominatedProgramFixture());
+        var presenter = DesktopBrowserPresenter.CreateForTesting(
+            environment.ReadName,
+            _ => throw new InvalidOperationException("a launch with an enabled hook must not consult the player's association"));
+        presenter.Adopt(new Uri(Entry));
+
+        Assert.True(presenter.OpenOnce());
+        await WaitFor(() => ReadNominatedProgramInvocations(report).Length == 1);
+        // The automatic open is still once per launch: the second ask starts nothing.
+        Assert.False(presenter.OpenOnce());
+        Assert.Equal(1, presenter.OpenCount);
+        Assert.Equal(DesktopBrowserPresenter.OpenedCategory, presenter.ResultCategory());
+
+        var invocations = ReadNominatedProgramInvocations(report);
+        Assert.Single(invocations);
+        Assert.Equal(new[] { Entry }, invocations[0]);
+    }
+
+    /// <summary>
+    /// A nominated program that cannot be started is a missing presentation and never a failed
+    /// session: the launch reports one bounded category, opens nothing else, throws nothing, and
+    /// keeps answering. Catches: an unhandled exception out of the launcher's one new process
+    /// start, which would end a healthy Host session over a broken development affordance.
+    /// </summary>
+    [Fact]
+    public void A_nominated_program_that_cannot_start_leaves_the_launch_alive_and_reports_the_bounded_category()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), "gb-dev-browser-missing-" + Guid.NewGuid().ToString("N"), "not-a-program.exe");
+        var opened = new List<Uri>();
+        var environment = new EnvironmentProbe("1", missing);
+        var presenter = DesktopBrowserPresenter.CreateForTesting(
+            environment.ReadName,
+            url => { opened.Add(url); return true; });
+        presenter.Adopt(new Uri(Entry));
+
+        Assert.False(presenter.OpenOnce());
+        Assert.Equal(0, presenter.OpenCount);
+        Assert.Equal(DesktopDevBrowserHook.UnavailableCategory, presenter.ResultCategory());
+        // Nothing was opened as a second choice, and nothing was created on the way.
+        Assert.Empty(opened);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(missing)));
+        // The launch keeps working after the refusal.
+        Assert.False(presenter.Open());
+        Assert.Equal(DesktopDevBrowserHook.UnavailableCategory, presenter.ResultCategory());
+    }
+
+    /// <summary>
+    /// The hook's own source is where the entry could leak or be split, so it is pinned: the entry
+    /// is formatted exactly once and only into the single argv element of a directly started
+    /// program, no shell is involved, the failure path adds no message that could carry the entry,
+    /// and the launch reaches the hook only through its own environment and its own association.
+    /// Catches: a concatenated command line, a shell (which reads the entry's '&' as a command
+    /// separator and would split the boot token), a diagnostic that echoes the entry, and a
+    /// presenter that stops consulting the hook at all.
+    /// </summary>
+    [Fact]
+    public void The_dev_browser_hook_formats_the_entry_once_and_cannot_convey_it_anywhere_else()
+    {
+        var source = File.ReadAllText(Path.Combine(DesktopProjectRoot(), "DesktopDevBrowserHook.cs"));
+
+        Assert.Equal(1, CountOccurrences(source, "AbsoluteUri"));
+        Assert.Contains("start.ArgumentList.Add(entry.AbsoluteUri);", source, StringComparison.Ordinal);
+        Assert.Contains("UseShellExecute = false", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("UseShellExecute = true", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Arguments = ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("cmd.exe", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("powershell", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("string.Concat", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("+ \" ", source, StringComparison.Ordinal);
+
+        var presenter = File.ReadAllText(Path.Combine(DesktopProjectRoot(), "DesktopBrowserPresenter.cs"));
+        Assert.Contains("DesktopDevBrowserHook.Choose(Environment.GetEnvironmentVariable, OpenWithShell)", presenter, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The handoff and its presenter have no channel that could carry the entry anywhere but the
     /// pipe and the shell's own association call. Catches: a diagnostic, a log line, a debug
     /// trace, an exception message or a file write that would put a live one-shot credential
@@ -175,7 +350,7 @@ public sealed class PresentationShellTests
     [Fact]
     public void The_handoff_source_has_no_console_log_debug_or_file_channel()
     {
-        foreach (var file in new[] { "DesktopPresentationHandoff.cs", "DesktopBrowserPresenter.cs" })
+        foreach (var file in new[] { "DesktopPresentationHandoff.cs", "DesktopBrowserPresenter.cs", "DesktopDevBrowserHook.cs" })
         {
             var source = File.ReadAllText(Path.Combine(DesktopProjectRoot(), file));
             foreach (var forbidden in new[] { "Console.", "WriteLine", "File.", "Directory.", "Trace.", "Debug.", "EventLog", "Log(", "Message =" })
@@ -432,6 +607,94 @@ public sealed class PresentationShellTests
     {
         var node = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
         return File.Exists(node) ? node : throw new InvalidOperationException("test_publisher_node_unavailable");
+    }
+
+    /// <summary>
+    /// The nominated program of the dev browser hook, as this test project builds it: a real
+    /// executable image that records the arguments it was started with. It is the only account of
+    /// the handover that does not come from the launcher itself.
+    /// </summary>
+    private static string NominatedProgramFixture()
+    {
+        var directory = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "DevBrowserNominatedProgramFixture"));
+        var candidates = Directory.Exists(directory)
+            ? Directory.EnumerateFiles(directory, "DevBrowserNominatedProgramFixture.exe", SearchOption.AllDirectories)
+                .OrderBy(path => path.Length)
+                .ToArray()
+            : [];
+        Assert.True(candidates.Length > 0, $"The nominated-program fixture was not built under {directory}.");
+        return candidates[0];
+    }
+
+    private static string ResetNominatedProgramReport()
+    {
+        var report = Path.Combine(Path.GetDirectoryName(NominatedProgramFixture())!, "nominated-program-invocation.jsonl");
+        if (File.Exists(report)) File.Delete(report);
+        return report;
+    }
+
+    /// <summary>One entry per invocation, in the order the nominated program was started.</summary>
+    private static string[][] ReadNominatedProgramInvocations(string report)
+    {
+        if (!File.Exists(report)) return [];
+        // The nominated program appends to this file, and it may still hold its handle while the
+        // test looks: a reader that demands exclusive access would turn this proof into a race.
+        string[] lines;
+        using (var stream = new FileStream(report, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        using (var reader = new StreamReader(stream))
+        {
+            lines = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        var invocations = new List<string[]>();
+        foreach (var line in lines)
+        {
+            if (!line.StartsWith('[')) continue;
+            try
+            {
+                if (JsonSerializer.Deserialize<string[]>(line) is { } invocation) invocations.Add(invocation);
+            }
+            catch (JsonException)
+            {
+                // A line that is not yet a whole record is not an invocation.
+            }
+        }
+
+        return [.. invocations];
+    }
+
+    private static int CountOccurrences(string text, string token)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(token, StringComparison.Ordinal); index >= 0;
+             index = text.IndexOf(token, index + token.Length, StringComparison.Ordinal)) count += 1;
+        return count;
+    }
+
+    /// <summary>
+    /// A launch's environment as the hook reads it, plus the names it was actually asked for: a
+    /// variable that is only read where it can never matter counts as one that was not read.
+    /// </summary>
+    private sealed class EnvironmentProbe(string? flag, string? command)
+    {
+        private readonly List<string> read = [];
+
+        internal IReadOnlyList<string> ReadNames
+        {
+            get { lock (read) return [.. read]; }
+        }
+
+        internal string? ReadName(string name)
+        {
+            lock (read) read.Add(name);
+            return name switch
+            {
+                DesktopDevBrowserHook.EnableVariable => flag,
+                DesktopDevBrowserHook.CommandVariable => command,
+                _ => null,
+            };
+        }
     }
 
     private static string DesktopProjectRoot() =>

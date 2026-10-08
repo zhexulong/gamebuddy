@@ -19,9 +19,14 @@
   <ItemGroup>
     <Compile Remove="Fixtures\ExactChildBootstrapFixture\**\*.cs" />
     <Compile Remove="Fixtures\DesktopHostRuntimeFixture\**\*.cs" />
+    <Compile Remove="Fixtures\DevBrowserNominatedProgramFixture\**\*.cs" />
     <ProjectReference Include="..\GameBuddy.Desktop\GameBuddy.Desktop.csproj" />
     <ProjectReference Include="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="Fixtures\DesktopHostRuntimeFixture\DesktopHostRuntimeFixture.csproj" ReferenceOutputAssembly="false" />
+    <!-- The nominated program the dev browser hook test starts is a real executable image: the
+         test's claim about how the entry crosses the process boundary is only worth something if
+         a real process received it. It is built beside the tests and never published. -->
+    <ProjectReference Include="Fixtures\DevBrowserNominatedProgramFixture\DevBrowserNominatedProgramFixture.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <Target Name="PublishExactChildBootstrapFixture" AfterTargets="Build" Condition="'$(SkipFixturePublish)' != 'true'">
     <MSBuild Projects="Fixtures\ExactChildBootstrapFixture\ExactChildBootstrapFixture.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(MSBuildProjectDirectory)\bin\$(Configuration)\net8.0-windows\Fixtures\ExactChildBootstrapFixture\" />

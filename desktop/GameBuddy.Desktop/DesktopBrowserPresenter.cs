@@ -19,6 +19,11 @@ namespace GameBuddy.Desktop;
 /// it. An explicit tray <c>Open</c> is the player asking again, which is a different
 /// act and is allowed to repeat.
 /// </para>
+/// <para>
+/// The opener itself is the player's association, except in a launch that explicitly asks for a
+/// nominated program instead: <see cref="DesktopDevBrowserHook"/> owns that dev/QA-only choice and
+/// the bounded category an enabled hook that could not hand the entry over reports.
+/// </para>
 /// </summary>
 internal sealed class DesktopBrowserPresenter
 {
@@ -26,20 +31,41 @@ internal sealed class DesktopBrowserPresenter
     internal const string UnavailableCategory = "presentation_open_unavailable";
     internal const string NotAdoptedCategory = "presentation_entry_absent";
 
-    private readonly Func<Uri, bool> openWithShell;
+    private readonly Func<Uri, bool> openWithEntry;
+    private readonly string failureCategory;
     private Uri? entry;
     private int opened;
     private int automatic;
 
-    internal DesktopBrowserPresenter() : this(OpenWithShell) { }
+    internal DesktopBrowserPresenter()
+        : this(DesktopDevBrowserHook.Choose(Environment.GetEnvironmentVariable, OpenWithShell)) { }
 
-    /// <summary>Test seam: the same decision, with the shell's own launch replaced by an observer.</summary>
-    private DesktopBrowserPresenter(Func<Uri, bool> openWithShell) => this.openWithShell = openWithShell;
+    private DesktopBrowserPresenter((Func<Uri, bool> Opener, string FailureCategory) choice)
+        : this(choice.Opener, choice.FailureCategory) { }
 
-    internal static DesktopBrowserPresenter CreateForTesting(Func<Uri, bool> openWithShell)
+    private DesktopBrowserPresenter(Func<Uri, bool> openWithEntry, string failureCategory)
     {
-        ArgumentNullException.ThrowIfNull(openWithShell);
-        return new DesktopBrowserPresenter(openWithShell);
+        this.openWithEntry = openWithEntry;
+        this.failureCategory = failureCategory;
+    }
+
+    /// <summary>Test seam: the same decision, with the entry's own launch replaced by an observer.</summary>
+    internal static DesktopBrowserPresenter CreateForTesting(Func<Uri, bool> openWithEntry)
+    {
+        ArgumentNullException.ThrowIfNull(openWithEntry);
+        return new DesktopBrowserPresenter(openWithEntry, UnavailableCategory);
+    }
+
+    /// <summary>
+    /// Test seam: the same composition one launch performs, with the launch's own environment and
+    /// association replaced, so a test observes the dev browser hook's own choice and its bounded
+    /// category through the production path rather than through a second implementation of it.
+    /// </summary>
+    internal static DesktopBrowserPresenter CreateForTesting(Func<string, string?> read, Func<Uri, bool> playerAssociation)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(playerAssociation);
+        return new DesktopBrowserPresenter(DesktopDevBrowserHook.Choose(read, playerAssociation));
     }
 
     /// <summary>Whether this launch has a presentation entry at all.</summary>
@@ -84,7 +110,7 @@ internal sealed class DesktopBrowserPresenter
         bool openedNow;
         try
         {
-            openedNow = openWithShell(current);
+            openedNow = openWithEntry(current);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
@@ -98,7 +124,7 @@ internal sealed class DesktopBrowserPresenter
     }
 
     /// <summary>The category of the last open attempt, for the tray's own truth.</summary>
-    internal string ResultCategory() => entry is null ? NotAdoptedCategory : OpenCount > 0 ? OpenedCategory : UnavailableCategory;
+    internal string ResultCategory() => entry is null ? NotAdoptedCategory : OpenCount > 0 ? OpenedCategory : failureCategory;
 
     /// <summary>
     /// The player's default handler for the entry. The entry is passed as the shell's
