@@ -20,7 +20,6 @@ import {
 import {
   createComposedReferenceGameBrowserApi,
   type ComposedReferenceGameBrowserRootV1,
-  type GameBrowserStateV1,
   type GameCreateRequestV1,
   type GameCreateResultV1,
   type GameResumeResultV1,
@@ -31,6 +30,7 @@ import {
 import { composedProblemView as problemView, type ProblemViewState } from "../composed-problem-view";
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { Composer } from "./Composer";
+import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
@@ -73,13 +73,6 @@ type ReadyView = Readonly<{
   locale: Locale;
 }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
-type CabinViewState =
-  | Readonly<{ kind: "loading" }>
-  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[] }>
-  | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
-  | Readonly<{ kind: "admitted" }>
-  | Readonly<{ kind: "uncertain" }>
-  | Readonly<{ kind: "unavailable" }>;
 
 function newIdempotencyKey(): string {
   const bytes = new Uint8Array(16);
@@ -1180,16 +1173,12 @@ export function ComposedReferenceGameApp() {
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
-  const gameResumeInFlight = gameResumeActive;
   const gameReopenAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.actionAuthority === "paused" &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     view.root.game.game.connectionStatus === "connected_idle";
-  const gameReopenInFlight = gameReopenActive;
-  const gameResumeCancelInFlight = gameResumeCancelActive;
-  const gameCreateInFlight = gameCreateActive;
   const resumeFailureSurface = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
@@ -1211,7 +1200,15 @@ export function ComposedReferenceGameApp() {
       {view.kind === "ready" && view.session.snapshot.chat !== null && (
         <>
            <header className="app-bar">
-             <div className="app-bar-title">{view.session.snapshot.chat.companion.name}</div>
+             {/* The companion is named once, next to its own monogram, exactly
+                 as the chat surfaces' app bar does. The mark is a name-derived
+                 monogram placeholder, never decorative imagery. */}
+             <div className="app-bar-companion">
+               <span className="avatar avatar-small" aria-hidden="true">
+                 {view.session.snapshot.chat.companion.name.slice(0, 1).toUpperCase()}
+               </span>
+               <div className="app-bar-title">{view.session.snapshot.chat.companion.name}</div>
+             </div>
            </header>
           <main id="main-content" className="app-main-content">
             <Timeline
@@ -1223,124 +1220,84 @@ export function ComposedReferenceGameApp() {
             />
              {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
              <section className="reference-draft-section" aria-label={labels().savedDraft}>
+               <h2>{labels().savedDraft}</h2>
                {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (
                  <p>{view.draft.text}</p>
                ) : (
                  <p>{labels().noSavedDraft}</p>
                )}
              </section>
-              <section className="composed-game-drawer" aria-label={labels().gameState}>
-                  <GameProjection game={view.root.game} />
-                  {gameSyncing && <p role="status">{labels().gameSyncing}</p>}
-                  {gameActivationAvailable && (
-                    <button
-                      type="button"
-                      disabled={gameActivationActive}
-                      aria-label={labels().gameActivation}
-                      onClick={() => void handleLifecycleActivate()}
-                    >
-                      {labels().gameActivation}
-                    </button>
-                  )}
-                  {gameActivationActive && <p role="status">{labels().gameActivationInProgress}</p>}
-                  {gameActivationFailed && <p role="status">{labels().gameActivationFailed}</p>}
-                  {gameActivationUnavailable && <p role="status">{labels().gameActivationUnavailable}</p>}
-                  {gameSetupAvailable && (
-                    <button type="button" disabled={gameSetupActive} onClick={() => void handleGameSetup()}>
-                      {labels().gameSetup}
-                    </button>
-                  )}
-                  {gameSetupNotStaged
-                    ? <p role="status">{labels().gameActivationRequired}</p>
-                    : gameSetupFailed && <p role="status">{labels().gameSetupFailed}</p>}
-                  {gameLaunchAvailable && (
-                    <button type="button" disabled={gameLaunchActive} aria-label={labels().gameLaunch} onClick={() => void handleGameLaunch()}>
-                      {labels().gameLaunch}
-                    </button>
-                  )}
-                  {gameLaunchNotStaged
-                    ? <p role="status">{labels().gameActivationRequired}</p>
-                    : gameLaunchFailed && <p role="status">{labels().gameLaunchFailed}</p>}
-                 {gameStopAvailable && (
-                   <button type="button" disabled={gameStopActive} onClick={() => void handleGameStop()}>
-                     {labels().gameStop}
-                   </button>
-                 )}
-                 {gameStopFailed && <p role="status">{labels().gameStopFailed}</p>}
-                 {disconnectAvailable && (
-                  <button type="button" disabled={disconnectActive} onClick={() => void handleDisconnect()}>
-                    {labels().gameDisconnect}
-                  </button>
-                )}
-                {disconnectFailed && <p role="status">{labels().gameDisconnectFailed}</p>}
-                {gameResumeAvailable && (
-                  <button type="button" disabled={gameResumeInFlight} onClick={() => void handleGameResume()}>
-                    {labels().gameResume}
-                  </button>
-                )}
-                {gameResumeActive && <p role="status">{labels().gameResumeInProgress}</p>}
-                {gameResumeFailed && <p role="status">{labels().gameResumeFailed}</p>}
-                {gameResumeUnavailable && <p role="status">{labels().gameResumeUnavailable}</p>}
-                {resumeFailureSurface && (
-                  <div className="resume-failure-actions">
-                    <button type="button" disabled={gameResumeInFlight} onClick={() => void handleGameResume()}>
-                      {labels().gameRetry}
-                    </button>
-                    <button type="button" disabled={gameResumeCancelInFlight} onClick={() => void handleGameResumeCancel()}>
-                      {labels().gameResumeCancel}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={gameCreateInFlight}
-                      onClick={() => setCreateFormOpen((open) => !open)}
-                    >
-                      {labels().gameCreate}
-                    </button>
-                  </div>
-                )}
-                {gameResumeCancelActive && <p role="status">{labels().gameResumeCancelInProgress}</p>}
-                {gameResumeCancelFailed && <p role="status">{labels().gameResumeCancelFailed}</p>}
-                {createFormOpen && (
-                  <form className="game-create-form" onSubmit={(event) => { event.preventDefault(); void handleGameCreate(); }}>
-                    <h3>{labels().gameCreateFormTitle}</h3>
-                    <label>
-                      <span>{labels().gameCreateIntegration}</span>
-                      <span className="game-create-integration">{STARDEW_GAME_INTEGRATION_ID}</span>
-                    </label>
-                    <label>
-                      <span>{labels().gameCreateContinuityBinding}</span>
-                      <input
-                        type="text"
-                        value={continuityIdentityInput}
-                        onChange={(event) => setContinuityIdentityInput(event.target.value)}
-                        placeholder={labels().gameCreateContinuityBindingHint}
-                      />
-                    </label>
-                    <button type="submit" disabled={gameCreateInFlight}>
-                      {labels().create}
-                    </button>
-                    {gameCreateActive && <p role="status">{labels().gameCreateInProgress}</p>}
-                    {gameCreateFailed && <p role="status">{labels().gameCreateFailed}</p>}
-                    {gameCreateUnavailable && <p role="status">{labels().gameCreateUnavailable}</p>}
-                  </form>
-                )}
-                {gameReopenAvailable && (
-                  <>
-                    <p role="status">{labels().gameActionsPaused}</p>
-                    <button type="button" disabled={gameReopenInFlight} onClick={() => void handleGameReopen()}>
-                      {labels().gameReopen}
-                    </button>
-                  </>
-                )}
-                {gameReopenActive && <p role="status">{labels().gameReopenInProgress}</p>}
-                {gameReopenFailed && <p role="status">{labels().gameReopenFailed}</p>}
-                {gameReopenUnavailable && <p role="status">{labels().gameReopenUnavailable}</p>}
-                <StardewCabinHandoff
-                 state={cabinView}
-                 labels={labels()}
-                 onConfirm={(choice) => void handleCabinConfirmation(choice)}
-                />
-              </section>
+              <GameStatePanel
+                game={view.root.game}
+                labels={labels()}
+                integrationId={STARDEW_GAME_INTEGRATION_ID}
+                syncing={gameSyncing}
+                lifecycle={{
+                  activation: {
+                    available: gameActivationAvailable,
+                    active: gameActivationActive,
+                    failed: gameActivationFailed,
+                    unavailable: gameActivationUnavailable,
+                  },
+                  setup: {
+                    available: gameSetupAvailable,
+                    active: gameSetupActive,
+                    failed: gameSetupFailed,
+                    notStaged: gameSetupNotStaged,
+                  },
+                  launch: {
+                    available: gameLaunchAvailable,
+                    active: gameLaunchActive,
+                    failed: gameLaunchFailed,
+                    notStaged: gameLaunchNotStaged,
+                  },
+                }}
+                session={{
+                  stop: { available: gameStopAvailable, active: gameStopActive, failed: gameStopFailed },
+                  disconnect: {
+                    available: disconnectAvailable,
+                    active: disconnectActive,
+                    failed: disconnectFailed,
+                  },
+                }}
+                resume={{
+                  available: gameResumeAvailable,
+                  active: gameResumeActive,
+                  failed: gameResumeFailed,
+                  unavailable: gameResumeUnavailable,
+                  cancelActive: gameResumeCancelActive,
+                  cancelFailed: gameResumeCancelFailed,
+                  failureSurface: resumeFailureSurface,
+                }}
+                reopen={{
+                  available: gameReopenAvailable,
+                  active: gameReopenActive,
+                  failed: gameReopenFailed,
+                  unavailable: gameReopenUnavailable,
+                }}
+                create={{
+                  active: gameCreateActive,
+                  failed: gameCreateFailed,
+                  unavailable: gameCreateUnavailable,
+                  formOpen: createFormOpen,
+                  continuityIdentity: continuityIdentityInput,
+                }}
+                cabin={cabinView}
+                handlers={{
+                  activate: () => void handleLifecycleActivate(),
+                  setup: () => void handleGameSetup(),
+                  launch: () => void handleGameLaunch(),
+                  stop: () => void handleGameStop(),
+                  disconnect: () => void handleDisconnect(),
+                  resume: () => void handleGameResume(),
+                  resumeCancel: () => void handleGameResumeCancel(),
+                  reopen: () => void handleGameReopen(),
+                  create: () => void handleGameCreate(),
+                  toggleCreateForm: () => setCreateFormOpen((open) => !open),
+                  setContinuityIdentity: setContinuityIdentityInput,
+                  confirmCabin: (choice) => void handleCabinConfirmation(choice),
+                }}
+              />
               {/* The installation discovery panel is its own surface, not part of
                   the Game state region. It must stay OUTSIDE the drawer's
                   <section aria-label={gameState}>: its own status/Retry/Cancel
@@ -1359,64 +1316,6 @@ export function ComposedReferenceGameApp() {
           </main>
         </>
       )}
-    </div>
-  );
-}
-
-function StardewCabinHandoff({
-  state,
-  labels,
-  onConfirm,
-}: {
-  state: CabinViewState;
-  labels: ReturnType<typeof messages>;
-  onConfirm(choice: StardewCabinChoiceV1): void;
-}) {
-  return (
-    <section className="stardew-cabin-handoff" aria-label={labels.stardewCabinSelection}>
-      <h3>{labels.stardewCabinSelection}</h3>
-      {state.kind === "loading" && <p>{labels.stardewCabinsLoading}</p>}
-      {state.kind === "unavailable" && <p role="status">{labels.stardewCabinsUnavailable}</p>}
-      {state.kind === "uncertain" && <p role="status">{labels.stardewCabinConfirmationUncertain}</p>}
-      {state.kind === "admitted" && <p role="status">{labels.stardewManifestAdmitted}</p>}
-      {(state.kind === "choices" || state.kind === "confirming") && (
-        state.choices.length === 0 ? <p>{labels.stardewCabinsEmpty}</p> : (
-          <ul>
-            {state.choices.map((choice) => (
-              <li key={choice.choiceHandle}>
-                <span>{choice.displayLabel}</span>
-                <button
-                  type="button"
-                  disabled={state.kind === "confirming"}
-                  onClick={() => onConfirm(choice)}
-                >
-                  {labels.stardewCabinConfirm}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )
-      )}
-    </section>
-  );
-}
-
-function GameProjection({ game }: { game: GameBrowserStateV1 | null }) {
-  if (game === null) {
-    return <div className="game-projection" data-game-state="null"><h2>Game</h2><p>Game state is unavailable for this profile.</p></div>;
-  }
-  const projection = game.game;
-  return (
-    <div className="game-projection" data-game-state="available">
-      <h2>Game</h2>
-      <dl>
-        <div><dt>Connection</dt><dd>{projection.connectionStatus}</dd></div>
-        <div><dt>Instance</dt><dd>{projection.instance.gameTitle ?? projection.instance.status}</dd></div>
-        <div><dt>World</dt><dd>{projection.selectedWorld ?? "—"}</dd></div>
-        <div><dt>Save</dt><dd>{projection.selectedSave ?? "—"}</dd></div>
-        <div><dt>Compatibility</dt><dd>{projection.compatibility.message ?? projection.compatibility.status}</dd></div>
-        <div><dt>Capabilities</dt><dd>{projection.capabilitySummary.available ? projection.capabilitySummary.count : "unavailable"}</dd></div>
-      </dl>
     </div>
   );
 }

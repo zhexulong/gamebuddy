@@ -163,6 +163,17 @@ body {
   color: var(--text-primary);
 }
 
+/* The app-bar title is the one element every shell shares; it takes the
+   remaining width and ellipsises, so a long companion or chat name never
+   pushes the app-bar actions out of the viewport. */
+.app-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .app-bar-brand-mark {
   display: inline-flex;
   align-items: center;
@@ -576,6 +587,38 @@ body {
   font-style: normal;
 }
 
+/* A shell that is still reading its first projection: one quiet centred line,
+   never a stand-in transcript or a disabled control set. */
+.state-placeholder {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.loading-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-disabled);
+}
+
+/* The turn-outcome notice under the transcript: a status line, not an error. */
+.reference-turn-notice {
+  flex-shrink: 0;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+}
+
 .error-banner {
   display: flex;
   align-items: center;
@@ -587,6 +630,39 @@ body {
   font-size: 13px;
   border-radius: var(--radius-sm);
   margin: 0 16px 12px 16px;
+}
+
+/* Saved-draft region: the labelled read-only band a shell shows above its
+   composer. Padding is horizontal-only because the band is full-bleed inside
+   the reading-measure column that already carries the side padding. */
+.reference-draft-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+  background-color: var(--surface-panel);
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reference-draft-section h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-disabled);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.reference-draft-section p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 /* ==========================================================================
@@ -1314,14 +1390,6 @@ body {
   gap: 8px;
 }
 
-[data-profile="management"] .app-bar-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 [data-profile="management"] .management-settings-section {
   flex-shrink: 0;
   border-top: 1px solid var(--border-subtle);
@@ -1426,12 +1494,6 @@ body {
 }
 
 [data-profile="management"] .reference-draft-section {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-subtle);
-  background-color: var(--surface-panel);
-  padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) 0;
-  display: flex;
-  flex-direction: column;
   gap: 8px;
 }
 
@@ -1501,8 +1563,455 @@ body {
 }
 
 /* ==========================================================================
+   Composed reference Game surface (design/26 §4.2 "Game" panel)
+
+   The Game panel is the chat surface's sibling: same three-tier tokens, same
+   spacing rhythm (4/8 px), same 44 px hit target and 52 px list-row minimums,
+   same Lucide/typography scale. It carries the typed connection facts, the
+   session controls and the cabin handoff in one bounded, scrollable panel so
+   the conversation above it stays the primary surface.
+
+   Selector freeze: the panel keeps `role="region"` + `aria-label` (its
+   accessible name), `data-testid="game-state-panel"`, `data-game-state`, the
+   cabin confirm button's `aria-label`, and the `dt`/`dd` text adjacency the
+   browser spec asserts by text. Nothing here introduces a testid, class or
+   CSS layer the spec depends on, and no rule changes a role or an accessible
+   name.
+   ========================================================================== */
+
+.composed-game-drawer {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(40dvh, 360px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+.game-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-panel-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-xs);
+  background-color: var(--palette-burgundy-dark);
+  border: 1px solid var(--palette-burgundy-border);
+  color: var(--accent);
+}
+
+.game-panel-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.game-panel-empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-disabled);
+}
+
+/* Connection facts: a compact labelled grid, never a bare definition list.
+   The `dt`/`dd` pair stays adjacent inside one row so the row's text content
+   is exactly `label` + `value`. */
+.game-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 16px;
+  margin: 0;
+}
+
+.game-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.game-fact dt {
+  font-size: 12px;
+  color: var(--text-disabled);
+  white-space: nowrap;
+}
+
+.game-fact dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* Tone variants for the shared status dot, so an in-panel dot can carry the
+   same colours as the semantic feedback tokens. */
+.status-dot[data-tone="progress"] {
+  background-color: var(--accent);
+  box-shadow: 0 0 6px rgba(200, 120, 125, 0.4);
+  animation: game-status-pulse 1.4s ease-in-out infinite;
+}
+
+.status-dot[data-tone="warning"] {
+  background-color: var(--warning);
+  box-shadow: 0 0 6px rgba(214, 168, 91, 0.4);
+}
+
+.status-dot[data-tone="danger"] {
+  background-color: var(--danger);
+  box-shadow: 0 0 6px rgba(217, 101, 101, 0.4);
+}
+
+.status-dot[data-tone="neutral"] {
+  background-color: var(--text-disabled);
+  box-shadow: none;
+}
+
+/* Status lines. One primitive, five honest tones: a hard failure, an uncertain
+   or temporary outcome, guidance for what to do next, a positive admission,
+   and work in progress. The sentence itself always says which one it is, so
+   tone is never the only carrier of the state. */
+.game-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.game-status::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background-color: var(--text-disabled);
+}
+
+.game-status[data-tone="progress"] {
+  border-left-color: var(--accent);
+}
+
+.game-status[data-tone="progress"]::before {
+  background-color: var(--accent);
+  animation: game-status-pulse 1.4s ease-in-out infinite;
+}
+
+.game-status[data-tone="danger"] {
+  background-color: rgba(217, 101, 101, 0.12);
+  border-color: rgba(217, 101, 101, 0.32);
+  border-left-color: var(--danger);
+}
+
+.game-status[data-tone="danger"]::before {
+  background-color: var(--danger);
+}
+
+.game-status[data-tone="warning"] {
+  background-color: rgba(214, 168, 91, 0.12);
+  border-color: rgba(214, 168, 91, 0.32);
+  border-left-color: var(--warning);
+}
+
+.game-status[data-tone="warning"]::before {
+  background-color: var(--warning);
+}
+
+.game-status[data-tone="success"] {
+  background-color: rgba(79, 174, 154, 0.14);
+  border-color: rgba(79, 174, 154, 0.4);
+  border-left-color: var(--success);
+}
+
+.game-status[data-tone="success"]::before {
+  background-color: var(--success);
+}
+
+/* Action rows. An empty row renders nothing, so a state that offers no control
+   leaves no phantom spacing behind. */
+.game-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.game-actions:empty {
+  display: none;
+}
+
+.game-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--touch-target-min);
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.game-action:hover:not(:disabled) {
+  background-color: var(--palette-gray-700);
+  border-color: var(--border-strong);
+}
+
+.game-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.game-action svg {
+  flex: 0 0 auto;
+}
+
+/* The single next action a ready state offers reads as the primary action; the
+   same command offered twice keeps its second reading as a secondary. */
+.game-action.primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--palette-gray-100);
+}
+
+.game-action.primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* Sub-panels inside the Game panel (cabin handoff, installation setup). */
+.game-subpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.game-subpanel .section-subtitle {
+  margin: 0;
+}
+
+.game-subpanel-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.game-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.game-choice-label {
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Start-new-game form: a real form stack with labelled fields. */
+.game-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.game-create-form h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.game-create-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.game-create-form input {
+  width: 100%;
+  min-height: var(--touch-target-min);
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.game-create-form input:focus {
+  border-color: var(--accent);
+}
+
+.game-create-form input::placeholder {
+  color: var(--text-disabled);
+}
+
+.game-create-integration {
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+/* Installation setup is a second Game panel at lower emphasis: same surface
+   and rhythm, a smaller title, its own bounded scroll. */
+.game-installation-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(24dvh, 220px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+.installation-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.installation-candidate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 12px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.installation-candidate-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.installation-source {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--text-disabled);
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.installation-hint {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-disabled);
+}
+
+.installation-candidate .game-action {
+  margin-left: auto;
+}
+
+.installation-state {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+/* ==========================================================================
    Keyframe Animations & Motion Fallbacks
    ========================================================================== */
+
+@keyframes game-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 
 @keyframes backdrop-in {
   from {
