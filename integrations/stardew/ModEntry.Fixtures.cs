@@ -3217,10 +3217,23 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // stacked; a farm that cannot host them fails closed instead of silently
         // presenting a poorer world than the audit claims.
         var provisioned = new List<string>();
+        // Where the companion starts must be OPEN. Every probe below returns the first eligible tile scanning
+        // from the map's origin, so the props used to cluster into that corner and fence the actor into a
+        // two-tile pocket: a live session then measured `component_tiles=2`, which made the cauliflower a few
+        // tiles away genuinely unreachable and spent the session on turns the world could not accept.
+        // Starting from an open crossroads, and keeping that crossroads' own ring clear, keeps the world
+        // navigable without scripting what the session should do.
+        // Where the session starts must be an OPEN crossroads, and the props must sit NEXT TO it. Two live runs
+        // measured both halves of that: starting in the Farm's corner pocket gave `component_tiles=2` (the
+        // cauliflower a few tiles away was genuinely unreachable, and the session spent turns on refusals that
+        // looked like capability failures), while starting at an open crossroads but leaving the props at the
+        // map origin made the session spend its turns walking to them.
+        Vector2 startTile = FindNativeLocalPlaySessionStartTile(farm)
+            ?? throw new InvalidOperationException("fixture_native_local_play_session_start_tile_missing");
         Vector2? standingTile = null;
         for (int index = 0; index < 2; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_weed_spot_missing");
             StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
@@ -3231,7 +3244,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             standingTile ??= spot.Value.StandingTile;
         }
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
@@ -3239,7 +3252,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             standingTile ??= spot.Value.StandingTile;
         }
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
@@ -3253,7 +3266,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         int plantedCrops = 0;
         for (int index = 0; index < 4; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_crop_spot_missing");
             StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
@@ -3289,7 +3302,8 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
             .FirstOrDefault();
 
-        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)startTile.X, (int)startTile.Y, false));
+        provisioned.Add($"standing={(int)startTile.X},{(int)startTile.Y}");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; planted_crops=4; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
     }
@@ -3722,6 +3736,80 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             };
             Vector2[] validStanding = cardinal
                 .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// An OPEN tile for the play session to start on: passable and unoccupied itself, with all four cardinal
+    /// neighbours passable and unoccupied. Measured reason: the Farm's corner where the origin-scan placed the
+    /// props is a two-tile pocket (`component_tiles=2` in a live receipt), so a session started there could not
+    /// reach targets a few tiles away for reasons nothing in the world showed it.
+    /// </summary>
+    private static Vector2? FindNativeLocalPlaySessionStartTile(GameLocation farm)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 tile in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(tile) || !farm.isTilePassable(tile))
+                continue;
+            if (farm.objects.ContainsKey(tile) || farm.terrainFeatures.ContainsKey(tile))
+                continue;
+            if (farm.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                continue;
+            Vector2[] cardinal =
+            {
+                tile + new Vector2(-1f, 0f), tile + new Vector2(1f, 0f),
+                tile + new Vector2(0f, -1f), tile + new Vector2(0f, 1f),
+            };
+            if (!cardinal.All(neighbour => farm.isTileOnMap(neighbour)
+                && farm.isTilePassable(neighbour)
+                && !farm.objects.ContainsKey(neighbour)
+                && !farm.terrainFeatures.ContainsKey(neighbour)
+                && !farm.IsTileOccupiedBy(neighbour, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)))
+                continue;
+            return tile;
+        }
+        return null;
+    }
+    /// <summary>
+    /// The same emptiness/standability probe the other fixtures use, with one addition: the target may not sit
+    /// in the actor's own neighbourhood, so this fixture's props cannot fence the companion in. The session
+    /// starts on the first placement's standing tile, and everything placed after it keeps that tile's cardinal
+    /// ring clear.
+    /// </summary>
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start)
+    {
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        // Outward from the actor's start: nearest eligible tile first, so the props sit beside the session
+        // rather than in whichever corner the map's origin happens to be.
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y)))
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - start.X), Math.Abs(tile.Y - start.Y)))
+            .ThenBy(tile => tile.Y)
+            .ThenBy(tile => tile.X))
+        {
+            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
+                continue;
+            // Never in the actor's own ring: that is what fenced the companion in before.
+            if (Math.Abs(target.X - start.X) + Math.Abs(target.Y - start.Y) <= 1)
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && standing != start
                     && farm.isTilePassable(standing)
                     && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
                 .ToArray();

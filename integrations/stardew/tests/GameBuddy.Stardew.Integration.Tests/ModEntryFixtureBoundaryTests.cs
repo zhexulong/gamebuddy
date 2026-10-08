@@ -24,6 +24,10 @@ public sealed class ModEntryFixtureBoundaryTests
     private static readonly IReadOnlySet<string> FixtureMethodWhitelist = new HashSet<string>(StringComparer.Ordinal)
     {
         "TryInitializeNativeLocalPlayerFixture", "TryBootstrapNativeLocalPlayerFixture",
+        "FindNativeLocalPlaySessionStartTile",
+        // Note: the probe that returns a named tuple (`(Vector2, Vector2)?`) is deliberately absent here. The
+        // boundary scanner's pattern does not match tuple-returning declarations, so listing it would fail the
+        // reverse check that every listed method exists.
         "InitializeNativeLocalWithdrawSiloHayFixture",
         "FindNativeLocalItemTileStandingTile",
         "FindNativeLocalMailboxTile",

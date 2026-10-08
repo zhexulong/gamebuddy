@@ -38,30 +38,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     // than the silence interval.
     private static readonly TimeSpan BootstrapCeiling = TimeSpan.FromMinutes(10);
 
-    // How long this launcher waits for the child's one-shot presentation entry AFTER the
-    // acknowledgement is accepted. The child publishes it while it constructs the composition, so
-    // in every real launch it is already on the pipe by this point; the bound exists for the child
-    // that never publishes at all, because a launcher waiting for a presentation it will never
-    // receive would be a launcher hanging on an optional fact.
-    private static readonly TimeSpan PresentationHandoffWait = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    /// The player's presentation, as this launch owns it: the entry the child published and the
-    /// single automatic open it gets. The shell (tray, secondary invocation) reads it to answer an
-    /// explicit Open; nothing else may open it on the player's behalf.
-    /// </summary>
-    internal DesktopBrowserPresenter Presentation { get; init; } = new();
-
-    /// <summary>Test-only bound override, so a focused test observes "no presentation" in milliseconds.</summary>
-    internal TimeSpan? PresentationHandoffWaitForTesting { get; set; }
-
-    /// <summary>
-    /// The bounded reason this launch has (or has not) a presentation entry. It is evidence for the
-    /// shell's own status, never a category the launch failure path may reuse: a missing
-    /// presentation is not a failed launch.
-    /// </summary>
-    internal string PresentationCategory { get; private set; } = DesktopPresentationHandoffOutcome.Absent;
-
     /// <summary>
     /// Names the silent wait's expiry as its own reason, so "the child stopped progressing" can
     /// never again be reported as the generic runtime failure a genuinely broken start produces.
@@ -107,7 +83,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var launched = false;
         DesktopHostBootstrapBroker? broker = null;
         var brokerTransferred = false;
-        DesktopPresentationHandoff? handoff = null;
         // The last bootstrap stage the child announced, kept for the failure diagnostic.
         // Declared out here because the frame dispatch that records it runs behind the
         // cancellable read and the catches below report what it saw.
@@ -136,10 +111,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             runtime.VerifyStillLocked();
             var bootstrapId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
             broker = DesktopHostBootstrapBroker.Create(bootstrapId, selection, layout);
-            // Created BEFORE the child exists, for the same reason the broker is: the child connects
-            // the moment it has this fact, and a pipe that appears later would make it retry or drop
-            // the publication. The child derives the name from the bootstrap id it already receives.
-            handoff = DesktopPresentationHandoff.Create(bootstrapId);
             var startup = new WindowsNative.StartupInfoEx
             {
                 StartupInfo = new WindowsNative.StartupInfo
@@ -190,22 +161,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             parentStdoutReader.Dispose();
             parentStdoutReader = null;
 
-            // The acknowledgement is accepted, so the Host is serving and the composed surface it
-            // announced is the one the player asked for. Only now is the entry read and opened: the
-            // handoff is the second half of the same readiness fact, and opening a browser for a
-            // launch that never reached readiness would present a surface that is not there.
-            var presentation = await handoff.ReadEntryAsync(process, PresentationHandoffWaitForTesting ?? PresentationHandoffWait, cancellationToken).ConfigureAwait(false);
-            PresentationCategory = presentation.Category;
-            await handoff.DisposeAsync().ConfigureAwait(false);
-            handoff = null;
-            if (presentation.LaunchUrl is not null)
-            {
-                Presentation.Adopt(presentation.LaunchUrl);
-                // Best-effort by construction: this returns false rather than throwing when the
-                // player's shell cannot open a browser, and the Host session above keeps running.
-                _ = Presentation.OpenOnce();
-            }
-
             var locks = runtime.TransferLocks();
             var lease = new RuntimeSupervisorLease(process, locks.Runtime, locks.Bootstrap, ack, broker);
             brokerTransferred = true;
@@ -247,7 +202,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
                 process.Dispose();
             }
             if (!brokerTransferred && broker is not null) await broker.DisposeAsync().ConfigureAwait(false);
-            if (handoff is not null) await handoff.DisposeAsync().ConfigureAwait(false);
             if (attributeList != IntPtr.Zero)
             {
                 if (attributeListInitialized) WindowsNative.DeleteProcThreadAttributeList(attributeList);
