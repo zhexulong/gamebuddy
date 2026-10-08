@@ -102,6 +102,7 @@ test("an activated but not yet launched attempt offers the player the launch con
     activationAvailable: false,
     setupAvailable: false,
     launchAvailable: true,
+    launchGeneration: 1,
   });
 });
 
@@ -116,6 +117,7 @@ test("a launch actually in flight still projects launching and offers no launch 
     activationAvailable: false,
     setupAvailable: false,
     launchAvailable: false,
+    launchGeneration: null,
   });
 });
 
@@ -132,6 +134,7 @@ test("before activation the coordinator defers to the facade and the client stil
     activationAvailable: true,
     setupAvailable: true,
     launchAvailable: false,
+    launchGeneration: null,
   });
 });
 
@@ -156,5 +159,6 @@ test("a running lifecycle stays running and is never a launch-from-idle candidat
     activationAvailable: false,
     setupAvailable: false,
     launchAvailable: false,
+    launchGeneration: null,
   });
 });
