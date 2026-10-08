@@ -2394,3 +2394,55 @@ admission answered `player_not_actionable` - true, but not the clause under test
 waits for an actionable actor first. The same class of fix as `dismiss_modal`, `ride_bus` and `enter_exit`:
 a request whose native work resolves immediately, or whose world is mid-animation, must not be asserted
 against the wrong phase.
+## 39. Ladder-6 refusal evidence: where the actor CAN go, and whether the wall comes down (2026-10-08, live)
+
+Two real ladder-6 sessions (real game + Mod + provider, fixture `native_play_session_v1`) validated
+three additions to a `move_to_tile` refusal. Both artifacts are kept: `tools/_ladder6-names.result.json`
+and `tools/_ladder6-removable.result.json`, with their runner logs beside them.
+
+### What a refusal now carries
+
+```
+from=37,53;to=32,54;...;component_tiles=28;
+approaches=north:(O)450@32,53[removable],east:open,south:blocked,west:open;
+closest=39,57;closest_distance=14
+```
+
+* `closest=<x>,<y>;closest_distance=<chebyshev>` — the reachable tile nearest the goal, from the same
+  flood that decides `target_enclosed`. Present in **9 of 9** refusals of the second run.
+* `approaches=` — each cardinal approach as `open`, `blocked` (map-level: no object, no terrain
+  feature, and the planner still refuses) or the named occupant.
+* `[removable]` — the occupant is twig litter, a breakable stone or weeds, i.e. an obstacle one of the
+  published clearing actions can take down. Present on **6 of 9** refusals of the second run.
+
+Occupants observed live, with the game's own classification:
+
+| Occupant | What it is | Source |
+| --- | --- | --- |
+| `(O)2` | breakable stone | `Object.IsBreakableStone()` (`Object.cs:6082`) |
+| `(O)294`, `(O)450` | twig/branch litter | the twig family of `GameLocation.cs:15351` |
+| `(O)784` | spring weed | `GameLocation.cs:11339` spring weed choice; `Object.cs:1918` |
+| `building:Farmhouse` | a building footprint | `Building.occupiesTile` |
+| `terrain:HoeDirt` | a terrain feature (walkable, hence `target_standable=false` beside `target_walkable=true`) | — |
+
+### The 28-tile component question, answered
+
+An earlier audit asked whether `component_tiles=28` on an open farm was honest or a probe defect. It is
+honest, and the refusal fields are what show it: the actor is boxed in by the standard farm's own litter —
+twigs and stones as `Object`s, which block the planner — plus map-level `blocked` tiles, and by the
+farmhouse for one target. Across four runs from four different actor positions the count is 28 every time.
+
+The consequence is a product observation rather than a defect: the world says no, and the companion never
+takes the wall down, although `clear_debris`, `break_rock_source` and `cut_weeds` are published and have
+succeeded in other sessions of this same fixture. Whether the Agent acts on `[removable]` is a behavioural
+question this evidence does not answer.
+
+### What these runs does NOT show
+
+* No causal claim: both runs use the same fixture, and one run each way is not a comparison. Session outcomes
+  still vary with the model's own choices — the second run accomplished four world actions
+  (`harvest_crop`, `break_rock_source`, `cut_grass`, `cut_weeds`) and spoke to the player, while a third
+  run from the same tree attempted four actions, accomplished one and never spoke (`verdict=silent`).
+* The 63% of turn time an audit attributed to the refuse-and-re-aim loop is not reduced by these fields; the
+  structural fix (publishing the actor's reachable extent in observation) is still open.
+* `navigate_to_destination` failed with `destination_selector_invalid` in the second run; not investigated.
