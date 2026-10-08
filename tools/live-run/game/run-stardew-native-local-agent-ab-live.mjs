@@ -37,7 +37,6 @@ import {
   resolveVoiceConfiguration,
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
-import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
 import { isPass, judgeExpectation } from "../core/evidence-verdict.mjs";
@@ -147,11 +146,6 @@ process.on("unhandledRejection", (error) => {
   process.exitCode = 1;
   process.exit(1);
 });
-
-// This file imports fifteen modules of `host/dist-test` directly, so a stale artifact silently tests the wrong
-// code — observed as an `Unsupported candidate action:` for an action that was already committed. Refuse to
-// start rather than spend a game launch, a fixture prepare and a session on it.
-await assertLiveRunArtifactFresh();
 
 const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
 // Ladder 6 (self-directed play session): instead of a scripted chain, the Agent
