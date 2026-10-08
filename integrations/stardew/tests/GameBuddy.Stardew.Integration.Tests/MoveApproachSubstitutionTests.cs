@@ -151,6 +151,10 @@ public class MoveApproachSubstitutionTests
         controller.Should().Contain("target_standable=");
         controller.Should().Contain("target_walkable=");
         controller.Should().Contain("probe_says_reachable=");
+        // The refusal must also publish WHERE the actor CAN go. Mutation evidence: dropping this call left every
+        // test green, because the formatter's own test never proved the refusal called it -- a formatter test is
+        // not a wiring test.
+        controller.Should().Contain("FormatReachableHint(assessed.ClosestToTarget");
     }
 
     [Fact]
@@ -159,5 +163,20 @@ public class MoveApproachSubstitutionTests
         Vector2 target = new(10f, 10f);
         ExecutionManager.SelectStandingApproachTile(target, new Vector2(1f, 1f), _ => false)
             .Should().BeNull();
+    }
+
+    [Fact]
+    public void ReachableHintNamesTheNearestReachableTile()
+    {
+        // The refusal used to publish only the verdict, so an audited live session re-aimed inside a 28-tile pocket
+        // for 63% of its turn while the tile it COULD reach was computed and discarded.
+        string hint = StardewBodyController.FormatReachableHint(new Point(35, 54), new Point(35, 55));
+        hint.Should().Be("closest=35,54;closest_distance=1");
+
+        // No visited tile closer than the actor already is: say so rather than invent a destination.
+        StardewBodyController.FormatReachableHint(null, new Point(35, 55)).Should().Be("closest=none");
+
+        // Chebyshev, the metric the flood minimises.
+        StardewBodyController.FormatReachableHint(new Point(30, 40), new Point(35, 55)).Should().Be("closest=30,40;closest_distance=15");
     }
 }

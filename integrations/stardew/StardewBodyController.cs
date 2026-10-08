@@ -145,7 +145,11 @@ if (movementDisposition != LocalDispositionKind.Idle)
                 // A free target inside an enclosed component is only explicable by its own approaches, so name
                 // them: without this the receipt reads as a contradiction and the agent re-aims blindly.
                 if (assessed.TargetEnclosed)
+                {
                     evidence += $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}";
+                    // Where it CAN go, not only where it cannot: the flood already found this tile.
+                    evidence += $";{FormatReachableHint(assessed.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}";
+                }
                 searchOutcome = assessed.ComponentContainsTarget
                     ? "planner_null_with_cardinal_route"
                     : "no_cardinal_route";
@@ -561,6 +565,23 @@ if (movementDisposition != LocalDispositionKind.Idle)
             return true;
         return location.isTilePassable(tile)
             && !location.IsTileOccupiedBy(tile, (CollisionMask)255, (CollisionMask)0, false);
+    }
+
+    /// <summary>
+    /// The actionable half of a refusal: the reachable tile nearest the goal, as one bounded token.
+    ///
+    /// The flood already computes this while deciding enclosure, and the refusal published only the verdict --
+    /// `target_enclosed=true` -- which tells the caller "you cannot get there" and nothing about where it CAN go.
+    /// An audited live session spent 63% of its turn re-aiming inside a 28-tile pocket, and the one fact that would
+    /// have ended the loop (a tile it could actually reach, closer to what it wanted) was computed and thrown away.
+    /// `closest=none` is honest: it means the flood found no visited tile closer than where the actor already is.
+    /// </summary>
+    internal static string FormatReachableHint(Point? closest, Point target)
+    {
+        if (closest is not Point tile)
+            return "closest=none";
+        int distance = Math.Max(Math.Abs(tile.X - target.X), Math.Abs(tile.Y - target.Y));
+        return $"closest={tile.X},{tile.Y};closest_distance={distance}";
     }
 
     /// <summary>
