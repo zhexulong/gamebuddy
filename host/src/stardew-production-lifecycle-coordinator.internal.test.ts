@@ -24,6 +24,7 @@ import {
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
 import { composeGameProfile, GameBrowserFixtureV1, GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
+import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
@@ -1148,6 +1149,45 @@ test("launch-readiness generation is 0 before activation, then 1 while staged, a
         JSON.stringify(fixture.coordinator.launchReadinessReader.readLaunchReadinessView()).includes("player-generation-1"),
         false,
       );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("a staged but not yet launched attempt projects nothing running instead of launching", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      // The attempt owns the exact expected generation and no Player Host
+      // process: the launch reservation minted by activation is an
+      // authorization, not a launch in flight.
+      assert.deepEqual(fixture.coordinator.launchReadinessReader.readLaunchReadinessView(), {
+        generation: 1,
+        status: "ready",
+      });
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "not_started",
+        ownership: "none",
+      });
+      const state = await createGameBrowserStateProvider(
+        gameProfileWithDiscovery,
+        fixture.coordinator.lifecycleReader,
+        fixture.coordinator.attachmentReader,
+        fixture.coordinator.launchReadinessReader,
+        fixture.coordinator.actionAuthorityReader,
+      ).readState({ csrfToken: bootstrapToken, browserSessionExpiresAtMs: 100_000 });
+      assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+      assert.equal(state.game.prerequisites.status, "met");
+      // `none` is the honest word for "nothing is running, and the product is
+      // ready to start it"; `launching` would strand the player, because the
+      // launch control requires this exact shape.
+      assert.deepEqual(state.game.instance, { status: "none", gameTitle: null, generation: 1 });
+      assert.equal(state.game.latestOutcome, "none");
+      assert.deepEqual(fixture.playerSpawnCalls, []);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();

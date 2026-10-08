@@ -93,8 +93,8 @@ import { FarmhandBridgeConnectionNotAvailableError } from "./containment/runtime
 import {
   createStardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
-  type StardewRoleLifecycleView,
 } from "./stardew-role-lifecycle-facade.js";
+import { composeCoordinatorRoleLifecycleView } from "./stardew-role-lifecycle-projection.internal.js";
 import type {
   StardewOwnedPlayerHostStageCResult,
   StardewOwnedAiClientStageDResult,
@@ -1054,30 +1054,16 @@ function createCoordinator(
       return Object.freeze({ status: actionAuthorityStatus });
     },
   });
-  // Coordinator-authoritative Player Host slot. The facade's process-owner
-  // projection cannot reflect the contained runtime path (the direct Node
-  // process owner is never marked when the runtime owns the launch), so the
-  // lifecycle's own launch facts drive the slot for every state the
-  // coordinator knows definitively; the facade remains authoritative for
-  // idle/stopped/unavailable states.
-  const coordinatorPlayerHostSlot = (): StardewRoleLifecycleView["playerHost"] | undefined => {
-    switch (activationState) {
-      case "launching_player_host":
-        return Object.freeze({ state: "pending", ownership: "gamebuddy_direct_spawn" });
-      case "awaiting_player_host_attestation":
-        return Object.freeze({ state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn" });
-      default:
-        return undefined;
-    }
-  };
+  // The lifecycle's own launch facts compose the Player Host slot for every
+  // state the coordinator knows definitively (see
+  // `stardew-role-lifecycle-projection.internal.ts` for why a merely staged
+  // attempt must not project as a launch in flight); the facade remains
+  // authoritative for idle/stopped/unavailable states.
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
       if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
         await correlatePlayerHostAttestation();
-      const view = await facade.readRoleLifecycleView();
-      const playerHost = coordinatorPlayerHostSlot();
-      if (playerHost === undefined) return view;
-      return Object.freeze({ schemaVersion: 1, playerHost, aiClient: view.aiClient });
+      return composeCoordinatorRoleLifecycleView(activationState, await facade.readRoleLifecycleView());
     },
   });
   const isClosing = (): boolean => activationState === "closing" || activationState === "closed";

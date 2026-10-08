@@ -288,27 +288,27 @@ test("provider response redacts lifecycle internals and has no ready claim", asy
     assert.equal(serialized.includes(forbidden), false, forbidden);
 });
 
-test("provider projects the coordinator-owned launch generation exactly and never fabricates one", async () => {
-  const launchedView = lifecycle(Object.freeze({
+test("provider maps a launch in flight to launching and a launch-ready attempt to nothing running", async () => {
+  const launchInFlightView = lifecycle(Object.freeze({
     schemaVersion: 1,
     playerHost: Object.freeze({ state: "pending", ownership: "gamebuddy_direct_spawn" }),
     aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
   }));
-  // A staged coordinator-owned instance exposes its exact expected generation.
-  const staged = await createGameBrowserStateProvider(
+  // `pending` is the composed lifecycle word for a launch actually in flight.
+  const launching = await createGameBrowserStateProvider(
     profile(),
-    launchedView,
+    launchInFlightView,
     attachment(),
     launchReadiness(Object.freeze({ generation: 1, status: "ready" })),
   ).readState(context);
-  assert.equal(staged.game.instance.status, "launching");
-  assert.equal(staged.game.instance.generation, 1);
-  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(staged), true);
+  assert.equal(launching.game.instance.status, "launching");
+  assert.equal(launching.game.instance.generation, 1);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(launching), true);
 
   // With no staged instance the generation is 0 even though prerequisites are met.
   const idle = await createGameBrowserStateProvider(
     profile(),
-    launchedView,
+    launchInFlightView,
     attachment(),
     launchReadiness(),
   ).readState(context);
@@ -317,9 +317,10 @@ test("provider projects the coordinator-owned launch generation exactly and neve
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(idle), true);
 
   // A launch-ready but not-yet-launched projection carries the generation without a numeric UI leak.
-  // In real coordinator flow, staged-but-not-launched means the lifecycle facade reports
-  // no spawned player host (ownership "none") while the coordinator's readiness reader
-  // exposes the exact generation, proving no process is implied.
+  // The coordinator composes exactly this slot shape for a staged attempt, whose
+  // launch reservation is an authorization rather than a running role
+  // (stardew-role-lifecycle-projection.internal.ts), and this is the shape the
+  // client's launch gate requires.
   const readyToLaunch = await createGameBrowserStateProvider(
     profile(),
     lifecycle(Object.freeze({
