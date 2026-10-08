@@ -13,6 +13,7 @@ import type {
 import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
 import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/contract/game-runtime.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
+import { createDesktopPresentationHandoffPublisher } from "../../desktop-presentation-handoff.internal.js";
 import { parseStrictJson } from "../../strict-json-reader.js";
 import { connectHealthyVoiceGateway } from "../../voice-bootstrap.js";
 import type { VoiceSurfaceReader } from "../../tavern/reference-pipeline-state.js";
@@ -115,8 +116,18 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
   await writeStatus("voice-surface");
   const voice = await connectOptionalVoiceSurface();
   await writeStatus("deployment-manifest");
+  // The composed surface's readiness is one fact with two private observers: the
+  // developer/QA composition gate, which reads it over this child's IPC channel and
+  // is therefore a no-op in production, and the installed Desktop shell, which owns
+  // the handoff pipe below and is absent in every gate. Neither is this child's to
+  // address: it publishes on whichever of the two exists and never fails on either.
+  const publishDesktopPresentationHandoff = createDesktopPresentationHandoffPublisher(frame.bootstrapId);
+  const publishLaunchUrl = (launchUrl: string): void => {
+    publishCompositionReady(launchUrl);
+    publishDesktopPresentationHandoff(launchUrl);
+  };
   const assemblyInput = await loadDesktopHostAssemblyInput(
-    publishCompositionReady,
+    publishLaunchUrl,
     voice?.reader,
     voice?.speechSink,
     voice?.listOutputDevices,
