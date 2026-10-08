@@ -309,12 +309,25 @@ async function closeServer(server: Server): Promise<void> {
 
 type DiscoveryBrowserHandler = NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDiscovery"]>;
 
-async function createAdmissionBroker(gameDiscovery?: DiscoveryBrowserHandler) {
+async function createAdmissionBroker(
+  gameDiscovery?: DiscoveryBrowserHandler,
+  activate?: (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) => Promise<unknown>,
+) {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
     bootstrapToken,
     async readChat(context) { return stateForChat(context); },
     async readGame(context) { return stateForGame(context); },
+    ...(activate === undefined
+      ? {}
+      : {
+          // The composed wire's activation seam, mounted onto the coordinator's own
+          // activation owner exactly as the production provider mounts it. The owner's
+          // private snapshot is discarded, as the browser callback requires.
+          gameActivate: async (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<void> => {
+            await activate(admission);
+          },
+        }),
     gameDiscovery: gameDiscovery ?? {
       read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
       confirm: async () => ({ apiVersion: 1, status: "registered" }),
@@ -614,7 +627,10 @@ async function createFixture(input: Readonly<{
       }),
     },
   );
-  const broker = await createAdmissionBroker(input.discoveryBrowserHandlers);
+  const broker = await createAdmissionBroker(
+    input.discoveryBrowserHandlers,
+    (admission) => coordinator.activationOwner.activate(admission),
+  );
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
   return {
     runtimeRoot,
@@ -981,6 +997,44 @@ test("staged Player Host admits internally, direct-spawns once, and projects onl
         state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
       });
        assert.equal(fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }), first);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("the activation route stages the owned player host through the coordinator's own activation path", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture({ overrides: {} });
+    try {
+      // Failure caught: the composed shell issuing the `lifecycle_activation` admission for
+      // `POST /lifecycle/activate` while dispatch has no branch for the path, so the browser's
+      // first activation step answers 404 and the state can never leave `inactive` - which is
+      // exactly why `setup` and `launch` refuse afterwards with
+      // `stardew_player_host_launch_not_staged`.
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "inactive");
+      const path = `${fixture.broker.origin}/api/composed-reference-game/v1/lifecycle/activate`;
+      const response = await fetch(path, {
+        method: "POST",
+        headers: {
+          origin: fixture.broker.origin,
+          cookie: fixture.broker.cookie,
+          "x-csrf-token": fixture.broker.csrfToken,
+          "content-type": "application/json",
+        },
+      });
+      assert.equal(response.status, 204);
+      assert.equal(await response.text(), "");
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      // The route is a producer, not an opening: an unauthenticated caller is still refused and
+      // the state it produced is not advanced by the refusal.
+      const unauthenticated = await fetch(path, {
+        method: "POST",
+        headers: { origin: fixture.broker.origin, "content-type": "application/json" },
+      });
+      assert.equal(unauthenticated.status, 401);
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
