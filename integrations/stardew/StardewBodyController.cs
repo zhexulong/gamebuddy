@@ -587,7 +587,13 @@ if (movementDisposition != LocalDispositionKind.Idle)
     /// <summary>
     /// Names what stands on a refused destination tile, so the refusal is
     /// actionable: <c>&lt;qualifiedItemId&gt;@x,y</c> for an object,
-    /// <c>terrain:&lt;type&gt;</c> for a terrain feature, or <c>none</c>.
+    /// <c>terrain:&lt;type&gt;</c> for a terrain feature, <c>clump:&lt;type&gt;</c>, <c>large:&lt;type&gt;</c> or
+    /// <c>building:&lt;type&gt;</c> for the blocking collections that are not <c>objects</c> or
+    /// <c>terrainFeatures</c>, or <c>none</c>.
+    ///
+    /// Why the extra collections: a live refusal reported <c>blocked_by=none</c> for tiles the planner refuses,
+    /// which reads as "nothing is in the way" about a wall. Resource clumps, large terrain features and buildings
+    /// live in their own collections, so asking only the first two answered <c>none</c> for a real obstacle.
     /// </summary>
     internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile)
     {
@@ -596,6 +602,22 @@ if (movementDisposition != LocalDispositionKind.Idle)
             return $"{item.QualifiedItemId}@{point.X},{point.Y}";
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
             return $"terrain:{feature.GetType().Name}@{point.X},{point.Y}";
+        foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
+        {
+            if (clump.occupiesTile(point.X, point.Y))
+                return $"clump:{clump.GetType().Name}@{point.X},{point.Y}";
+        }
+        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
+        {
+            // Large terrain features have a bounding box, not an occupancy query; the tile centre is the honest test.
+            if (large.getBoundingBox().Contains(point.X * 64 + 32, point.Y * 64 + 32))
+                return $"large:{large.GetType().Name}@{point.X},{point.Y}";
+        }
+        foreach (StardewValley.Buildings.Building building in location.buildings)
+        {
+            if (building.occupiesTile(tile, applyTilePropertyRadius: false))
+                return $"building:{building.buildingType.Value}@{point.X},{point.Y}";
+        }
         return "none";
     }
 
