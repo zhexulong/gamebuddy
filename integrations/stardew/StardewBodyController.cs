@@ -142,6 +142,10 @@ if (movementDisposition != LocalDispositionKind.Idle)
                 // instead of leaving a reader to derive it from target_enclosed.
                 evidence += $";target_enclosed={assessed.TargetEnclosed.ToString().ToLowerInvariant()};derived=true;probe=cardinal_flood;probe_says_reachable={(assessed.TargetEnclosed ? "false" : "true")}";
                 evidence += $";route_exists_cardinal={assessed.ComponentContainsTarget.ToString().ToLowerInvariant()};component_tiles={assessed.ComponentTiles}";
+                // A free target inside an enclosed component is only explicable by its own approaches, so name
+                // them: without this the receipt reads as a contradiction and the agent re-aims blindly.
+                if (assessed.TargetEnclosed)
+                    evidence += $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}";
                 searchOutcome = assessed.ComponentContainsTarget
                     ? "planner_null_with_cardinal_route"
                     : "no_cardinal_route";
@@ -572,6 +576,45 @@ if (movementDisposition != LocalDispositionKind.Idle)
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
             return $"terrain:{feature.GetType().Name}@{point.X},{point.Y}";
         return "none";
+    }
+
+    /// <summary>
+    /// The four cardinal approaches to a tile, each with its blocker, as one bounded token.
+    ///
+    /// A refusal that says `target_standable=true; target_walkable=true; blocked_by=none` next to
+    /// `target_enclosed=true` reads as a contradiction: the tile is free, yet nothing can walk to it. Both
+    /// statements are true, and what the receipt was missing is the middle -- the tile's own approaches can be
+    /// individually walled, which leaves a free tile enclosed by its neighbours. Measured consequence: a live
+    /// agent re-aimed at such a tile eight times. This names the wall instead of leaving it to be guessed.
+    /// </summary>
+    internal static string DescribeTargetApproaches(Farmer actor, GameLocation location, Vector2 tile)
+    {
+        var parts = new List<string>(CardinalOffsets.Length);
+        foreach (Point offset in CardinalOffsets)
+        {
+            Point neighbour = new((int)tile.X + offset.X, (int)tile.Y + offset.Y);
+            Vector2 neighbourTile = new(neighbour.X, neighbour.Y);
+            string direction = offset switch
+            {
+                { X: 0, Y: -1 } => "north",
+                { X: 0, Y: 1 } => "south",
+                { X: -1, Y: 0 } => "west",
+                _ => "east",
+            };
+            if (!location.isTileOnMap(neighbourTile))
+            {
+                parts.Add($"{direction}:off_map");
+                continue;
+            }
+            string occupant = DescribeTargetOccupant(location, neighbourTile);
+            bool walkable = IsWalkableTile(location, actor, neighbourTile);
+            // Three readable states. `open` = the planner walks there. Otherwise the blocker is named when it is an
+            // object or terrain feature, and `blocked` when the planner refuses a tile that carries neither -- map
+            // collision or a building -- because reporting `none` there read as "nothing is wrong" for a tile the
+            // planner will not enter.
+            parts.Add(walkable ? $"{direction}:open" : occupant == "none" ? $"{direction}:blocked" : $"{direction}:{occupant}");
+        }
+        return string.Join(",", parts);
     }
 
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)

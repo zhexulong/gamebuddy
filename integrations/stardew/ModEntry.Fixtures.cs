@@ -3746,6 +3746,33 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     }
 
     /// <summary>
+    /// Whether the actor can WALK from the session's start to this tile, asked of the same cardinal flood the
+    /// refusal receipt publishes (<see cref="StardewBodyController.AssessReachability"/>). A prop whose standing
+    /// tile is not connected to the start is a prop the session can see and never reach, which is exactly the
+    /// shape that made a live run look broken.
+    /// </summary>
+    private static bool IsReachableFromStart(GameLocation farm, Vector2 start, Vector2 standing)
+    {
+        Point startTile = new((int)start.X, (int)start.Y);
+        Point standingTile = new((int)standing.X, (int)standing.Y);
+        if (startTile == standingTile)
+            return true;
+        var layer = farm.map.Layers[0];
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            startTile,
+            standingTile,
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)),
+            maxVisited: 8000,
+            findClosestReachable: true);
+        // A null verdict means the component exceeded the budget, so no claim is made; that is not a placement
+        // this fixture should rely on either.
+        return verdict is ReachabilityVerdict assessed && !assessed.TargetEnclosed;
+    }
+    /// <summary>
     /// An OPEN tile for the play session to start on: passable and unoccupied itself, with all four cardinal
     /// neighbours passable and unoccupied. Measured reason: the Farm's corner where the origin-scan placed the
     /// props is a two-tile pocket (`component_tiles=2` in a live receipt), so a session started there could not
@@ -3758,7 +3785,9 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         foreach (Vector2 tile in Enumerable.Range(0, width)
             .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
         {
-            if (!farm.isTileOnMap(tile) || !farm.isTilePassable(tile))
+            // The PLANNER's own predicate, not "passable and unoccupied": the earlier version asked the
+            // latter and could pick a start whose exits the planner refuses.
+            if (!StardewBodyController.IsWalkableTile(farm, Game1.player, tile))
                 continue;
             if (farm.objects.ContainsKey(tile) || farm.terrainFeatures.ContainsKey(tile))
                 continue;
@@ -3769,11 +3798,9 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 tile + new Vector2(-1f, 0f), tile + new Vector2(1f, 0f),
                 tile + new Vector2(0f, -1f), tile + new Vector2(0f, 1f),
             };
-            if (!cardinal.All(neighbour => farm.isTileOnMap(neighbour)
-                && farm.isTilePassable(neighbour)
+            if (!cardinal.All(neighbour => StardewBodyController.IsWalkableTile(farm, Game1.player, neighbour)
                 && !farm.objects.ContainsKey(neighbour)
-                && !farm.terrainFeatures.ContainsKey(neighbour)
-                && !farm.IsTileOccupiedBy(neighbour, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)))
+                && !farm.terrainFeatures.ContainsKey(neighbour)))
                 continue;
             return tile;
         }
@@ -3808,8 +3835,17 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             Vector2[] validStanding = cardinal
                 .Where(standing => farm.isTileOnMap(standing)
                     && standing != start
-                    && farm.isTilePassable(standing)
-                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                    && !farm.objects.ContainsKey(standing)
+                    && !farm.terrainFeatures.ContainsKey(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                    // Two facts, both required, both from the planner's own authority:
+                    //   * the planner will stand there (IsWalkableTile), and
+                    //   * the actor can WALK there from where the session starts (AssessReachability).
+                    // Without the second, a prop lands outside the actor's component -- measured: a crop two tiles
+                    // away with component_tiles=28 and no cardinal route, which the session read as a system
+                    // failure and re-aimed at eight times.
+                    && StardewBodyController.IsWalkableTile(farm, Game1.player, standing)
+                    && IsReachableFromStart(farm, start, standing))
                 .ToArray();
             if (validStanding.Length == 1)
                 return (target, validStanding[0]);
