@@ -339,6 +339,19 @@ test("provider maps a launch in flight to launching and a launch-ready attempt t
 });
 
 
+test("a running lifecycle still projects running and is never a launch-from-idle state", async () => {
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(authenticatedView("verified")),
+    attachment(),
+    launchReadiness(),
+  ).readState(context);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+  assert.equal(state.game.instance.status, "running");
+  assert.equal(state.game.instance.generation, 0);
+});
+
+
 test("terminal launch failure remains met/crashed without a retry generation", async () => {
   const failed = await createGameBrowserStateProvider(
     profile(),
