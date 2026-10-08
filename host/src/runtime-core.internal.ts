@@ -271,6 +271,14 @@ type MagicContextFeatureTestOverride = Readonly<{
   /** Test-only trigger compression; never comes from operator/browser config. */
   historianExecuteThresholdTokens?: number;
   historianExecuteThresholdPercentage?: number;
+  /**
+   * Test-only protection compression, same seam and same reason. Magic Context also keeps a recent
+   * tail out of the fold (`protected_tokens`), and that tail is a fraction of the model's range too -
+   * on the product's million-token window it is tens of thousands of tokens. A fixture that compresses
+   * only the trigger therefore still folds nothing, because the conversation cannot outgrow the
+   * protection. CI's fold fixture needs both, and neither knob has an operator or browser surface.
+   */
+  historianProtectedTokens?: number;
 }>;
 
 /** Private composition constant; Preview JSON and every external Host protocol are unable to select it. */
@@ -729,6 +737,9 @@ export async function createRuntimeWithFixedToolsCore(
                 execute_threshold_percentage:
                   internalMagicContextFeatureTestOverride.historianExecuteThresholdPercentage,
               }),
+          ...(internalMagicContextFeatureTestOverride?.historianProtectedTokens === undefined
+            ? {}
+            : { protected_tokens: internalMagicContextFeatureTestOverride.historianProtectedTokens }),
           // Owner ruling D (2026-10-08): narrow-open Dreamer. Only the two
           // memory-hygiene tasks run. The schedule is the only disable control,
           // so every other canonical task is listed explicitly to keep the
