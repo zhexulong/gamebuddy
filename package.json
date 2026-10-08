@@ -187,6 +187,8 @@
     "build:stardew": "dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release",
     "diagnose:procs": "powershell.exe -File tools/scripts/list-procs.ps1",
     "check:stardew-loop-closure": "node tools/check-stardew-loop-closure.mjs",
+    "check:live-run-artifact-freshness": "node tools/lib/live-run-artifact-freshness.mjs",
+    "test:live-run-artifact-freshness": "node --test tools/check-live-run-artifact-freshness.test.mjs",
     "check:stardew-native-pathfinder-source": "node tools/check-stardew-native-pathfinder-source.mjs",
     "test:stardew-native-pathfinder-source": "node --test tools/check-stardew-native-pathfinder-source.test.mjs",
     "check:stardew-receipt-attribution": "node tools/check-stardew-receipt-attribution.mjs",
