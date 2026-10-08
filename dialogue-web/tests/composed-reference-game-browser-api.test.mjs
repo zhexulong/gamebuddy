@@ -1084,6 +1084,19 @@ test("anything the client cannot classify shows the code it actually received", 
       .replace("{{cause}}", "stardew_player_host_launch_failed"),
   );
 
+  // A malformed composed root is the client's own protocol failure: it names its
+  // own closed reason instead of being re-worded as something it is not. This is
+  // the case the mounted composed spec asserts against.
+  const malformedRoot = composedProblemView(
+    new ComposedReferenceGameProtocolError("invalid_composed_root"),
+    labels,
+  );
+  assert.equal(malformedRoot.title, labels.problemInternalErrorTitle);
+  assert.equal(
+    malformedRoot.detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", "invalid_composed_root"),
+  );
+
   // A transport-level failure has no server code at all; the absence is stated
   // rather than replaced by an invented one.
   const offline = composedProblemView(new Error("socket closed"), labels);
