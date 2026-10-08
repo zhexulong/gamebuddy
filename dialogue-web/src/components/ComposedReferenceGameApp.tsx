@@ -511,14 +511,10 @@ export function ComposedReferenceGameApp() {
    */
   const handleLifecycleActivate = async (): Promise<void> => {
     const current = viewRef.current;
-    if (
-      gameActivationActiveRef.current ||
-      current.kind !== "ready" ||
-      current.root.game === null ||
-      current.root.game.game.prerequisites.status !== "unknown" ||
-      current.root.game.game.instance.status !== "none" ||
-      current.root.game.game.instance.generation >= 1
-    ) return;
+    if (gameActivationActiveRef.current || current.kind !== "ready") return;
+    // The click-time re-check is the same derivation the control is offered
+    // from, so a control can never be offered in a state its own handler refuses.
+    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game }).activationAvailable) return;
     gameActivationActiveRef.current = true;
     setGameActivationActive(true);
     setGameActivationFailed(false);
@@ -553,8 +549,8 @@ export function ComposedReferenceGameApp() {
 
   const handleGameSetup = async (): Promise<void> => {
     const current = viewRef.current;
-    if (gameSetupActiveRef.current || current.kind !== "ready" || current.root.game === null ||
-        current.root.game.game.prerequisites.status !== "unknown" || current.root.game.game.instance.status !== "none") return;
+    if (gameSetupActiveRef.current || current.kind !== "ready") return;
+    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game }).setupAvailable) return;
     const idempotencyKey = gameSetupKeyRef.current ?? newIdempotencyKey();
     gameSetupKeyRef.current = idempotencyKey;
     gameSetupActiveRef.current = true;
@@ -640,15 +636,10 @@ export function ComposedReferenceGameApp() {
 
   const handleGameLaunch = async (): Promise<void> => {
     const current = viewRef.current;
-    if (
-      gameLaunchActiveRef.current ||
-      current.kind !== "ready" ||
-      current.root.game === null ||
-      current.root.game.game.prerequisites.status !== "met" ||
-      current.root.game.game.instance.status !== "none" ||
-      current.root.game.game.instance.generation < 1
-    ) return;
-    const generation = current.root.game.game.instance.generation;
+    if (gameLaunchActiveRef.current || current.kind !== "ready") return;
+    const controls = deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game });
+    if (!controls.launchAvailable || controls.launchGeneration === null) return;
+    const generation = controls.launchGeneration;
     const existingKey = gameLaunchKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     gameLaunchKeysRef.current.set(generation, idempotencyKey);

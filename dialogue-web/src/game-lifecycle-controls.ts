@@ -27,12 +27,18 @@ export type GameLifecycleControlAvailability = Readonly<{
   activationAvailable: boolean;
   setupAvailable: boolean;
   launchAvailable: boolean;
+  /**
+   * The exact expected Player Host instance generation the launch command must
+   * bind, present exactly when `launchAvailable` is true.
+   */
+  launchGeneration: number | null;
 }>;
 
 const NO_CONTROLS: GameLifecycleControlAvailability = Object.freeze({
   activationAvailable: false,
   setupAvailable: false,
   launchAvailable: false,
+  launchGeneration: null,
 });
 
 export function deriveGameLifecycleControlAvailability(
@@ -41,9 +47,12 @@ export function deriveGameLifecycleControlAvailability(
   if (!view.ready || view.game === null) return NO_CONTROLS;
   const { instance, prerequisites } = view.game.game;
   const nothingRunning = instance.status === "none";
+  const preActivation = nothingRunning && prerequisites.status === "unknown";
+  const launchable = nothingRunning && prerequisites.status === "met" && instance.generation >= 1;
   return Object.freeze({
-    activationAvailable: nothingRunning && prerequisites.status === "unknown" && instance.generation < 1,
-    setupAvailable: nothingRunning && prerequisites.status === "unknown",
-    launchAvailable: nothingRunning && prerequisites.status === "met" && instance.generation >= 1,
+    activationAvailable: preActivation && instance.generation < 1,
+    setupAvailable: preActivation,
+    launchAvailable: launchable,
+    launchGeneration: launchable ? instance.generation : null,
   });
 }
