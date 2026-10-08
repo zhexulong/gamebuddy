@@ -18,6 +18,7 @@
  * Mod hides/shows the window exactly per the frozen contract.
  */
 import { spawn } from "node:child_process";
+import { assertLiveRunArtifactFresh } from "./live-run-artifact-freshness.mjs";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
@@ -83,6 +84,9 @@ export async function launchStardewLiveRun({
   if (typeof gamePath !== "string" || !isAbsolute(gamePath)) throw new Error("invalid_live_run_game_path");
   if (typeof modsPath !== "string" || !isAbsolute(modsPath)) throw new Error("invalid_live_run_mods_path");
   if (typeof pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(pipeName)) throw new Error("invalid_live_run_pipe_name");
+  // Refuse BEFORE a game process exists. The runner checks this too, but a caller that reaches the runner has
+  // already paid for a save load -- measured: a stale artifact refused the run and left the launched game behind.
+  await assertLiveRunArtifactFresh();
   const mode = normalizeLiveRunWindowMode(windowMode);
   const smapi = join(gamePath, "StardewModdingAPI.exe");
 
