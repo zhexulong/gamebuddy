@@ -18,16 +18,28 @@
  * What it asserts is exactly H's claim: one real fold happened (a chapter sealed and reached m[0]),
  * and the m[0] prefix stayed byte-stable within each materialization revision.
  *
- * OPEN FINDING (measured 2026-10-08, this fixture): the fold does not happen yet. With the fixture
- * knobs compressed (`execute_threshold_tokens: 6000`, `protected_tokens: 4000`) and twenty real
- * turns - Magic Context's own session reports `last_input_tokens = 10931`,
- * `observed_safe_input_tokens = 10931`, `times_execute_threshold_reached = 0`, `compartments = 0` -
- * the trigger never fires, so the compressed value is not in force. The Host DID write it: the file
- * `<root>/contexts/<hash>/.cortexkit/magic-context.jsonc` carries `execute_threshold_tokens`. So the
- * remaining question is not "does the override work" but "where does the plugin read its effective
- * config from, and when" - either it is not this file on the in-process path, or it is read before
- * the Host writes it. Until that is settled this test is SKIPPED with this finding rather than left
- * red (which would blame the product) or green (which would be a lie).
+ * OPEN FINDING (measured 2026-10-08, this fixture). Three of the fold's inputs are USER-tier trusted
+ * keys, and the Host writes only the PROJECT config - so a fixture must supply its own user tier or
+ * it measures nothing:
+ *
+ *   - `execute_threshold_tokens`: "a repository may only RAISE execute_threshold_tokens above the
+ *     user's trusted token threshold; it cannot force earlier historian work or cloned-repo cost
+ *     escalation." A project value of 6000 was ignored outright (vendor loader, verified warning).
+ *   - `historian.pi.model`: "historian model selection is user-level only". Ignored from project
+ *     scope, and without it the historian does not resolve, so the trigger is never evaluated.
+ *   - `protected_tokens`: accepted from project scope, but must be supplied together with the above.
+ *
+ * This fixture now supplies all of them from an isolated user tier (its own XDG_CONFIG_HOME), which
+ * also makes it hermetic - otherwise it silently inherits the operator's own user config, and this
+ * machine's sets an 800k threshold, so no fold could ever happen.
+ * 
+ * The fold STILL does not fire: `protected_tokens_effective` now honors the fixture (4000), and after
+ * twenty real turns `last_input_tokens = 10898` - far past the 6000 threshold - yet
+ * `times_execute_threshold_reached = 0`. So one more condition remains. The most likely candidate is
+ * that the pressure decision needs a context-usage reading the Pi session supplies at request time
+ * (the same run reports `detected_context_limit_provenance = unknown` while carrying a usable window),
+ * i.e. that a bare in-process session never crosses it however much text it holds. The next probe is
+ * to log the handler's own trigger inputs on one pass, rather than reason about them.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -39,6 +51,11 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 const apiKey = process.env.CPA_OAI_API_KEY;const identity: CompanionIdentity = Object.freeze({
+  // Production's chat runtime carries a continuity id, and the Host only declares the memory
+  // partition when it is present. WITHOUT it the plugin falls back to a git-root walk from a
+  // temporary directory - finds no project, and memory plus the historian stay off. A fixture
+  // without it measures nothing, which is what this one did until it was added.
+  continuityId: "continuity_01",
   playerId: "player_01",
   saveId: "save_01",
   worldId: "world_01",
@@ -80,13 +97,12 @@ test(
     // Two gates, and the second one is an OPEN FINDING rather than a permission:
     //
     // 1. Without a credential there is nothing to run - this fixture needs real provider turns.
-    // 2. The fixture does not yet produce a fold even with BOTH window-derived quantities compressed
-    //    (measured: `execute_threshold_tokens: 6000` + `protected_tokens: 4000`, twenty real turns,
-    //    `last_input_tokens = 10931`, `times_execute_threshold_reached = 0`), while the config file
-    //    on disk DOES carry the key. So the plugin's effective config source (or its read order
-    //    against the Host's write) is the open question; see the file header. Until then this must
-    //    NOT be reported as evidence - a green test here would be a lie, and a red one would blame
-    //    the product. `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` runs it anyway, for diagnosis.
+    // 2. The fixture does not yet produce a fold: identity, the user-tier keys and the protected tail
+    //    are all now correct (measured `protected_tokens_effective = 4000`, `last_input_tokens =
+    //    10898`), yet `times_execute_threshold_reached = 0`. One more condition gates the trigger; the
+    //    file header names the candidate and the next probe. Until then this must NOT be reported as
+    //    evidence - a green test here would be a lie, and a red one would blame the product.
+    //    `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` runs it anyway, for diagnosis.
     skip:
       process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE === "1"
         ? false
@@ -100,6 +116,34 @@ test(
     const key = apiKey;
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
+    // Magic Context treats the fold trigger as a USER-tier trusted key, and its rule is explicit:
+    // "a repository may only RAISE execute_threshold_tokens above the user's trusted token
+    // threshold; it cannot force earlier historian work or cloned-repo cost escalation." So the
+    // Host-written project config can never lower it - measured: a project value of 6000 was ignored
+    // and the run kept the operator's own user-tier threshold. The fixture therefore supplies its
+    // OWN user tier, which is also what keeps it hermetic: without this it would silently inherit
+    // whatever the machine's operator has configured (here: an 800k threshold, so no fold ever).
+    const configHome = join(root, "config-home");
+    const previousConfigHome = process.env.XDG_CONFIG_HOME;
+    await mkdir(join(configHome, "cortexkit"), { recursive: true });
+    await writeFile(
+      join(configHome, "cortexkit", "magic-context.jsonc"),
+      `${JSON.stringify(
+        {
+          execute_threshold_tokens: { default: 6_000 },
+          protected_tokens: 4_000,
+          // Also a trusted USER-tier key, and ignored from project scope by the same security rule:
+          // "historian model selection is user-level only; a repository cannot force extra compaction
+          // cost". Without it the historian does not resolve at all, so the trigger is never even
+          // evaluated - which is what the earlier runs measured as "threshold never reached".
+          historian: { pi: { model: "cpa-oai/deepseek-v4-flash", thinking_level: "low" } },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    process.env.XDG_CONFIG_HOME = configHome;
     // Magic Context resolves its PROJECT config from the session's working directory, and the Host
     // writes that config into the CONTEXT directory (`<root>/contexts/<hash>/.cortexkit/...`), which is
     // what a composed child's cwd is. Measured: without this the plugin read nothing and the fold
@@ -177,6 +221,8 @@ test(
       }
       bindWindowsStaleLockReclaimer(undefined);
       process.chdir(previousCwd);
+      if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousConfigHome;
     }
   },
 );
