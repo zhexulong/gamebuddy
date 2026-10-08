@@ -17,11 +17,22 @@
  *
  * What it asserts is exactly H's claim: one real fold happened (a chapter sealed and reached m[0]),
  * and the m[0] prefix stayed byte-stable within each materialization revision.
+ *
+ * OPEN FINDING (measured 2026-10-08, this fixture): the fold does not happen yet. With the fixture
+ * knobs compressed (`execute_threshold_tokens: 6000`, `protected_tokens: 4000`) and twenty real
+ * turns - Magic Context's own session reports `last_input_tokens = 10931`,
+ * `observed_safe_input_tokens = 10931`, `times_execute_threshold_reached = 0`, `compartments = 0` -
+ * the trigger never fires, so the compressed value is not in force. The Host DID write it: the file
+ * `<root>/contexts/<hash>/.cortexkit/magic-context.jsonc` carries `execute_threshold_tokens`. So the
+ * remaining question is not "does the override work" but "where does the plugin read its effective
+ * config from, and when" - either it is not this file on the in-process path, or it is read before
+ * the Host writes it. Until that is settled this test is SKIPPED with this finding rather than left
+ * red (which would blame the product) or green (which would be a lie).
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { createCompanionRuntime, resolveRuntimePaths, type CompanionIdentity } from "./runtime.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
@@ -69,18 +80,19 @@ test(
     // Two gates, and the second one is an OPEN FINDING rather than a permission:
     //
     // 1. Without a credential there is nothing to run - this fixture needs real provider turns.
-    // 2. The fixture does not yet produce a fold even with BOTH window-derived quantities
-    //    compressed (measured: `execute_threshold_tokens: 6000` + `protected_tokens: 4000`, 12 real
-    //    turns, ~13k tokens -> `[probe:m0_chapters] 0` every pass, `compartments` stays 0). So a
-    //    third condition gates the fold, and it has to be identified before this can be a gate:
-    //    the two candidates are (a) the plugin does not read the Host-written project config on this
-    //    in-process path, or (b) Magic Context's pressure decision needs a context-usage reading a
-    //    bare in-process session does not supply. Until that is settled this must NOT be reported as
-    //    evidence - a green test here would be a lie, and a red one would blame the product.
+    // 2. The fixture does not yet produce a fold even with BOTH window-derived quantities compressed
+    //    (measured: `execute_threshold_tokens: 6000` + `protected_tokens: 4000`, twenty real turns,
+    //    `last_input_tokens = 10931`, `times_execute_threshold_reached = 0`), while the config file
+    //    on disk DOES carry the key. So the plugin's effective config source (or its read order
+    //    against the Host's write) is the open question; see the file header. Until then this must
+    //    NOT be reported as evidence - a green test here would be a lie, and a red one would blame
+    //    the product. `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` runs it anyway, for diagnosis.
     skip:
-      apiKey === undefined
-        ? "requires CPA_OAI_API_KEY: this fixture runs real provider turns"
-        : "open finding: an in-process fold does not happen yet even with the fixture knobs compressed (see the file header)",
+      process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE === "1"
+        ? false
+        : apiKey === undefined
+          ? "requires CPA_OAI_API_KEY: this fixture runs real provider turns"
+          : "open finding: an in-process fold does not happen yet even with the fixture knobs compressed (see the file header)",
   },
   async () => {
     // Narrowed after the skip guard: the closure below must not see `string | undefined`.
@@ -88,6 +100,14 @@ test(
     const key = apiKey;
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
+    // Magic Context resolves its PROJECT config from the session's working directory, and the Host
+    // writes that config into the CONTEXT directory (`<root>/contexts/<hash>/.cortexkit/...`), which is
+    // what a composed child's cwd is. Measured: without this the plugin read nothing and the fold
+    // trigger stayed at the 65% default even though the fixture's config file asked for 6000 tokens.
+    const contextDir = dirname(resolveRuntimePaths(identity, root).agentDir);
+    await mkdir(contextDir, { recursive: true });
+    const previousCwd = process.cwd();
+    process.chdir(contextDir);
     try {
       // The provider credential, exactly where the runtime reads it.
       const agentDir = resolveRuntimePaths(identity, root).agentDir;
@@ -114,7 +134,7 @@ test(
           // in a test. The trigger alone is not enough - see `historianProtectedTokens`.
           { historianExecuteThresholdTokens: 6_000, historianProtectedTokens: 4_000 },
         );
-      for (let index = 1; index <= 12; index += 1) {
+      for (let index = 1; index <= 20; index += 1) {
         await runtime.session.prompt(filler(index));
       }
       });
@@ -148,8 +168,15 @@ test(
         assert.equal(seen.size, 1, `revision ${revision} rendered ${seen.size} different m[0] byte images`);
       }
     } finally {
-      await rm(root, { recursive: true, force: true }).catch(() => undefined);
+      // Diagnosis aid: keep the root when asked, so Magic Context's own database can be read
+      // afterwards (it is where the fold's reasons live: `session_meta`).
+      if (process.env.GAMEBUDDY_CHAPTER_FOLD_KEEP_ROOT === "1") {
+        process.stderr.write(`[chapter-fold-fixture] kept root: ${root}\n`);
+      } else {
+        await rm(root, { recursive: true, force: true }).catch(() => undefined);
+      }
       bindWindowsStaleLockReclaimer(undefined);
+      process.chdir(previousCwd);
     }
   },
 );
