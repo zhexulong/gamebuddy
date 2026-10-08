@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 
 import {
@@ -7,6 +8,12 @@ import {
   createComposedReferenceGameBrowserApi,
   validateComposedReferenceGameRoot,
 } from "../src/composed-reference-game-browser-api.ts";
+import { composedProblemView } from "../src/composed-problem-view.ts";
+import { messages } from "../src/i18n.ts";
+import { composeReferenceGameBrowserProfile } from "../../host/src/composed-browser-contract/index.js";
+import { createComposedReferenceGameBrowserRequestHandler } from "../../host/src/composed-reference-game-browser.js";
+import { composeGameProfile, GameBrowserFixtureV1 } from "../../host/src/game-browser-contract/index.js";
+import { composeTavernProfile, TavernBrowserFixtureV1 } from "../../host/src/tavern/browser-contract/index.js";
 
 const HANDLE = "A".repeat(43);
 
@@ -201,13 +208,55 @@ test("composed client reports bounded server problems without accepting additive
     ComposedReferenceGameProtocolError,
   );
 
-  const foreign = transport(jsonResponse({ code: "foreign_server_detail" }, 409));
+  const foreign = transport(jsonResponse({ code: "raw producer detail" }, 409));
   await assert.rejects(
     createComposedReferenceGameBrowserApi(foreign.fetch).readState(),
     (error) =>
       error instanceof ComposedReferenceGameProtocolError &&
       error.reason === "invalid_problem",
   );
+
+  // A code this build does not know is still a *bounded* token: it is preserved
+  // and shown instead of being turned into an opaque protocol failure, which is
+  // what makes an unfamiliar refusal diagnosable rather than invisible.
+  const unknown = transport(jsonResponse({ code: "game_endgame_settlement_unavailable" }, 409));
+  await assert.rejects(
+    createComposedReferenceGameBrowserApi(unknown.fetch).readState(),
+    (error) =>
+      error instanceof ComposedReferenceGameProblemError &&
+      error.code === "game_endgame_settlement_unavailable" &&
+      error.causeCode === null,
+  );
+
+  // The bounded cause the shell projects for a lifecycle refusal is read as its
+  // own field; an unbounded or additive shape is still refused outright.
+  const caused = transport(
+    jsonResponse({ code: "game_unavailable", cause: "stardew_player_host_launch_runtime_unavailable" }, 409),
+  );
+  await assert.rejects(
+    createComposedReferenceGameBrowserApi(caused.fetch).readState(),
+    (error) =>
+      error instanceof ComposedReferenceGameProblemError &&
+      error.code === "game_unavailable" &&
+      error.causeCode === "stardew_player_host_launch_runtime_unavailable",
+  );
+  for (const body of [
+    { code: "game_unavailable", cause: "C:\\Games\\Stardew Valley" },
+    { code: "game_unavailable", cause: "stardew_" + "a".repeat(200) },
+    { code: "game_unavailable", cause: "not_a_coordinator_code" },
+    { code: "game_unavailable", cause: "stardew_ok", detail: "raw producer text" },
+    { code: "C:\\Games\\Stardew Valley" },
+    { code: "" },
+    { code: "a".repeat(200) },
+  ]) {
+    const recorder = transport(jsonResponse(body, 409));
+    await assert.rejects(
+      createComposedReferenceGameBrowserApi(recorder.fetch).readState(),
+      (error) =>
+        error instanceof ComposedReferenceGameProtocolError &&
+        error.reason === "invalid_problem",
+    );
+  }
 });
 
 
@@ -647,7 +696,7 @@ test("Game resume preserves frozen typed problem outcomes and rejects non-200 tr
     new Response(null, { status: 204 }),
     new Response("not-json", { status: 200 }),
     new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
-    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "raw producer detail" }), { status: 409 }),
   ]) {
     const recorder = transport(jsonResponse(root()), response);
     const api = createComposedReferenceGameBrowserApi(recorder.fetch);
@@ -738,7 +787,7 @@ test("Game reopen preserves frozen typed problem outcomes and rejects non-200 tr
     new Response(null, { status: 204 }),
     new Response("not-json", { status: 200 }),
     new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
-    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "raw producer detail" }), { status: 409 }),
   ]) {
     const recorder = transport(jsonResponse(root()), response);
     const api = createComposedReferenceGameBrowserApi(recorder.fetch);
@@ -859,7 +908,7 @@ test("Game create preserves frozen typed problem outcomes and rejects non-200 tr
     new Response(null, { status: 204 }),
     new Response("not-json", { status: 200 }),
     new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
-    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "raw producer detail" }), { status: 409 }),
   ]) {
     const recorder = transport(jsonResponse(root()), response);
     const api = createComposedReferenceGameBrowserApi(recorder.fetch);
@@ -942,7 +991,7 @@ test("Game resume cancel preserves frozen typed problem outcomes and rejects non
     new Response(null, { status: 204 }),
     new Response("not-json", { status: 200 }),
     new Response(JSON.stringify({ code: "state_unavailable", detail: "raw producer text" }), { status: 409 }),
-    new Response(JSON.stringify({ code: "foreign_server_detail" }), { status: 409 }),
+    new Response(JSON.stringify({ code: "raw producer detail" }), { status: 409 }),
   ]) {
     const recorder = transport(jsonResponse(root()), response);
     const api = createComposedReferenceGameBrowserApi(recorder.fetch);
@@ -951,5 +1000,237 @@ test("Game resume cancel preserves frozen typed problem outcomes and rejects non
       api.cancelResume({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 2 }),
       ComposedReferenceGameProtocolError,
     );
+  }
+});
+
+// ─── Problem presentation: one category per real failure class ───────────────
+
+/** Reads `/state` through the real client and returns the refusal it raised. */
+async function refusal(body, status) {
+  const api = createComposedReferenceGameBrowserApi(transport(jsonResponse(body, status)).fetch);
+  return api.readState().then(
+    () => { throw new Error("expected the read to be refused"); },
+    (error) => error,
+  );
+}
+
+test("a gone session is presented as a gone session, never as a reconciliation conflict", async () => {
+  // The regression this catches: every non-retryable refusal was rendered as
+  // "the chat state could not be safely reconciled", so a plain 401 sent the
+  // reader after a consistency fault that did not exist.
+  for (const code of ["unauthorized", "csrf_failed"]) {
+    for (const locale of ["en", "zh-CN"]) {
+      const labels = messages(locale);
+      const view = composedProblemView(await refusal({ code }, 401), labels);
+      assert.equal(view.title, labels.problemSessionExpiredTitle);
+      assert.equal(view.detail, labels.problemSessionExpiredDetail);
+      assert.equal(view.detail.includes(labels.problemReconciliationFailedDetail), false);
+    }
+  }
+});
+
+test("a real reconciliation conflict is the only failure presented as reconciliation", async () => {
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const view = composedProblemView(await refusal({ code: "state_reconciliation_required" }, 409), labels);
+    assert.equal(view.title, labels.problemReconciliationFailedTitle);
+    assert.equal(view.detail, labels.problemReconciliationFailedDetail);
+  }
+});
+
+test("a route this build does not serve is presented as an absent route", async () => {
+  for (const code of ["not_found", "unsupported_api_version", "profile_operation_unavailable"]) {
+    for (const locale of ["en", "zh-CN"]) {
+      const labels = messages(locale);
+      const view = composedProblemView(await refusal({ code }, 404), labels);
+      assert.equal(view.title, labels.problemRouteUnavailableTitle);
+      assert.equal(view.detail, labels.problemRouteUnavailableDetail);
+    }
+  }
+});
+
+test("a retryable unavailability keeps its own presentation", async () => {
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const view = composedProblemView(await refusal({ code: "state_unavailable" }, 409), labels);
+    assert.equal(view.title, labels.problemTemporarilyUnavailableTitle);
+    assert.equal(view.detail, labels.problemTemporarilyUnavailableDetail);
+    const upstream = composedProblemView(await refusal({ code: "game_unavailable" }, 503), labels);
+    assert.equal(upstream.detail, labels.problemTemporarilyUnavailableDetail);
+  }
+});
+
+test("anything the client cannot classify shows the code it actually received", async () => {
+  const labels = messages("en");
+  // An unknown code is the case that turns tonight's confusion into a one-minute
+  // diagnosis: it must reach the text, not be re-worded as reconciliation.
+  const unknown = composedProblemView(await refusal({ code: "invented_failure_code" }, 409), labels);
+  assert.equal(unknown.title, labels.problemInternalErrorTitle);
+  assert.equal(
+    unknown.detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", "invented_failure_code"),
+  );
+
+  // A code with a named bounded cause shows both.
+  const caused = composedProblemView(
+    await refusal({ code: "game_unavailable", cause: "stardew_player_host_launch_failed" }, 409),
+    labels,
+  );
+  assert.equal(caused.title, labels.problemInternalErrorTitle);
+  assert.equal(
+    caused.detail,
+    labels.problemInternalErrorCauseDetail
+      .replace("{{code}}", "game_unavailable")
+      .replace("{{cause}}", "stardew_player_host_launch_failed"),
+  );
+
+  // A transport-level failure has no server code at all; the absence is stated
+  // rather than replaced by an invented one.
+  const offline = composedProblemView(new Error("socket closed"), labels);
+  assert.equal(offline.title, labels.problemInternalErrorTitle);
+  assert.equal(
+    offline.detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", labels.problemInternalErrorNoCode),
+  );
+});
+
+// ─── Cross-boundary: a real Host body through the real client mapping ────────
+
+const BOOTSTRAP_TOKEN = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
+
+/** The real composed Host handler, with only its readers and launch seam stubbed. */
+function realComposedSurface(gameLaunch) {
+  const tavernProfile = composeTavernProfile({
+    profileId: "gamebuddy.chat-core.reference-pipeline",
+    releaseTier: "chat_core",
+    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
+    operationIds: ["chat.submit", "chat.cancel"],
+    navigationItemIds: ["chat"],
+  });
+  const gameProfile = composeGameProfile({
+    profileId: "gamebuddy.game.preview",
+    releaseTier: "game_preview",
+    operationIds: ["game.state.read", "game.launch"],
+    navigationItemIds: ["game"],
+  });
+  return createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken: BOOTSTRAP_TOKEN,
+    readChat: async (context) => {
+      const base = TavernBrowserFixtureV1.snapshot();
+      return {
+        ...base,
+        build: { ...base.build, profileId: tavernProfile.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      };
+    },
+    readGame: async (context) => {
+      const base = GameBrowserFixtureV1.state();
+      return {
+        ...base,
+        build: { ...base.build, profileId: gameProfile.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      };
+    },
+    gameLaunch,
+  });
+}
+
+async function startSurface(handler) {
+  const server = createServer((request, response) =>
+    handler.handle(request, response, `http://127.0.0.1:${server.address().port}`),
+  );
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    async close() {
+      await handler.close();
+      await new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+test("a real composed refusal reaches the player as its own category, over real HTTP", async () => {
+  // The failure this test exists for: both sides passed their own tests while
+  // disagreeing with each other. Nothing below restates one side - the real Host
+  // handler is driven, and its real response body goes through the client's own
+  // strict reader and its own presentation.
+  //
+  // A renewed disagreement fails HERE: re-collapsing the server to a bare
+  // `game_unavailable` breaks the code assertions, dropping the bounded cause
+  // breaks the cause assertion, and re-wording any non-retryable refusal as
+  // reconciliation - the exact regression this lane exists for - breaks the
+  // session and title assertions.
+  const wrapped = (cause) => {
+    const error = new Error("stardew_player_host_launch_failed");
+    error.cause = cause;
+    return error;
+  };
+  let thrown = wrapped(new Error("stardew_player_host_launch_runtime_unavailable"));
+  const handler = realComposedSurface(async () => { throw thrown; });
+  const surface = await startSurface(handler);
+  try {
+    const en = messages("en");
+
+    // Real 401: no session at all. The body the player's page actually receives is
+    // the input to the client's own mapping.
+    const unauthenticated = await fetch(`${surface.origin}/api/composed-reference-game/v1/state`, {
+      headers: { "sec-fetch-site": "same-origin" },
+    });
+    assert.equal(unauthenticated.status, 401);
+    const unauthenticatedBody = await unauthenticated.json();
+    assert.deepEqual(unauthenticatedBody, { code: "unauthorized" });
+    const unauthenticatedView = composedProblemView(await refusal(unauthenticatedBody, 401), en);
+    assert.equal(unauthenticatedView.title, en.problemSessionExpiredTitle);
+    assert.equal(unauthenticatedView.detail, en.problemSessionExpiredDetail);
+
+    // Real launch refusals: the client's own api over real HTTP against the real
+    // handler, carrying the session cookie the real bootstrap issued.
+    let cookie;
+    const api = createComposedReferenceGameBrowserApi(async (input, init) => {
+      const headers = { ...(init?.headers ?? {}), origin: surface.origin };
+      if (cookie !== undefined) headers.cookie = cookie;
+      const response = await fetch(`${surface.origin}${input}`, { ...init, headers });
+      const setCookie = response.headers.get("set-cookie");
+      if (setCookie !== null) cookie = setCookie.split(";", 1)[0];
+      return response;
+    });
+    // The real bootstrap body must satisfy the client's own strict root validator.
+    await api.bootstrap(BOOTSTRAP_TOKEN);
+    const launchRefusalOf = (key) => api
+      .launchGame({ apiVersion: 1, idempotencyKey: key, expectedInstanceGeneration: 1 })
+      .then(
+        () => { throw new Error("expected the real launch to be refused"); },
+        (error) => error,
+      );
+
+    // A known cause gets its own composed code: the runtime collaborator is absent.
+    const absentRuntime = await launchRefusalOf("L".repeat(21) + "A");
+    assert.ok(absentRuntime instanceof ComposedReferenceGameProblemError, String(absentRuntime));
+    assert.equal(absentRuntime.status, 409);
+    assert.equal(absentRuntime.code, "game_runtime_unavailable");
+    assert.equal(absentRuntime.causeCode, null);
+
+    // Tonight's actual shape: a launch that failed after admission, whose cause is
+    // not a known code. The code is still generic, so the bounded cause is what
+    // makes it diagnosable - and it must reach the player's text.
+    thrown = wrapped(new Error("stardew_private_launch_admission_failed"));
+    const wrappedFailure = await launchRefusalOf("M".repeat(21) + "A");
+    assert.ok(wrappedFailure instanceof ComposedReferenceGameProblemError, String(wrappedFailure));
+    assert.equal(wrappedFailure.code, "game_unavailable");
+    assert.equal(wrappedFailure.causeCode, "stardew_private_launch_admission_failed");
+
+    const launchView = composedProblemView(wrappedFailure, en);
+    assert.equal(launchView.title, en.problemInternalErrorTitle);
+    assert.ok(launchView.detail.includes("game_unavailable"), launchView.detail);
+    assert.ok(launchView.detail.includes("stardew_private_launch_admission_failed"), launchView.detail);
+    assert.equal(launchView.detail.includes(en.problemReconciliationFailedDetail), false);
+  } finally {
+    await surface.close();
   }
 });
