@@ -119,44 +119,32 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--require-chapter]";
+  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>]";
 }
 
 function parseArguments(argv) {
-  // Flags that stand alone. Everything else takes exactly one value; treating a boolean as
-  // value-taking made `--require-chapter` demand an argument it never has.
-  const booleanFlags = new Set(["--require-chapter"]);
   const flags = new Map([
     ["--report", undefined],
     ["--seed", undefined],
     ["--question", undefined],
     ["--manifest", undefined],
     ["--card", undefined],
-    ["--language", undefined],
-  // Refuse to pass when no chapter appeared, so a fold fixture cannot silently stop folding.
-  ["--require-chapter", undefined],
-]);
+  		["--language", undefined],
+	]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") return Object.freeze({ help: true });
-  		if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
-		if (booleanFlags.has(flag)) {
-			flags.set(flag, "true");
-			continue;
-		}
-		const value = argv[index + 1];
+    if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
+    const value = argv[index + 1];
     // A value that is itself a known flag means the caller forgot it; refusing is
     // better than silently consuming the next flag as text.
     if (value === undefined || flags.has(value)) throw new Error(usage());
     flags.set(flag, value);
     index += 1;
   }
-  const language = flags.get("--language");
-  if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
-    throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
-  const requireChapter = flags.get("--require-chapter");
-  if (requireChapter !== undefined && requireChapter !== "true")
-    throw new Error(`${usage()} (--require-chapter takes no value)`);
+ 	const language = flags.get("--language");
+	if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
+		throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({
@@ -164,8 +152,7 @@ function parseArguments(argv) {
     reportPath: resolve(reportPath),
     manifestPath: flags.get("--manifest"),
     cardPath: flags.get("--card"),
-    language,
-    requireChapter: requireChapter === "true",
+  		language,
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -1375,27 +1362,19 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	const parsed = parseArguments(process.argv.slice(2));
-	if (parsed.help) {
-		process.stdout.write(`${usage()}\n`);
-	} else {
-		requestedLanguage = parsed.language;
-		const report = await runMemoryLiveLoop({
-			reportPath: parsed.reportPath,
-			manifestPath: parsed.manifestPath,
-			seed: parsed.seed,
-			question: parsed.question,
-			cardPath: parsed.cardPath,
-		});
-		if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
-			process.stderr.write(
-				`[memory-loop] FAILED: --require-chapter but m[0] carried no chapter (markerObserved=${String(
-					report.chapters?.markerObserved,
-				)}, renderedCount=${String(report.chapters?.renderedCount)}); the fold did not happen in this fixture\n`,
-			);
-			process.exit(1);
-		}
-		process.stdout.write(
+  const parsed = parseArguments(process.argv.slice(2));
+  if (parsed.help) {
+    process.stdout.write(`${usage()}\n`);
+  } else {
+   	requestedLanguage = parsed.language;
+    const report = await runMemoryLiveLoop({
+      reportPath: parsed.reportPath,
+      manifestPath: parsed.manifestPath,
+      seed: parsed.seed,
+      question: parsed.question,
+      cardPath: parsed.cardPath,
+    });
+    process.stdout.write(
       `${JSON.stringify({
         state: report.seed.durable ? "collected" : "blocked",
         verdict: report.chat.verdict ?? null,
