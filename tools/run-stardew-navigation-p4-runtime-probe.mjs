@@ -10,6 +10,14 @@ import { validateRuntimeAttestation } from "./stardew-navigation-p4-runtime-vali
 
 const probeId = "zhexulong.GameBuddy.NavigationRuntimeProbe";
 const SHA256 = /^[a-f0-9]{64}$/;
+/**
+ * The only save-slot names tooling may stage, rename or remove inside the real
+ * Stardew saves root. It mirrors the Mod-side `GameBuddyFixture*` logical-name
+ * vocabulary (see `prepare-stardew-action-fixture.ps1` and
+ * `assertFixtureLogicalName` in `lib/stardew-native-local-player-fixture.mjs`),
+ * so every tool that owns a save slot agrees on which slots are its own.
+ */
+const FIXTURE_SLOT_NAME = /^GameBuddyFixture[A-Za-z0-9_-]{0,64}$/;
 const required = (value, error) => {
   if (typeof value !== "string" || !isAbsolute(value)) throw new Error(error);
   return resolve(value);
@@ -57,7 +65,14 @@ export async function readFixtureManifest(fixtureRoot, io = { lstat, readFile, r
     typeof manifest !== "object" ||
     Array.isArray(manifest) ||
     typeof manifest.saveDirectoryName !== "string" ||
-    !/^[^./\\]+$/.test(manifest.saveDirectoryName) ||
+    // The owner ruling: tooling may only ever own a slot it created itself. A
+    // fixture run stages its working save inside the REAL Stardew saves root, and
+    // this name is the one it stages, renames and later removes there. Accepting
+    // any other name let a manifest point that transaction at a save the player
+    // owns (a `GameBuddyFarm_*` companion world included), so a non-fixture slot
+    // name is refused loudly here -- before any staging directory, rename or
+    // removal under the saves root -- instead of being silently skipped.
+    !FIXTURE_SLOT_NAME.test(manifest.saveDirectoryName) ||
     !Array.isArray(manifest.files) ||
     !manifest.files.length
   )

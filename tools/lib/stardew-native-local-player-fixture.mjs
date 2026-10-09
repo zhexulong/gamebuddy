@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 
 const BUNDLE_FILES = Object.freeze([
@@ -19,6 +19,7 @@ const PUBLIC_ERROR_CODES = new Set([
   "invalid_native_local_fixture_action",
   "invalid_native_local_fixture_timeout",
   "native_local_fixture_absolute_paths_required",
+  "native_local_fixture_journal_scope_unowned",
   "native_local_fixture_action_policy_invalid",
   "native_local_fixture_backup_already_exists",
   "native_local_fixture_binding_invalid",
@@ -1000,7 +1001,7 @@ async function backupBodyProgramJournal(options, backup) {
   // alone for that path.
   const scopeDirectory = bodyProgramJournalScopeDirectory(options);
   if (scopeDirectory === null) {
-    await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: null, existed: null });
+    await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: null, existed: null, saveRoot: null });
     return { path: null, existed: null };
   }
   const scopeBackup = join(backup, "body-program-journal");
@@ -1009,8 +1010,39 @@ async function backupBodyProgramJournal(options, backup) {
     await mkdir(dirname(scopeBackup), { recursive: true });
     await cp(scopeDirectory, scopeBackup, { recursive: true });
   }
-  await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: scopeDirectory, existed });
+  // The save root is recorded with the scope: restore runs from the
+  // transaction's own backup and is not handed a save root again, so the one
+  // directory the removal is bounded to has to travel with the marker.
+  await writeJson(join(backup, "body-program-journal.json"), {
+    version: 1,
+    path: scopeDirectory,
+    existed,
+    saveRoot: options.stardewSaveRoot,
+  });
   return { path: scopeDirectory, existed };
+}
+
+/**
+ * The one directory a journal restore may remove.
+ *
+ * Why it exists: the marker is a file inside the fixture transaction's own
+ * backup, and restore used to pass the path it names straight into a recursive
+ * removal. A save root is the one directory tree the owner ruling forbids
+ * tooling to touch unless the slot is its own, so the marker's path is admitted
+ * only inside `<recorded save root>/BodyProgramJournal-v1`: a save folder is a
+ * direct child of the save root and can therefore never be named, and a marker
+ * from an undeclared, foreign or hand-edited root is refused loudly instead of
+ * being resolved through.
+ */
+function ownedJournalScopePath(marker) {
+  if (typeof marker.saveRoot !== "string" || !isAbsolute(marker.saveRoot) || typeof marker.path !== "string")
+    throw new Error("invalid_fixture_backup_manifest");
+  const journalRoot = resolve(join(marker.saveRoot, "BodyProgramJournal-v1"));
+  const scopePath = resolve(marker.path);
+  const containment = relative(journalRoot, scopePath);
+  if (containment === "" || containment.startsWith("..") || isAbsolute(containment) || containment.includes(".."))
+    throw new Error("native_local_fixture_journal_scope_unowned");
+  return scopePath;
 }
 
 async function restoreBodyProgramJournal(backup) {
@@ -1019,21 +1051,23 @@ async function restoreBodyProgramJournal(backup) {
   if (marker?.version !== 1) throw new Error("invalid_fixture_backup_manifest");
   const { path, existed } = marker;
   if (existed === null) {
-    if (path !== null) throw new Error("invalid_fixture_backup_manifest");
+    if (path !== null || marker.saveRoot !== null) throw new Error("invalid_fixture_backup_manifest");
     return marker;
   }
   if (typeof path !== "string" || typeof existed !== "boolean")
     throw new Error("invalid_fixture_backup_manifest");
+  const scopePath = ownedJournalScopePath(marker);
   // Always clear the live scope first: a run that wrote a journal must not keep
   // it merely because the pre-run state had none.
-  await rm(path, { recursive: true, force: true });
+  await rm(scopePath, { recursive: true, force: true });
   if (existed) {
     if (!(await exists(scopeBackup))) throw new Error("invalid_fixture_backup_manifest");
-    await mkdir(dirname(path), { recursive: true });
-    await cp(scopeBackup, path, { recursive: true, force: true });
+    await mkdir(dirname(scopePath), { recursive: true });
+    await cp(scopeBackup, scopePath, { recursive: true, force: true });
   }
   return marker;
 }
+
 async function restoreManagedFiles(context, backup, removeBackup) {
   const manifest = await readJson(join(backup, "manifest.json"));
   if (manifest?.version !== 1 || !Array.isArray(manifest.entries)) throw new Error("invalid_fixture_backup_manifest");

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "./stardew-fixture-roots.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
@@ -307,6 +307,7 @@ function resolveContext(options = {}) {
   const roots = resolveStardewFixtureRoots({ profileRoot: options.root });
   announceStardewFixtureRoots(roots);
   const profiles = options.profiles ?? roots.profilesDir;
+  assertProfilesOutsideStardewSaves(profiles);
   const releaseDir = options.releaseDir ?? "E:/projects/ai-game-companion/integrations/stardew/bin/Release/net6.0";
   return Object.freeze({
     root: roots.profileRoot,
@@ -317,6 +318,27 @@ function resolveContext(options = {}) {
     hostMod: configPath({ profiles }, "A-host", ["Mods", "GameBuddy", "config.json"]),
     aiMod: configPath({ profiles }, "A-ai-client", ["Mods", "GameBuddy", "config.json"]),
   });
+}
+
+/**
+ * The owner ruling: no fixture transaction may touch a save the player owns, and
+ * a `GameBuddyFarm_*` slot is the player's progress across bootstrap attempts.
+ *
+ * This transaction writes and removes config files under the resolved profile
+ * root, and `restoreFixtureProfileUnlocked` removes a target for every managed
+ * entry that did not exist before the run. A profile root that is, or sits
+ * inside, the Stardew saves folder would therefore let a mis-pointed `--root`
+ * resolve a managed target into the saves tree, so the root is refused loudly
+ * here -- before any backup, write or removal -- instead of being written
+ * through. Comparison is case-insensitive because Windows paths are.
+ */
+function assertProfilesOutsideStardewSaves(profiles) {
+  const appData = process.env.APPDATA;
+  if (typeof appData !== "string" || appData.length === 0) return;
+  const savesRoot = resolve(join(appData, "StardewValley", "Saves")).toLowerCase();
+  const containment = relative(savesRoot, resolve(profiles).toLowerCase());
+  if (containment === "" || (!containment.startsWith("..") && !isAbsolute(containment)))
+    throw new Error("fixture_profile_root_inside_stardew_saves");
 }
 
 function transactionLockPath(context) {

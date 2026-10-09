@@ -241,6 +241,116 @@ test("the fixture transaction resets the scope-bound Body Program journal", asyn
   await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
 });
 
+/**
+ * The physical slot basename the native game assigns to the Player Host world a
+ * companion session created. Its farm/player identity is the WorldCreation form
+ * (`GameBuddy Farm` / `GameBuddy`), and the suffix is the game's own unique id.
+ */
+const COMPANION_SLOT = "GameBuddyFarm_451234657";
+
+/**
+ * The owner ruling (2026-10-09): a `GameBuddyFarm_*` slot under the Stardew saves
+ * root is the player's own progress across bootstrap attempts, and no fixture or
+ * live-run transaction may delete, move, rename or overwrite it. This fixture
+ * transaction stages its working save inside that same real saves root, so the
+ * contract is asserted against the actual failure it guards: a full fixture cycle
+ * must leave a companion world sitting beside the fixture slot byte-identical.
+ */
+test("a fixture cycle leaves a companion world beside the fixture slot byte-identical", async (t) => {
+  const options = { ...(await createFixture(t, "companion-slot")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "working-saves");
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const companion = join(stardewSaveRoot, COMPANION_SLOT);
+  await mkdir(companion, { recursive: true });
+  await writeFile(join(companion, COMPANION_SLOT), "companion-save-body");
+  await writeFile(join(companion, "SaveGameInfo"), "companion-save-info");
+  const before = await snapshotTree(companion);
+
+  const prepared = await prepareNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+  await restoreNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+
+  assert.deepEqual(await snapshotTree(companion), before, "the companion world must survive a fixture cycle untouched");
+  await assert.rejects(lstat(join(stardewSaveRoot, options.saveName)), /ENOENT/);
+  await assert.rejects(lstat(prepared.backup), /ENOENT/);
+});
+
+/**
+ * The same ruling from the other side: the slot vocabulary is what makes the
+ * guard structural. A slot that is not this tooling's own `GameBuddyFixture*`
+ * name is refused with a named code, before any backup, write or removal, rather
+ * than silently skipped or resolved through into the player's saves.
+ */
+test("a non-fixture save slot name is refused loudly instead of being owned", async (t) => {
+  const options = { ...(await createFixture(t, "foreign-slot")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "working-saves");
+  const template = join(options.root, "templates", COMPANION_SLOT);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, COMPANION_SLOT), "companion-save-body");
+  await writeFile(join(template, "SaveGameInfo"), "companion-save-info");
+  const companion = join(stardewSaveRoot, COMPANION_SLOT);
+  await mkdir(companion, { recursive: true });
+  await writeFile(join(companion, COMPANION_SLOT), "companion-save-body");
+  await writeFile(join(companion, "SaveGameInfo"), "companion-save-info");
+  const before = await snapshotTree(companion);
+  const foreign = {
+    ...options,
+    saveName: COMPANION_SLOT,
+    backupName: "native-local-foreign-fixture-backup",
+    stardewSaveRoot,
+  };
+
+  await assert.rejects(
+    validateNativeLocalPlayerFixturePreparation(foreign),
+    (error) => assertRedactedPublicError(error, "invalid_fixture_observed_save_slot", [COMPANION_SLOT]),
+  );
+  await assert.rejects(
+    prepareNativeLocalPlayerFixture(foreign),
+    (error) => assertRedactedPublicError(error, "invalid_fixture_observed_save_slot", [COMPANION_SLOT]),
+  );
+  assert.deepEqual(await snapshotTree(companion), before, "a refused slot must not be touched");
+  await assert.rejects(lstat(join(options.root, foreign.backupName)), /ENOENT/);
+  await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
+});
+
+/**
+ * The journal backup marker is a file inside the transaction's own backup, and
+ * restore feeds the path it names into a recursive removal. It is admitted only
+ * inside the `<recorded save root>/BodyProgramJournal-v1` scope, so neither the
+ * saves root itself nor a save folder beside the journal can ever be named by it.
+ */
+test("a journal marker can never name a path outside the journal scope", async (t) => {
+  const options = { ...(await createFixture(t, "journal-scope")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "working-saves");
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const companion = join(stardewSaveRoot, COMPANION_SLOT);
+  await mkdir(companion, { recursive: true });
+  await writeFile(join(companion, COMPANION_SLOT), "companion-save-body");
+  await writeFile(join(companion, "SaveGameInfo"), "companion-save-info");
+  const before = await snapshotTree(companion);
+  const scoped = { ...options, stardewSaveRoot };
+  const prepared = await prepareNativeLocalPlayerFixture(scoped);
+  const markerPath = join(prepared.backup, "body-program-journal.json");
+  const marker = JSON.parse(await readFile(markerPath, "utf8"));
+
+  for (const forged of [stardewSaveRoot, companion]) {
+    await writeFile(markerPath, `${JSON.stringify({ ...marker, path: forged })}\n`);
+    await assert.rejects(
+      restoreNativeLocalPlayerFixture(scoped),
+      (error) => assertRedactedPublicError(error, "native_local_fixture_journal_scope_unowned", [forged]),
+    );
+    assert.deepEqual(await snapshotTree(companion), before, "a refused journal scope must not be removed");
+  }
+});
+
 test("public entry points redact an existing backup path with a fixed code", async (t) => {
   const options = { ...(await createFixture(t, "existing-backup")), action: "equip_tool" };
   const backup = join(options.root, options.backupName);
