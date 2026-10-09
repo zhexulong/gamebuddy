@@ -632,6 +632,13 @@ public sealed partial class ModEntry : Mod
         // Configuration rejection is terminal for this load.
         if (this.provisioningConfigurationRejected)
             return;
+        // The world is loaded, and it has to be able to host the companion this
+        // session exists for before anything reads it. This is the same
+        // post-load wiring point every other world-derived fact uses, and it runs
+        // ahead of the world-creation observation below: a Player Host world with
+        // no usable cabin could only ever refuse, so making it able to host the
+        // companion is the first post-load act, not a later repair.
+        this.EnsureCompanionCabin();
         if (this.worldCreationBootstrap is not null && !this.worldCreationBootstrap.TryComplete())
         {
             // The staged creation request exists but this loaded world is not the
@@ -657,6 +664,24 @@ public sealed partial class ModEntry : Mod
         this.TryStartHostAutomation();
         this.TryStartFarmhandProvisioner();
         this.TryInitializeEmbodiment();
+    }
+
+    /// <summary>
+    /// Ensure the loaded world can host this session's companion, through
+    /// <see cref="CompanionCabinProvisioning"/> — the one place that answers
+    /// "can this world host the companion" and makes the answer true by building
+    /// a Cabin through the engine's own public construction path
+    /// (<c>GameLocation.buildStructure</c> -> <c>Building.performActionOnConstruction</c>
+    /// -> <c>Cabin.CreateFarmhand</c>). Only the Player Host role does this at all
+    /// (the AI client hosts nothing), and the work itself is idempotent, so
+    /// hosting twice never adds a second cabin.
+    /// </summary>
+    private void EnsureCompanionCabin()
+    {
+        if (this.hostFarmhandProvisioner is null)
+            return;
+        CompanionCabinOutcome outcome = CompanionCabinProvisioning.EnsureCompanionCabin(this.Monitor);
+        this.Monitor.Log($"GameBuddy companion cabin provisioning outcome: {outcome}.", LogLevel.Info);
     }
 
     private static Vector2? FindNativeLocalMoveStallAnchor(GameLocation location)
