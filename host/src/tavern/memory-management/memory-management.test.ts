@@ -117,9 +117,14 @@ test("memory service rejects forged structural mounted leases and wrong profiles
 
 test("memory service source keeps the store, lease and coordinator authority private", async () => {
   const source = await readFile(new URL("./memory-management.js", import.meta.url), "utf8");
-  // The service composes browser DTOs, the coordinator lease check, and the
-  // runtime Magic Context extension resolver. It owns no HTTP or direct
-  // SQLite access; the vendor extension retains its own read projection.
+  // The service composes browser DTOs, the coordinator lease check, and the vendor read projection.
+  // It owns no HTTP or direct SQLite access. It no longer resolves the extension ENTRY: the
+  // context-engine decoupling moved that to the runtime, and the service imports the vendor's
+  // `/memory` facade instead - which is what this asserts now. (The previous assertion named the
+  // entry resolver, so it had been failing since that move.)
+  // It is loaded DYNAMICALLY (the service keeps the vendor extension out of its static import graph),
+  // so this matches the specifier as the compiler emits it.
+  assert.match(source, /["']@cortexkit\/pi-magic-context\/memory["']/);
   assert.match(source, /from ["']\.\.\/browser-contract\/index\.js["']/);
   assert.match(source, /from ["']\.\.\/\.\.\/runtime\.js["']/);
   assert.match(source, /from ["']\.\.\/\.\.\/continuity-semantic-production/);
@@ -128,7 +133,6 @@ test("memory service source keeps the store, lease and coordinator authority pri
     /continuity-semantic-production-coordinator\.internal|transitionMountedProviderStart|transitionMountedPresentation/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
-  assert.match(source, /resolveMagicContextExtensionEntry/);
   const executableSource = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(executableSource, /(?:from|import\s*\()[^\n]*sqlite|context\.db|openDatabase/);
 });
@@ -320,15 +324,28 @@ test("mounted memory service reads the exact embedded runtime's vendor Memory pa
       manifest.runtimeRoot,
       lease.chatSurfaceSessionId,
     ).runtimeCwd;
-    const extension = await import(pathToFileURL(runtime.resolveMagicContextExtensionEntry()).href);
-    const directFacade = extension.createGameBuddyPlayerMemoryCrudFacade({
-      continuityId: manifest.principal.continuityId,
-      runtimeCwd: actualRuntimeCwd,
-    });
+    // The player-memory read projection lives on the vendor's /memory subpath, next to the extension
+   // entry the runtime resolves. The ENTRY (dist/index.js) boots the Pi extension and does not export
+   // it - importing the entry here and reaching for the facade is what this test did, and it had been
+   // failing since the facade moved.
+   const memoryEntry = new URL("./memory/index.js", pathToFileURL(runtime.resolveMagicContextExtensionEntry()).href);
+   const extension = await import(memoryEntry.href);
+   // The facade validates its profile binding (profileId + profileRevision), so the direct leg has to
+   // pass the same one the service derives from the mounted runtime's identity profile - the earlier
+   // two-field call was rejected with invalid_memory_profile_binding.
+   const identityProfile = lease.runtimeSession.profile;
+   const directFacade = extension.createGameBuddyPlayerMemoryCrudFacade({
+   continuityId: manifest.principal.continuityId,
+   runtimeCwd: actualRuntimeCwd,
+   profileId: identityProfile.profileId,
+   profileRevision: identityProfile.revision,
+   });
     await directFacade.create({
-      continuityId: manifest.principal.continuityId,
-      content: "Memory created in the exact mounted runtime",
-    });
+   continuityId: manifest.principal.continuityId,
+   profileId: identityProfile.profileId,
+   profileRevision: identityProfile.revision,
+   content: "Memory created in the exact mounted runtime",
+   });
     const service = createMemoryManagementService({ manifest, lease, profile });
     const read = await service.read();
     process.stdout.write(JSON.stringify({
