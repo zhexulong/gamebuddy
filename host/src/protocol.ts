@@ -90,6 +90,10 @@ type ActiveExecution = Readonly<{
   state: ExecutionState;
   reasonCode: string;
   evidence: Readonly<Record<string, unknown>> | null;
+  /** Who owns the body, when the Mod names it; present only during an in-flight execution. */
+  ownerKind?: string;
+  /** Whether a new command can take that owner over. */
+  interruptible?: boolean;
 }>;
 
 export type Snapshot = Readonly<{
@@ -3291,7 +3295,10 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
     Number.isSafeInteger(value.revision) &&
-    (value.evidence === null || isRecord(value.evidence)) &&
+    (value.evidence === null || isRecord(value.evidence))
+    &&
+    (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
+    (value.interruptible === undefined || typeof value.interruptible === "boolean") &&
     (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null) &&
     (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null) &&
     (!("nativeNotices" in value) || value.nativeNotices === null || isNativeNotices(value.nativeNotices))
@@ -4905,8 +4912,23 @@ function isWarp(value: unknown): boolean {
   );
 }
 
+/** The exact key set a wire active execution may carry. */
+const ACTIVE_EXECUTION_KEYS = Object.freeze([
+  "executionId",
+  "requestId",
+  "action",
+  "state",
+  "reasonCode",
+  "evidence",
+  "ownerKind",
+  "interruptible",
+] as const);
+
 function validateActiveExecution(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["executionId", "requestId", "action", "state", "reasonCode", "evidence"]) &&
+  // `ownerKind`/`interruptible` are OPTIONAL, so an older Mod that does not send them still validates - but
+  // a newer one that does must not be refused, which is exactly what happened when the Mod gained them and
+  // this list did not (every in-flight snapshot would have been `invalid_snapshot` and closed the bridge).
+  return hasOnlyKeys(value, [...ACTIVE_EXECUTION_KEYS]) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
     typeof value.action === "string" &&
@@ -4914,7 +4936,10 @@ function validateActiveExecution(value: Record<string, unknown>): string | null 
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
-    (value.evidence === null || isRecord(value.evidence))
+    (value.evidence === null || isRecord(value.evidence)) &&
+    // The two optional members are type-checked when present: the allowance must not become a hole.
+    (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
+    (value.interruptible === undefined || typeof value.interruptible === "boolean")
     ? null
     : "invalid_active_execution";
 }

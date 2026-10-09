@@ -850,13 +850,13 @@ test("bridge message payloads fail closed", () => {
         scope,
         { ...snapshot, inventoryItemFacts: [{ slot: 3, qualifiedItemId: "(O)184", displayName: "Milk", stack: 0 }] },
         "snapshot_inventory_01",
-        now,
-      ),
-      scope,
       now,
     ),
-    "invalid_snapshot",
-  );
+    scope,
+    now,
+  ),
+  "invalid_snapshot",
+);
 });
 
 test("snapshot target facts reject schema-forbidden extra keys before Host consumers use them", () => {
@@ -3038,6 +3038,62 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   );
 });
 
+test("a snapshot taken while an execution is in flight carries the body owner", () => {
+  // This is the coverage whose ABSENCE let a real defect through: the Mod gained `ownerKind`/`interruptible`
+  // on the wire active execution while this side still required exactly six keys, so every snapshot taken
+  // during an in-flight action would have been refused as `invalid_snapshot` and the bridge would have closed
+  // the transport. No committed fixture ever sent a non-null activeExecution, so nothing could see it.
+  const inFlight = {
+    ...snapshot,
+    actionable: false,
+    activeExecution: {
+      executionId: "execution_01",
+      requestId: "request_01",
+      action: "move_to_tile",
+      state: "accepted",
+      reasonCode: "accepted",
+      evidence: null,
+      ownerKind: "body_owned_by_movement",
+      interruptible: true,
+    },
+  };
+    assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, inFlight, "inflight_1", now), scope, now), null);
+
+  // A Mod that predates the two members must still validate: they are optional, not required.
+  const older = {
+    ...inFlight,
+    activeExecution: {
+      executionId: "execution_01",
+      requestId: "request_01",
+      action: "move_to_tile",
+      state: "accepted",
+      reasonCode: "accepted",
+      evidence: null,
+    },
+  };
+    assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, older, "older_1", now), scope, now), null);
+
+  // A WRONG TYPE is still refused, so the allowance did not become a hole.
+  // validateBridgeMessage returns the BARE code for a snapshot; the named code comes from the diagnostic
+  // (this is the pair the neighbouring tests use). Assert the name, because the name is the diagnosis.
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...inFlight, activeExecution: { ...inFlight.activeExecution, interruptible: "yes" } }, "bad_type", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:activeExecution",
+  );
+  // And an unknown key is still an unknown key.
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...inFlight, activeExecution: { ...inFlight.activeExecution, whatever: 1 } }, "bad_key", now),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:activeExecution",
+  );
+});
 test("snapshot admits crafting/cooking recipe and cooking-station discovery and rejects malformed rows", () => {
   // craft_item and cook_recipe accept only expectedTargetId, so without these
   // lists an Agent had no way to learn a recipe key - and cook_recipe had no way
