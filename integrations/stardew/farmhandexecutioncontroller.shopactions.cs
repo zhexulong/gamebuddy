@@ -315,7 +315,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             || this.activeMountTransport is not null || this.activeBusRide is not null
             || this.activeDayAdvance is not null)
         {
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "body_owned", null);
+            return this.RejectBodyOwned(request.RequestId, executionId);
         }
 
         // A menu is already up: this action would be driving the game's own UI, so it

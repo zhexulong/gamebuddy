@@ -52,7 +52,7 @@ internal sealed class StardewBodyController
     /// the World Model so the retry window a refusal REPORTS to the Agent is the same number the body loop
     /// actually waits - an Agent told to wait 2000 ms while the loop waits 1500 would retry into a live lock.
     /// </summary>
-    private const int TransientWindowMs = 2000;
+    private const int TransientWindowMs = WorldModel.TransientRetryWindowMs;
 
     /// <summary>
     /// Upper bound for the derived reachability probe. A target is reported as
@@ -84,8 +84,9 @@ internal sealed class StardewBodyController
         evidence = null;
         if (this.active is not null)
         {
-            reasonCode = "body_owned";
-            evidence = $"execution={this.active.ExecutionId}";
+            // The body controller can hold exactly one ownership: an in-flight local move. It names it through the
+            // manager's single owner table rather than its own literal, so the code and the evidence cannot drift.
+            (reasonCode, evidence) = ExecutionManager.LocalMoveOwner(this.active.ExecutionId);
             return false;
         }
 

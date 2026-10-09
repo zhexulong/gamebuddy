@@ -602,6 +602,93 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return projected;
     }
 
+    // The frozen body-owner vocabulary. ONE definition per code so the refusal vocabulary and the snapshot's
+    // occupant projection cannot drift; the table below (slot -> code + interruptible) is the single judgement.
+    internal const string BodyOwnedByNavigation = "body_owned_by_navigation";
+    internal const string BodyOwnedByTravel = "body_owned_by_travel";
+    internal const string BodyOwnedByMovement = "body_owned_by_movement";
+    internal const string BodyOwnedByApproach = "body_owned_by_approach";
+    internal const string BodyOwnedByRide = "body_owned_by_ride";
+    internal const string BodyOwnedByDayAdvance = "body_owned_by_day_advance";
+    internal const string BodyOwnedByActivity = "body_owned_by_activity";
+
+    /// <summary>
+    /// The occupant kind and interruptibility of the current holder, plus the evidence string a refusal carries.
+    /// </summary>
+    private readonly record struct BodyOwner(string ReasonCode, string Evidence, bool Interruptible);
+
+    /// <summary>
+    /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
+    /// each action's own guard) mints its receipt through <see cref="RejectBodyOwned"/>, and the snapshot's
+    /// occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
+    ///
+    /// <para>
+    /// The table is the precedence, top to bottom: navigation, travel, local movement, tool approach, ride
+    /// (mount/bus), owned day advance, then the generic in-flight activity family. A slot whose occupant is a
+    /// local move (the manager's <c>active</c> or the body controller's own lease) is interruptible — a newer
+    /// movement directive supersedes it; every other owner ends on its own.
+    /// </para>
+    /// </summary>
+    private BodyOwner DescribeBodyOwner()
+    {
+        var owners = new List<(string ReasonCode, string ExecutionId, string Action, bool Interruptible)>();
+        if (this.activeNavigate is not null || this.activeNavigationCoordinator is not null)
+            owners.Add((BodyOwnedByNavigation, this.activeNavigate?.ExecutionId ?? "unknown", "navigate_to_destination", false));
+        if (this.activeTravel is not null)
+            owners.Add((BodyOwnedByTravel, this.activeTravel.ExecutionId, this.activeTravel.Action, false));
+        if (this.active is not null || this.controller.HasActiveExecution)
+            owners.Add((BodyOwnedByMovement, this.active?.ExecutionId ?? this.controller.ActiveExecutionId ?? "unknown", "move_to_tile", true));
+        if (this.activeToolApproach is not null)
+            owners.Add((BodyOwnedByApproach, this.activeToolApproach.ExecutionId, this.activeToolApproach.ActionId, false));
+        if (this.activeMountTransport is not null)
+            owners.Add((BodyOwnedByRide, this.activeMountTransport.ExecutionId, "mount_transport", false));
+        if (this.activeBusRide is not null)
+            owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false));
+        if (this.activeDayAdvance is not null)
+            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "advance_day", false));
+        if (this.activePet is not null)
+            owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false));
+        if (this.activeAnimalProduct is not null)
+            owners.Add((BodyOwnedByActivity, this.activeAnimalProduct.ExecutionId, "collect_animal_product", false));
+        if (this.activeItemUse is not null)
+            owners.Add((BodyOwnedByActivity, this.activeItemUse.ExecutionId, "use_item", false));
+        if (this.activeItemPickup is not null)
+            owners.Add((BodyOwnedByActivity, this.activeItemPickup.ExecutionId, "pickup_item", false));
+        if (this.activePedestalTaking is not null)
+            owners.Add((BodyOwnedByActivity, this.activePedestalTaking.ExecutionId, "take_pedestal_item", false));
+
+        // The guards make this unreachable; keeping the bare code honest rather than inventing an owner.
+        if (owners.Count == 0)
+            return new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false", false);
+
+        (string ReasonCode, string ExecutionId, string Action, bool Interruptible) owner = owners[0];
+        string evidence = $"owner_execution_id={OwnerToken(owner.ExecutionId)};owner_action={OwnerToken(owner.Action)};interruptible={(owner.Interruptible ? "true" : "false")}";
+        var alsoOwned = new List<string>();
+        for (int index = 1; index < owners.Count; index++)
+            if (!alsoOwned.Contains(owners[index].ReasonCode))
+                alsoOwned.Add(owners[index].ReasonCode);
+        if (alsoOwned.Count > 0)
+            evidence += $";also_owned={string.Join(",", alsoOwned)}";
+        return new BodyOwner(owner.ReasonCode, evidence, owner.Interruptible);
+    }
+
+    private static string OwnerToken(string? value) => string.IsNullOrEmpty(value) ? "unknown" : value;
+
+    /// <summary>Mints the named body-exclusivity refusal through the single owner describer.</summary>
+    private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId)
+    {
+        BodyOwner owner = this.DescribeBodyOwner();
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence);
+    }
+
+    /// <summary>
+    /// The named refusal for the ONE ownership the body controller itself can hold: an in-flight local move, which
+    /// a newer movement directive may supersede. Shared with <see cref="StardewBodyController"/> so the code, the
+    /// action and the interruptible verdict keep the single definition the owner table gives them.
+    /// </summary>
+    internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
+        (BodyOwnedByMovement, $"owner_execution_id={OwnerToken(executionId)};owner_action=move_to_tile;interruptible=true");
+
     /// <summary>
     /// The mechanical admission every executing action shares, in the single
     /// order invariant 1 fixes: identity → actionability → deadline → body
@@ -682,7 +769,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // list; they were not, and the real gap was the other way round.)
             || this.activeNavigate is not null
             || this.activeDayAdvance is not null || this.controller.HasActiveExecution))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+            return this.RejectBodyOwned(requestId, executionId);
 
         return null;
     }
@@ -1806,7 +1893,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                      ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
                                          (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
                                          new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" })
-                                 : null;
+                                  : null;
+        if (activeExecution is not null)
+        {
+            // The occupant projection is derived from the SAME owner table that names every body-exclusivity
+            // refusal, so a refusal's named code and the snapshot's owner kind cannot disagree.
+            BodyOwner owner = this.DescribeBodyOwner();
+            activeExecution = activeExecution with { OwnerKind = owner.ReasonCode, Interruptible = owner.Interruptible };
+        }
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",

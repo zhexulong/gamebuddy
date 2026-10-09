@@ -534,7 +534,13 @@ public sealed record BridgeActiveExecution(
     string Action,
     string State,
     string ReasonCode,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence,
+    // Who holds the body, as the SAME named code (`body_owned_*`) a refusal would carry, plus whether a new
+    // directive may replace the holder. Both are derived from the Mod's single body-owner table, so the
+    // observation surface and the refusal vocabulary cannot disagree. Optional and last: a settled body and
+    // the world-not-ready snapshot keep ActiveExecution null, and existing positional construction is unchanged.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OwnerKind = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Interruptible = null
 );
 
 public sealed record BridgeReceipt(

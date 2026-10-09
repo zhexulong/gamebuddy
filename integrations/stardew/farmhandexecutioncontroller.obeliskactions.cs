@@ -443,12 +443,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             || this.activeNavigate is not null
             || this.controller.HasActiveExecution)
         {
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "body_owned",
-                this.activeTravel?.ExecutionId ?? this.active?.ExecutionId ?? this.activeBusRide?.ExecutionId);
+            return this.RejectBodyOwned(request.RequestId, executionId);
         }
 
         if (string.IsNullOrWhiteSpace(request.Args.ExpectedTargetId))

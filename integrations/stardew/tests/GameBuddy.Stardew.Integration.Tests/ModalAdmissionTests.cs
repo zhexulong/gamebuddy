@@ -171,8 +171,8 @@ public sealed class ModalAdmissionTests
             OccupyBodyLease(manager);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Physical)!
-                .ReasonCode.Should().Be("body_owned",
-                    "the body-lease exemption belongs to the Modal profile alone");
+                .ReasonCode.Should().Be("body_owned_by_movement",
+                    "the body-lease exemption belongs to the Modal profile alone; the refused lease is now NAMED so the Agent can tell an interruptible local move from a navigation or a ride");
         });
     }
 

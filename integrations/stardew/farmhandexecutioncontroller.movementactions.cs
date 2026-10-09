@@ -48,7 +48,7 @@ internal sealed partial class ExecutionManager
         // The controller is still the sole body owner: it first records a
         // terminal receipt and halts before the new route may start.
         if (this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null)
-            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "body_owned", this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId ?? this.activeItemPickup?.ExecutionId);
+            return this.RejectBodyOwned(requestId, Guid.NewGuid().ToString("N"));
         if (this.active is not null)
             this.controller.Cancel("superseded_by_new_directive");
         if (this.active is not null || this.controller.HasActiveExecution)
@@ -214,7 +214,7 @@ internal sealed partial class ExecutionManager
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
+            return this.RejectBodyOwned(requestId, executionId);
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
@@ -292,7 +292,7 @@ internal sealed partial class ExecutionManager
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
+            return this.RejectBodyOwned(requestId, executionId);
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Microsoft.Xna.Framework.Point sourcePoint = new(sourceX, sourceY);
@@ -634,19 +634,7 @@ internal sealed partial class ExecutionManager
             || this.controller.HasActiveExecution
             || this.activeNavigationCoordinator is not null)
         {
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "body_owned",
-                this.activeNavigate?.ExecutionId
-                    ?? this.active?.ExecutionId
-                    ?? this.activeTravel?.ExecutionId
-                    ?? this.activePet?.ExecutionId
-                    ?? this.activeAnimalProduct?.ExecutionId
-                    ?? this.activeItemUse?.ExecutionId
-                    ?? this.activeItemPickup?.ExecutionId
-                    ?? this.controller.ActiveExecutionId);
+            return this.RejectBodyOwned(requestId, executionId);
         }
 
         NavigationRuntimeSnapshot? runtime = this.navigationRuntimeFactory?.Invoke();

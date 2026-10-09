@@ -39,8 +39,8 @@ public sealed class BodySettledOwnershipTests
     {
         string source = Source("integrations/stardew/farmhandexecutioncontroller.cs");
         // The rejection call is unique; the chain immediately precedes it.
-        int rejection = source.IndexOf("ExecutionState.Rejected, \"body_owned\"", StringComparison.Ordinal);
-        rejection.Should().BeGreaterThan(0, "the admission body_owned rejection must exist");
+        int rejection = source.IndexOf("this.RejectBodyOwned(requestId, executionId)", StringComparison.Ordinal);
+        rejection.Should().BeGreaterThan(0, "the admission body-exclusivity rejection must exist");
         int chainEnd = source.IndexOf("HasActiveExecution", rejection - 400, StringComparison.Ordinal);
         chainEnd.Should().BeGreaterThan(0, "the chain must close on the controller");
         int chainStart = source.LastIndexOf("this.active is not null", chainEnd, StringComparison.Ordinal);

@@ -95,7 +95,7 @@ internal sealed partial class ExecutionManager
             || this.activeItemPickup is not null
             || this.activeDayAdvance is not null
             || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+            return this.RejectBodyOwned(requestId, executionId);
 
         SleepAndAdvanceDayLifecycleConfig config = new()
         {

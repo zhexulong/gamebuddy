@@ -151,12 +151,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             || this.activeItemPickup is not null || this.activePedestalTaking is not null
             || this.activeToolApproach is not null)
         {
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "body_owned",
-                this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId);
+            return this.RejectBodyOwned(request.RequestId, executionId);
         }
 
         // Native facility first: a MineShaft with the elevator tile. A location that
