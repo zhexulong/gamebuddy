@@ -2446,3 +2446,29 @@ question this evidence does not answer.
 * The 63% of turn time an audit attributed to the refuse-and-re-aim loop is not reduced by these fields; the
   structural fix (publishing the actor's reachable extent in observation) is still open.
 * `navigate_to_destination` failed with `destination_selector_invalid` in the second run; not investigated.
+
+## 40. Scene reachability is live: the probe's evidence (2026-10-09, live)
+
+The `reachable` affordance field (per-target, from `observe_scene`) is forced through the whole chain by a
+deterministic probe, because a ladder session can never prove it: a live session may not observe at all
+(`verdict=silent`), and even one that does varies with the model's choices. The probe connects over the real pipe,
+pulls a snapshot, calls `observeScene`, and prints every affordance with its reachability.
+
+```
+SCENE_RESULT observationId=so1_cL0-9uNn1oIkpLDow7JuqQ currentLocation=FarmHouse
+SCENE_AFFORDANCES chest:Chest reachable=true | door:Farm reachable=true
+SCENE_REACHABLE summary affordances=2 reachable=2 unreachable=0 absent=0
+SCENE_PROBE_RESULT {"state":"passed","reason":"scene_observed","affordances":2,"reachableCount":2,"unreachableCount":0,"absentCount":0}
+```
+
+Both affordances (a chest and the Farm door, each in range) carry `reachable=true`; zero ABSENT. That is the Mod
+saying it, not the Agent: the field is present in what `stardew_read_scene` returns, so the Agent CAN prefer
+reachable targets instead of learning reachability from refusals.
+
+Runner: `tools/run-stardew-native-local-player-scene-reachable-probe-smoke.mjs` (a diagnostic reader, so its file
+name is the one permitted exception to the `native-local-player-*` convention in the resolver test). Drive it with
+the same disposable native-local launcher under `-Action scene_reachable_probe`.
+
+What this does NOT establish (deliberately): whether the Agent, given the field, re-aims less. That is a
+behavioural question whose live answer needs a session that observes at all, and the session outcome still varies
+with the model's own choices.
