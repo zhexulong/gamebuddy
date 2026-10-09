@@ -26,6 +26,21 @@ namespace GameBuddy.Stardew;
 /// </summary>
 public sealed partial class ModEntry : Mod
 {
+    /// <summary>
+    /// The early returns on the fixture tick path that leave NO trace. A stall at the title screen therefore
+    /// presents as a bare pipe timeout with no Mod line at all - observed live, and it cost hours - so each
+    /// return reports once, naming itself. Once per distinct reason, so a per-tick condition cannot flood the log.
+    /// </summary>
+    private readonly HashSet<string> fixtureTickStallReasonsLogged = new(StringComparer.Ordinal);
+
+    private void LogFixtureTickStallOnce(string reason)
+    {
+        if (this.fixtureTickStallReasonsLogged.Add(reason))
+        {
+            this.Monitor.Log($"GameBuddy fixture tick is not advancing: {reason}", LogLevel.Warn);
+        }
+    }
+
     // ── 本地在轨测试夹具与宿主自动化（自 ModEntry.cs 机械剥离，方法体 0 改动）──
 
     private void TryInitializeNativeLocalPlayerFixture()

@@ -1135,7 +1135,10 @@ public sealed partial class ModEntry : Mod
         this.ApplyWindowModeTick();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
+        {
+            this.LogFixtureTickStallOnce("the configuration was rejected at launch (see the rejection line above)");
             return;
+        }
         // Before anything else this tick: the engine decides whether to start and
         // keep its native server on every loading and playing frame, from the
         // multiplayer mode and the player's LAN option (Multiplayer.cs:1777-1811),
@@ -1145,16 +1148,21 @@ public sealed partial class ModEntry : Mod
         ScreenEmbodimentState pendingTeardownState = this.GetEmbodimentState();
         if (pendingTeardownState.BodyProgramTeardownPending)
         {
+            this.LogFixtureTickStallOnce("a body-program teardown is pending, so this tick clears state and yields");
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
             return;
         }
         if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
+        {
+            this.LogFixtureTickStallOnce("a sleep probe/lifecycle request was rejected at launch");
             return;
+        }
         if (this.worldCreationBootstrap is { IsArmed: true })
         {
             // Drive the one native creation request while the title menu owns the
             // screen, and start no host/provisioning work until the created world
             // has been observed (or the attempt failed closed).
+            this.LogFixtureTickStallOnce("a formal Player Host world creation is armed, which owns the title screen");
             this.worldCreationBootstrap.TryCreate();
             if (this.worldCreationBootstrap.IsArmed)
                 return;

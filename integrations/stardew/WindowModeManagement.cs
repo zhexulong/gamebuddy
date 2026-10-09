@@ -7,6 +7,9 @@ namespace GameBuddy.Stardew;
 public sealed partial class ModEntry
 {
     private int windowModeAppliedTicks;
+    // Reported once, so a re-assertion is visible instead of silent: this is the fact that used to cost a whole
+    // 300-second pipe timeout with no diagnostic.
+    private bool windowOptionsReassertedLogged;
 
     private string GetEffectiveWindowMode()
     {
@@ -208,41 +211,21 @@ public sealed partial class ModEntry
 
     private void ApplyWindowModeTick()
     {
-        // Windows creates the game window some time AFTER the mod's first update
-        // ticks, so a one-second burst is not enough: measured on a real run the
-        // first tick logged "window handle not usable yet" and the burst ended
-        // before a usable handle existed. Keep trying for ten seconds, then stop
-        // (a persistent failure is reported once, not every frame forever).
+        // THE RUN'S WINDOW/AUDIO INVARIANTS ARE RE-ASSERTED EVERY TICK, not for the first ten seconds.
+        //
+        // The engine applies its own `clientOptions` when the title screen initializes, which is LATER than the
+        // bounded burst below - so `pauseWhenOutOfFocus` came back TRUE after the burst had stopped, and a game
+        // whose window sits behind the operator's terminal then simply stopped advancing at the title screen.
+        // The fixture's title-screen work never ran, so no save was ever requested and the harness reported a
+        // 300-second `bridge_never_ready` with no Mod line between "armed" and the timeout. Observed live.
+        this.EnforceEngineOptionsEveryTick();
+
+        // The window HANDLE genuinely needs a bounded burst: Windows creates the game window after the first
+        // ticks, so a one-tick attempt is not enough. This part stays bounded.
         if (this.windowModeAppliedTicks >= 600)
             return;
 
         this.windowModeAppliedTicks++;
-
-        try
-        {
-            if (GameRunner.instance is not null && GameRunner.instance.InactiveSleepTime != TimeSpan.Zero)
-            {
-                GameRunner.instance.InactiveSleepTime = TimeSpan.Zero;
-            }
-            if (Game1.options is not null)
-            {
-                if (Game1.options.pauseWhenOutOfFocus)
-                {
-                    Game1.options.pauseWhenOutOfFocus = false;
-                }
-                if (Game1.options.musicVolumeLevel != 0f)
-                {
-                    Game1.options.musicVolumeLevel = 0f;
-                }
-                if (Game1.options.soundVolumeLevel != 0f)
-                {
-                    Game1.options.soundVolumeLevel = 0f;
-                }
-            }
-        }
-        catch
-        {
-        }
 
         string mode = this.GetEffectiveWindowMode();
         int cmd = ResolveWindowCommand(mode);
@@ -252,6 +235,40 @@ public sealed partial class ModEntry
         if (RequiresActivation(mode) && this.windowRaiseSettled)
         {
             this.windowModeAppliedTicks = 600;
+        }
+    }
+
+    /// <summary>
+    /// The part of the window contract that must hold for as long as this Mod owns a session: the actor must
+    /// keep ticking while the window is unfocused, and the run must stay silent. Re-applied every tick because
+    /// the engine re-reads its own options after startup.
+    /// </summary>
+    private void EnforceEngineOptionsEveryTick()
+    {
+        try
+        {
+            if (GameRunner.instance is not null && GameRunner.instance.InactiveSleepTime != TimeSpan.Zero)
+                GameRunner.instance.InactiveSleepTime = TimeSpan.Zero;
+            if (Game1.options is null)
+                return;
+            if (Game1.options.pauseWhenOutOfFocus)
+            {
+                Game1.options.pauseWhenOutOfFocus = false;
+                if (!this.windowOptionsReassertedLogged)
+                {
+                    this.windowOptionsReassertedLogged = true;
+                    this.Monitor.Log(
+                        "GameBuddy re-disabled pause-when-out-of-focus after the engine applied its own window options.",
+                        LogLevel.Info);
+                }
+            }
+            if (Game1.options.musicVolumeLevel != 0f)
+                Game1.options.musicVolumeLevel = 0f;
+            if (Game1.options.soundVolumeLevel != 0f)
+                Game1.options.soundVolumeLevel = 0f;
+        }
+        catch
+        {
         }
     }
 

@@ -74,6 +74,41 @@ try {
     $phase = "input_validation"
     foreach ($path in @($smapi, $ModsPath, $FixtureRoot, $releaseDir, $clientConfig, $equipToolChild, $lifecycleResultWriter)) { if (-not (Test-Path -LiteralPath $path)) { throw "Missing harness path: $path" } }
     if (-not $BootstrapNativeSave -and $SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$') { throw "A disposable action run requires an observed physical GameBuddyFixture slot ending in _<nativeUniqueId>." }
+    # THE RUN'S OWN ENVIRONMENT IS PINNED, NOT INHERITED.
+    #
+    # The Mod already fixes what it can from inside the game (pauseWhenOutOfFocus=false, music/sound volume 0,
+    # InactiveSleepTime=0, power throttling off, and the window mode from GAMEBUDDY_WINDOW_MODE), so a run's
+    # screen and audio state is code-fixed. The engine's startup_preferences is NOT: the game reads it before
+    # the Mod loads, and this lane's fixture REFUSES TO LOAD THE SAVE until the live game locale matches the
+    # locale the Mod config will demand. Left to the operator, a healthy code path sat for the whole pipe
+    # timeout and reported `bridge_never_ready`, because the fixture was waiting for a locale the game was
+    # never going to switch to.
+    #
+    # So the precondition is asserted HERE against the SAME source of truth the fixture config uses, and it
+    # fails with a name and the exact fix instead of hanging. It refuses rather than rewriting: this is the
+    # operator's game preference file, and another lane's launcher asserts it identically (`live_locale_required`).
+    $phase = "live_run_preferences"
+    $startupPreferencesPath = Join-Path $env:APPDATA "StardewValley/startup_preferences"
+    if (-not (Test-Path -LiteralPath $startupPreferencesPath -PathType Leaf)) {
+        throw "Live locale required: $startupPreferencesPath does not exist, so the game would start on its default locale while this lane's fixture refuses to load the save until it matches the configured one. Start the game once with the intended language, then re-run."
+    }
+    $requiredLanguageCode = if ($env:GAMEBUDDY_COMPANION_LOCALE -eq "en-US") { "en-US" } else { "zh-CN" }
+    # TWO VOCABULARIES, and confusing them is silent: the fixture config carries the Mod's BCP-47 locale
+    # (`zh-CN`), while this file carries the GAME's own enum name for that language (`zh`, from
+    # LocalizedContentManager.LanguageCode: en/ja/zh/...). Writing the BCP-47 value here makes the engine
+    # ignore the preference and start in English, so the fixture then waits for a locale the game was never
+    # asked for - which is how a healthy code path came to sit out the whole pipe timeout. Map, do not copy.
+    $requiredPreferenceValue = if ($requiredLanguageCode -eq "en-US") { "en" } else { "zh" }
+    $preferenceLanguageCode = $null
+    try {
+        [xml]$startupPreferences = [IO.File]::ReadAllText($startupPreferencesPath)
+        $preferenceLanguageCode = [string]$startupPreferences.StartupPreferences.languageCode
+    } catch {
+        throw "Live locale required: $startupPreferencesPath could not be read as XML ($($_.Exception.Message))."
+    }
+    if ($preferenceLanguageCode -ne $requiredPreferenceValue) {
+        throw "Live locale required: the game's startup_preferences languageCode is '$preferenceLanguageCode' but this run needs '$requiredPreferenceValue' (the game's enum name for the '$requiredLanguageCode' locale the fixture config demands, and which the Mod waits to observe live before it loads the save). Set <languageCode>$requiredPreferenceValue</languageCode> in $startupPreferencesPath, or run with GAMEBUDDY_COMPANION_LOCALE=$preferenceLanguageCode."
+    }
     # This guard precedes every profile/config/bundle mutation. The one process
     # launched below is therefore the only game process in this transaction.
     Assert-NoStardewProcesses 'fixture preparation'
