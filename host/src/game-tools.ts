@@ -13,6 +13,7 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import {
   type ActionRegistrationDescriptor,
@@ -2695,17 +2696,24 @@ function receiptResult(
     writePhase === "write_unknown"
       ? `Game action outcome is unknown: ${reasonCode}. The request reached the bridge, so the world may have changed - do not re-issue it; observe the world to determine what happened.`
       : `Game action was not created: ${reasonCode}. Nothing was written; the world is unchanged.`;
+  // A hold the Mod named arrives with the facts a countermeasure needs, so the Agent is told what to DO and not
+  // only what failed. The sentence comes from the production helper the live probe also asserts against, so a
+  // probe can never pass on wording the tool layer does not actually emit.
+  const remedy = describeBodyHoldRefusal(receipt?.reasonCode ?? reasonCode, receipt?.evidence);
   return {
     content: [
       {
         type: "text" as const,
-        text: receipt === null ? failureText : JSON.stringify(receipt),
+        text:
+          (receipt === null ? failureText : JSON.stringify(receipt)) +
+          (remedy === null ? "" : `\n${remedy.guidance}`),
       },
     ],
     details: {
       receiptJson: receipt === null ? null : JSON.stringify(receipt),
       reasonCode,
       writePhase,
+      ...(remedy === null ? {} : { remedy }),
     },
   };
 }

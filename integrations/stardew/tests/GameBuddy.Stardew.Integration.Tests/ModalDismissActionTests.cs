@@ -66,8 +66,10 @@ public sealed class ModalDismissActionTests
             ExecutionManager manager = CreateManager(1001);
 
             InvokeDismiss(manager, "req_dismiss_event")
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "an absorbed cutscene outranks the modal (WIA §4.1/§4.2)");
+                // An absorbed cutscene outranks the modal (WIA 4.1/4.2) - and the code now says WHICH hold
+                // that is. The Agent needs the distinction: a cutscene cannot be dismissed by any tool,
+                // while a mounted dialogue can.
+                .ReasonCode.Should().Be("cutscene_active");
         });
     }
 

@@ -110,7 +110,8 @@ public sealed class ModalAnswerDialogueTests
             LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_answer_event", "Yes");
 
             receipt.State.Should().Be(ExecutionState.Rejected);
-            receipt.ReasonCode.Should().Be("player_not_actionable");
+            // A cutscene, named: it outranks the modal and no tool can clear it.
+            receipt.ReasonCode.Should().Be("cutscene_active");
         });
     }
 

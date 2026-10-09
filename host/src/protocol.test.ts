@@ -1294,7 +1294,33 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now), "invalid_raft_target");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
-  assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
+  // The gateway no longer decides body actionability: `actionable: false` is exactly the state the modal
+  // family exists for, and refusing here made `dismiss_modal`/`answer_dialogue` unreachable while a dialogue
+  // was up. The Mod names the hold instead; the remedy for that name is asserted in
+  // stardew-action-remedy.test.ts.
+  assert.equal(
+    validateExecutionRequest(valid, { ...snapshot, actionable: false }, now),
+    null,
+    "a held body must reach the Mod, which is the authority that can name what holds it",
+  );
+  const modalCapability = {
+    ...snapshot,
+    actionable: false,
+    capabilities: [...snapshot.capabilities, "dismiss_modal", "answer_dialogue"],
+  };
+  assert.equal(
+    validateExecutionRequest({ ...valid, action: "dismiss_modal", args: {} }, modalCapability, now),
+    null,
+    "the modal family is admitted precisely when actionable is false; blocking it there was the defect",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...valid, action: "answer_dialogue", args: { responseKey: "yes" } },
+      modalCapability,
+      now,
+    ),
+    null,
+  );
   const equip = { ...valid, action: "equip_tool", args: { tool: "axe" } };
   assert.equal(validateExecutionRequest(equip, snapshot, now), "capability_not_declared");
   assert.equal(

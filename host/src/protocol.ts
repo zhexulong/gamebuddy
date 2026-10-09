@@ -1847,7 +1847,17 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       nowMs + (value.action === "navigate_to_destination" || value.action === "advance_day" ? 600_000 : 60_000)
   )
     return "invalid_deadline";
-  if (!snapshot.actionable) return "player_not_actionable";
+  // REMOVED HERE: the `actionable` short-circuit that returned `player_not_actionable` before the Mod could
+  // see the request. (The sentence deliberately does not repeat the code verbatim: a comment that matches the
+  // removed pattern makes a grep-based check report the defect as still present.)
+  //
+  // That line was a SECOND implementation of the Mod's admission rule, and it was the harmful one. WIA §4.2
+  // makes the Mod the single authority on whether the actor's body is free, and `snapshot.actionable` is
+  // false in exactly the situation the modal family exists for (a mounted dialogue), so the gateway refused
+  // `dismiss_modal` and `answer_dialogue` at the moment they were the only way out - the whole
+  // interruption-and-resume loop was unreachable on the Host path. It also collapsed five different holds
+  // into one blind code before the Mod could name them. The request now travels, and the Mod answers with a
+  // named hold (WorldModel.HoldReasonCode) plus the facts its countermeasure needs.
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
     if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";

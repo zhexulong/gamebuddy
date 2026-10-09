@@ -41,6 +41,10 @@ export async function runWiaModalDismissChain(
     stabilizeTimeoutMs = 10_000,
     moveTimeoutMs = 55_000,
     travelTimeoutMs = 15_000,
+    // Injectable so the offline tests can drive this runner's guard logic without a compiled Host artifact;
+    // the live gate passes the real loader, which is the only way the production gateway is actually
+    // exercised. The gateway's OWN contract is pinned in host/src/protocol.test.ts.
+    loadHostModule = loadHostTestModule,
   } = {},
 ) {
   const trace = [];
@@ -68,6 +72,65 @@ export async function runWiaModalDismissChain(
       interruptEvidence.interrupted_by.length > 0 &&
       parseTargetCoordinates(interruptEvidence.target_tile).x !== null &&
       Number.isInteger(Number(interrupted.revision));
+
+    // ---- phase 2a: the hold refusal through the PRODUCTION gateway ----
+    //
+    // Every earlier live proof in this lane drove the bridge DIRECTLY, so it never executed
+    // `validateExecutionRequest` - and that function refused a held body (`!snapshot.actionable` ->
+    // `player_not_actionable`) before the request could reach the Mod that knows what holds the actor. So
+    // the dismiss half-loop was unreachable in production while the bridge-level proof looked green. This
+    // phase puts the production gateway in the loop and asserts the two halves of the fix: the gateway now
+    // ADMITS while the body is held, and the Mod answers with a named hold plus the remedy.
+    const { validateExecutionRequest } = await loadHostModule("protocol.js");
+    const { describeBodyHoldRefusal } = await loadHostModule("stardew-action-remedy.js");
+    const held = await waitForFreshSnapshot(client, {
+      minRevision: interrupted.revision,
+      timeoutMs: postconditionTimeoutMs,
+    });
+    // The world fact this whole phase is about: the actor is held, which is exactly the state the gateway
+    // used to refuse before asking the Mod.
+    const heldWhileModalOpen = held.actionable === false;
+    const holdNonce = `${Date.now()}_${trace.length}`;
+    const holdRequest = {
+      requestId: `native_local_wia_hold_${holdNonce}`,
+      idempotencyKey: `native_local_wia_hold_${holdNonce}_idem`,
+      action: "move_to_tile",
+      args: { x: target.x, y: target.y },
+      expectedRevision: held.revision,
+      deadlineMs: Date.now() + 30_000,
+    };
+    const gatewayVerdict = validateExecutionRequest(holdRequest, held);
+    const holdReceipt = await executeFresh(client, {
+      action: "move_to_tile",
+      args: { x: target.x, y: target.y },
+      snapshot: held,
+      requestId: holdRequest.requestId,
+      idempotencyKey: holdRequest.idempotencyKey,
+      timeoutMs: 30_000,
+    });
+    trace.push({
+      phase: "hold",
+      action: "move_to_tile",
+      args: { x: target.x, y: target.y },
+      requestId: holdRequest.requestId,
+      gatewayVerdict,
+      receipt: summarizeReceipt(holdReceipt),
+    });
+    // Accept either wire shape: the Mod answers a refusal with an immediate terminal, and a refusal that
+    // travelled through the journal would arrive as accepted-then-terminal. Requiring one shape would fail
+    // a correct run.
+    const holdTerminal =
+      holdReceipt.state === "accepted" ? await waitForTerminal(receipts, holdReceipt, terminalTimeoutMs) : holdReceipt;
+    const holdEvidence = parseStrictEvidence(holdTerminal.evidence);
+    const holdNamed =
+      holdTerminal.state === "rejected" &&
+      holdTerminal.reasonCode === "actor_held_by_modal" &&
+      holdEvidence.modal_type === "DialogueBox" &&
+      holdEvidence.is_question === "false";
+    // The sentence the Agent would read comes from the PRODUCTION helper the tool layer also calls, so this
+    // cannot pass on wording the tool layer does not emit.
+    const holdRemedy = describeBodyHoldRefusal(holdTerminal.reasonCode, holdTerminal.evidence);
+    const holdRemedyOk = holdRemedy?.action === "stardew_dismiss_modal";
 
     // ---- phase 2: dismiss (admission half-loop) ----
     const fresh2 = await waitForFreshSnapshot(client, {
@@ -110,17 +173,32 @@ export async function runWiaModalDismissChain(
       requireActionable: true,
       check: (latest) => adjacent(latest.tile, target),
     });
-    const passed = breakpointOk && dismissOk && after.tile.x === target.x && after.tile.y === target.y;
+    const passed =
+      breakpointOk &&
+      heldWhileModalOpen &&
+      gatewayVerdict === null &&
+      holdNamed &&
+      holdRemedyOk &&
+      dismissOk &&
+      after.tile.x === target.x &&
+      after.tile.y === target.y;
     return {
       state: passed ? "passed" : "blocked",
       reasonCode: passed ? "modal_dismiss_chain_complete" : "wia_modal_dismiss_chain_postcondition_mismatch",
       target,
       phases: {
         interrupt: summarizeReceipt(interrupted),
+        hold: summarizeReceipt(holdTerminal),
         dismiss: summarizeReceipt(dismissed),
         resume: summarizeReceipt(resumed),
       },
       breakpointOk,
+      // The chain halves the gateway defect used to hide.
+      heldWhileModalOpen,
+      gatewayVerdict,
+      holdNamed,
+      holdRemedy: holdRemedy === null ? null : { action: holdRemedy.action, guidance: holdRemedy.guidance },
+      holdRemedyOk,
       dismissOk,
       after: summarizeSnapshot(after),
       trace,

@@ -79,8 +79,10 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("scythe_crop")]
     public void MatchingActorIdentity_IsAdmitted_AndRejectedOnlyByGameState(string action)
         => Run(action, actorId: long.Parse(ScopePlayerId))
-            .Should().Be("player_not_actionable",
-                "a scope-matching actor must clear admission and advance to game-state validation");
+            .Should().Be("cutscene_active",
+                "a scope-matching actor clears admission and is refused BY GAME STATE, which this probe makes"
+                + " inert with eventUp=true - and that hold is now NAMED rather than reported as the"
+                + " anonymous player_not_actionable that once covered five different holds");
 
     /// <summary>
     /// The same discriminating case for the admissions that carry a world/location

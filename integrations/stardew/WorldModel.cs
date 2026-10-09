@@ -1,4 +1,5 @@
 using StardewValley;
+using StardewValley.Menus;
 
 namespace GameBuddy.Stardew;
 
@@ -199,4 +200,79 @@ internal static class WorldModel
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;
+
+    /// <summary>
+    /// How long a transient body lock is tolerated before it stops being "will pass on its own". The body
+    /// loop's window and the retry window a refusal reports are THE SAME NUMBER, so an Agent told to wait
+    /// waits exactly as long as the loop waits.
+    /// </summary>
+    public const int TransientRetryWindowMs = 2000;
+
+    /// <summary>
+    /// The reason code for a body that is held, named. This is the ONE place the closed set of holding
+    /// dispositions is mapped to wire codes: every gate reads it, so a gate cannot spell its own - which is
+    /// how `player_not_actionable` came to mean "menu", "cutscene", "faint", "eating" and "tool swing"
+    /// at once, leaving an Agent with no way to choose a countermeasure.
+    /// </summary>
+    public static string HoldReasonCode(ActorDispositionKind kind) => kind switch
+    {
+        ActorDispositionKind.Modal => "actor_held_by_modal",
+        ActorDispositionKind.Event => "cutscene_active",
+        ActorDispositionKind.PassOut => "actor_passed_out",
+        ActorDispositionKind.Transient => "transient_busy",
+        _ => "player_not_actionable",
+    };
+
+    /// <summary>
+    /// The evidence for a held body: what holds the actor, and the facts needed to choose a countermeasure.
+    /// Pure, so the whole decision table is testable without a game instance.
+    ///
+    /// <paramref name="modalIsQuestion"/> decides dismiss-versus-answer and is supplied by the caller
+    /// because it needs the live modal; when it is absent the evidence says so rather than guessing.
+    /// </summary>
+    public static string DescribeBodyHold(
+        in ActorDisposition disposition,
+        in ActorWorldFacts facts,
+        bool canMove,
+        bool? modalIsQuestion = null)
+    {
+        string canMoveText = canMove ? "true" : "false";
+        return disposition.Kind switch
+        {
+            ActorDispositionKind.Modal =>
+                $"modal_type={disposition.ModalType ?? "unknown"};action_owned={Bool(disposition.ModalActionOwned)}"
+                + $";is_question={BoolOrUnknown(modalIsQuestion)};can_move={canMoveText}",
+            ActorDispositionKind.Event => $"event_up=true;can_move={canMoveText}",
+            ActorDispositionKind.PassOut =>
+                $"stamina={facts.Stamina.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
+                + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
+            // `movement_lock` is the honest name for the one hold the facts cannot name further: the
+            // disposition says Transient but no eating/tool/freeze fact produced it, so something else
+            // native (a knockback, a warp transition) took CanMove away.
+            ActorDispositionKind.Transient =>
+                $"transient_kind={disposition.TransientKind ?? "movement_lock"}"
+                + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",
+            _ => $"can_move={canMoveText}",
+        };
+    }
+
+    /// <summary>
+    /// <see cref="DescribeBodyHold"/> with the modal probe filled from the LIVE modal, and the reason code
+    /// taken from the same closed set. Kept apart from the pure overload so the decision table stays a
+    /// table; the only thing this adds is reading the modal that is actually mounted.
+    /// </summary>
+    public static (string ReasonCode, string Evidence) DescribeCurrentBodyHold(
+        in ActorDisposition disposition,
+        in ActorWorldFacts facts,
+        bool canMove)
+    {
+        bool? isQuestion = null;
+        if (disposition.Kind == ActorDispositionKind.Modal && Game1.activeClickableMenu is DialogueBox dialogue)
+            isQuestion = dialogue.isQuestion;
+        return (HoldReasonCode(disposition.Kind), DescribeBodyHold(disposition, facts, canMove, isQuestion));
+    }
+
+    private static string Bool(bool value) => value ? "true" : "false";
+
+    private static string BoolOrUnknown(bool? value) => value is null ? "unknown" : Bool(value.Value);
 }

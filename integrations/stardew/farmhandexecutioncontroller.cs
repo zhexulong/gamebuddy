@@ -580,8 +580,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static LocalDispositionKind ClassifyAdmissionDisposition(Farmer actor)
     {
         ActorWorldFacts facts = WorldModel.ReadFacts(actor);
-        ActorDispositionKind kind = WorldModel.Classify(facts).Kind;
-        LocalDispositionKind disposition = kind switch
+        return ProjectAdmissionDisposition(WorldModel.Classify(facts), actor);
+    }
+
+    /// <summary>
+    /// The admission projection of a disposition: the closed kind, plus the <c>!CanMove</c> tail that keeps
+    /// a movement lock (eating / knockback / warp transition) non-Idle for the body-owning profiles.
+    /// </summary>
+    private static LocalDispositionKind ProjectAdmissionDisposition(ActorDisposition disposition, Farmer actor)
+    {
+        LocalDispositionKind projected = disposition.Kind switch
         {
             ActorDispositionKind.Event => LocalDispositionKind.Event,
             ActorDispositionKind.Modal => LocalDispositionKind.Modal,
@@ -589,11 +597,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ActorDispositionKind.Transient => LocalDispositionKind.Transient,
             _ => LocalDispositionKind.Idle,
         };
-        // Any remaining movement lock (eating / knockback / warp transition)
-        // stays non-Idle exactly as the pre-convergence !CanMove check decided.
-        if (disposition == LocalDispositionKind.Idle && !actor.CanMove)
+        if (projected == LocalDispositionKind.Idle && !actor.CanMove)
             return LocalDispositionKind.Transient;
-        return disposition;
+        return projected;
     }
 
     /// <summary>
@@ -631,7 +637,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // pass-out / transient → player_not_actionable as before). The explicit
         // eventUp clause keeps the §4.2 "and !eventUp" precondition even if the
         // WorldModel swap ever reorders the precedence.
-        LocalDispositionKind disposition = ClassifyAdmissionDisposition(boundActor);
+        ActorWorldFacts admissionFacts = WorldModel.ReadFacts(boundActor);
+        ActorDisposition admissionDisposition = WorldModel.Classify(admissionFacts);
+        LocalDispositionKind disposition = ProjectAdmissionDisposition(admissionDisposition, boundActor);
         // The Modal profile decides whether the action may be ATTEMPTED; whether a modal is actually
         // present is the handler business, because it names that far better (no_modal_present,
         // modal_not_answerable, modal_not_dismissible). Refusing here on `disposition != Modal` made those
@@ -645,7 +653,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ? disposition == LocalDispositionKind.Event || Game1.eventUp
             : disposition != LocalDispositionKind.Idle;
         if (notActionable)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        {
+            // WIA 4.?? : the refusal NAMES the hold and carries the facts a countermeasure needs. A single
+            // `player_not_actionable` for a menu, a cutscene, a faint, an eating animation and a tool swing
+            // told the Agent nothing it could act on, and the Agent's only visible option was to retry the
+            // same request.
+            (string holdCode, string holdEvidence) =
+                WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
+        }
 
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);

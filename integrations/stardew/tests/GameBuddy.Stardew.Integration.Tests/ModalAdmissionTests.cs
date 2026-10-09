@@ -54,8 +54,8 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Physical)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "adding the Modal profile must not loosen the menu lock for the body-owning profiles");
+                .ReasonCode.Should().Be("actor_held_by_modal",
+                    "the modal lock is NAMED now, so the Agent can tell a mounted menu from a cutscene or a faint");
         });
     }
 
@@ -67,8 +67,8 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.General)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "adding the Modal profile must not loosen the menu lock for the pre-convergence general profile either");
+                .ReasonCode.Should().Be("actor_held_by_modal",
+                    "same named lock for the general profile: the code must not depend on which profile asked");
         });
     }
 
@@ -99,8 +99,9 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "a modal-handling action must not talk over an absorbing event (WIA §4.2 \"and !eventUp\")");
+                // A cutscene is the one hold that outranks a mounted modal, and it is the one the modal family
+                // can do nothing about - so the code has to differ from a mounted menu's.
+                .ReasonCode.Should().Be("cutscene_active");
         });
     }
 
@@ -195,8 +196,9 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001, usingTool: true);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Physical)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "WIA §4.1 classifies the tool animation as Transient, and Transient is not Idle");
+                .ReasonCode.Should().Be("transient_busy",
+                    "the tool animation is named a transient, which is what tells the Agent to wait rather than to"
+                    + " look for a tool that cannot help");
         });
     }
 
@@ -208,8 +210,8 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001, freezePaused: true);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Physical)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "freezePause is a Transient body lock, not Idle");
+                .ReasonCode.Should().Be("transient_busy",
+                    "freezePause is the same transient hold as the tool animation, and the code says so");
         });
     }
 
@@ -221,8 +223,9 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Physical)!
-                .ReasonCode.Should().Be("player_not_actionable",
-                    "the pass-out hour is a world change (WIA §4.3), never an admissible body");
+                .ReasonCode.Should().Be("actor_passed_out",
+                    "the pass-out hour is a world change (WIA 4.3) that no action can clear, so it must not look"
+                    + " like a dismissible modal");
         });
     }
 

@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runWiaModalDismissChain } from "./run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs";
 
+const REAL_REMEDY = { action: "stardew_dismiss_modal", guidance: "Call 'stardew_dismiss_modal'" };
+/** A host-module loader whose gateway admits, so a guard test can move past phase 2a. */
+function hostLoader({ gateway = () => null, remedy = () => REAL_REMEDY } = {}) {
+  return async (name) =>
+    name === "protocol.js"
+      ? { validateExecutionRequest: gateway }
+      : { describeBodyHoldRefusal: remedy };
+}
+
 const config = {
   SaveId: "save",
   WorldId: "world",
@@ -62,6 +71,27 @@ function makeClient(overrides = {}) {
             evidence: { detail: "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15;revision=7" },
           });
           snapshot = baseSnapshot(10, { actionable: false, activeExecution: null });
+        } else if (moveCalls === 2) {
+          // phase 2a: a FRESH move issued while the modal is still mounted. The Mod names the hold, and the
+          // request reaches the Mod at all only because the gateway no longer refuses a held body itself.
+          receipts.push({
+            requestId: request.requestId,
+            executionId,
+            state: "rejected",
+            reasonCode: "actor_held_by_modal",
+            revision: 11,
+            evidence: { detail: "modal_type=DialogueBox;action_owned=false;is_question=false;can_move=false" },
+          });
+          // A TryStart refusal is an IMMEDIATE terminal on the wire, so return it rather than falling
+          // through to the accepted shape below.
+          return {
+            requestId: request.requestId,
+            executionId,
+            state: "rejected",
+            reasonCode: "actor_held_by_modal",
+            revision: 11,
+            evidence: { detail: "modal_type=DialogueBox;action_owned=false;is_question=false;can_move=false" },
+          };
         } else {
           // phase 3: resumed success.
           receipts.push({
@@ -112,10 +142,21 @@ function makeClient(overrides = {}) {
 
 test("wia dismiss chain passes the full interrupt → dismiss → resume loop", async () => {
   const { client, receipts, counters } = makeClient();
-  const result = await runWiaModalDismissChain(client, receipts, config);
-  assert.equal(result.state, "passed");
+  const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
+  assert.equal(
+    result.state,
+    "passed",
+    `blocked: ${result.reasonCode} breakpoint=${result.breakpointOk} held=${result.heldWhileModalOpen} ` +
+      `gateway=${String(result.gatewayVerdict)} named=${result.holdNamed} remedy=${result.holdRemedyOk} ` +
+      `dismiss=${result.dismissOk}`,
+  );
   assert.equal(result.reasonCode, "modal_dismiss_chain_complete");
   assert.equal(result.breakpointOk, true);
+  assert.equal(result.heldWhileModalOpen, true, "the actor really is held; this is the state the gateway used to refuse");
+  assert.equal(result.gatewayVerdict, null, "the gateway must ADMIT a held body and let the Mod name the hold");
+  assert.equal(result.holdNamed, true);
+  assert.equal(result.holdRemedyOk, true);
+  assert.equal(result.holdRemedy.action, "stardew_dismiss_modal");
   assert.equal(result.dismissOk, true);
   assert.equal(result.phases.interrupt.reasonCode, "modal_interrupted");
   assert.equal(result.phases.dismiss.reasonCode, "modal_dismissed");
@@ -140,7 +181,7 @@ test("wia dismiss chain fails closed when the interrupt is not classified", asyn
     }
     return originalExecute(request);
   };
-  const result = await runWiaModalDismissChain(client, receipts, config);
+  const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "interrupt_missing:state=succeeded;reason=target_reached");
 });
@@ -162,7 +203,44 @@ test("wia dismiss chain fails closed when the dismiss is not admitted", async ()
     }
     return originalExecute(request);
   };
-  const result = await runWiaModalDismissChain(client, receipts, config);
+  const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "dismiss_missing:state=rejected;reason=no_modal_present");
+});
+test("wia dismiss chain fails closed when the gateway refuses the held body itself", async () => {
+  // The regression this phase exists for: a gateway that decides body actionability on its own answer
+  // takes the decision away from the Mod, which is the authority that can name the hold.
+  const { client, receipts } = makeClient();
+  const result = await runWiaModalDismissChain(client, receipts, config, {
+    loadHostModule: hostLoader({ gateway: () => "player_not_actionable" }),
+  });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.gatewayVerdict, "player_not_actionable");
+});
+
+test("wia dismiss chain fails closed when the hold is not named", async () => {
+  // A rejection that does not name the hold leaves the Agent with nothing to act on, which is the defect
+  // the whole change removes - so the gate must not pass on it.
+  const { client, receipts } = makeClient();
+  const originalExecute = client.execute;
+  client.execute = async (request) => {
+    const receipt = await originalExecute(request);
+    if (receipt.reasonCode === "actor_held_by_modal")
+      return { ...receipt, reasonCode: "player_not_actionable", evidence: { detail: "can_move=false" } };
+    return receipt;
+  };
+  const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.holdNamed, false);
+});
+
+test("wia dismiss chain fails closed when the remedy names the wrong tool", async () => {
+  const { client, receipts } = makeClient();
+  const result = await runWiaModalDismissChain(client, receipts, config, {
+    loadHostModule: hostLoader({
+      remedy: () => ({ action: "stardew_move_to_tile", guidance: "Walk somewhere else" }),
+    }),
+  });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.holdRemedyOk, false);
 });
