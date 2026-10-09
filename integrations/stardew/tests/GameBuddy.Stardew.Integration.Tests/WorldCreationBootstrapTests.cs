@@ -250,6 +250,39 @@ public sealed class WorldCreationBootstrapTests
             .Should().BeTrue();
     }
 
+    // ---- (c) the created world can host its one companion ----------------------------
+
+    [Fact]
+    public void CompanionCabinLayout_PinsTheNativeNewGameFactTheVanillaHostFormSets()
+    {
+        // The create path drives TitleMenu.createdNewCharacter directly, so it never
+        // passes through CharacterCustomization -- the only vanilla place that sets
+        // `Game1.startingCabins = 1` for `Source.HostNewFarm`
+        // (CharacterCustomization.cs:354). `Game1.resetPlayer()` zeroes the fact
+        // (Game1.cs:16414) and GameLocation.loadPathsLayerObjectsInArea collects the
+        // map's cabin pads only while it is greater than zero (GameLocation.cs:17430),
+        // so the Farm's BuildStartingCabins pass builds nothing and the created world
+        // has no Cabin for the companion it exists for. This test pins the fact the
+        // path must establish; it does not claim the live native entry then builds the
+        // cabin, which needs a real farm map and a live title menu.
+        int previous = Game1.startingCabins;
+        try
+        {
+            Game1.startingCabins = 0;
+
+            WorldCreationBootstrap.EstablishCompanionCabinLayout();
+
+            WorldCreationBootstrap.CompanionCabinCount.Should().Be(
+                1,
+                "the product's own world exists for exactly one companion Farmhand");
+            Game1.startingCabins.Should().Be(WorldCreationBootstrap.CompanionCabinCount);
+        }
+        finally
+        {
+            Game1.startingCabins = previous;
+        }
+    }
+
     // ---- native-state helpers -------------------------------------------------------
 
     /// <summary>

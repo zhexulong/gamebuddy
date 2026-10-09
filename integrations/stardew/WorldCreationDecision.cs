@@ -38,6 +38,9 @@ internal enum WorldCreationRefusal
 
     /// <summary>A save is named for this farm but is not identity-equal to this request.</summary>
     ForeignSlotCollision,
+
+    /// <summary>The world this request owns contains no Cabin, so the single companion it exists for cannot live in it.</summary>
+    CompanionCabinMissing,
 }
 
 /// <summary>

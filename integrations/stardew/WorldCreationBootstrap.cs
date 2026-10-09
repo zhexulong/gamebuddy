@@ -72,6 +72,57 @@ internal sealed class WorldCreationBootstrap
     internal string ObservedSaveSlot { get; private set; } = string.Empty;
 
     /// <summary>
+    /// The native new-game cabin count this product's own world needs. The world
+    /// this request creates exists to host exactly one companion Farmhand, and a
+    /// native Farmhand lives in a <c>Cabin</c>; the number of starting cabins is
+    /// the one native new-game setup fact that decides whether the created world
+    /// can host one at all.
+    /// </summary>
+    internal const int CompanionCabinCount = 1;
+
+    /// <summary>
+    /// Establish the cabin half of the native new-game setup this path bypasses.
+    ///
+    /// The vanilla Co-op → Host form sets <c>Game1.startingCabins = 1</c> for
+    /// <c>CharacterCustomization.Source.HostNewFarm</c>
+    /// (<c>CharacterCustomization.cs:354</c>), and the Farm builds cabins only
+    /// from the map's own cabin pads, which
+    /// <c>GameLocation.loadPathsLayerObjectsInArea</c> collects only while
+    /// <c>Game1.startingCabins &gt; 0</c> (<c>GameLocation.cs:17430</c>). This path
+    /// drives <c>TitleMenu.createdNewCharacter</c> directly instead of that menu,
+    /// so nothing else establishes the fact, and <c>Game1.resetPlayer()</c> zeroes
+    /// it (<c>Game1.cs:16414</c>) — so this must run after that reset and before
+    /// the native entry. Without it the created world contains no cabin, and the
+    /// companion this world was created for has nowhere to live.
+    /// </summary>
+    internal static void EstablishCompanionCabinLayout()
+    {
+        Game1.startingCabins = CompanionCabinCount;
+    }
+
+    /// <summary>
+    /// Whether a loaded world can host this request's single companion: it must
+    /// contain at least one native <c>Cabin</c>. Read-only validation of the world
+    /// the game itself produced; it never creates, moves or removes a building.
+    /// </summary>
+    internal static bool CanHostCompanion()
+    {
+        if (!Context.IsWorldReady || Game1.locations is null)
+            return false;
+        bool found = false;
+        Utility.ForEachBuilding(building =>
+        {
+            if (building.GetIndoors() is StardewValley.Locations.Cabin)
+            {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
+    /// <summary>
     /// The exact physical slot the Mod asked the native load to enter. Empty
     /// while the Mod has not asked for an existing world (it asked for a new
     /// game instead, or it has not asked for anything yet).
@@ -157,6 +208,16 @@ internal sealed class WorldCreationBootstrap
             this.FailClosed("the world that finished loading is not the exact save this request entered");
             return false;
         }
+        // The world this request owns is only usable when it can host the single
+        // companion it exists for. A world created by this path with no cabin (or
+        // an older world re-entered by identity) can never accept a Farmhand, so
+        // failing closed here is the difference between a bounded refusal and a
+        // companion that silently never starts.
+        if (!CanHostCompanion())
+        {
+            this.FailClosed(WorldCreationRefusal.CompanionCabinMissing, "the Player Host world this request owns contains no Cabin, so it cannot host the companion it was created for");
+            return false;
+        }
         this.ObservedSaveSlot = observedSaveSlot;
         this.monitor.Log($"GameBuddy observed the created Player Host world slot '{this.ObservedSaveSlot}'.", LogLevel.Info);
         return true;
@@ -199,6 +260,11 @@ internal sealed class WorldCreationBootstrap
             Game1.player.favoriteThing.Value = this.config.FavoriteThing;
             if (!string.Equals(Game1.GetSaveGameName(set_value: false), requestedSaveName, StringComparison.Ordinal))
                 throw new InvalidOperationException("world_creation_native_save_name_resolution_failed");
+            // The created world must be able to host the companion it exists for,
+            // which means the native new-game setup fact the vanilla co-op host
+            // form would have established. Set it after the reset above (which
+            // zeroes it) and before the native entry consumes it.
+            EstablishCompanionCabinLayout();
             // createdNewCharacter() switches into native loading before SMAPI
             // raises SaveLoaded. Record the request first so that expected
             // intermediate state is never mistaken for a second attempt.
@@ -273,6 +339,7 @@ internal sealed class WorldCreationBootstrap
         WorldCreationRefusal.SavesUnreadable => "saves_unreadable",
         WorldCreationRefusal.MultipleOwnWorlds => "multiple_own_worlds",
         WorldCreationRefusal.ForeignSlotCollision => "foreign_slot_collision",
+        WorldCreationRefusal.CompanionCabinMissing => "companion_cabin_missing",
         _ => "none",
     };
 }
