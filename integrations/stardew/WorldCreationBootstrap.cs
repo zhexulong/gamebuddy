@@ -208,16 +208,10 @@ internal sealed class WorldCreationBootstrap
             this.FailClosed("the world that finished loading is not the exact save this request entered");
             return false;
         }
-        // The world this request owns is only usable when it can host the single
-        // companion it exists for. A world created by this path with no cabin (or
-        // an older world re-entered by identity) can never accept a Farmhand, so
-        // failing closed here is the difference between a bounded refusal and a
-        // companion that silently never starts.
+        // The world this request owns is observed and identity-equal, but it must
+        // also be able to host the single companion it exists for.
         if (!CanHostCompanion())
-        {
-            this.FailClosed(WorldCreationRefusal.CompanionCabinMissing, "the Player Host world this request owns contains no Cabin, so it cannot host the companion it was created for");
-            return false;
-        }
+            this.ReportUnhostableCompanionWorld(observedSaveSlot);
         this.ObservedSaveSlot = observedSaveSlot;
         this.monitor.Log($"GameBuddy observed the created Player Host world slot '{this.ObservedSaveSlot}'.", LogLevel.Info);
         return true;
@@ -331,6 +325,17 @@ internal sealed class WorldCreationBootstrap
         this.terminal = true;
         this.monitor.Log($"GameBuddy formal Player Host world request failed closed [{RefusalCode(refusal)}]: {reason}.", LogLevel.Error);
     }
+
+    /// <summary>
+    /// Report - without ending the request - that the world this request owns
+    /// cannot host the companion it exists for. The request itself succeeded (the
+    /// world is observed and stays the world-identity authority), and the Mod's
+    /// own advertisement is the only view the Host has of this world, so the Host
+    /// must still receive the truthful `cabins: []` rather than a non-arrival it
+    /// could only classify as an attestation timeout.
+    /// </summary>
+    private void ReportUnhostableCompanionWorld(string observedSaveSlot) =>
+        this.monitor.Log($"GameBuddy formal Player Host world request cannot host its companion [{RefusalCode(WorldCreationRefusal.CompanionCabinMissing)}]: the Player Host world this request owns ('{observedSaveSlot}') contains no Cabin, so the companion it exists for has nowhere to live.", LogLevel.Error);
 
     /// <summary>The stable token for one bounded refusal, or `none` for a failure that is not a decision refusal.</summary>
     private static string RefusalCode(WorldCreationRefusal refusal) => refusal switch
