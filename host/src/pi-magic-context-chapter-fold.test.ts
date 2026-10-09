@@ -49,6 +49,17 @@
  * (the loop below does, bounded), and confirm the fixture both waits correctly and stays honest when
  * the historian never publishes. That last verification is NOT finished - this test still reports the
  * open finding rather than a verdict, and must not be read as evidence either way.
+ *
+ * MEASURED 2026-10-08 (decisive run, `GAMEBUDDY_CHAPTER_FOLD_FORCE=1`, root kept): 59 passes,
+ * `last_input_tokens = 16186`, `last_context_percentage = 2.16%` - well past the trigger, and the
+ * vendor logged `proactive fire` from pass 29 onward - yet `compartments = 0` and no chapter ever
+ * reached m[0]. So the trigger fires and the historian still publishes nothing. The next candidate,
+ * and the reason this fixture cannot simply wait longer: the historian runs as an EMBEDDED subagent
+ * (`resolveHistorianFromConfig` returns an `EmbeddedPiHistorianRunner` in this mode) and its model
+ * registry is bound post-construction through the Host's `bindHistorianRunner` seam. A fire-and-forget
+ * run that fails because that seam is not driven leaves no trace in the session at all - which is
+ * exactly the shape of `compartments = 0` here. Verify that seam (and capture the runner's own
+ * failure) before this fixture can assert anything about chapters.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
