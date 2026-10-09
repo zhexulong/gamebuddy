@@ -62,18 +62,28 @@
  *   // Headless Pi exits after agent_end without dispatching session_shutdown.
  *   // Leave the eligible history in the store for the next interactive pass.
  *   if (!ctx.hasUI) return;
- *   triggered = true;
- *   sessionLog(sessionId, `historian trigger fired (reason=...) - spawning subagent`);
  *
- * A headless Pi host therefore NEVER spawns the historian. The `spawning subagent` line is absent
- * from this fixture's captured vendor log, which is the same fact from the other side.
+ * A headless Pi host therefore never spawned the historian, and GameBuddy's embedded runtime is such a
+ * host - so on it no compartment was ever created, the decayed-history block stayed empty, and no
+ * chapter could be sealed, whatever `execute_threshold_*` was set to.
  *
- * This is the answer to H's question, and it is bigger than the fixture: GameBuddy's embedded runtime
- * is a headless Pi host, so on it the historian never runs, no compartment is ever created, the
- * decayed-history block stays empty, and a chapter can never be sealed - whatever
- * `execute_threshold_*` is set to. The threshold work above is still true and still necessary, but it
- * is not the binding gate. This fixture cannot assert a fold until the product decides how the
- * historian runs on the embedded path; until then it is SKIPPED, never green.
+ * FIXED IN THE FORK (`packages/pi-plugin/src/pi-background-run-lifetime.ts`, vendor 58c213a61): the
+ * gate now asks whether the host OUTLIVES a background run rather than whether it has a UI, and accepts
+ * an embedded host's own declaration. Measured after that change on this fixture: `historian_runs` went
+ * from 0 to 62 rows, so the gate was the binding constraint.
+ *
+ * TWO CONDITIONS REMAIN, both measured on the same run, neither of them the gate:
+ *
+ *   1. `failed` with `failure_reason = null` and `subagent_invocation_id = null` (2 of the 62 runs):
+ *      the embedded historian attempt fails without recording why. That is the next thing to diagnose -
+ *      in a headless in-process fixture nothing binds a model registry, so this is the most likely
+ *      shape of it, and production (where the Host binds one) may differ.
+ *   2. `noop` with `internal protected-tail drain budget spent` (60 of the 62): pacing. See the drain
+ *      window note in the body - one 10-minute window authorizes about 4000 tokens at this fixture's
+ *      geometry, which is less than one fold needs.
+ *
+ * So this fixture stays SKIPPED and must not be read as evidence either way until (1) is understood and
+ * a geometry is chosen that lets (2) finish; the chapter layer is not claimed to work end to end yet.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -109,7 +119,7 @@ function filler(index: number): string {
 type Marker = Readonly<{ line: string }>;
 
 /** Capture the vendor's own materialization markers, which it writes to stderr. */
-async function captureMarkers(run: () => Promise<void>): Promise<readonly Marker[]> {
+async function captureMarkers(run: (markers: Marker[]) => Promise<void>): Promise<readonly Marker[]> {
   const markers: Marker[] = [];
   const original = process.stderr.write.bind(process.stderr);
   process.stderr.write = ((chunk: string | Uint8Array): boolean => {
@@ -118,7 +128,11 @@ async function captureMarkers(run: () => Promise<void>): Promise<readonly Marker
     return true;
   }) as typeof process.stderr.write;
   try {
-    await run();
+    // The callback receives the live array, so a wait loop inside it can inspect what has arrived so
+    // far. Reading the OUTER binding that this call is still assigning is a temporal-dead-zone error,
+    // which is how the first version of that loop reported `Cannot access 'markers' before
+    // initialization` instead of a fold result.
+    await run(markers);
   } catch (error) {
     // Carry the markers seen so far into the failure: a run that died mid-loop must not be
     // indistinguishable from one whose historian never published (that hid a real error for a
@@ -168,6 +182,12 @@ test(
     // OWN user tier, which is also what keeps it hermetic: without this it would silently inherit
     // whatever the machine's operator has configured (here: an 800k threshold, so no fold ever).
     const configHome = join(root, "config-home");
+    // The embedded host's own declaration, and the one the fork's historian gate now asks for: this
+    // process owns its lifetime and disposes the session (dispatching session_shutdown), so a
+    // fire-and-forget historian run can be seen through instead of being killed at exit. Production
+    // sets it for the composed child; the fixture must not silently rely on the ambient value.
+    const previousEmbeddedRuntime = process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+    process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
     const previousConfigHome = process.env.XDG_CONFIG_HOME;
     await mkdir(join(configHome, "cortexkit"), { recursive: true });
     await writeFile(
@@ -205,7 +225,7 @@ test(
     				JSON.stringify({ "cpa-oai": { type: "api_key", key } }),
         "utf8",
       );
-      const markers = await captureMarkers(async () => {
+      const markers = await captureMarkers(async (markers) => {
         runtime = await createCompanionRuntime(
           identity,
           root,
@@ -233,13 +253,22 @@ test(
         for (let index = 1; index <= 30; index += 1) {
           await runtime.session.prompt(filler(index));
         }
-        // The historian runs ASYNCHRONOUSLY (fire-and-forget), so the chapter can only appear in a m[0]
-        // rendered AFTER it publishes - the pass that fires is not the pass that shows it. Wait for it
-        // with cheap turns (each one re-renders m[0] and emits a fresh chapter marker) rather than by
-        // guessing how long a historian call takes.
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        // The historian runs ASYNCHRONOUSLY (fire-and-forget), so a chapter can only appear in a m[0]
+        // rendered AFTER it publishes - the firing pass is never the pass that shows it.
+        //
+        // The wait has to span DRAIN WINDOWS, not just a few turns: Magic Context authorizes
+        // protected-tail draining per 10-minute window (`DRAIN_WINDOW_MS = 10 * 60 * 1000`) with a
+        // budget of `min(500k, max(perRunCap, 20% of usable))`, and every attempt inside a spent
+        // window returns `noop` with `internal protected-tail drain budget spent`. Measured with this
+        // fixture's compressed trigger (usable ~6000 tokens), one window authorizes about 4000 tokens
+        // while the eligible tail is far larger, so a fold needs several windows - which is why this is
+        // a nightly gate and not a per-commit test. The budget defaults to five minutes and is raised
+        // with `GAMEBUDDY_CHAPTER_FOLD_WAIT_MINUTES` on a CI job that can afford it.
+        const waitMinutes = Number.parseInt(process.env.GAMEBUDDY_CHAPTER_FOLD_WAIT_MINUTES ?? "5", 10);
+        const deadline = Date.now() + Math.max(1, waitMinutes) * 60_000;
+        while (Date.now() < deadline) {
           if (markers.some(({ line }) => /^\[probe:m0_chapters\]\s+\S+\s+[1-9]/u.test(line))) break;
-          await new Promise((resolve) => setTimeout(resolve, 3_000));
+          await new Promise((resolve) => setTimeout(resolve, 30_000));
           await runtime.session.prompt("Still here?");
         }
       });
@@ -316,6 +345,8 @@ test(
       process.chdir(previousCwd);
       if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousConfigHome;
+      if (previousEmbeddedRuntime === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntime;
       // Only when nothing else is failing: otherwise the fold verdict is already on its way out and
       // replacing it with a cleanup error would hide the thing this fixture exists to measure.
       if (cleanupError !== undefined && !bodyFailed) {
