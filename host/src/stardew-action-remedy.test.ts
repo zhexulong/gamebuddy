@@ -48,6 +48,61 @@ test("a hold with no countermeasure says so instead of naming a tool", () => {
   }
 });
 
+test("every named body owner gets actionable guidance, and no two owners read the same", () => {
+  const owners = [
+    "body_owned_by_navigation",
+    "body_owned_by_travel",
+    "body_owned_by_movement",
+    "body_owned_by_approach",
+    "body_owned_by_ride",
+    "body_owned_by_day_advance",
+    "body_owned_by_activity",
+  ];
+  const guidances = owners.map((code) => remedyForBodyHold(code, null)?.guidance);
+  for (const [index, guidance] of guidances.entries()) {
+    assert.ok(guidance, `${owners[index]} must name a next step, not just report the hold`);
+    assert.match(guidance ?? "", /Wait|Re-issue/, `${owners[index]} must say to wait or to re-issue`);
+  }
+  assert.equal(
+    new Set(guidances).size,
+    owners.length,
+    "owners that share a sentence leave the Agent guessing which hold it is again",
+  );
+});
+
+test("only a supersedable owner is told to re-issue; every other owner must settle first", () => {
+  // The Mod's frozen table marks an in-flight local movement supersedable by a newer command, so re-issuing
+  // is the remedy there; re-issuing against any other owner would just be refused again.
+  assert.match(remedyForBodyHold("body_owned_by_movement", null)?.guidance ?? "", /Re-issue the same request now/);
+  for (const code of [
+    "body_owned_by_travel",
+    "body_owned_by_approach",
+    "body_owned_by_ride",
+    "body_owned_by_day_advance",
+    "body_owned_by_activity",
+  ]) {
+    assert.match(remedyForBodyHold(code, null)?.guidance ?? "", /Wait for/, `${code} cannot be interrupted`);
+  }
+  // Navigation ends on its own, but a new movement directive also takes over from it, so it is the one owner
+  // whose remedy must offer both: wait it out, or actively take it over.
+  const navigation = remedyForBodyHold("body_owned_by_navigation", null)?.guidance ?? "";
+  assert.match(navigation, /Wait for/);
+  assert.match(navigation, /new movement directive/);
+});
+
+test("a body_owned_* code the table does not list still gets a generic actionable remedy", () => {
+  // A named hold the Host has not heard of yet must not degrade to an unknown-error dead end.
+  const remedy = remedyForBodyHold("body_owned_by_future_owner", null);
+  assert.equal(remedy?.action, null, "a prefixed hold names no tool");
+  assert.match(remedy?.guidance ?? "", /Wait for it to settle/);
+  assert.match(remedy?.guidance ?? "", /re-issue the same request/);
+});
+
+test("the bare legacy body_owned stays a dead end for the prefix fallback", () => {
+  // `body_owned` is not `body_owned_`: the fallback must not swallow the code whose test asserts no remedy.
+  assert.equal(remedyForBodyHold("body_owned", null), null);
+});
+
 test("a reason code that is not a body hold gets no remedy", () => {
   // Attaching a remedy here would tell the Agent to close a dialogue that is not open.
   for (const code of ["player_not_actionable", "invalid_target_tile", "no_native_path", "body_owned", "accepted", null]) {

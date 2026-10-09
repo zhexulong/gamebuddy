@@ -99,7 +99,70 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
           "The farmhand is unconscious (exhausted or past the forced end of day), so nothing can be done " +
           "until the next in-game day begins. Do not retry the request.",
       };
+    // A named `body_owned_by_*` code says WHICH in-flight execution holds the body. The Mod's frozen table
+    // fixes whether that owner can be superseded: only an in-flight local movement yields to a newer command,
+    // so only that one is told to re-issue now; every other owner has to settle on its own first.
+    case "body_owned_by_navigation":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is already walking to a target an earlier request chose. Wait for the walk to settle, " +
+          "then re-issue the same request; a new movement directive for a different tile also takes over from " +
+          "the walk in progress, so issue one only if you mean to change the target.",
+      };
+    case "body_owned_by_travel":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is changing location through a door, warp or mine entrance. Wait for the transition " +
+          "to finish, then re-issue the same request; a map transition cannot be interrupted.",
+      };
+    case "body_owned_by_movement":
+      return {
+        action: null,
+        guidance:
+          "The farmhand's body is held by an in-flight movement that a newer command supersedes. Re-issue " +
+          "the same request now; the new directive takes over from the walk in progress.",
+      };
+    case "body_owned_by_approach":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is walking into reach of a target another request chose. Wait for the approach to " +
+          "finish, then re-issue the same request.",
+      };
+    case "body_owned_by_ride":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is riding a mount or bus. Wait for the ride to end, then re-issue the same request; " +
+          "a ride cannot be interrupted mid-trip.",
+      };
+    case "body_owned_by_day_advance":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is in the day-advance transition. Wait for the new day to begin, then re-issue the " +
+          "same request; the transition cannot be interrupted.",
+      };
+    case "body_owned_by_activity":
+      return {
+        action: null,
+        guidance:
+          "The farmhand is occupied by another in-flight activity (petting, animal produce, item use, pickup " +
+          "or pedestal taking). Wait for it to finish, then re-issue the same request.",
+      };
     default:
+      // The Mod keeps the `body_owned_` prefix on every named hold, so a named code this table does not list
+      // yet still gets actionable guidance instead of degrading to an unknown error. The bare legacy
+      // `body_owned` names no owner and carries no countermeasure, so it keeps returning null.
+      if (reasonCode !== null && reasonCode.startsWith("body_owned_"))
+        return {
+          action: null,
+          guidance:
+            "The farmhand's body is held by another in-flight execution. Wait for it to settle, then re-issue " +
+            "the same request instead of repeating it in a loop.",
+        };
       return null;
   }
 }

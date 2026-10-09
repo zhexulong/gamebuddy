@@ -214,10 +214,13 @@ test("a stale_snapshot refusal whose refreshed revision is unchanged is surfaced
 });
 
 test("every other refusal is surfaced unchanged, with no re-observe and no retry", async () => {
-  const { outcome, dispatches, observes } = await runAgainstPeer({ firstRefusal: "body_owned", refreshedRevision: 8 });
+  // The Mod now names WHO holds the body (`body_owned_by_*`). Match the family prefix so a renamed owner
+  // cannot slip past the assertion, but pin the whole message to a body-ownership code so the check stays
+  // as strong as the old exact code: a loose `body_owned` substring would accept an unrelated code.
+  const { outcome, dispatches, observes } = await runAgainstPeer({ firstRefusal: "body_owned_by_navigation", refreshedRevision: 8 });
 
   assert.equal(outcome.kind, "error");
-  assert.match(outcome.kind === "error" ? outcome.message : "", /bridge_rejected:body_owned/);
+  assert.match(outcome.kind === "error" ? outcome.message : "", /^bridge_rejected:body_owned(?:_by_[a-z_]+)?$/);
   assert.equal(observes, 0, "only stale_snapshot justifies a re-observe");
   assert.equal(dispatches.length, 1, "an owned body is a real refusal: never re-dispatched");
 });
