@@ -1330,6 +1330,36 @@ const PHASE_B_MANAGED_PATHS = [
 ] as const;
 
 /**
+ * The owner ruling: the companion world persists across bootstrap attempts, so an
+ * attempt's delete surface may never name a Stardew save. The declaration is
+ * admitted only as contained relative paths, so anything that would reach
+ * outside the attempt's own transaction directory -- an absolute or
+ * drive-qualified save folder, a UNC share, or any `..` traversal -- fails
+ * loudly when the set is authored rather than when it is consumed.
+ */
+test("an attempt's managed path declaration can never name a path outside its own transaction directory", () => {
+  const declared = productionCore.ownedManagedPathSet([...PHASE_B_MANAGED_PATHS] as const);
+  assert.deepEqual([...declared], [...PHASE_B_MANAGED_PATHS]);
+  for (const escape of [
+    "C:/Users/player/AppData/Roaming/StardewValley/Saves/GameBuddyFarm_445094166",
+    "C:\\Users\\player\\AppData\\Roaming\\StardewValley\\Saves\\GameBuddyFarm_445094166",
+    "/stardew-valley/Saves/GameBuddyFarm_445094166",
+    "//server/share/StardewValley/Saves/GameBuddyFarm_445094166",
+    "../../../StardewValley/Saves/GameBuddyFarm_445094166",
+    "player-host/../../../StardewValley/Saves/GameBuddyFarm_445094166",
+    "player-host/./Mods",
+    "player-host//Mods",
+    "",
+  ]) {
+    assert.throws(
+      () => productionCore.ownedManagedPathSet([OWNER_FILE, escape]),
+      /stardew_bootstrap_managed_path_not_contained/,
+      `declared escape ${JSON.stringify(escape)} must be refused`,
+    );
+  }
+});
+
+/**
  * D5: the cleanup consumes exactly the record's own declaration. A declared file
  * is gone, a declared path that was never written is not an error, and nothing
  * undeclared is touched -- not the file an undeclared writer left inside a

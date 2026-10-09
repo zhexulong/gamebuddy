@@ -109,7 +109,7 @@ const PHASE_B_PACKAGE_ENTRIES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "manifest.json",
 ] as const);
-const PHASE_B_MANAGED_PATHS = Object.freeze([
+const PHASE_B_MANAGED_PATHS = ownedManagedPathSet([
   OWNER_FILE,
   HOST_PROFILE_ROOT,
   `${HOST_PROFILE_ROOT}/${MODS_DIRECTORY}`,
@@ -121,7 +121,7 @@ const PHASE_B_MANAGED_PATHS = Object.freeze([
   `${HOST_PROFILE_ROOT}/${MODS_DIRECTORY}/${MOD_DIRECTORY}/${PHASE_B_PACKAGE_ENTRIES[3]}`,
 ] as const);
 const AI_CLIENT_PROFILE_ROOT = "ai-client";
-const AI_CLIENT_MANAGED_PATHS = Object.freeze([
+const AI_CLIENT_MANAGED_PATHS = ownedManagedPathSet([
   AI_CLIENT_PROFILE_ROOT,
   `${AI_CLIENT_PROFILE_ROOT}/${MODS_DIRECTORY}`,
   `${AI_CLIENT_PROFILE_ROOT}/${MODS_DIRECTORY}/${MOD_DIRECTORY}`,
@@ -131,10 +131,40 @@ const AI_CLIENT_MANAGED_PATHS = Object.freeze([
   `${AI_CLIENT_PROFILE_ROOT}/${MODS_DIRECTORY}/${MOD_DIRECTORY}/${PHASE_B_PACKAGE_ENTRIES[2]}`,
   `${AI_CLIENT_PROFILE_ROOT}/${MODS_DIRECTORY}/${MOD_DIRECTORY}/${PHASE_B_PACKAGE_ENTRIES[3]}`,
 ] as const);
-const C1_MANAGED_PATHS = Object.freeze([
+const C1_MANAGED_PATHS = ownedManagedPathSet([
   ...PHASE_B_MANAGED_PATHS,
   ...AI_CLIENT_MANAGED_PATHS,
 ] as const);
+
+/**
+ * The owned-path set of one attempt: authored once here, refused unless every
+ * entry is a contained relative path.
+ *
+ * Why it exists: this declaration is the attempt's entire delete surface
+ * (`consumeRecoveredAttemptCleanup` deletes exactly these paths, relative to the
+ * attempt's own transaction directory). The owner ruling makes it a guarantee
+ * rather than luck that no entry names a Stardew save: a `GameBuddyFarm_*` slot
+ * under the Stardew saves root is the player's own progress across bootstrap
+ * attempts and is never part of an attempt's owned set -- ordinary close, endgame
+ * and crash cleanup included. A declaration that leaves the transaction
+ * directory -- absolute, drive-qualified, UNC, or carrying a `.`/`..` segment --
+ * is refused here, when the set is authored, so the mistake fails on import
+ * instead of on someone's farm. The cleanup re-checks containment against the
+ * real directory before deleting anything; this is the authoring-time half of
+ * the same rule.
+ */
+export function ownedManagedPathSet<T extends readonly string[]>(declared: T): T {
+  for (const contained of declared) {
+    if (
+      contained.length === 0 ||
+      contained.startsWith("/") ||
+      contained.includes("\\") ||
+      contained.includes(":") ||
+      contained.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+    ) throw new Error("stardew_bootstrap_managed_path_not_contained");
+  }
+  return Object.freeze([...declared]) as unknown as T;
+}
 
 type RegistrationState = "available" | "binding" | "consumed";
 type LaunchState = "available" | "binding" | "consumed" | "revoked";
