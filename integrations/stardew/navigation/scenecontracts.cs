@@ -189,7 +189,18 @@ internal sealed record SceneAffordanceProjection(
     string Name,
     int Distance,
     string Direction,
-    string? ActionHint = null);
+    string? ActionHint = null,
+    /// <summary>
+    /// Whether the actor can act on this affordance from where it stands: it can walk ONTO the tile or stand
+    /// beside it. <c>null</c> means undecided — the reachability probe ran out of budget, so no claim is made.
+    ///
+    /// <para>
+    /// Published because a live session spent 63% of its turn re-aiming: it chose targets from this list and
+    /// learned they were unreachable only from a refusal. Measured cost of the fix: the actor's whole walkable
+    /// component is one flood per observation (28 tiles on the fixture farm), and four observations per session.
+    /// </para>
+    /// </summary>
+    bool? Reachable = null);
 
 /// <summary>
 /// Internal read-only scene projection. Summary is player-facing text for this

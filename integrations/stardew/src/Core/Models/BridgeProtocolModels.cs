@@ -735,7 +735,11 @@ public sealed record ObserveSceneAffordancePayload(
     string Name,
     int Distance,
     string Direction,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionHint = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionHint = null,
+    // Whether the actor can act on this affordance from where it stands (walk onto the tile or stand beside it).
+    // `null` is UNDECIDED -- the reachability probe exceeded its budget -- and is written explicitly, because an
+    // omitted field would be read as `false` and turn "we could not measure" into "you cannot go there".
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? Reachable = null
 );
 
 public sealed record ObserveSceneResultPayload(

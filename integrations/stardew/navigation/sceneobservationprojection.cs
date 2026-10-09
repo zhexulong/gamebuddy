@@ -81,7 +81,8 @@ internal sealed class SceneObservationProjection
     internal SceneObservationProjectionResult Observe(
         SceneObservationContext context,
         SceneObservationInput input,
-        int? radius = null)
+        int? radius = null,
+        Func<int, int, bool>? isActionable = null)
     {
         int effectiveRadius = radius ?? DefaultRadius;
         if (effectiveRadius is < 0 or > MaximumRadius)
@@ -145,7 +146,10 @@ internal sealed class SceneObservationProjection
                 candidate.Source.Name,
                 candidate.Distance,
                 SceneDirectionWire.ToWireValue(candidate.Direction),
-                candidate.Source.ActionHint));
+                candidate.Source.ActionHint,
+                // Undecided when the caller supplied no probe: the projection stays pure (it cannot reach the live
+                // game from here), and "no claim" is a different answer from "not reachable".
+                isActionable is null ? null : isActionable(candidate.Source.TileX, candidate.Source.TileY)));
         }
 
         // Ground is a separate axis from affordances, so it is summarised once

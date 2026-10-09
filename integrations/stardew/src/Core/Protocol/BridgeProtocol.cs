@@ -1380,12 +1380,15 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool TryReadObserveSceneAffordance(JsonElement value, out ObserveSceneAffordancePayload? affordance)
     {
         affordance = null;
-        if (!HasExactProperties(value, "ref", "kind", "name", "distance", "direction", "actionHint")
+        if (!HasExactProperties(value, "ref", "kind", "name", "distance", "direction", "actionHint", "reachable")
             || !ReadSceneReference(value.GetProperty("ref"), out string? reference)
             || !ReadSceneText(value.GetProperty("name"), 128, out string? name)
             || !value.GetProperty("distance").TryGetInt32(out int distance)
             || distance is < 0 or > 30
             || !TryReadSceneOptionalText(value.GetProperty("actionHint"), 160, out string? actionHint)
+            // `null` is UNDECIDED and must survive as null: reading an absent-or-null field as `false` would publish
+            // "you cannot act on this" for a target nobody measured.
+            || !TryReadSceneOptionalBoolean(value.GetProperty("reachable"), out bool? reachable)
             || value.GetProperty("kind").ValueKind != JsonValueKind.String
             || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "tree" or "animal" or "forage" or "door" or "machine" or "water_source" or "weed" or "stone" or "debris" or "artifact_spot")
             || value.GetProperty("direction").ValueKind != JsonValueKind.String
@@ -1398,8 +1401,26 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             name!,
             distance,
             value.GetProperty("direction").GetString()!,
-            actionHint);
+            actionHint,
+            reachable);
         return true;
+    }
+
+    /// <summary>Reads a tri-state boolean from the wire: <c>true</c>, <c>false</c>, or <c>null</c> for undecided.</summary>
+    private static bool TryReadSceneOptionalBoolean(JsonElement value, out bool? result)
+    {
+        result = null;
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Null:
+                return true;
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                result = value.GetBoolean();
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static bool TryReadSceneBoolean(JsonElement value, out bool result)

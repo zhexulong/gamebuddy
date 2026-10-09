@@ -9,6 +9,7 @@ using GameBuddy.Stardew.Core.Routing;
 using GameBuddy.Stardew.Navigation;
 using GameBuddy.Stardew.Sensory;
 using Microsoft.Xna.Framework;
+using StardewValley;
 
 namespace GameBuddy.Stardew;
 
@@ -161,7 +162,13 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             locationName,
             this.sceneMovementSequence,
             ++this.sceneObservationSequence);
-        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(context, input, SceneObservationProjection.DefaultRadius);
+        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(
+            context,
+            input,
+            SceneObservationProjection.DefaultRadius,
+            // One flood for the whole observation, so each affordance can say whether the actor can act on it from
+            // here. `null` (component beyond budget) publishes undecided rather than guessing.
+            StardewBodyController.BuildSceneActionability(Game1.player));
         if (!projection.IsValid)
             return null;
 
@@ -186,7 +193,8 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
                 affordance.Name,
                 affordance.Distance,
                 affordance.Direction,
-                affordance.ActionHint)).ToArray(),
+                affordance.ActionHint,
+                affordance.Reachable)).ToArray(),
             projection.Summary,
             projection.IsPartial,
             projection.TruncatedReason,
@@ -318,7 +326,13 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             locationName,
             this.sceneMovementSequence,
             ++this.sceneObservationSequence);
-        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(context, input, envelope!.Payload.Radius);
+        SceneObservationProjectionResult projection = this.sceneObservationProjection.Observe(
+            context,
+            input,
+            envelope!.Payload.Radius,
+            // The piggyback path builds the SAME payload the parsed-request path builds, so it must carry the same
+            // reachability answer -- this is exactly the shape that dropped `Ground` once when the two paths diverged.
+            StardewBodyController.BuildSceneActionability(Game1.player));
          if (!projection.IsValid)
          {
              reasonCode = projection.TruncatedReason ?? "scene_observation_invalid";

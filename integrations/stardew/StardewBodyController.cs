@@ -47,7 +47,12 @@ internal sealed class StardewBodyController
     /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
     /// (freezePause, tool animation) keeps the execution running while inside it
     /// and only falls through to the regular rulings once it expires.</summary>
-    private const int TransientWindowMs = 2000;
+    /// <summary>
+    /// How long a transient body lock is tolerated before it stops being "will pass on its own". Sourced from
+    /// the World Model so the retry window a refusal REPORTS to the Agent is the same number the body loop
+    /// actually waits - an Agent told to wait 2000 ms while the loop waits 1500 would retry into a live lock.
+    /// </summary>
+    private const int TransientWindowMs = WorldModel.TransientRetryWindowMs;
 
     /// <summary>
     /// Upper bound for the derived reachability probe. A target is reported as
@@ -85,14 +90,24 @@ internal sealed class StardewBodyController
         }
 
         // The body-environment ruling comes from the SHARED authority, not from a third copy of it: this
-// used to be `!CanMove || menu != null || eventUp`, which agreed with admission only by accident and
-// could not say WHY the actor is held. Reading the disposition makes movement and admission decide
-// the same way, and the refusal below can then name the holder.
-LocalDispositionKind movementDisposition = ClassifyLocalDisposition(localPlayer);
-if (movementDisposition != LocalDispositionKind.Idle)
+        // used to be `!CanMove || menu != null || eventUp`, which agreed with admission only by accident and
+        // could not say WHY the actor is held. Reading the disposition makes movement and admission decide
+        // the same way, and the refusal names the holder (WorldModel is the one place the closed set of
+        // holds maps to wire codes).
+        ActorWorldFacts movementFacts = WorldModel.ReadFacts(localPlayer);
+        ActorDisposition movementDisposition = WorldModel.Classify(movementFacts);
+        if (movementDisposition.Kind != ActorDispositionKind.Idle || !localPlayer.CanMove)
         {
-            reasonCode = "player_not_actionable";
-            evidence = $"can_move={localPlayer.CanMove.ToString().ToLowerInvariant()};menu={(Game1.activeClickableMenu is not null).ToString().ToLowerInvariant()};event_up={Game1.eventUp.ToString().ToLowerInvariant()}";
+            // A movement lock the facts cannot name further (knockback, a warp transition) reads as Idle,
+            // so the `!CanMove` tail is what makes it a hold here - and it is reported as a transient, which
+            // is exactly how the body loop treats it.
+            ActorDisposition hold = movementDisposition.Kind == ActorDispositionKind.Idle
+                ? movementDisposition with { Kind = ActorDispositionKind.Transient }
+                : movementDisposition;
+            (string holdCode, string holdEvidence) =
+                WorldModel.DescribeCurrentBodyHold(hold, movementFacts, localPlayer.CanMove);
+            reasonCode = holdCode;
+            evidence = holdEvidence;
             return false;
         }
         if (localPlayer.controller is not null)
@@ -720,6 +735,75 @@ if (movementDisposition != LocalDispositionKind.Idle)
             // native failure and its existing evidence remain authoritative.
             return null;
         }
+    }
+
+    /// <summary>
+    /// The actor's walkable component, as a set — or <c>null</c> when it exceeded the budget, in which case the
+    /// caller must make no claim at all. One flood answers reachability for every scene affordance; the alternative
+    /// (one flood per target) is the version that does not scale.
+    ///
+    /// <para>
+    /// It shares the planner's cardinal neighbourhood and the same collision predicate as
+    /// <see cref="AssessReachability"/>; the difference is that this returns the tiles themselves, because a caller
+    /// asking "can I act on THIS target" needs a lookup, not a verdict about one goal.
+    /// </para>
+    /// </summary>
+    internal static HashSet<Point>? ReachableTiles(Point actorTile, int maxVisited, Func<Point, bool> canTraverse)
+    {
+        if (maxVisited <= 0 || !canTraverse(actorTile))
+            return null;
+        var visited = new HashSet<Point> { actorTile };
+        var pending = new Queue<Point>();
+        pending.Enqueue(actorTile);
+        while (pending.Count > 0)
+        {
+            Point current = pending.Dequeue();
+            foreach (Point offset in CardinalOffsets)
+            {
+                Point next = new(current.X + offset.X, current.Y + offset.Y);
+                if (!canTraverse(next) || !visited.Add(next))
+                    continue;
+                if (visited.Count > maxVisited)
+                    return null;
+                pending.Enqueue(next);
+            }
+        }
+        return visited;
+    }
+
+    /// <summary>
+    /// A lookup for one observation: "can the actor act on this tile?" — it can stand on it or beside it, which is
+    /// what every interaction's reach means. Returns <c>null</c> when the component exceeded the probe budget, so the
+    /// observation publishes undecided rather than guessing.
+    /// </summary>
+    internal static Func<int, int, bool>? BuildSceneActionability(Farmer actor, int budget = ReachabilityProbeLimit)
+    {
+        GameLocation? location = actor.currentLocation;
+        if (location is null)
+            return null;
+        var layer = location.map.Layers[0];
+        HashSet<Point>? reachable = ReachableTiles(
+            new Point((int)actor.Tile.X, (int)actor.Tile.Y),
+            budget,
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && IsWalkableTile(location, actor, new Vector2(tile.X, tile.Y)));
+        if (reachable is null)
+            return null;
+        return (x, y) =>
+        {
+            Point tile = new(x, y);
+            if (reachable.Contains(tile))
+                return true;
+            foreach (Point offset in CardinalOffsets)
+            {
+                if (reachable.Contains(new Point(tile.X + offset.X, tile.Y + offset.Y)))
+                    return true;
+            }
+            return false;
+        };
     }
 
     /// <summary>
