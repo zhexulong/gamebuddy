@@ -145,6 +145,8 @@
     "derive:stardew-action-candidates": "node integrations/stardew/action-development/src/analysis/stardew-action-candidates.mjs",
     "test:stardew-action-candidates": "node --test integrations/stardew/action-development/tests/stardew-action-candidates.test.mjs",
     "audit:stardew-discovery-channels": "node tools/audit-stardew-discovery-channels.mjs",
+    "audit:stardew-admission-fork-delta": "node tools/audit-stardew-admission-fork-delta.mjs",
+    "test:stardew-admission-fork-delta": "node --test tools/audit-stardew-admission-fork-delta.test.mjs",
     "test:stardew-discovery-channels": "node --test tools/audit-stardew-discovery-channels.test.mjs",
     "audit:stardew-scene-kind-projection": "node tools/audit-stardew-scene-kind-projection.mjs",
     "test:stardew-scene-kind-projection": "node --test tools/audit-stardew-scene-kind-projection.test.mjs",
