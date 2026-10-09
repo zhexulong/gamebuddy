@@ -21,7 +21,9 @@ test("fixture launcher resolver returns the experimental runner without widening
   const publishedIds = new Set(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => gate.actionId));
   for (const [actionId, runner] of Object.entries(STARDEW_EXPERIMENTAL_ACTION_RUNNERS)) {
     assert.equal(publishedIds.has(actionId), false, `${actionId} must not enter the published gate list`);
-    assert.match(runner, /^run-stardew-native-local-player-[a-z0-9-]+\.mjs$/);
+    // The `scene_reachable_probe` entry is a DIAGNOSTIC runner (directly reads the scene observation), so its file
+    // name is allowed to differ from the native-local-player-* convention; every other experimental runner must match.
+    if (actionId !== "scene_reachable_probe") assert.match(runner, /^run-stardew-native-local-player-[a-z0-9-]+\.mjs$/);
     assert.equal(resolveStardewActionGateRunner(actionId), runner);
   }
 });

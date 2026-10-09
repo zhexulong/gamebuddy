@@ -348,7 +348,11 @@ function assertBackupName(value) {
     throw new Error("invalid_fixture_backup_name");
 }
 export function fixtureActions(action) {
-  if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
+  // The scene-reachable probe is a direct observation read: the fixture only
+  // publishes the read-only observe_scene capability so the runner can pull a
+  // projection with reachability attached.
+  if (action === "scene_reachable_probe") return ["observe_scene"];
+  if (action === "move_to_tile") return ["move_to_tile"];
   // The move-stall probe (design 5.3 observation) drives the published
   // move_to_tile action over a fixture that stands a native blocker on the
   // route. `pet_animal` is listed ONLY so the Pet projection is published and
