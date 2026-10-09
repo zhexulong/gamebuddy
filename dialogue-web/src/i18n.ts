@@ -307,6 +307,84 @@ const en = {
   cardImportHistoryHint: "Every confirmed import and what it kept or dropped, by class.",
   cardImportHistoryEmpty: "No confirmed imports yet.",
   cardImportHistoryFailed: "The import history could not be read.",
+
+  // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
+  appMark: "GB",
+  gamePanel: "Game",
+  gameStateUnavailable: "Game state is unavailable for this profile.",
+  gameGroupConnection: "Connection",
+  gameGroupNextStep: "Next step",
+  gameGroupSession: "Session",
+  gameGroupRecovery: "Recovery",
+
+  // Game facts. Every value is a localized player outcome; the raw Host enum
+  // (`connected_idle`, `state_unavailable`, ...) is never rendered (design/104 §10).
+  gameFactConnection: "Connection",
+  gameFactInstance: "Instance",
+  gameFactWorld: "World",
+  gameFactSave: "Save",
+  gameFactCompatibility: "Compatibility",
+  gameFactCapabilities: "Capabilities",
+  gameFactExecution: "Execution",
+  gameFactOutcome: "Last result",
+  gameValueNone: "None",
+  gameCapabilityCount: "{{count}} available",
+  gameCapabilitiesUnavailable: "Not published",
+
+  gameConnectionNone: "No game connection",
+  gameConnectionDiscovering: "Looking for your game…",
+  gameConnectionLaunchPending: "Starting your game…",
+  gameConnectionAttachPending: "Connecting your companion…",
+  gameConnectionCompatibilityWarning: "This game version needs attention",
+  gameConnectionAwaitingConfirmation: "Waiting for your confirmation",
+  gameConnectionConnecting: "Connecting your companion…",
+  gameConnectionConnectedIdle: "Connected",
+  gameConnectionActive: "Connected, companion playing",
+  gameConnectionStopping: "Stopping…",
+  gameConnectionReconnecting: "Reconnecting…",
+  gameConnectionSyncing: "Syncing…",
+  gameConnectionStopped: "Stopped",
+  gameConnectionFailed: "Connection failed",
+  gameConnectionDisconnected: "Disconnected",
+
+  gameInstanceNone: "Not running",
+  gameInstanceDetected: "Found, not started",
+  gameInstanceLaunching: "Starting…",
+  gameInstanceRunning: "Running",
+  gameInstanceStopped: "Stopped",
+  gameInstanceCrashed: "Stopped unexpectedly",
+
+  gameCompatibilityUnchecked: "Not checked yet",
+  gameCompatibilityCompatible: "Compatible",
+  gameCompatibilityIncompatible: "Not compatible",
+  gameCompatibilityWarning: "Needs attention",
+
+  gameAuthorityUnavailable: "Not available",
+  gameAuthorityActive: "Companion can act",
+  gameAuthorityPaused: "Paused",
+
+  gameOutcomeNone: "No activity yet",
+  gameOutcomeSucceeded: "Completed successfully",
+  gameOutcomeFailed: "Did not complete",
+  gameOutcomeCancelled: "Stopped by you",
+
+  // Installation discovery (design/104 §5.1). The panel's `data-state` stays the
+  // typed state for the tests; the text a player reads is one of these.
+  gameInstallationAria: "Game installation setup",
+  gameInstallationTitle: "Game installation",
+  gameInstallationNotConfigured: "GameBuddy needs to find your Stardew Valley installation.",
+  gameInstallationLoading: "Looking for your Stardew Valley installation…",
+  gameInstallationCandidates: "We found possible installations. Choose one to connect.",
+  gameInstallationConfirming: "Confirming the installation…",
+  gameInstallationRetrying: "Searching again…",
+  gameInstallationCancelled: "Search cancelled.",
+  gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
+  gameInstallationNoCandidates: "No Stardew Valley installation was found.",
+  gameInstallationExpired: "These search results expired. Search again.",
+  gameInstallationError: "The installation search failed.",
+  gameInstallationConfirm: "Confirm",
+  gameInstallationChooseFolder: "Choose game folder",
+  gameInstallationFindAgain: "Find again",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -337,7 +415,7 @@ const zh: Messages = {
   gameActivationFailed: "无法启用伙伴陪玩；当前显示的是最新权威游戏状态。",
   gameActivationUnavailable: "当前版本无法启用伙伴陪玩。请更新 GameBuddy 或重新加载页面。",
   gameActivationRequired: "伙伴陪玩尚未准备完成。请先启用伙伴陪玩，然后重试。",
-  gameStop: "停止游戏任务",
+  gameStop: "停止游戏",
   gameStopFailed: "游戏停止结果尚不确定；当前显示的是最新权威游戏状态。",
   gameDisconnect: "断开游戏连接",
   gameDisconnectFailed: "无法断开游戏连接；当前连接已保留。",
@@ -615,6 +693,84 @@ const zh: Messages = {
   cardImportHistoryHint: "每次已确认的导入，以及按类别保留或丢弃的内容。",
   cardImportHistoryEmpty: "暂无已确认的导入。",
   cardImportHistoryFailed: "无法读取导入历史。",
+
+  // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
+  appMark: "GB",
+  gamePanel: "游戏",
+  gameStateUnavailable: "当前配置下没有游戏状态。",
+  gameGroupConnection: "连接",
+  gameGroupNextStep: "下一步",
+  gameGroupSession: "当前会话",
+  gameGroupRecovery: "恢复",
+
+  // 游戏事实。每个取值都是本地化的玩家结果，绝不显示 Host 原始枚举
+  // （`connected_idle`、`state_unavailable` 等，design/104 §10）。
+  gameFactConnection: "连接",
+  gameFactInstance: "实例",
+  gameFactWorld: "世界",
+  gameFactSave: "存档",
+  gameFactCompatibility: "兼容性",
+  gameFactCapabilities: "可用能力",
+  gameFactExecution: "执行",
+  gameFactOutcome: "最近结果",
+  gameValueNone: "无",
+  gameCapabilityCount: "{{count}} 项可用",
+  gameCapabilitiesUnavailable: "未发布",
+
+  gameConnectionNone: "尚未连接游戏",
+  gameConnectionDiscovering: "正在查找你的游戏…",
+  gameConnectionLaunchPending: "正在启动游戏…",
+  gameConnectionAttachPending: "正在连接伙伴…",
+  gameConnectionCompatibilityWarning: "该游戏版本需要留意",
+  gameConnectionAwaitingConfirmation: "等待你的确认",
+  gameConnectionConnecting: "正在连接伙伴…",
+  gameConnectionConnectedIdle: "已连接",
+  gameConnectionActive: "已连接，伙伴正在游戏",
+  gameConnectionStopping: "正在停止…",
+  gameConnectionReconnecting: "正在重新连接…",
+  gameConnectionSyncing: "正在同步…",
+  gameConnectionStopped: "已停止",
+  gameConnectionFailed: "连接失败",
+  gameConnectionDisconnected: "已断开连接",
+
+  gameInstanceNone: "未运行",
+  gameInstanceDetected: "已发现，未启动",
+  gameInstanceLaunching: "正在启动…",
+  gameInstanceRunning: "运行中",
+  gameInstanceStopped: "已停止",
+  gameInstanceCrashed: "意外退出",
+
+  gameCompatibilityUnchecked: "尚未检查",
+  gameCompatibilityCompatible: "兼容",
+  gameCompatibilityIncompatible: "不兼容",
+  gameCompatibilityWarning: "需要留意",
+
+  gameAuthorityUnavailable: "尚未提供",
+  gameAuthorityActive: "伙伴可以行动",
+  gameAuthorityPaused: "已暂停",
+
+  gameOutcomeNone: "尚无执行记录",
+  gameOutcomeSucceeded: "已成功完成",
+  gameOutcomeFailed: "未完成",
+  gameOutcomeCancelled: "已由你停止",
+
+  // 游戏安装发现（design/104 §5.1）。面板的 `data-state` 仍保留类型化状态供测试使用，
+  // 玩家看到的文字来自这里。
+  gameInstallationAria: "游戏安装设置",
+  gameInstallationTitle: "游戏安装",
+  gameInstallationNotConfigured: "GameBuddy 需要找到你的《星露谷物语》安装位置。",
+  gameInstallationLoading: "正在查找《星露谷物语》安装位置…",
+  gameInstallationCandidates: "已找到可能的安装位置，请选择一个进行连接。",
+  gameInstallationConfirming: "正在确认安装位置…",
+  gameInstallationRetrying: "正在重新搜索…",
+  gameInstallationCancelled: "搜索已取消。",
+  gameInstallationSourceUnavailable: "目前无法搜索游戏安装位置。",
+  gameInstallationNoCandidates: "未找到《星露谷物语》安装位置。",
+  gameInstallationExpired: "搜索结果已过期，请重新搜索。",
+  gameInstallationError: "搜索游戏安装位置失败。",
+  gameInstallationConfirm: "确认",
+  gameInstallationChooseFolder: "选择游戏文件夹",
+  gameInstallationFindAgain: "重新查找",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

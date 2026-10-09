@@ -14,6 +14,29 @@ const discovery = { apiVersion: 1, candidates: [{ candidateId, source: "steam", 
 const realTopologySkipReason =
   "requires the approved composed shell fixture; route-mocked dialogue-web tests cannot prove real bootstrap/session/CSRF topology";
 
+/**
+ * Installation discovery lives inside the Game drawer (design/104 §5.1), so a
+ * journey opens the drawer the way a player does - through the AppBar entry -
+ * before reaching for the panel.
+ */
+async function openGameDrawer(page: import("@playwright/test").Page): Promise<void> {
+  const drawer = page.getByTestId("game-drawer");
+  const entry = page.getByRole("button", { name: "Game", exact: true });
+  // The drawer restores itself from the URL, so "it is already open" is a normal
+  // outcome - including straight after a reload, when the visibility check can
+  // run before the restored drawer has rendered. The entry is the shell's own
+  // control and is present either way, so wait for the shell and then click only
+  // when the drawer really is closed; if it opens between the check and the
+  // click, the click lands on the drawer's own backdrop and the outcome is the
+  // one this helper wants anyway, so that is tolerated rather than failed.
+  await expect(entry).toBeVisible();
+  if (await drawer.isVisible()) return;
+  await entry.click().catch(async (error: unknown) => {
+    if (!(await drawer.isVisible())) throw error;
+  });
+  await expect(drawer).toBeVisible();
+}
+
 test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   test("confirms a safe candidate and rereads authoritative state", async ({ page }) => {
     let reads = 0;
@@ -23,6 +46,7 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => { reads++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(discovery) }); });
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery/confirm", async route => { confirms++; expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, candidateId }); return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, status: "registered" }) }); });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
     const setup = page.locator('section[aria-label="Game installation setup"]');
     await expect(page.getByText("Stardew Valley", { exact: true })).toBeVisible();
     await setup.getByRole("button", { name: "Confirm" }).click();
@@ -37,6 +61,7 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/tavern/v1/draft", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, revision: 4, text: "A durable delegated draft." }) }));
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ code: "game_unavailable" }) }));
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
     const setup = page.locator('section[aria-label="Game installation setup"]');
     await expect(setup).toHaveAttribute("data-state", "source-unavailable");
   });
@@ -47,12 +72,14 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await page.route("**/api/tavern/v1/draft", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, revision: 4, text: "A durable delegated draft." }) }));
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, candidates: [{ candidateId: "bad", source: "steam" }] }) }));
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
     const setup = page.locator('section[aria-label="Game installation setup"]');
     await expect(setup).toHaveAttribute("data-state", "error");
 
     await page.unroute("**/api/composed-reference-game/v1/game/installation/discovery");
     await page.route("**/api/composed-reference-game/v1/game/installation/discovery", route => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: "unauthorized" }) }));
     await page.reload();
+    await openGameDrawer(page);
     await expect(page.locator('section[aria-label="Game installation setup"]')).toHaveAttribute("data-state", "error");
   });
 });

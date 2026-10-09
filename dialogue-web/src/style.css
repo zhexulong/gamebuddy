@@ -158,9 +158,20 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
   font-weight: 600;
   font-size: 15px;
   color: var(--text-primary);
+}
+
+/* The wordmark is the first thing to go when the bar gets narrow; the brand
+   mark and the companion stay (design/26 §7.1, 375 px compact app bar). */
+.app-bar-brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
 /* The app-bar title is the one element every shell shares; it takes the
@@ -192,7 +203,25 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+}
+
+/* The connection/turn status sits next to the companion it describes, divided
+   from the name by a hairline rather than a literal separator glyph
+   (design/26 §4.1: `Mira · Online`, unobtrusive). */
+.app-bar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .app-bar-companion strong {
@@ -1565,11 +1594,15 @@ body {
 /* ==========================================================================
    Composed reference Game surface (design/26 §4.2 "Game" panel)
 
-   The Game panel is the chat surface's sibling: same three-tier tokens, same
-   spacing rhythm (4/8 px), same 44 px hit target and 52 px list-row minimums,
-   same Lucide/typography scale. It carries the typed connection facts, the
-   session controls and the cabin handoff in one bounded, scrollable panel so
-   the conversation above it stays the primary surface.
+   The Game surface is the shell's single contextual drawer, not an inline
+   status block (design/26 §4.2, design/104 §2). It reuses the shared drawer
+   primitive - `.context-panel` at `min(420px, 100vw)`, `.backdrop-overlay`,
+   `.drawer-header` - and only the panel body is described here.
+
+   The body is four labelled groups in one scrolling column: connection facts,
+   next step, session, recovery. Group separation is the 20 px tier and the
+   stepped 12/8 px rhythm inside a group keeps the copy and the status sentence
+   attached to the control that produced them (design/26 §6.4).
 
    Selector freeze: the panel keeps `role="region"` + `aria-label` (its
    accessible name), `data-testid="game-state-panel"`, `data-game-state`, the
@@ -1579,47 +1612,37 @@ body {
    name.
    ========================================================================== */
 
+/* The documented scrim: `#0007`, no blur (design/26 §4.2, §6.1). The shared
+   `.backdrop-overlay` is another surface's primitive, so the composed drawer
+   sets its own value instead of changing it under a different lane. */
+.composed-drawer-backdrop {
+  background-color: #0007;
+  backdrop-filter: none;
+}
+
+/* Exactly one drawer at a time, anchored right, full height, safe-area aware. */
+.composed-game-panel {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 .composed-game-drawer {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: min(40dvh, 360px);
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin: 0 0 12px;
-  padding: 12px 14px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
+  gap: 20px;
 }
 
-.game-panel-header {
+.game-group {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.game-panel-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  border-radius: var(--radius-xs);
-  background-color: var(--palette-burgundy-dark);
-  border: 1px solid var(--palette-burgundy-border);
-  color: var(--accent);
-}
-
-.game-panel-header h2 {
+.game-group-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-primary);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
 }
 
 .game-panel-empty {
@@ -1878,7 +1901,7 @@ body {
   border-radius: var(--radius-sm);
 }
 
-.game-create-form h3 {
+.game-create-form h4 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
@@ -1927,16 +1950,15 @@ body {
 }
 
 /* Installation setup is a second Game panel at lower emphasis: same surface
-   and rhythm, a smaller title, its own bounded scroll. */
+   and rhythm, a smaller title, its own bounded scroll for a machine that
+   reports many candidates. */
 .game-installation-panel {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: min(24dvh, 220px);
+  flex: 0 0 auto;
+  max-height: min(32dvh, 300px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin: 0 0 12px;
   padding: 12px 14px;
   background-color: var(--surface-panel);
   border: 1px solid var(--border-subtle);
@@ -2034,6 +2056,10 @@ body {
 @media (max-width: 640px) {
   .context-panel {
     max-width: 100vw;
+  }
+
+  .app-bar-brand-name {
+    display: none;
   }
 
   .message.companion,

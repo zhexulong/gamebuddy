@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Gamepad2 } from "lucide-react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, resolveLocale } from "../i18n";
 import {
@@ -29,7 +30,9 @@ import {
 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView, type ProblemViewState } from "../composed-problem-view";
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
+import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
+import { GameDrawer } from "./GameDrawer";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
@@ -64,6 +67,18 @@ const RESUME_REREAD_MAX_ATTEMPTS = 60;
 const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
 
 const STARDEW_GAME_INTEGRATION_ID = "stardew" as const;
+
+/**
+ * The single contextual panel this profile can open (design/26 §4.2). The open
+ * panel is part of the URL, so a refresh restores it and Browser Back closes it
+ * before it leaves the chat (design/26 §7.2, design/104 §2).
+ */
+const PANEL_PARAM = "panel";
+const GAME_PANEL = "game" as const;
+
+function readPanelFromUrl(): string | null {
+  return new URLSearchParams(window.location.hash.slice(1)).get(PANEL_PARAM);
+}
 
 type ReadyView = Readonly<{
   kind: "ready";
@@ -152,6 +167,10 @@ export function ComposedReferenceGameApp() {
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [continuityIdentityInput, setContinuityIdentityInput] = useState("");
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
+  // The open contextual panel, as the URL states it. A refresh with
+  // `#…&panel=game` comes back with the drawer already open.
+  const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
+  const gameEntryRef = useRef<HTMLButtonElement>(null);
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -164,6 +183,41 @@ export function ComposedReferenceGameApp() {
     applyDocumentLocale(localeRef.current);
   }, []);
 
+  // Browser Back and mobile back close the open panel first; the drawer is a
+  // history entry, not hidden state (design/26 §7.2).
+  useEffect(() => {
+    const syncPanelWithHistory = (): void => setOpenPanel(readPanelFromUrl());
+    window.addEventListener("popstate", syncPanelWithHistory);
+    return () => window.removeEventListener("popstate", syncPanelWithHistory);
+  }, []);
+
+  const openGamePanel = (): void => {
+    if (openPanel !== GAME_PANEL) {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.hash.slice(1));
+      params.set(PANEL_PARAM, GAME_PANEL);
+      url.hash = params.toString();
+      window.history.pushState({ gbPanel: GAME_PANEL }, "", url.toString());
+    }
+    setOpenPanel(GAME_PANEL);
+  };
+
+  const closeGamePanel = (): void => {
+    // Closing steps the history back, so the entry that opened the drawer is
+    // really gone and a later refresh cannot resurrect it. A drawer restored
+    // from a URL this session never pushed is closed in place instead.
+    if (window.history.state?.gbPanel === GAME_PANEL) {
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    params.delete(PANEL_PARAM);
+    url.hash = params.toString();
+    window.history.replaceState(null, "", url.toString());
+    setOpenPanel(null);
+  };
+
   useEffect(() => {
     cancelledRef.current = false;
     let active = true;
@@ -171,12 +225,17 @@ export function ComposedReferenceGameApp() {
       try {
         const params = new URLSearchParams(window.location.hash.slice(1));
         const bootToken = params.get("boot");
+        const restoredPanel = params.get(PANEL_PARAM);
         const root = bootToken === null
           ? await composedApiRef.current.readState()
           : await composedApiRef.current.bootstrap(bootToken);
         if (bootToken !== null) {
           const url = new URL(window.location.href);
-          url.hash = "profile=composed-reference-game";
+          // The one-time boot token is stripped from the fragment; a panel the
+          // URL already names survives the rewrite.
+          url.hash = restoredPanel === null
+            ? "profile=composed-reference-game"
+            : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
         const draft = await tavernApiRef.current.readDraft();
@@ -1168,29 +1227,46 @@ export function ComposedReferenceGameApp() {
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0;
-  const gameResumeAvailable = view.kind === "ready" &&
-    view.root.game !== null &&
-    view.root.game.game.attachment.status === "attached" &&
-    view.root.game.game.attachment.generation > 0 &&
-    RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus);
-  const gameReopenAvailable = view.kind === "ready" &&
-    view.root.game !== null &&
-    view.root.game.game.actionAuthority === "paused" &&
-    view.root.game.game.attachment.status === "attached" &&
-    view.root.game.game.attachment.generation > 0 &&
-    view.root.game.game.connectionStatus === "connected_idle";
   const resumeFailureSurface = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
     view.root.game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus) &&
     (gameResumeFailed || gameResumeUnavailable || view.root.game.game.latestOutcome === "failed");
+  // One command, one control. `game.resume` is both the connection-restore
+  // action and its own retry, so the panel offers it under exactly one honest
+  // name: the failure rollup (`Retry`) owns the attempt that already failed
+  // (design/26 §4.1 offers `Try again` only where the exact request is safe to
+  // replay - which the preserved generation-bound idempotency key makes it), and
+  // `Resume game` owns the degraded connection that no attempt has failed on.
+  // Offering both at once was the surface naming its own command twice.
+  const gameResumeAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    RESUMABLE_CONNECTION_STATUSES.has(view.root.game.game.connectionStatus) &&
+    !resumeFailureSurface;
+  const gameReopenAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.actionAuthority === "paused" &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    view.root.game.game.connectionStatus === "connected_idle";
   const gameSyncing = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.connectionStatus === "syncing";
   const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
     ? labels().chatStopped
     : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed" ? labels().chatFailed : null;
+  // The app-bar indicator is the Chat surface's own connection/turn fact: a turn
+  // is in flight from the moment a submission is admitted until the authoritative
+  // turn reaches a terminal state. The Game connection has its own drawer
+  // (design/26 §4.1, design/104 §2); it is not announced from here.
+  const turnInFlight = view.kind === "ready" && (
+    view.session.pending !== null ||
+    (view.session.snapshot.chat?.turn != null &&
+      !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state))
+  );
 
   return (
     <div className="tavern-app-shell" data-profile="composed-reference-game">
@@ -1199,17 +1275,23 @@ export function ComposedReferenceGameApp() {
       {view.kind === "problem" && <ProblemView title={view.title} detail={view.detail} />}
       {view.kind === "ready" && view.session.snapshot.chat !== null && (
         <>
-           <header className="app-bar">
-             {/* The companion is named once, next to its own monogram, exactly
-                 as the chat surfaces' app bar does. The mark is a name-derived
-                 monogram placeholder, never decorative imagery. */}
-             <div className="app-bar-companion">
-               <span className="avatar avatar-small" aria-hidden="true">
-                 {view.session.snapshot.chat.companion.name.slice(0, 1).toUpperCase()}
-               </span>
-               <div className="app-bar-title">{view.session.snapshot.chat.companion.name}</div>
-             </div>
-           </header>
+           <AppBar
+             brandMark={labels().appMark}
+             brandLabel={labels().appName}
+             companionName={view.session.snapshot.chat.companion.name}
+             statusLabel={turnInFlight ? labels().generating : labels().online}
+             statusTone={turnInFlight ? "progress" : "idle"}
+             entries={[
+               {
+                 id: GAME_PANEL,
+                 label: labels().gamePanel,
+                 icon: Gamepad2,
+                 active: openPanel === GAME_PANEL,
+                 onClick: openGamePanel,
+                 ref: gameEntryRef,
+               },
+             ]}
+           />
           <main id="main-content" className="app-main-content">
             <Timeline
               transcript={view.session.snapshot.chat.transcript}
@@ -1227,6 +1309,31 @@ export function ComposedReferenceGameApp() {
                  <p>{labels().noSavedDraft}</p>
                )}
              </section>
+            <Composer
+              value={inputText}
+              onChange={setInputText}
+              onSend={() => void handleSend()}
+              onStop={() => void handleStop()}
+              isGenerating={stopAvailable}
+              disabled={!submitAvailable}
+              labels={labels()}
+            />
+          </main>
+          {/* Exactly one contextual panel is mounted at a time, and only while the
+              URL names it open (design/26 §4.2, §7.2; design/104 §2). The Game
+              region keeps its own frozen anchors inside the drawer.
+              Installation discovery is a sibling inside the same drawer, never
+              inside the Game state region, so the region's scope stays exactly
+              its own controls (its Retry/Cancel would otherwise make the
+              region's strict-mode queries ambiguous). */}
+          {openPanel === GAME_PANEL && (
+            <GameDrawer
+              title={labels().gamePanel}
+              closeLabel={labels().close}
+              onClose={closeGamePanel}
+              restoreFocusTo={gameEntryRef}
+              testId="game-drawer"
+            >
               <GameStatePanel
                 game={view.root.game}
                 labels={labels()}
@@ -1298,22 +1405,9 @@ export function ComposedReferenceGameApp() {
                   confirmCabin: (choice) => void handleCabinConfirmation(choice),
                 }}
               />
-              {/* The installation discovery panel is its own surface, not part of
-                  the Game state region. It must stay OUTSIDE the drawer's
-                  <section aria-label={gameState}>: its own status/Retry/Cancel
-                  controls would otherwise pollute the region's scope and make
-                  Playwright strict-mode region queries ambiguous. */}
-              <StardewInstallationDiscovery api={composedApiRef.current} />
-            <Composer
-              value={inputText}
-              onChange={setInputText}
-              onSend={() => void handleSend()}
-              onStop={() => void handleStop()}
-              isGenerating={stopAvailable}
-              disabled={!submitAvailable}
-              labels={labels()}
-            />
-          </main>
+              <StardewInstallationDiscovery api={composedApiRef.current} labels={labels()} />
+            </GameDrawer>
+          )}
         </>
       )}
     </div>

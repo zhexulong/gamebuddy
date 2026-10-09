@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -71,6 +71,22 @@ const root = {
 
 const draft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
 
+/**
+ * The Game surface is the shell's single contextual drawer (design/26 §4.2,
+ * design/104 §2), so a journey reaches it the way a player does: through the
+ * AppBar entry. Every assertion about the panel stays a behavioural assertion
+ * about the panel - it just has to be open first.
+ */
+async function openGameDrawer(page: Page): Promise<void> {
+  const drawer = page.getByTestId("game-drawer");
+  // The drawer restores itself from the URL, so this is "open if closed": a
+  // journey that already has it open (after a refresh) does not click the entry
+  // that its own backdrop now covers.
+  if (await drawer.isVisible()) return;
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(drawer).toBeVisible();
+}
+
 test("composed profile redeems once, renders nested Chat and redacted Game, then reloads from composed state", async ({ page }) => {
   let bootstrapRequests = 0;
   let composedStateRequests = 0;
@@ -133,9 +149,10 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   await expect(page.getByText("The game projection is read-only.")).toBeVisible();
   await expect(page.getByRole("region", { name: "Saved draft" })).toContainText(draft.text);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
-  await expect(panel).toContainText("Connectionnone");
-  await expect(panel).toContainText("Compatibilityunchecked");
+  await expect(panel).toContainText("ConnectionNo game connection");
+  await expect(panel).toContainText("CompatibilityNot checked yet");
   await expect(panel.getByText("North cabin")).toBeVisible();
   const confirmButton = panel.getByRole("button", { name: "Confirm cabin" });
   await confirmButton.dblclick();
@@ -145,13 +162,18 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   await expect(panel).not.toContainText(cabinChoiceHandle);
   await expect(panel).not.toContainText("cabinId");
   await expect(panel).not.toContainText(/ready|connected/i);
-  await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+  // The one-time boot token is gone and the profile marker is kept; the drawer
+  // this journey opened is the URL's `panel` fact, which survives the reload
+  // below and is what restores it (design/26 §7.2).
+  await expect(page).toHaveURL(/#profile=composed-reference-game&panel=game$/);
   expect(bootstrapRequests).toBe(1);
   expect(tavernBootstrapRequests).toBe(0);
   expect(tavernStateRequests).toBe(0);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
+  // Refresh restores the open drawer, and redeems no second bootstrap.
+  await expect(page.getByTestId("game-drawer")).toBeVisible();
   await expect.poll(() => composedStateRequests).toBe(1);
   expect(bootstrapRequests).toBe(1);
   expect(tavernBootstrapRequests).toBe(0);
@@ -170,6 +192,7 @@ test("composed profile renders game null honestly without exposing mutation cont
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await expect(panel).toContainText("Game state is unavailable for this profile.");
   await expect(panel.locator("button, input, textarea, select, form")).toHaveCount(0);
@@ -229,6 +252,7 @@ test("uncertain Stardew handoff waits for manual recovery without refetch or ret
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Confirm cabin" }).click();
   await expect(panel.getByText(/still awaiting verification/i)).toBeVisible();
@@ -268,6 +292,7 @@ test("stale Stardew handoff alone refetches choices and preserves one confirmati
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Confirm cabin" }).click();
   await expect(panel.getByText("North cabin 2")).toBeVisible();
@@ -300,6 +325,7 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
@@ -339,6 +365,7 @@ test("terminal Game setup failure permits only an authoritative fresh-key player
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
@@ -375,6 +402,7 @@ test("uncertain Game setup reread preserves the exact key for manual replay", as
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
@@ -444,6 +472,7 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Set up Stardew Valley" }).click();
   await expect.poll(() => setupRequests).toBe(1);
@@ -502,6 +531,7 @@ test("Game STOP is generation-bound, single-flight, rereads stopped, and remains
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const gameStop = panel.getByRole("button", { name: "Stop game" });
   await expect(gameStop).toBeVisible();
@@ -509,7 +539,7 @@ test("Game STOP is generation-bound, single-flight, rereads stopped, and remains
   await gameStop.dblclick();
   await expect.poll(() => stopRequests).toBe(1);
   await expect.poll(() => stateRequests).toBe(1);
-  await expect(panel).toContainText("Connectionstopped");
+  await expect(panel).toContainText("ConnectionStopped");
   await expect(gameStop).toHaveCount(0);
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
@@ -547,6 +577,7 @@ test("stale-generation Game STOP rereads a newer attachment without mutating it"
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Stop game" }).click();
   await expect.poll(() => stopRequests).toBe(1);
@@ -592,11 +623,12 @@ test("uncertain Game STOP preserves its generation key and renders authoritative
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Stop game" }).click();
   await expect.poll(() => keys.length).toBe(1);
   await expect.poll(() => stateRequests).toBe(1);
-  await expect(panel).toContainText("Connectionfailed");
+  await expect(panel).toContainText("ConnectionConnection failed");
   await expect(panel.getByRole("button", { name: "Stop game" })).toHaveCount(0);
   await expect(panel).toContainText("The game stop result is uncertain");
   await page.waitForTimeout(50);
@@ -646,11 +678,12 @@ test("failed Game disconnect reread permits a fresh-key user retry", async ({ pa
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const disconnect = panel.getByRole("button", { name: "Disconnect game" });
   await disconnect.click();
   await expect.poll(() => keys.length).toBe(1);
-  await expect(panel).toContainText("Connectionfailed");
+  await expect(panel).toContainText("ConnectionConnection failed");
   await disconnect.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).not.toBe(keys[0]);
@@ -695,6 +728,7 @@ test("attached Game drawer disconnect is distinct, double-activation is one comm
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const disconnect = panel.getByRole("button", { name: "Disconnect game" });
   await expect(disconnect).toBeVisible();
@@ -702,7 +736,7 @@ test("attached Game drawer disconnect is distinct, double-activation is one comm
   await disconnect.dblclick();
   await expect.poll(() => disconnectRequests).toBe(1);
   await expect.poll(() => stateRequests).toBe(1);
-  await expect(panel).toContainText("Connectionnone");
+  await expect(panel).toContainText("ConnectionNo game connection");
   await expect(disconnect).toHaveCount(0);
 });
 
@@ -765,13 +799,14 @@ test("Game Resume is generation-bound and single-flight, rereads authoritative s
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const resume = panel.getByRole("button", { name: "Resume game" });
   await expect(resume).toBeVisible();
   await resume.dblclick();
   await expect.poll(() => resumeRequests).toBe(1);
   await expect.poll(() => stateRequests).toBe(1);
-  await expect(panel).toContainText("Connectionconnected_idle");
+  await expect(panel).toContainText("ConnectionConnected");
   await expect(resume).toHaveCount(0);
   await expect(panel).not.toContainText("The game could not be resumed");
   await expect(panel).not.toContainText("accepted");
@@ -839,6 +874,7 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const resume = panel.getByRole("button", { name: "Resume game" });
   await expect(resume).toBeVisible();
@@ -850,14 +886,14 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   // At least one authoritative reread confirms the projection is still the
   // same-generation attached/disconnected state rather than converged.
   await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(2);
-  await expect(panel).toContainText("Connectiondisconnected");
+  await expect(panel).toContainText("ConnectionDisconnected");
   // The Resume stays visibly in progress and disabled across the rereads, with
   // no synthetic success/accepted/completion text projected.
   await expect(panel.getByRole("status")).toContainText("Resuming the game connection...");
   await expect(resume).toBeDisabled();
   await expect(panel).not.toContainText("accepted");
   await expect(panel).not.toContainText("could not be resumed");
-  await expect(panel).not.toContainText("Connectionconnected_idle");
+  await expect(panel).not.toContainText("ConnectionConnected");
   await page.waitForTimeout(100);
   expect(resumeRequests).toBe(1);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
@@ -898,15 +934,21 @@ test("unavailable Game Resume preserves its generation key for an idempotent exa
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const resume = panel.getByRole("button", { name: "Resume game" });
   await resume.click();
   await expect.poll(() => keys.length).toBe(1);
   await expect.poll(() => stateRequests).toBe(1);
-  await expect(panel).toContainText("Connectionfailed");
+  await expect(panel).toContainText("ConnectionConnection failed");
   await expect(panel).toContainText("could not be resumed right now");
-  await expect(resume).toBeVisible();
-  await resume.click();
+  // One command, one control: the failed attempt hands the same generation-bound
+  // retry over to the failure rollup, so `Resume game` is not offered a second
+  // time beside its own recovery name.
+  await expect(resume).toHaveCount(0);
+  const retry = panel.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toBeVisible();
+  await retry.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).toBe(keys[0]);
   await expect.poll(() => stateRequests).toBe(2);
@@ -954,6 +996,7 @@ test("stale-generation Game Resume rereads a newer attachment without mutating o
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const resume = panel.getByRole("button", { name: "Resume game" });
   await resume.click();
@@ -988,11 +1031,12 @@ test("resume-phase syncing projection passes the browser gate, visualizes sync, 
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   // The syncing resume-phase status passes the browser gate: the authoritative
   // projection renders instead of failing closed.
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(panel).toContainText("Connectionsyncing");
+  await expect(panel).toContainText("ConnectionSyncing");
   await expect(panel.getByRole("status")).toContainText("Syncing the game connection...");
   // syncing is neither resumable nor connected, so no Resume/Stop control is
   // offered and the connected vocabulary is never claimed.
@@ -1061,8 +1105,9 @@ test("ready-actions-paused renders the Resume actions control and converges on t
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
-  await expect(panel).toContainText("Connectionconnected_idle");
+  await expect(panel).toContainText("ConnectionConnected");
   const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
   await expect(reopen).toBeVisible();
   await expect(panel.getByText("Game actions are paused.")).toBeVisible();
@@ -1084,13 +1129,13 @@ test("ready-actions-paused renders the Resume actions control and converges on t
 
 test("Resume actions stays hidden outside the ready-actions-paused projection", async ({ page }) => {
   const scenarios = [
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "active" }, connectionText: "connected_idle" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "unavailable" }, connectionText: "connected_idle" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "syncing", actionAuthority: "paused" }, connectionText: "syncing" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "reconnecting", actionAuthority: "paused" }, connectionText: "reconnecting" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "failed", actionAuthority: "paused" }, connectionText: "failed" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "disconnected", actionAuthority: "paused" }, connectionText: "disconnected" },
-    { overrides: {}, connectionText: "none" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "active" }, connectionText: "Connected" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle", actionAuthority: "unavailable" }, connectionText: "Connected" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "syncing", actionAuthority: "paused" }, connectionText: "Syncing…" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "reconnecting", actionAuthority: "paused" }, connectionText: "Reconnecting…" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "failed", actionAuthority: "paused" }, connectionText: "Connection failed" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "disconnected", actionAuthority: "paused" }, connectionText: "Disconnected" },
+    { overrides: {}, connectionText: "No game connection" },
   ];
   let currentGame = game;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
@@ -1107,8 +1152,9 @@ test("Resume actions stays hidden outside the ready-actions-paused projection", 
     // A fresh query keeps every iteration a real document navigation: the app
     // strips the boot token from the hash on first mount, so fragment-only
     // gotos would skip the bootstrap fetch and replay the previous projection.
-    await page.goto(`/?scenario=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
-    const panel = page.getByRole("region", { name: "Game state" });
+     await page.goto(`/?scenario=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
+     await openGameDrawer(page);
+     const panel = page.getByRole("region", { name: "Game state" });
     await expect(panel).toContainText(`Connection${scenario.connectionText}`);
     await expect(panel.getByRole("button", { name: "Resume actions", exact: true })).toHaveCount(0);
     await expect(panel.getByText("Game actions are paused.")).toHaveCount(0);
@@ -1148,6 +1194,7 @@ test("failed Game reopen renders no synthetic success and preserves its generati
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
   await reopen.click();
@@ -1210,6 +1257,7 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const reopen = panel.getByRole("button", { name: "Resume actions", exact: true });
   await reopen.click();
@@ -1288,6 +1336,7 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   const resume = panel.getByRole("button", { name: "Resume game" });
   await resume.click();
@@ -1301,7 +1350,7 @@ test("stale-generation Game reopen rereads a newer attachment without mutating o
   await cancel.dblclick();
   await expect.poll(() => cancelRequests).toBe(1);
   await expect.poll(() => stateRequests).toBeGreaterThanOrEqual(2);
-  await expect(panel).toContainText("Connectiondisconnected");
+  await expect(panel).toContainText("ConnectionDisconnected");
   // The cancelled epoch clears the failure surface: no stale Reopen, no
   // Retry/Cancel/Start rollup, no synthetic success text, and the session
   // stays resumable at the same armed generation.
@@ -1388,6 +1437,7 @@ test("Start new game form submits the exact create command and converges on the 
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Resume game" }).click();
   await expect(panel.getByRole("button", { name: "Start new game" })).toBeVisible();
@@ -1462,6 +1512,7 @@ test("Start new game fails closed on Create, never projects a session, and keeps
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Resume game" }).click();
   await expect(panel).toContainText("could not be resumed right now");
@@ -1489,10 +1540,10 @@ test("Start new game fails closed on Create, never projects a session, and keeps
 
 test("Retry, Cancel, and Start new game stay hidden outside the failed-resume surface", async ({ page }) => {
   const scenarios = [
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle" }, connectionText: "connected_idle" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "failed" }, connectionText: "failed" },
-    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "disconnected" }, connectionText: "disconnected" },
-    { overrides: { attachment: { status: "none", generation: 0 }, connectionStatus: "none" }, connectionText: "none" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "connected_idle" }, connectionText: "Connected" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "failed" }, connectionText: "Connection failed" },
+    { overrides: { attachment: { status: "attached", generation: 1 }, connectionStatus: "disconnected" }, connectionText: "Disconnected" },
+    { overrides: { attachment: { status: "none", generation: 0 }, connectionStatus: "none" }, connectionText: "No game connection" },
   ];
   let currentGame = game;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
@@ -1506,8 +1557,9 @@ test("Retry, Cancel, and Start new game stay hidden outside the failed-resume su
   );
   for (const [scenarioIndex, scenario] of scenarios.entries()) {
     currentGame = { ...game, game: { ...game.game, ...scenario.overrides } };
-    await page.goto(`/?scenario=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
-    const panel = page.getByRole("region", { name: "Game state" });
+     await page.goto(`/?scenario=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
+     await openGameDrawer(page);
+     const panel = page.getByRole("region", { name: "Game state" });
     await expect(panel).toContainText(`Connection${scenario.connectionText}`);
     await expect(panel.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
@@ -1563,6 +1615,7 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   // Before activation the coordinator owns no staged Player Host, so the exact
   // expected generation is absent and launch must not be on offer at all.
@@ -1603,6 +1656,7 @@ test("a launch refused as not staged names activation as the reason instead of a
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Play with companion" }).click();
   await expect.poll(() => launchRequests).toBe(1);
@@ -1640,12 +1694,153 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
 
   for (const [scenarioIndex, scenario] of scenarios.entries()) {
     current = scenario;
-    await page.goto(`/?activation=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
-    const panel = page.getByRole("region", { name: "Game state" });
+     await page.goto(`/?activation=${scenarioIndex}#profile=composed-reference-game&boot=${token}`);
+     await openGameDrawer(page);
+     const panel = page.getByRole("region", { name: "Game state" });
     await panel.getByRole("button", { name: "Enable companion play" }).click();
     await expect(panel).toContainText(scenario.expected);
     // The refusal is a Game-drawer fact: the Chat surface is never replaced.
     await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
     await expect(panel.getByRole("button", { name: "Enable companion play" })).toBeVisible();
   }
+});
+
+/**
+ * The single contextual panel itself (design/26 §4.2, §7.2; design/104 §2):
+ * the AppBar entry opens it, the URL names it while it is open, Browser Back
+ * closes it before it leaves the chat, and a refresh restores it.
+ */
+test("the AppBar Game entry opens the single drawer, the URL names it, and Back closes it without dropping the draft", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+  // Closed until a player opens it: the Game surface is a drawer, never an
+  // inline technical status block (design/104 §2).
+  await expect(page.getByTestId("game-state-panel")).toHaveCount(0);
+  await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+  const entry = page.getByRole("button", { name: "Game", exact: true });
+  await expect(entry).toBeVisible();
+
+  await entry.click();
+  const drawer = page.getByTestId("game-drawer");
+  await expect(drawer).toBeVisible();
+  // One modal drawer: animated backdrop, focus trap, Escape/backdrop close.
+  await expect(drawer).toHaveAttribute("aria-modal", "true");
+  await expect(page.getByTestId("game-drawer-backdrop")).toBeVisible();
+  // The panel keeps its frozen anchors inside the drawer.
+  const panel = page.getByTestId("game-state-panel");
+  await expect(panel).toHaveAttribute("data-game-state", "available");
+  await expect(page.getByRole("region", { name: "Game state" })).toBeVisible();
+  // Opening names the panel in the URL and moves focus into it.
+  await expect(page).toHaveURL(/#profile=composed-reference-game&panel=game$/);
+  await expect(drawer.getByRole("heading", { name: "Game", exact: true })).toBeFocused();
+  // A player reads localized outcomes, never a raw Host enum (design/104 §10).
+  const panelText = await panel.innerText();
+  expect(panelText).not.toContain("connected_idle");
+  expect(panelText).not.toContain("unchecked");
+  expect(panelText).not.toContain("not_configured");
+
+  // Browser Back closes the open panel first; the chat and the draft are
+  // untouched, and no message is replayed.
+  await page.goBack();
+  await expect(drawer).toHaveCount(0);
+  await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
+  await expect(page.getByText("A durable delegated draft.")).toBeVisible();
+
+  // Escape closes it too, and focus returns to the entry that opened it.
+  await entry.click();
+  await expect(drawer).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(entry).toBeFocused();
+  await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+
+  // The backdrop is the third documented way out.
+  await entry.click();
+  await expect(drawer).toBeVisible();
+  await page.getByTestId("game-drawer-backdrop").click({ position: { x: 8, y: 8 } });
+  await expect(drawer).toHaveCount(0);
+});
+
+test("the Game drawer is restored from the URL after a refresh and keeps keyboard focus inside itself", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-drawer")).toBeVisible();
+
+  await page.reload();
+  // Refresh restores the open panel without touching the conversation behind it.
+  const drawer = page.getByTestId("game-drawer");
+  await expect(drawer).toBeVisible();
+  await expect(page.getByTestId("game-state-panel")).toHaveAttribute("data-game-state", "available");
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
+  await expect(page.getByText("A durable delegated draft.")).toBeVisible();
+
+  // Modal means the keyboard cannot leave it: tabbing forward and backward walks
+  // the drawer's own controls and wraps inside it.
+  for (let press = 0; press < 12; press += 1) {
+    await page.keyboard.press("Tab");
+    const inside = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
+    expect(inside, `tab stop ${press} stays inside the drawer`).toBe(true);
+  }
+  for (let press = 0; press < 4; press += 1) {
+    await page.keyboard.press("Shift+Tab");
+    const inside = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
+    expect(inside, `shift-tab stop ${press} stays inside the drawer`).toBe(true);
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+});
+
+test("the Game drawer renders localized player outcomes in zh-CN with no English chrome", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.addInitScript(() => window.localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await page.getByRole("button", { name: "游戏", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("游戏");
+  const panel = page.getByTestId("game-state-panel");
+  // Group vocabulary, fact labels and fact values all come from the zh-CN
+  // catalog; the panel is not a mix of English chrome and Chinese content.
+  await expect(panel).toContainText("连接尚未连接游戏");
+  await expect(panel).toContainText("兼容性尚未检查");
+  await expect(panel).toContainText("下一步");
+  await expect(panel).toContainText("启用伙伴陪玩");
+  await expect(panel).toContainText("当前会话");
+  const panelText = await panel.innerText();
+  expect(panelText).not.toMatch(/Game state|Connection|Compatibility|Not checked|unchecked|connected_idle/);
 });

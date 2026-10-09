@@ -3,6 +3,8 @@ import type {
   StardewInstallationDiscoveryV1,
   ComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
+import { installationStateLabel } from "../game-presentation";
+import type { Messages } from "../i18n";
 
 export type InstallationDiscoveryState =
   | "not_configured"
@@ -24,9 +26,10 @@ type Props = {
     | "cancelStardewInstallationDiscovery"
     | "openStardewInstallationPicker"
   >;
+  labels: Messages;
 };
 
-export function StardewInstallationDiscovery({ api }: Props) {
+export function StardewInstallationDiscovery({ api, labels }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
@@ -120,16 +123,18 @@ export function StardewInstallationDiscovery({ api }: Props) {
   return (
     <section
       className="game-installation-panel"
-      aria-label="Game installation setup"
+      aria-label={labels.gameInstallationAria}
       data-state={state}
       // The panel scrolls when a machine reports many candidates; a scrollable
       // region that cannot take focus is unreachable for a keyboard player
       // (axe: scrollable-region-focusable).
       tabIndex={0}
     >
-      <h3 className="section-subtitle">Game installation</h3>
+      <h4 className="section-subtitle">{labels.gameInstallationTitle}</h4>
+      {/* `data-state` above stays the typed state the tests assert; the sentence
+          a player reads is always the localized outcome (design/104 §10). */}
       <p className="installation-state" role="status">
-        {state}
+        {installationStateLabel(labels, state)}
       </p>
       {discovery !== null && discovery.candidates.length > 0 && (
         <ul className="installation-candidates">
@@ -147,7 +152,7 @@ export function StardewInstallationDiscovery({ api }: Props) {
                   void action("confirm", candidateId);
                 }}
               >
-                Confirm
+                {labels.gameInstallationConfirm}
               </button>
             </li>
           ))}
@@ -155,20 +160,20 @@ export function StardewInstallationDiscovery({ api }: Props) {
       )}
       {selectedCandidateId !== null && state === "confirming" && (
         <p className="installation-state" role="status">
-          Confirming installation
+          {labels.gameInstallationConfirming}
         </p>
       )}
       <div className="game-actions">
         {retryable && (
           <button type="button" className="game-action" disabled={disabled} onClick={() => void action("picker")}>
-            Choose manually
+            {labels.gameInstallationChooseFolder}
           </button>
         )}
         <button type="button" className="game-action" disabled={disabled} onClick={() => void action("retry")}>
-          Retry
+          {labels.gameInstallationFindAgain}
         </button>
         <button type="button" className="game-action" disabled={disabled} onClick={() => void action("cancel")}>
-          Cancel
+          {labels.gameResumeCancel}
         </button>
       </div>
     </section>
