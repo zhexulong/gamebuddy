@@ -111,6 +111,7 @@ public sealed partial class ModEntry : Mod
     private bool nativeLocalPlayerFixtureBootstrapInvoked;
     private bool nativeLocalPlayerFixtureBootstrapTerminal;
     private WorldCreationBootstrap? worldCreationBootstrap;
+    private CompanionSessionHosting? companionSessionHosting;
     private NativeLocalFeedFixturePending? nativeLocalFeedFixturePending;
     private NativeLocalCollectAnimalProductFixturePending? nativeLocalCollectAnimalProductFixturePending;
     private NativeLocalClearHoeDirtFixturePending? nativeLocalClearHoeDirtFixturePending;
@@ -343,7 +344,17 @@ public sealed partial class ModEntry : Mod
             if (this.hostFarmhandProvisioner is null)
                 this.Monitor.Log("GameBuddy host provisioning is enabled but its configuration is invalid; no client or diagnostic fallback was started.", LogLevel.Error);
             else
+            {
                 this.InstallNativeChatIngress();
+                // A Player Host profile exists only because the launcher spawned it
+                // for one companion session, so this session is ours to host: the
+                // native Farmhand joins over the engine's own LAN protocol, which
+                // needs the engine in server mode with the LAN option on. The
+                // ownership is bounded - the player's own values come back when the
+                // session ends (see CompanionSessionHosting).
+                this.companionSessionHosting = new CompanionSessionHosting(this.Monitor);
+                this.Monitor.Log("GameBuddy companion session will host the engine's native LAN server for as long as this session runs.", LogLevel.Info);
+            }
             if (this.config.HostAutomation is { Enable: true } automation && !automation.IsValid)
             {
                 this.hostAutomationTerminal = true;
@@ -1125,6 +1136,12 @@ public sealed partial class ModEntry : Mod
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
             return;
+        // Before anything else this tick: the engine decides whether to start and
+        // keep its native server on every loading and playing frame, from the
+        // multiplayer mode and the player's LAN option (Multiplayer.cs:1777-1811),
+        // so a companion session must present those two facts before that check
+        // runs. Idempotent and bounded; a session that never hosted writes nothing.
+        this.companionSessionHosting?.Observe();
         ScreenEmbodimentState pendingTeardownState = this.GetEmbodimentState();
         if (pendingTeardownState.BodyProgramTeardownPending)
         {
@@ -1615,6 +1632,7 @@ public sealed partial class ModEntry : Mod
     {
         this.salientEventFilter.Reset();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
+        this.companionSessionHosting?.End();
         this.worldCreationBootstrap?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
