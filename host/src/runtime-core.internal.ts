@@ -7,9 +7,10 @@ import {
   type AgentSession,
   createAgentSession,
   type CreateAgentSessionOptions,
-  DefaultResourceLoader,
-  defineTool,
-  ModelRuntime,
+ 	DefaultResourceLoader,
+	defineTool,
+	ModelRegistry,
+	ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
@@ -1059,14 +1060,19 @@ export async function createRuntimeWithFixedToolsCore(
       // this Host narrowing a value the player typed (design/28 §2.3.1, §2.3.5).
       thinkingLevel: piThinkingLevel(modelConfig?.thinkingLevel ?? "off"),
     }));
-  } finally {
-    if (loadMagicContextExtension) {
-      if (previousEmbeddedRuntimeMarker === undefined)
-        delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else
-        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
-    }
-  }
+ 	} finally {
+		if (loadMagicContextExtension) {
+			if (previousEmbeddedRuntimeMarker === undefined)
+				delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+			else
+				process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+		}
+	}
+
+	// After session construction, and only for a runtime that mounted Magic Context: the embedded
+	// historian spawns per trigger with this registry, and without it every attempt fails closed.
+	if (loadMagicContextExtension)
+		await bindEmbeddedHistorianModelRegistry(modelRuntime);
 
   // Once Pi has returned a session, every subsequent initialization step owns
   // one deterministic reverse path. In particular, publication is cleared
@@ -1295,6 +1301,48 @@ export function resolveMagicContextExtensionEntry(): string {
   } catch {
     throw new Error("magic_context_extension_build_required");
   }
+}
+
+/**
+ * Hand the embedded historian the model registry it refuses to run without.
+ *
+ * Magic Context's embedded runner fails closed - `spawn_failed: embedded historian ModelRegistry is
+ * not bound` - and its own documentation places this call with the embedding Host, after session
+ * construction. Nothing called it, so on this Host the historian never produced anything: no
+ * compartment was ever created, the decayed-history block stayed empty, and a chapter could never be
+ * sealed.
+ *
+ * The binding is read from a `Symbol.for` slot on `globalThis` rather than by importing the extension
+ * entry. Pi loads extensions through jiti (`loadExtensionModule` -> `jiti.import(path, { moduleCache:
+ * false })`), so importing the same file here would evaluate a SECOND instance of the extension and
+ * bind a registry into module state nothing reads - which is exactly what a first attempt did. The
+ * symbol slot is the only channel that crosses that registry boundary.
+ *
+ * A missing binding in embedded mode is a real fault, not a no-op to swallow: the artifact is meant to
+ * expose it, and silently continuing is how this gap went unnoticed for so long.
+ */
+async function bindEmbeddedHistorianModelRegistry(modelRuntime: ModelRuntime): Promise<void> {
+  const slot = Symbol.for("magic-context.pi.embedded-historian-binding");
+  const binding = (
+    globalThis as typeof globalThis & {
+      [slot]?: { bind(registry: ModelRegistry): boolean };
+    }
+  )[slot];
+  // Never fatal. This runs on every Chat and Game runtime construction, and a missing binding means the
+  // extension did not publish it - a real gap, but one that must not take the whole runtime down. It is
+  // reported on stderr (the composed child's log) so the gap stays visible instead of silent.
+  if (binding === undefined) {
+    process.stderr.write(
+      "[historian] embedded historian binding unavailable: the mounted Magic Context did not publish one\n",
+    );
+    return;
+  }
+  // The facade is synchronous over the runtime's catalog, and the historian resolves its model through
+  // `find()`, so the catalog has to be loaded before the registry is handed over.
+  const registry = new ModelRegistry(modelRuntime);
+  await registry.refresh();
+  if (!binding.bind(registry))
+    process.stderr.write("[historian] embedded historian refused the model registry\n");
 }
 
 type RuntimeSessionResource = Awaited<

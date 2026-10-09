@@ -75,15 +75,29 @@
  * TWO CONDITIONS REMAIN, both measured on the same run, neither of them the gate:
  *
  *   1. `failed` with `failure_reason = null` and `subagent_invocation_id = null` (2 of the 62 runs):
- *      the embedded historian attempt fails without recording why. That is the next thing to diagnose -
- *      in a headless in-process fixture nothing binds a model registry, so this is the most likely
- *      shape of it, and production (where the Host binds one) may differ.
+ *      the embedded historian attempt fails without recording why.
  *   2. `noop` with `internal protected-tail drain budget spent` (60 of the 62): pacing. See the drain
  *      window note in the body - one 10-minute window authorizes about 4000 tokens at this fixture's
- *      geometry, which is less than one fold needs.
+ *      geometry.
  *
- * So this fixture stays SKIPPED and must not be read as evidence either way until (1) is understood and
- * a geometry is chosen that lets (2) finish; the chapter layer is not claimed to work end to end yet.
+ * RESOLVED 2026-10-09. (1) first became diagnosable at all - the runner's telemetry default was
+ * `status: "failed"` with no reason, so exits that logged their cause still wrote a reason-less row
+ * (vendor 259cbc9d9) - and then said exactly what it meant:
+ *
+ *   subagent run failed (spawn_failed): embedded historian ModelRegistry is not bound
+ *
+ * Two independent causes, both in the fork (vendor ece542146): Pi evaluates an extension through jiti
+ * with `moduleCache: false`, so the binding the Host installed through the documented seam landed in a
+ * module evaluation nothing reads (which is also why that seam had no callers); and
+ * `resolveContextOptionsForProject` rebuilds the historian on every pass, so the instance
+ * `bindHistorianRunner` ever bound is not the instance the trigger runs. The registry is now
+ * process-wide and the runner falls back to it at run time. The Host binds it after session
+ * construction (`runtime-core.internal.ts`), non-fatally but visibly.
+ *
+ * MEASURED after that fix, same fixture: `historian_runs = success x2 produced=2`, `compartments = 2`,
+ * and this test PASSES - a real fold sealed a chapter, the chapter reached m[0], and the m[0] prefix
+ * stayed byte-stable within each materialization revision. (2) turned out not to block: with the runner
+ * actually spawning, the first triggers succeeded rather than being held by the drain budget.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -94,7 +108,8 @@ import { createCompanionRuntime, resolveRuntimePaths, type CompanionIdentity } f
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
-const apiKey = process.env.CPA_OAI_API_KEY;const identity: CompanionIdentity = Object.freeze({
+const apiKey = process.env.CPA_OAI_API_KEY;
+const identity: CompanionIdentity = Object.freeze({
   // Production's chat runtime carries a continuity id, and the Host only declares the memory
   // partition when it is present. WITHOUT it the plugin falls back to a git-root walk from a
   // temporary directory - finds no project, and memory plus the historian stay off. A fixture
@@ -149,21 +164,14 @@ async function captureMarkers(run: (markers: Marker[]) => Promise<void>): Promis
 test(
   "a real fold seals a chapter and keeps the m[0] prefix byte-stable (CI fold fixture)",
   {
-    // Two gates, and the second one is an OPEN FINDING rather than a permission:
-    //
-    // 1. Without a credential there is nothing to run - this fixture needs real provider turns.
-    // 2. The fixture does not yet produce a fold: identity, the user-tier keys and the protected tail
-    //    are all now correct (measured `protected_tokens_effective = 4000`, `last_input_tokens =
-    //    10898`), yet `times_execute_threshold_reached = 0`. One more condition gates the trigger; the
-    //    file header names the candidate and the next probe. Until then this must NOT be reported as
-    //    evidence - a green test here would be a lie, and a red one would blame the product.
-    //    `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` runs it anyway, for diagnosis.
+    // The only gate is the credential: the fixture runs real provider turns (a fold spends one
+    // historian model call). It needs nothing else now that the embedded historian has a registry -
+    // see the file header for the two fork defects that used to make this impossible.
+    // `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` still runs it without the credential check for diagnosis.
     skip:
-      process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE === "1"
-        ? false
-        : apiKey === undefined
-          ? "requires CPA_OAI_API_KEY: this fixture runs real provider turns"
-          : "open finding: an in-process fold does not happen yet even with the fixture knobs compressed (see the file header)",
+      apiKey === undefined && process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE !== "1"
+        ? "requires CPA_OAI_API_KEY: this fixture runs real provider turns"
+        : false,
   },
   async () => {
     // Narrowed after the skip guard: the closure below must not see `string | undefined`.
@@ -255,7 +263,6 @@ test(
         }
         // The historian runs ASYNCHRONOUSLY (fire-and-forget), so a chapter can only appear in a m[0]
         // rendered AFTER it publishes - the firing pass is never the pass that shows it.
-        //
         // The wait has to span DRAIN WINDOWS, not just a few turns: Magic Context authorizes
         // protected-tail draining per 10-minute window (`DRAIN_WINDOW_MS = 10 * 60 * 1000`) with a
         // budget of `min(500k, max(perRunCap, 20% of usable))`, and every attempt inside a spent
@@ -264,6 +271,11 @@ test(
         // while the eligible tail is far larger, so a fold needs several windows - which is why this is
         // a nightly gate and not a per-commit test. The budget defaults to five minutes and is raised
         // with `GAMEBUDDY_CHAPTER_FOLD_WAIT_MINUTES` on a CI job that can afford it.
+        // The wait has to span DRAIN WINDOWS, not just a few turns: Magic Context authorizes
+        // protected-tail draining per 10-minute window (`DRAIN_WINDOW_MS = 10 * 60 * 1000`) with a
+        // budget of `min(500k, max(perRunCap, 20% of usable))`. Measured after the registry fix, the
+        // first triggers succeed inside the first window, so five minutes is generous headroom rather
+        // than a requirement - raise it with `GAMEBUDDY_CHAPTER_FOLD_WAIT_MINUTES` if a machine is slow.
         const waitMinutes = Number.parseInt(process.env.GAMEBUDDY_CHAPTER_FOLD_WAIT_MINUTES ?? "5", 10);
         const deadline = Date.now() + Math.max(1, waitMinutes) * 60_000;
         while (Date.now() < deadline) {
