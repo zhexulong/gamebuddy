@@ -172,14 +172,22 @@ async function reloadMagicContextInRuntimeRoot(
   try {
     const previousCwd = process.cwd();
     const previousDataDir = process.env.XDG_DATA_HOME;
+    const previousConfigDir = process.env.XDG_CONFIG_HOME;
     try {
       process.env.XDG_DATA_HOME = join(runtimeCwd, "data");
+      // The extension resolves its USER-scope config through XDG_CONFIG_HOME and falls back to
+      // `~/.config` (and to a user Pi installation) without it - so an unset variable means this
+      // runtime would read a file from the player's home. Point it at the runtime's own config,
+      // alongside the data root, so the runtime touches nothing outside its root.
+      process.env.XDG_CONFIG_HOME = join(runtimeCwd, "config");
       process.chdir(runtimeCwd);
       await loader.reload();
     } finally {
       process.chdir(previousCwd);
       if (previousDataDir === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = previousDataDir;
+      if (previousConfigDir === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousConfigDir;
     }
   } finally {
     release();
@@ -804,7 +812,58 @@ export async function createRuntimeWithFixedToolsCore(
       "utf8",
     );
 
-  const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
+ 	// Magic Context treats a few keys as USER-scope trust decisions, not project ones - by its own
+	// security rule, "a repository may only RAISE execute_threshold_tokens …" and "historian model
+	// selection is user-level only". The Host writes only the project file above, so those keys would
+	// otherwise be read from the PLAYER's own profile (`~/.config/cortexkit/magic-context.jsonc`) or
+	// from a user Pi installation's, and our historian would resolve to whatever that machine happens
+	// to configure - or to nothing at all on a player's PC. The runtime therefore owns its user-scope
+	// config too, inside the runtime root, and the extension bootstrap below points XDG_CONFIG_HOME at
+	// it. One rule: this runtime reads and writes nothing outside its own root.
+	const magicContextUserConfigDir = join(paths.runtimeCwd, "config");
+	if (loadMagicContextExtension) {
+		await mkdir(join(magicContextUserConfigDir, "cortexkit"), { recursive: true });
+		await writeFile(
+			join(magicContextUserConfigDir, "cortexkit", "magic-context.jsonc"),
+			JSON.stringify(
+				{
+					...(magicContextHistorianEnabled
+						? {
+								historian: {
+									pi: {
+										model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${
+											(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId
+										}`,
+										thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
+											.thinkingLevel,
+									},
+								},
+							}
+						: {}),
+					...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
+					undefined
+						? {}
+						: {
+								execute_threshold_tokens: {
+									default:
+										internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
+								},
+							}),
+					...(internalMagicContextFeatureTestOverride?.historianProtectedTokens === undefined
+						? {}
+						: {
+								protected_tokens:
+									internalMagicContextFeatureTestOverride.historianProtectedTokens,
+							}),
+				},
+				null,
+				2,
+			),
+			"utf8",
+		);
+	}
+
+	const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
 
   // Render/management partition agreement. Magic Context resolves a project
   // identity by walking up from the session cwd looking for a git root; for a

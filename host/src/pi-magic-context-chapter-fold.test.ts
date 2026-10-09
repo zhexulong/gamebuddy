@@ -183,39 +183,19 @@ test(
     let bodyFailed = false;
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
     // Magic Context treats the fold trigger as a USER-tier trusted key, and its rule is explicit:
-    // "a repository may only RAISE execute_threshold_tokens above the user's trusted token
-    // threshold; it cannot force earlier historian work or cloned-repo cost escalation." So the
-    // Host-written project config can never lower it - measured: a project value of 6000 was ignored
-    // and the run kept the operator's own user-tier threshold. The fixture therefore supplies its
-    // OWN user tier, which is also what keeps it hermetic: without this it would silently inherit
-    // whatever the machine's operator has configured (here: an 800k threshold, so no fold ever).
-    const configHome = join(root, "config-home");
+    // No isolated user tier here on purpose. The runtime owns its Magic Context user-scope config
+    // inside its own root and the Host points XDG_CONFIG_HOME at it (runtime-core.internal.ts), so
+    // supplying one from the fixture would test the fixture instead of the product - and would hide
+    // exactly the inheritance this run has to rule out: `~/.config/cortexkit/magic-context.jsonc` on
+    // whatever machine runs this, which sets an 800k fold threshold and a historian model of its own.
+    const previousConfigHome = process.env.XDG_CONFIG_HOME;
+    delete process.env.XDG_CONFIG_HOME;
     // The embedded host's own declaration, and the one the fork's historian gate now asks for: this
     // process owns its lifetime and disposes the session (dispatching session_shutdown), so a
     // fire-and-forget historian run can be seen through instead of being killed at exit. Production
     // sets it for the composed child; the fixture must not silently rely on the ambient value.
     const previousEmbeddedRuntime = process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
     process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
-    const previousConfigHome = process.env.XDG_CONFIG_HOME;
-    await mkdir(join(configHome, "cortexkit"), { recursive: true });
-    await writeFile(
-      join(configHome, "cortexkit", "magic-context.jsonc"),
-      `${JSON.stringify(
-        {
-          execute_threshold_tokens: { default: 6_000 },
-          protected_tokens: 4_000,
-          // Also a trusted USER-tier key, and ignored from project scope by the same security rule:
-          // "historian model selection is user-level only; a repository cannot force extra compaction
-          // cost". Without it the historian does not resolve at all, so the trigger is never even
-          // evaluated - which is what the earlier runs measured as "threshold never reached".
-          historian: { pi: { model: "cpa-oai/deepseek-v4-flash", thinking_level: "low" } },
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    process.env.XDG_CONFIG_HOME = configHome;
     // Magic Context resolves its PROJECT config from the session's working directory, and the Host
     // writes that config into the CONTEXT directory (`<root>/contexts/<hash>/.cortexkit/...`), which is
     // what a composed child's cwd is. Measured: without this the plugin read nothing and the fold
