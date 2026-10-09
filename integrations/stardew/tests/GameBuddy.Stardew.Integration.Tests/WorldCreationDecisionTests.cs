@@ -63,8 +63,9 @@ public sealed class WorldCreationDecisionTests
     [Fact]
     public void WithNoSaveOfThisRequestTheAnswerIsToCreateExactlyOne()
     {
-        WorldCreationDecision.Decide(StagedForm(), new[] { Save("SomeoneElsesFarm_7", farmName: "Someone Else") })
-            .Outcome.Should().Be(WorldCreationOutcome.CreateWorld);
+        WorldCreationPlan plan = WorldCreationDecision.Decide(StagedForm(), new[] { Save("SomeoneElsesFarm_7", farmName: "Someone Else") });
+        plan.Outcome.Should().Be(WorldCreationOutcome.CreateWorld);
+        plan.Refusal.Should().Be(WorldCreationRefusal.None);
     }
 
     [Fact]
@@ -88,6 +89,7 @@ public sealed class WorldCreationDecisionTests
 
         plan.Outcome.Should().Be(WorldCreationOutcome.EnterExistingWorld);
         plan.SlotName.Should().Be("GameBuddyFarm_451146820");
+        plan.Refusal.Should().Be(WorldCreationRefusal.None);
     }
 
     [Fact]
@@ -102,6 +104,7 @@ public sealed class WorldCreationDecisionTests
 
         plan.Outcome.Should().Be(WorldCreationOutcome.Refuse);
         plan.Reason.Should().Contain("not this request's own world");
+        plan.Refusal.Should().Be(WorldCreationRefusal.ForeignSlotCollision);
     }
 
     [Fact]
@@ -121,6 +124,9 @@ public sealed class WorldCreationDecisionTests
     [Fact]
     public void TwoIdentityEqualSavesAreAmbiguousAndRefused()
     {
+        // This is the case a player has to answer, and the bounded code is what the
+        // product branches on to say so: more than one companion world exists, so the
+        // product can ask the player which one instead of failing opaquely.
         WorldCreationPlan plan = WorldCreationDecision.Decide(StagedForm(), new[]
         {
             Save("GameBuddyFarm_451146820"),
@@ -129,6 +135,7 @@ public sealed class WorldCreationDecisionTests
 
         plan.Outcome.Should().Be(WorldCreationOutcome.Refuse);
         plan.Reason.Should().Contain("ambiguous");
+        plan.Refusal.Should().Be(WorldCreationRefusal.MultipleOwnWorlds);
     }
 
     [Fact]
@@ -140,13 +147,15 @@ public sealed class WorldCreationDecisionTests
 
         plan.Outcome.Should().Be(WorldCreationOutcome.Refuse);
         plan.Reason.Should().Contain("could not be read");
+        plan.Refusal.Should().Be(WorldCreationRefusal.SavesUnreadable);
     }
 
     [Fact]
     public void AFarmNameWithNoNativeSaveIdentityRefuses()
     {
-        WorldCreationDecision.Decide(StagedForm("/**/"), Array.Empty<WorldSaveIdentity>())
-            .Outcome.Should().Be(WorldCreationOutcome.Refuse);
+        WorldCreationPlan plan = WorldCreationDecision.Decide(StagedForm("/**/"), Array.Empty<WorldSaveIdentity>());
+        plan.Outcome.Should().Be(WorldCreationOutcome.Refuse);
+        plan.Refusal.Should().Be(WorldCreationRefusal.FarmNameHasNoSaveIdentity);
     }
 }
 

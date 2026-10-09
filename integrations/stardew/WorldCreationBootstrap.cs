@@ -96,7 +96,7 @@ internal sealed class WorldCreationBootstrap
         }
         if (WorldCreationDecision.FilterSaveName(this.config.FarmName).Length == 0)
         {
-            this.FailClosed("the configured farm name has no native save identity");
+            this.FailClosed(WorldCreationRefusal.FarmNameHasNoSaveIdentity, "the configured farm name has no native save identity");
             return;
         }
         if (Game1.activeClickableMenu is not TitleMenu titleMenu)
@@ -107,7 +107,7 @@ internal sealed class WorldCreationBootstrap
         WorldCreationPlan plan = WorldCreationDecision.Decide(this.config, this.readExistingWorlds());
         if (plan.Outcome == WorldCreationOutcome.Refuse)
         {
-            this.FailClosed(plan.Reason);
+            this.FailClosed(plan.Refusal, plan.Reason);
             return;
         }
         if (plan.Outcome == WorldCreationOutcome.EnterExistingWorld)
@@ -248,11 +248,31 @@ internal sealed class WorldCreationBootstrap
         Game1.exitActiveMenu();
     }
 
-    private void FailClosed(string reason)
+    private void FailClosed(string reason) => this.FailClosed(WorldCreationRefusal.None, reason);
+
+    /// <summary>
+    /// Fails the request closed and records why, with the bounded refusal code in
+    /// the one surface this path has. The code is what lets a product tell the two
+    /// kinds apart: a refusal only the player can answer (more than one companion
+    /// world exists, so which one is this session's is the player's choice) versus
+    /// a refusal the reflection of a bug or an unreadable folder. Without it the
+    /// Host sees only "no join manifest arrived" and cannot say either.
+    /// </summary>
+    private void FailClosed(WorldCreationRefusal refusal, string reason)
     {
         if (this.terminal)
             return;
         this.terminal = true;
-        this.monitor.Log($"GameBuddy formal Player Host world request failed closed: {reason}.", LogLevel.Error);
+        this.monitor.Log($"GameBuddy formal Player Host world request failed closed [{RefusalCode(refusal)}]: {reason}.", LogLevel.Error);
     }
+
+    /// <summary>The stable token for one bounded refusal, or `none` for a failure that is not a decision refusal.</summary>
+    private static string RefusalCode(WorldCreationRefusal refusal) => refusal switch
+    {
+        WorldCreationRefusal.FarmNameHasNoSaveIdentity => "farm_name_has_no_save_identity",
+        WorldCreationRefusal.SavesUnreadable => "saves_unreadable",
+        WorldCreationRefusal.MultipleOwnWorlds => "multiple_own_worlds",
+        WorldCreationRefusal.ForeignSlotCollision => "foreign_slot_collision",
+        _ => "none",
+    };
 }

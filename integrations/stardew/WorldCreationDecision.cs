@@ -16,12 +16,42 @@ internal enum WorldCreationOutcome
 }
 
 /// <summary>
+/// The bounded, stable reason a staged world request was refused. The prose in
+/// <see cref="WorldCreationPlan.Reason"/> is for a human reading a log; this code
+/// is what a product can branch on, so the one refusal a player has to answer -
+/// "you already have more than one companion world, choose which one" - is never
+/// indistinguishable from a refusal the product itself caused.
+/// </summary>
+internal enum WorldCreationRefusal
+{
+    /// <summary>Not a refusal: the plan asks for a world to be created or entered.</summary>
+    None,
+
+    /// <summary>The configured farm name has no native save identity at all.</summary>
+    FarmNameHasNoSaveIdentity,
+
+    /// <summary>The save folder could not be read, so "no world exists yet" is not proved.</summary>
+    SavesUnreadable,
+
+    /// <summary>More than one save carries this request's own world identity.</summary>
+    MultipleOwnWorlds,
+
+    /// <summary>A save is named for this farm but is not identity-equal to this request.</summary>
+    ForeignSlotCollision,
+}
+
+/// <summary>
 /// The single decision the staged world request resolves to, plus the exact
 /// physical save slot it names when the answer is
-/// <see cref="WorldCreationOutcome.EnterExistingWorld"/>, plus the reason when
-/// the answer is <see cref="WorldCreationOutcome.Refuse"/>.
+/// <see cref="WorldCreationOutcome.EnterExistingWorld"/>, plus the reason and the
+/// bounded refusal code when the answer is
+/// <see cref="WorldCreationOutcome.Refuse"/>.
 /// </summary>
-internal readonly record struct WorldCreationPlan(WorldCreationOutcome Outcome, string SlotName, string Reason);
+internal readonly record struct WorldCreationPlan(
+    WorldCreationOutcome Outcome,
+    string SlotName,
+    string Reason,
+    WorldCreationRefusal Refusal);
 
 /// <summary>
 /// The rule that reads a staged world request as "create", "enter the world I
@@ -44,6 +74,14 @@ internal readonly record struct WorldCreationPlan(WorldCreationOutcome Outcome, 
 /// with a save that is not identity-equal (one different field, one different
 /// folder shape, or an unreadable save list) is refused instead of adopted or
 /// overwritten, and a second world is never created.
+///
+/// What this rule deliberately does NOT do: prefer a previously entered slot.
+/// The Host's private bootstrap staging path cannot hand one over -- the slot it
+/// learns is persisted only as an opaque world-binding ref keyed by the previous
+/// game session, and no existing durable field the bootstrap can read carries it
+/// -- so identity matching stays the only rule, and the refusals carry a bounded
+/// code (see <see cref="WorldCreationRefusal"/>) that distinguishes the case the
+/// player has to answer from the cases the product has to fix.
 /// </summary>
 internal static class WorldCreationDecision
 {
@@ -51,13 +89,14 @@ internal static class WorldCreationDecision
     {
         string requestedFilteredName = FilterSaveName(config.FarmName);
         if (requestedFilteredName.Length == 0)
-            return new(WorldCreationOutcome.Refuse, string.Empty, "the configured farm name has no native save identity");
+            return new(WorldCreationOutcome.Refuse, string.Empty, "the configured farm name has no native save identity", WorldCreationRefusal.FarmNameHasNoSaveIdentity);
         if (existingSaves is null)
         {
             return new(
                 WorldCreationOutcome.Refuse,
                 string.Empty,
-                "the existing saves could not be read, so this request cannot prove that its own world does not already exist");
+                "the existing saves could not be read, so this request cannot prove that its own world does not already exist",
+                WorldCreationRefusal.SavesUnreadable);
         }
         WorldSaveIdentity[] namedSlots = existingSaves
             .Where(save => IsNativeSaveSlotFor(save.SlotName, requestedFilteredName))
@@ -68,22 +107,24 @@ internal static class WorldCreationDecision
                 && string.Equals(save.FavoriteThing, config.FavoriteThing, StringComparison.Ordinal))
             .ToArray();
         if (ownWorlds.Length == 1)
-            return new(WorldCreationOutcome.EnterExistingWorld, ownWorlds[0].SlotName, string.Empty);
+            return new(WorldCreationOutcome.EnterExistingWorld, ownWorlds[0].SlotName, string.Empty, WorldCreationRefusal.None);
         if (ownWorlds.Length > 1)
         {
             return new(
                 WorldCreationOutcome.Refuse,
                 string.Empty,
-                $"{ownWorlds.Length} saves carry this request's own world identity, so which one is this request's world is ambiguous");
+                $"{ownWorlds.Length} saves carry this request's own world identity, so which one is this request's world is ambiguous",
+                WorldCreationRefusal.MultipleOwnWorlds);
         }
         if (namedSlots.Length > 0)
         {
             return new(
                 WorldCreationOutcome.Refuse,
                 string.Empty,
-                $"a save named '{requestedFilteredName}' already exists and is not this request's own world");
+                $"a save named '{requestedFilteredName}' already exists and is not this request's own world",
+                WorldCreationRefusal.ForeignSlotCollision);
         }
-        return new(WorldCreationOutcome.CreateWorld, string.Empty, string.Empty);
+        return new(WorldCreationOutcome.CreateWorld, string.Empty, string.Empty, WorldCreationRefusal.None);
     }
 
     /// <summary>
