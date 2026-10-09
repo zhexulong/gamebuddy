@@ -121,7 +121,18 @@ const identity: CompanionIdentity = Object.freeze({
   companionId: "companion_01",
 });
 
-/** One turn of ordinary conversation, sized so a handful of them cross the fixture trigger. */
+/**
+ * One turn of ordinary conversation, sized so a handful of them cross the fixture trigger.
+ *
+ * Deliberately lean. An earlier version of this filler also carried relationship content (an explicitly
+ * stated preference and an observation) to inspect what the fold kept, and that measurement succeeded -
+ * the sealed compartment read back "the player twice stated plainly that they hate going down into the
+ * mines, and that rainy mornings are their favourite thing about the valley" (recorded in
+ * design/architecture/airp-memory-evolution-architecture.md 4.3). Keeping it in THIS fixture made the
+ * conversation heavy enough that the second fold no longer fit inside one protected-tail drain window,
+ * and this gate is about the fold sealing a chapter, not about content - so the content measurement
+ * stays a recorded one-off.
+ */
 function filler(index: number): string {
   return (
     `Filler turn ${index} of a long stretch of ordinary small talk. We talked about the weather, ` +
