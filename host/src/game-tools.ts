@@ -336,7 +336,11 @@ export function createStardewObservationTools(
         // wire action id is unchanged.
         name: "stardew_read_scene",
         label: "Observe Stardew Scene",
-        description: "Read the Mod-advertised live Stardew scene projection. Scene references are observational only and never authorize mutation.",
+        description: "Read the Mod-advertised live Stardew scene projection. Scene references are observational only " +
+          "and never authorize mutation. Each affordance may carry `reachable` (true, false, or ABSENT): true means the " +
+          "companion can act on it from where it stands (walk onto the tile or stand beside it), false means a measured no, " +
+          "and ABSENT means undecided -- nobody measured it, which is not a denial. Prefer acting on reachable targets; " +
+          "a refusal is the fallback, not the plan.",
         parameters: Type.Object({}, { additionalProperties: false }),
         execute: async (_toolCallId, params) => {
           if (!requireStrictObject(params) || Object.keys(params).length !== 0)

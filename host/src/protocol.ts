@@ -728,6 +728,12 @@ export type ObserveSceneAffordance = Readonly<{
   distance: number;
   direction: "North" | "South" | "East" | "West" | "CurrentTile";
   actionHint: string | null;
+  /**
+   * Whether the actor can act on this target from where it stands (walk onto the tile or stand beside it).
+   * ABSENT means undecided — nobody measured it — which is deliberately NOT `false`: "we could not check" is not
+   * "you cannot go there". Published so the Agent stops learning reachability from refusals.
+   */
+  reachable?: boolean;
 }>;
 
 /** Bounded, factual scene projection. Scene refs are opaque observation labels, not mutation authority. */
@@ -1631,12 +1637,23 @@ function validateObserveSceneResult(value: Record<string, unknown>): string | nu
     return "invalid_observe_scene_result";
   const refs = new Set<string>();
   return value.affordances.every((affordance) => {
-    if (!isRecord(affordance) || !hasExactKeys(affordance, ["ref", "kind", "name", "distance", "direction", "actionHint"]) ||
+    // `reachable` is OPTIONAL and tri-state: `false` is a measured no, ABSENT or null is undecided (nobody checked),
+    // and a `null` may never read as `false`. Presence changes the exact-key set, so it is decided before that check.
+    const allowReachable = affordance.reachable !== undefined;
+    if (!isRecord(affordance) ||
+        !hasExactKeys(
+          affordance,
+          allowReachable
+            ? ["ref", "kind", "name", "distance", "direction", "actionHint", "reachable"]
+            : ["ref", "kind", "name", "distance", "direction", "actionHint"],
+        ) ||
         !isSceneReference(affordance.ref) || typeof affordance.kind !== "string" || !OBSERVE_SCENE_KINDS.has(affordance.kind) ||
         !boundedSceneText(affordance.name, 128) || !Number.isSafeInteger(affordance.distance) ||
         (affordance.distance as number) < 0 || (affordance.distance as number) > 30 ||
         typeof affordance.direction !== "string" || !OBSERVE_SCENE_DIRECTIONS.has(affordance.direction) ||
-        (affordance.actionHint !== null && !boundedSceneText(affordance.actionHint, 160)) || refs.has(affordance.ref))
+        (affordance.actionHint !== null && !boundedSceneText(affordance.actionHint, 160)) ||
+        (allowReachable && affordance.reachable !== null && typeof affordance.reachable !== "boolean") ||
+        refs.has(affordance.ref))
       return false;
     refs.add(affordance.ref as string);
     return true;

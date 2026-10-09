@@ -2694,6 +2694,48 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
   assert.equal(diagnoseBridgeMessage(unregisteredDenseKind, scope, now), "invalid_observe_scene_result");
 });
 
+test("observe_scene result admits reachable as true, false, null or absent, and rejects a non-boolean", () => {
+  const sceneFor = (reachable) =>
+    newEnvelope("observe_scene_result", scope, {
+      observationId: "so1_REACHAB1E0001",
+      currentLocation: "Farm",
+      currentRegion: "Farm",
+      affordances: [
+        {
+          ref: "sr1_AAAAAAAAAAAAAAAA",
+          kind: "crop",
+          name: "Crop",
+          distance: 1,
+          direction: "East",
+          actionHint: null,
+         ...(reachable === undefined ? {} : { reachable }),
+        },
+      ],
+      summary: "1 actionable objects visible in Farm.",
+      partial: false,
+      truncatedReason: null,
+      ground: null,
+    },
+    "observe_scene_reach_01",
+    now,
+  );
+  // The field is tri-state and OPTIONAL: the whole point is the difference between false (a measured no) and
+  // ABSENT or null (nobody measured). A non-boolean is still refused.
+  assert.equal(diagnoseBridgeMessage(sceneFor(true), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor(false), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor(null), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor(undefined), scope, now), null);
+  const invalid = sceneFor(true);
+  (invalid as unknown as { payload: Record<string, unknown> }).payload = {
+    ...(invalid as unknown as { payload: Record<string, unknown> }).payload,
+    affordances: [
+      { ref: "sr1_AAAAAAAAAAAAAAAA", kind: "crop", name: "Crop", distance: 1, direction: "East", actionHint: null, reachable: "no" },
+    ],
+  };
+  // The payload sits under `payload`, so the malformed affordance is reached and must be named by the payload
+  // validator, not rejected as a malformed envelope.
+  assert.equal(diagnoseBridgeMessage(invalid, scope, now), "invalid_observe_scene_result");
+});
 test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
   const scene = newEnvelope(
     "observe_scene_result",

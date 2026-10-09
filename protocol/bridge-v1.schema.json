@@ -1017,6 +1017,10 @@
               "type": "null"
             }
           ]
+        },
+        "reachable": {
+          "type": ["boolean", "null"],
+          "description": "Whether the actor can act on this target from where it stands. null means undecided (nobody measured it), never false."
         }
       }
     },
