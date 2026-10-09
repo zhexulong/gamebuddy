@@ -776,8 +776,13 @@ internal sealed class StardewBodyController
     /// what every interaction's reach means. Returns <c>null</c> when the component exceeded the probe budget, so the
     /// observation publishes undecided rather than guessing.
     /// </summary>
-    internal static Func<int, int, bool>? BuildSceneActionability(Farmer actor, int budget = ReachabilityProbeLimit)
+    internal static Func<int, int, bool>? BuildSceneActionability(Farmer? actor, int budget = ReachabilityProbeLimit)
     {
+        // `actor` is NULLABLE on purpose: the observation path is also reachable before a player exists (rejected
+        // generations, tests that run no game at all), and the suite caught this as 18 NullReferenceExceptions from
+        // `TryObserveScene`. A probe helper must answer "no claim" rather than throw, on every headless path.
+        if (actor is null)
+            return null;
         GameLocation? location = actor.currentLocation;
         if (location is null)
             return null;
