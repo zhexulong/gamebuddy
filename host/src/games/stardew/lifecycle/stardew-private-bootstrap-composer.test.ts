@@ -1412,6 +1412,99 @@ test("finalization deletes exactly the declared managed paths and refuses to wid
   }
 });
 
+/**
+ * The owner ruling: the companion world persists across bootstrap attempts, so no
+ * exit of an attempt may reach a `GameBuddyFarm_*` slot in the Stardew saves
+ * root. The attempt does own its own transaction directory, and exactly one exit
+ * consumes it -- the crash/recovery cleanup. This drives the two exits this file
+ * can reach while a companion world exists and asserts that world is
+ * byte-identical after each:
+ *
+ * - endgame settlement reaches the attempt's terminal `contained` record and
+ *   releases the bound registration, but consumes no declaration, so even the
+ *   attempt's own transaction survives it;
+ * - the crash/recovery finalization is the one exit that deletes, and it deletes
+ *   exactly the paths the record declares, relative to the attempt's own
+ *   directory -- never a sibling of it, and never anything in a saves root.
+ *
+ * The ordinary-close exit cannot be driven from this file: `close` is the
+ * contained runtime's own member (`StardewGuardianPlatform.close` forwards to
+ * `runtime.close()`), and no materialized contained runtime is built here. What
+ * makes it safe is asserted where it is decidable instead -- the close path never
+ * reaches the durable attempt, let alone a cleanup -- and the only consumer of an
+ * attempt's declaration is `consumeRecoveredAttemptCleanup`, exercised below.
+ */
+test("no attempt exit can reach a companion world in the Stardew saves root", async (t) => {
+  const harness = createHarness();
+  const savesRoot = await createRoot("gamebuddy-stardew-saves-");
+  t.after(() => rm(savesRoot, { recursive: true, force: true }));
+  // A world a companion session created, with the identity the native game gives
+  // it: farm name `GameBuddy Farm` sanitized to the folder basename, plus the
+  // game's own unique id and the SaveGameInfo the native save list reads.
+  const companionSlot = "GameBuddyFarm_451234657";
+  const companion = join(savesRoot, companionSlot);
+  await mkdir(companion, { recursive: true });
+  await writeFile(join(companion, companionSlot), "companion-save-body", "utf8");
+  await writeFile(join(companion, "SaveGameInfo"), "companion-save-info", "utf8");
+  const snapshotCompanion = async (): Promise<readonly string[]> => {
+    const leaves = (await readdir(companion, { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort();
+    const snapshot: string[] = [];
+    for (const leaf of leaves) snapshot.push(`${leaf}:${(await readFile(join(companion, leaf))).toString("base64")}`);
+    return snapshot;
+  };
+  const companionBefore = await snapshotCompanion();
+
+  // Exit 1 -- endgame settlement.
+  const endgameRoot = await createRoot();
+  await writeRegistrationAttemptFixture(endgameRoot, { marker: false, activeAttempt: true, owner: false });
+  const endgameTriple = mintOwnedTriple(harness.composition);
+  const endgameOwner = await harness.composition.reserveOwnedPlayerHostBootstrap(
+    endgameRoot,
+    endgameTriple.claim,
+    endgameTriple.playerHostReservation,
+    endgameTriple.aiClientReservation,
+  );
+  productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(endgameOwner),
+  );
+  await productionCore.settleOwnedPlayerHostContainedRuntimeAttempt(endgameOwner, ["playerHost", "aiClient"]);
+  const settled = JSON.parse(await readFile(ownerPath(endgameRoot), "utf8")) as Record<string, unknown>;
+  assert.equal(settled.state, "contained");
+  assert.equal((await readStardewInstallationRegistration(endgameRoot))?.activeAttempt, null);
+  assert.deepEqual(await snapshotCompanion(), companionBefore, "endgame settlement must not touch a companion world");
+
+  // Exit 2 -- the crash/recovery cleanup, the only exit that deletes anything.
+  // It runs on its own composition because a composition's Player Host launch
+  // slot is one-at-a-time and the endgame above never launched its reservation.
+  const recoveryHarness = createHarness();
+  const recoveryRoot = await createRoot();
+  await writeRegistrationAttemptFixture(recoveryRoot, { marker: false, activeAttempt: true, owner: false });
+  const recoveryTriple = mintOwnedTriple(recoveryHarness.composition);
+  const recoveryOwner = await recoveryHarness.composition.reserveOwnedPlayerHostBootstrap(
+    recoveryRoot,
+    recoveryTriple.claim,
+    recoveryTriple.playerHostReservation,
+    recoveryTriple.aiClientReservation,
+  );
+  const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
+    productionCore.createStardewBootstrapGuardianOwnerBinding(recoveryOwner),
+  );
+  const actor = "6f1a9c04-2b7e-4d51-9a83-0c5e7d41b28f";
+  await transitions.beginRecovery(actor);
+  await transitions.recoveryRoleContained("playerHost", actor);
+  await transitions.recoveryRoleContained("aiClient", actor);
+  await productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(recoveryOwner, actor);
+  await assert.rejects(
+    readFile(ownerPath(recoveryRoot), "utf8"),
+    { code: "ENOENT" },
+    "the recovery cleanup is the exit that consumes the attempt's declaration",
+  );
+  assert.deepEqual(await snapshotCompanion(), companionBefore, "the recovery cleanup must not touch a companion world");
+});
+
 test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, and strict-rereads", async () => {
   const harness = createHarness();
   const root = await createRoot();
