@@ -52,7 +52,7 @@ internal sealed class StardewBodyController
     /// the World Model so the retry window a refusal REPORTS to the Agent is the same number the body loop
     /// actually waits - an Agent told to wait 2000 ms while the loop waits 1500 would retry into a live lock.
     /// </summary>
-    private const int TransientWindowMs = WorldModel.TransientRetryWindowMs;
+    private const int TransientWindowMs = 2000;
 
     /// <summary>
     /// Upper bound for the derived reachability probe. A target is reported as
