@@ -54,7 +54,14 @@ const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v4";
 export const OWNER_FILE = "owner.json";
 export const temporaryRoots: string[] = [];
 
-export function signedAttachmentSession(sessionToken: string, launchGeneration = "player-generation-1") {
+export function signedAttachmentSession(
+  sessionToken: string,
+  launchGeneration = "player-generation-1",
+  // The cabins the host world advertises. One by default (what a world created
+  // with its native co-op cabin layout advertises); an empty list is the live
+  // shape of a host world that has no Cabin at all.
+  cabins: readonly Readonly<{ cabinId: string; ownerFarmhandId: string; boundCompanionId: string; isBusy: boolean }>[] = [{ cabinId: "cabin-attachment-factory", ownerFarmhandId: "12345", boundCompanionId: "", isBusy: false }],
+) {
   const session = {
     schemaVersion: 1,
     integrationId: "stardew",
@@ -73,7 +80,7 @@ export function signedAttachmentSession(sessionToken: string, launchGeneration =
      hostPlayerId: "world-attachment-factory",
      runtimeRole: "player_host",
      launchGeneration,
-     cabins: [{ cabinId: "cabin-attachment-factory", ownerFarmhandId: "12345", boundCompanionId: "", isBusy: false }],
+     cabins,
     signature: "",
   };
   const unsigned = { ...session } as Record<string, unknown>;

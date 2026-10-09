@@ -2598,6 +2598,38 @@ const availableCabins: readonly PublishedCabin[] = Object.freeze([
   Object.freeze({ cabinId: "cabin-foreign", ownerFarmhandId: "404", boundCompanionId: "other-companion", isBusy: false }),
 ]);
 
+test("a live host advertisement with no usable cabin is a named failure, never an empty choice list", async () => {
+  // The world a Player Host creates must contain a Cabin for the single
+  // companion it exists for, and this is the only place the browser learns that
+  // it does not: an advertisement that is live, ready and generation-correlated
+  // but offers no cabin this companion may use. Returning `choices: []` there was
+  // indistinguishable from "cabins are still coming" and stalled the chain with
+  // no product-visible reason.
+  const fixture = await createFixture();
+  try {
+    await withWindowsPlatform(async () => {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", [], Date.now() + 5 * 60_000);
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+    });
+    assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
+    await assert.rejects(
+      () => fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read")),
+      /stardew_player_host_cabin_unavailable/,
+    );
+    // The gate held: no cabin handoff was confirmable, so the AI client's one-shot
+    // launch reservation was never consumed and nothing was spawned.
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal(await attachmentRequestId(fixture.runtimeRoot), null);
+    assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
+      state: "not_started", ownership: "none",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
 async function prepareCabinCoordinator(
   expiresAtUnixMs = Date.now() + 5 * 60_000,
   input: Parameters<typeof createFixture>[0] = {},

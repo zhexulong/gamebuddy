@@ -4542,6 +4542,64 @@ test("fresh Farmhand activation refuses to arm without an ended activation and a
  * and would silently stop deferring a resume attach if the class here were ever
  * replaced by a plain Error.
  */
+test("a host world that advertises no cabin leaves the AI-client launch reservation unconsumed", async () => {
+  // The gate the bridge session never opens onto: the AI client is launched only
+  // after a confirmed cabin handoff, and a handoff exists only for a cabin the
+  // live advertisement actually carries. A world created without its native
+  // co-op cabin layout advertises none, so no selection can exist, no manifest
+  // admission can be consumed, and the AI client's one-shot `launch_reserved`
+  // generation stays exactly where the durable owner record left it.
+  const playerHostGeneration = "cabinless-player-generation";
+  const aiClientGeneration = "cabinless-ai-generation";
+  const companionId = "cabinless-companion";
+  const packageSource = await createStageBPackage();
+  const harness = createHarness({
+    launchGenerations: [aiClientGeneration],
+    playerHostLaunchGenerations: [playerHostGeneration],
+    staging: stageCStaging(packageSource),
+  });
+  const testCore = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
+  const root = await createRoot("gamebuddy-cabinless-host-");
+  const triple = mintOwnedTriple(testCore.composition, { playerId: "cabinless-player", companionId });
+  const owner = await testCore.composition.reserveOwnedPlayerHostBootstrap(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  await createStageBTestHarness({
+    recheck: async () => undefined,
+    verifyPackage: async () => undefined,
+  }).bindOwnedPlayerHostBootstrap(owner);
+
+  const ownerView = testCore.bindOwnedPlayerHostPhaseAOwner(owner);
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const launchResult = await testCore.launchStagedPlayerHost(owner, installation);
+  assert.deepEqual(launchResult, { status: { kind: "awaiting_player_host_attestation" } });
+
+  const sessionDirectory = join(ownerView.transactionDirectory, "session");
+  const sessionToken = "session-secret-stagec-012345";
+  await mkdir(sessionDirectory, { recursive: true });
+  await writeFile(
+    join(sessionDirectory, "stardew-session.json"),
+    JSON.stringify(signedAttachmentSession(sessionToken, playerHostGeneration, [])),
+  );
+
+  const coordinator = testCore.createOwnedPlayerHostManifestHandoffCoordinator();
+  assert.deepEqual(await coordinator.list(owner), []);
+  // No cabin can be selected, so the only door to the AI-client profile
+  // materialization and its launch stays shut.
+  await assert.rejects(() => coordinator.select(owner, "cabin-attachment-factory"), /cabin_missing/);
+  assert.deepEqual(ownerView.record.aiClient, {
+    kind: "launch_reserved",
+    launchGeneration: aiClientGeneration,
+  });
+  assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(harness.spawnCalls, []);
+  assert.equal((await readdir(sessionDirectory)).includes("stardew-attachment-request.json"), false);
+  assert.equal((await readdir(sessionDirectory)).includes("stardew-farmhand-manifest.json"), false);
+});
+
 test("both Farmhand Bridge connection refusals carry the platform contract's typed identity", async () => {
   const fixture = await prepareLaunchedAiClientFixture();
   // (a) Arming a fresh activation is refused because no activation ended yet.

@@ -1503,6 +1503,12 @@ function createCoordinator(
       throw new Error("stardew_cabin_handoff_unavailable");
     const boundRevision = revision;
     const choices = await handoffCoordinator.list(owner);
+    // A live, generation-correlated advertisement with no cabin this companion
+    // may use is not "nothing to confirm yet": the AI-client launch is reached
+    // only through a confirmed cabin handoff, so an empty list here is the fact
+    // that this host world cannot host the companion at all. Name it instead of
+    // returning an empty choice list the browser surfaces as no options.
+    if (choices.length === 0) throw new Error("stardew_player_host_cabin_unavailable");
     if (revision !== boundRevision || isClosing()) throw new Error("stardew_cabin_handoff_revision_changed");
     return {
       apiVersion: 1 as const,
