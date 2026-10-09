@@ -1327,9 +1327,10 @@ export type SemanticProductionAuthority = Readonly<{
    * Coordinator-private exact same-selection successor bridge. Derives the
    * current exact active Chat from the durable catalog and writes one ordinary
    * `select_chat` bridge for it. The store's successor admission consumes this
-   * bridge only for a mount after the exact terminal predecessor teardown;
-   * without that durable teardown no successor mount is ever admissible and
-   * the bridge cannot fork the runtime chain.
+   * bridge only for a mount after the exact terminal predecessor teardown, or
+   * after an interrupted cycle - a terminal predecessor with no teardown at all,
+   * whose own committed vector is the end this bridge consumes - and for no other
+   * shape, so the bridge cannot fork the runtime chain.
    */
   reselectTerminalChatRuntimeSuccessor(): Promise<ProductionChatCommandReadback>;
   transitionNonSelectedChatLifecycle(

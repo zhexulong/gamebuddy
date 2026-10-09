@@ -2101,7 +2101,7 @@ function rejectChatRuntimeTransition(db: DatabaseSync): void {
   )
     throw new Error("chat_runtime_transition_pending");
 }
-type ChatRuntimeSuccessorAdmission = Readonly<{ predecessor: any; teardown: any; bridge: any }>;
+type ChatRuntimeSuccessorAdmission = Readonly<{ predecessor: any; endVector: SagaVector; bridge: any }>;
 type ChatCommandChainStep = Readonly<{
   kind: ProductionChatCommandReadback["kind"];
   response: ProductionChatCommandReadback;
@@ -2165,6 +2165,47 @@ function chatChainSettledSelection(
     tip.response.chatSurfaceSessionId === mount.chatSurfaceSessionId
   );
 }
+/**
+ * ADR 0009: the vector a terminal chat-runtime predecessor's cycle ended at, and
+ * whether that cycle was interrupted rather than closed.
+ *
+ * A committed teardown is the graceful close: `commitChatRuntimeTeardown` advanced
+ * the partition/fence and marked the surface `ended`, and the vector it committed is
+ * the root the successor select bridge must consume.
+ *
+ * No teardown row at all is an interrupted cycle, read truthfully from the facts
+ * rather than represented as a new state: the process died after the runtime was
+ * committed and before any teardown was prepared, so nothing ever advanced past the
+ * predecessor's own committed vector. That vector is where the runtime was, it is
+ * still the live partition vector, and - because the authority root mutex makes this
+ * process the sole owner of the root - the runtime that owned it is gone. The
+ * successor select bridge therefore consumes that vector directly.
+ *
+ * Anything else is not a decidable end and returns `null` to fail closed: a
+ * non-terminal teardown is an unresolved transition (the Chat command path already
+ * refuses one with `chat_runtime_transition_pending` before reaching any admission),
+ * and a terminal teardown without a valid committed vector is corrupt.
+ */
+function chatRuntimePredecessorEnd(
+  db: DatabaseSync,
+  continuityId: string,
+  predecessor: Readonly<{ operation_id: string; committed_vector_json: string | null }>,
+): Readonly<{ vector: SagaVector; interrupted: boolean }> | null {
+  const teardowns = db
+    .prepare(
+      "SELECT status,committed_vector_json FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND bootstrap_operation_id=?",
+    )
+    .all(continuityId, predecessor.operation_id) as Array<{ status: string; committed_vector_json: string | null }>;
+  if (teardowns.length === 0) {
+    const own = parse(predecessor.committed_vector_json);
+    return validStoredVector(own) ? Object.freeze({ vector: own, interrupted: true }) : null;
+  }
+  if (teardowns.length !== 1) return null;
+  const teardown = teardowns[0]!;
+  if (teardown.status !== "terminal") return null;
+  const committed = parse(teardown.committed_vector_json);
+  return validStoredVector(committed) ? Object.freeze({ vector: committed, interrupted: false }) : null;
+}
 function requireSameChatRuntimeSuccessorBridge(
   db: DatabaseSync,
   continuityId: string,
@@ -2174,18 +2215,24 @@ function requireSameChatRuntimeSuccessorBridge(
 ): void {
   const predecessors = db
     .prepare(
-      "SELECT operation_id FROM production_chat_runtime_intent WHERE continuity_id=? AND status='terminal' AND chat_thread_id=? AND chat_surface_session_id=?",
+      "SELECT operation_id,committed_vector_json FROM production_chat_runtime_intent WHERE continuity_id=? AND status='terminal' AND chat_thread_id=? AND chat_surface_session_id=?",
     )
-    .all(continuityId, chatThreadId, chatSurfaceSessionId) as Array<{ operation_id: string }>;
+    .all(continuityId, chatThreadId, chatSurfaceSessionId) as Array<{
+    operation_id: string;
+    committed_vector_json: string | null;
+  }>;
+  // Exactly one predecessor's end vector may be consumed by this successor bridge.
+  // A graceful teardown's end is consumed only when it is exactly the vector this
+  // select starts from. An interrupted cycle's end - its own committed vector - is
+  // consumed when the recorded command chain from that end already reaches this
+  // vector (the empty chain included, when the vector never advanced past it); the
+  // select written here then extends that same chain. Two matching predecessors, the
+  // ambiguity this rule exists to refuse, still fail the count.
   const matches = predecessors.filter((predecessor) => {
-    const teardown = db
-      .prepare(
-        "SELECT committed_vector_json FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND bootstrap_operation_id=? AND status='terminal'",
-      )
-      .get(continuityId, predecessor.operation_id) as { committed_vector_json?: string } | undefined;
-    if (!teardown?.committed_vector_json) return false;
-    const committed = parse(teardown.committed_vector_json);
-    return validStoredVector(committed) && canonical(committed) === canonical(expected);
+    const end = chatRuntimePredecessorEnd(db, continuityId, predecessor);
+    if (end === null) return false;
+    if (end.interrupted) return sameSagaVector(chatCommandChainTip(db, continuityId, end.vector), expected);
+    return canonical(end.vector) === canonical(expected);
   });
   if (matches.length !== 1) throw new Error("chat_runtime_reentry_selection_invalid");
 }
@@ -2198,16 +2245,13 @@ function chatRuntimeSuccessorAdmissions(
     .all(input.continuityId) as any[];
   const admissions: ChatRuntimeSuccessorAdmission[] = [];
   for (const predecessor of predecessors) {
-    const teardown = db
-      .prepare(
-        "SELECT * FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND bootstrap_operation_id=?",
-      )
-      .get(input.continuityId, predecessor.operation_id) as any;
-    if (!teardown || teardown.status !== "terminal") continue;
-    const teardownVector = parse(teardown.committed_vector_json);
-    if (!validStoredVector(teardownVector)) continue;
+    const end = chatRuntimePredecessorEnd(db, input.continuityId, predecessor);
+    if (end === null) continue;
+    // The end vector - the committed teardown's, or an interrupted cycle's own - must
+    // be consumed by the unique select bridge producing this request's expected
+    // vector. Operation-id order is not a temporal chain proof.
     if (
-      !chatChainSettledSelection(db, input.continuityId, teardownVector, {
+      !chatChainSettledSelection(db, input.continuityId, end.vector, {
         expected: input.expected,
         chatThreadId: input.chatThreadId,
         chatSurfaceSessionId: input.chatSurfaceSessionId,
@@ -2216,8 +2260,8 @@ function chatRuntimeSuccessorAdmissions(
       continue;
     admissions.push({
       predecessor,
-      teardown,
-      bridge: chatCommandChain(db, input.continuityId, teardownVector).at(-1),
+      endVector: end.vector,
+      bridge: chatCommandChain(db, input.continuityId, end.vector).at(-1),
     });
   }
   return admissions;

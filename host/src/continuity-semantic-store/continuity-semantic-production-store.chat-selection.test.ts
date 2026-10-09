@@ -73,12 +73,16 @@ function receiptFor(
 }
 
 /** Mounts and commits the currently selected Chat, leaving an active runtime. */
-function mount(store: Store, selection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) {
+function mount(
+  store: Store,
+  selection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  id = selection.chatThreadId,
+) {
   const prepared = store.prepareChatRuntime(
     Object.freeze({
       principal,
-      operationId: `runtime-${selection.chatThreadId}`,
-      requestId: `runtime-request-${selection.chatThreadId}`,
+      operationId: `runtime-${id}`,
+      requestId: `runtime-request-${id}`,
       chatThreadId: selection.chatThreadId,
       chatSurfaceSessionId: selection.chatSurfaceSessionId,
       runtimeBindingDigest,
@@ -110,12 +114,13 @@ function mount(store: Store, selection: Readonly<{ chatThreadId: string; chatSur
 function closeRuntime(
   store: Store,
   selection: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  id = selection.chatThreadId,
 ): Vector {
   const prepared = store.prepareChatRuntimeTeardown({
     principal,
-    operationId: `teardown-${selection.chatThreadId}`,
-    requestId: `teardown-request-${selection.chatThreadId}`,
-    bootstrapOperationId: `runtime-${selection.chatThreadId}`,
+    operationId: `teardown-${id}`,
+    requestId: `teardown-request-${id}`,
+    bootstrapOperationId: `runtime-${id}`,
     chatThreadId: selection.chatThreadId,
     chatSurfaceSessionId: selection.chatSurfaceSessionId,
     runtimeBindingDigest,
@@ -236,11 +241,17 @@ test("a select expectation names an existing verified Chat and is settled by the
     const { store } = fixtureUnderTest;
     const opened = store.readChatCatalog();
     const initial = opened.activeSelection!;
+    // The initial Chat is mounted and closed before any other Chat command, exactly
+    // as the product opens its first runtime. Waiting would leave the initial root
+    // unsettled, which ADR 0009 correctly refuses: a register/verify advances the
+    // vector without settling a selection, so the root's mount must come first.
+    mount(store, initial);
+    closeRuntime(store, initial);
     // A second Chat already exists and is verified, exactly like a Chat the
     // player created on an earlier run.
     const second = Object.freeze({ chatThreadId: "chat-second", chatSurfaceSessionId: "surface-second" });
     store.registerChat(
-      Object.freeze({ operationId: "register-second", ...second, expected: { ...opened.vector } }),
+      Object.freeze({ operationId: "register-second", ...second, expected: { ...store.readChatCatalog().vector } }),
     );
     const registered = store.readChatCatalog();
     store.verifyChatContent(
@@ -258,8 +269,6 @@ test("a select expectation names an existing verified Chat and is settled by the
     // Recording a select leaves the mounted selection where it is.
     assert.equal(recorded.activeSelection?.chatThreadId, initial.chatThreadId);
 
-    mount(store, initial);
-    closeRuntime(store, initial);
     const settleTarget = store.readChatCatalog();
     store.selectChat(
       Object.freeze({ operationId: "settle-select", ...second, expected: { ...settleTarget.vector } }),
@@ -488,6 +497,128 @@ test("recording an expectation fails closed while a runtime transition is in fli
       }).runtimeState,
       "active",
     );
+  } finally {
+    fixtureUnderTest.close();
+  }
+});
+
+/**
+ * Interrupted-cycle reconciliation. A run killed rather than closed leaves a
+ * terminal runtime intent with no teardown. The startup path - the same-selection
+ * successor bridge written for the live selection, then the mount it admits - must
+ * reconcile that shape instead of throwing
+ * `chat_runtime_reentry_selection_invalid`, while a graceful intent+teardown pair
+ * and several terminal predecessors keep exactly their previous behaviour.
+ */
+function reselect(
+  store: Store,
+  target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  operationId: string,
+) {
+  return store.selectChat(
+    Object.freeze({
+      operationId,
+      chatThreadId: target.chatThreadId,
+      chatSurfaceSessionId: target.chatSurfaceSessionId,
+      expected: { ...store.readChatCatalog().vector },
+    }),
+  );
+}
+
+test("an interrupted terminal runtime with no teardown is reconciled and the next runtime mounts", () => {
+  const fixtureUnderTest = fixture("interrupted");
+  try {
+    const { store } = fixtureUnderTest;
+    const initial = store.readChatCatalog().activeSelection!;
+    // The first run mounts the runtime and is then killed, so no teardown is ever
+    // prepared: the store keeps exactly the terminal predecessor.
+    mount(store, initial, "runtime-killed");
+    // The startup path that used to throw: the same-selection successor bridge.
+    reselect(store, initial, "reselect-interrupted");
+    // ... and the mount it admits.
+    assert.equal(mount(store, initial, "runtime-next").runtimeState, "active");
+    assert.equal(store.readChatCatalog().activeSelection?.chatThreadId, initial.chatThreadId);
+  } finally {
+    fixtureUnderTest.close();
+  }
+});
+
+test("an interrupted cycle whose successor bridge was already written still reconciles", () => {
+  const fixtureUnderTest = fixture("interrupted-bridged");
+  try {
+    const { store } = fixtureUnderTest;
+    const initial = store.readChatCatalog().activeSelection!;
+    mount(store, initial, "runtime-1"); // run 1 mounts, then is killed.
+    // run 2 writes the successor bridge and is killed before the mount commits.
+    reselect(store, initial, "reselect-1");
+    // run 3 starts against the already-settled selection: the recorded chain from the
+    // predecessor's own committed vector already reaches this vector.
+    reselect(store, initial, "reselect-2");
+    assert.equal(mount(store, initial, "runtime-3").runtimeState, "active");
+  } finally {
+    fixtureUnderTest.close();
+  }
+});
+
+test("an interrupted cycle advanced by a non-select Chat command is reconciled on the recorded chain", () => {
+  const fixtureUnderTest = fixture("interrupted-advanced");
+  try {
+    const { store } = fixtureUnderTest;
+    const initial = store.readChatCatalog().activeSelection!;
+    mount(store, initial, "runtime-1");
+    // A Chat command that is not a select advances the vector after the killed
+    // runtime; the recorded chain from the predecessor's end still reaches it.
+    store.registerChat(
+      Object.freeze({
+        operationId: "register-after-kill",
+        chatThreadId: "chat-after-kill",
+        chatSurfaceSessionId: "surface-after-kill",
+        expected: { ...store.readChatCatalog().vector },
+      }),
+    );
+    reselect(store, initial, "reselect-after-advance");
+    assert.equal(mount(store, initial, "runtime-2").runtimeState, "active");
+  } finally {
+    fixtureUnderTest.close();
+  }
+});
+
+test("a matched intent and teardown pair keeps the exact same-one successor rule", () => {
+  const fixtureUnderTest = fixture("matched-pair");
+  try {
+    const { store } = fixtureUnderTest;
+    const initial = store.readChatCatalog().activeSelection!;
+    mount(store, initial, "runtime-1");
+    closeRuntime(store, initial, "runtime-1");
+    // The canonical graceful re-entry is unchanged: the committed teardown vector is
+    // the vector the successor bridge starts from.
+    reselect(store, initial, "reselect-graceful");
+    assert.equal(mount(store, initial, "runtime-2").runtimeState, "active");
+    // A second graceful cycle killed after its own successor bridge is still refused,
+    // exactly as before the reconciliation: a graceful end is consumed only when it is
+    // exactly the current vector.
+    closeRuntime(store, initial, "runtime-2");
+    reselect(store, initial, "reselect-graceful-2");
+    assert.throws(() => reselect(store, initial, "reselect-graceful-3"), /chat_runtime_reentry_selection_invalid/);
+  } finally {
+    fixtureUnderTest.close();
+  }
+});
+
+test("several terminal predecessors keep the exact same-one successor rule", () => {
+  const fixtureUnderTest = fixture("several-predecessors");
+  try {
+    const { store } = fixtureUnderTest;
+    const initial = store.readChatCatalog().activeSelection!;
+    mount(store, initial, "runtime-1");
+    closeRuntime(store, initial, "runtime-1");
+    reselect(store, initial, "reselect-1");
+    mount(store, initial, "runtime-2");
+    closeRuntime(store, initial, "runtime-2");
+    // Two terminal predecessors each with a teardown: only the second teardown vector
+    // is the current vector, so the re-entry matches exactly one and mounts.
+    reselect(store, initial, "reselect-2");
+    assert.equal(mount(store, initial, "runtime-3").runtimeState, "active");
   } finally {
     fixtureUnderTest.close();
   }
