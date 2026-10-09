@@ -290,6 +290,7 @@ test("memory read projection contains only safe bounded rows and validates stric
         content: "The farmer loves blueberries.",
         category: "semantic",
         status: "active",
+        origin: "companion",
         pinned: false,
       },
     ],
@@ -311,7 +312,7 @@ test("memory read projection contains only safe bounded rows and validates stric
     }),
     false,
   );
-  // All six safe fields are required; extra fields are rejected.
+  // All seven safe fields are required; extra fields are rejected.
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
       ...memory,
@@ -323,7 +324,17 @@ test("memory read projection contains only safe bounded rows and validates stric
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
       ...memory,
-      memories: [{ title: "No handle", content: "content", category: "semantic", status: "active", pinned: false }],
+      memories: [
+        { title: "No handle", content: "content", category: "semantic", status: "active", origin: "companion", pinned: false },
+      ],
+    }),
+    false,
+  );
+  // The provenance union is closed: an unknown origin is not a memory.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], origin: "system" }],
     }),
     false,
   );
@@ -337,6 +348,7 @@ test("memory read projection contains only safe bounded rows and validates stric
         content: `content ${i}`,
         category: "semantic" as const,
         status: "active" as const,
+        origin: "companion" as const,
         pinned: false,
       })),
     }),

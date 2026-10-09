@@ -1824,6 +1824,7 @@ function MemoryPanel({
               key={item.handle}
               item={item}
               statusText={statusText(item.status, item.pinned)}
+            originText={item.origin === "player" ? labels.originPlayer : labels.originCompanion}
               labels={labels}
               mutationAvailable={mutationAvailable}
               onUpdate={(content) => onMutate({ operation: "update", handle: item.handle, content })}
@@ -1851,6 +1852,7 @@ function MemoryCreateForm({ label, onCreate }: Readonly<{ label: string; onCreat
 function MemoryRow({
   item,
   statusText,
+  originText,
   labels,
   mutationAvailable,
   onUpdate,
@@ -1858,6 +1860,7 @@ function MemoryRow({
 }: Readonly<{
   item: MemoryItemV1;
   statusText: string;
+  originText: string;
   labels: ReturnType<typeof messages>;
   mutationAvailable: boolean;
   onUpdate: (content: string) => void;
@@ -1876,6 +1879,9 @@ function MemoryRow({
     <div className="memory-item-card" role="listitem">
       <div className="memory-header">
         <span className="memory-item-title">{item.title}</span>
+        <span className="memory-item-origin" data-memory-origin={item.origin}>
+          {originText}
+        </span>
         <span className="memory-item-meta">{statusText}</span>
       </div>
       {editing ? <textarea aria-label={`${labels.memoryContent}: ${item.title}`} className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} /> : <p>{item.content}</p>}

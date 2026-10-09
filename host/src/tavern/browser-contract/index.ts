@@ -170,6 +170,14 @@ export const MemoryItemV1Schema = strictObject({
   content: MemoryText,
   category: Type.Union([Type.Literal("semantic"), Type.Literal("interaction")]),
   status: Type.Union([Type.Literal("active"), Type.Literal("permanent"), Type.Literal("archived")]),
+  /**
+   * Whose memory this is: the player's own writing, or the companion's. The management surface has
+   * always let a player edit or archive either kind, but it could not TELL THEM APART - and a memory
+   * list where "I told her this" and "she remembers this" look identical is one a player cannot
+   * audit. The store's finer vocabulary (historian/agent/dreamer) is mapped in the Host; the browser
+   * only needs the distinction that changes what a player does next.
+   */
+  origin: Type.Union([Type.Literal("player"), Type.Literal("companion")]),
   pinned: Type.Boolean(),
 });
 /**

@@ -84,6 +84,41 @@ export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
 export const MAGIC_CONTEXT_MEMORY_DOMAIN = "ongoing-interaction" as const;
 
 /**
+ * Test-only channel for the fold's window-derived quantities.
+ *
+ * Magic Context treats these as USER-scope trust keys: a PROJECT file may only RAISE
+ * `execute_threshold_tokens`, never lower it. So a harness that wants a real fold inside a CI-sized
+ * conversation cannot express it through the project config the Host writes - it needs the
+ * user-scope file, which the runtime already owns (`<runtimeCwd>/config/cortexkit/...`).
+ *
+ * This reads the launcher's request for that, and only for those two internal keys, WITHIN THIS
+ * RUNTIME'S OWN ROOT. It is not an operator or browser surface (no Host protocol or management route
+ * can select it), and it grants nothing a player could not do by editing that same file in their own
+ * runtime root.
+ */
+type InternalHistorianTestChannel = {
+  executeThresholdTokens?: number;
+  protectedTokens?: number;
+};
+
+function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
+  const parse = (name: string): number | undefined => {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const value = Number.parseInt(raw, 10);
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  };
+  const executeThresholdTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS");
+  const protectedTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS");
+  // Spread conditionally: this project compiles with `exactOptionalPropertyTypes`, so an explicit
+  // `undefined` is not the same as an absent key.
+  return {
+    ...(executeThresholdTokens === undefined ? {} : { executeThresholdTokens }),
+    ...(protectedTokens === undefined ? {} : { protectedTokens }),
+  };
+}
+
+/**
  * Magic Context v0.33.0 auto-search searches raw history by the current Pi
  * session ID, not by GameBuddy's continuity ID. Its only cross-session path is
  * project memory, which deliberately remains outside the approved product
@@ -840,21 +875,24 @@ export async function createRuntimeWithFixedToolsCore(
 								},
 							}
 						: {}),
-					...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
-					undefined
-						? {}
-						: {
-								execute_threshold_tokens: {
-									default:
-										internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
-								},
-							}),
-					...(internalMagicContextFeatureTestOverride?.historianProtectedTokens === undefined
-						? {}
-						: {
-								protected_tokens:
-									internalMagicContextFeatureTestOverride.historianProtectedTokens,
-							}),
+          ...((internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ??
+          readInternalHistorianTestChannel().executeThresholdTokens) === undefined
+            ? {}
+            : {
+                execute_threshold_tokens: {
+                  default:
+                    internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ??
+                    readInternalHistorianTestChannel().executeThresholdTokens,
+                },
+              }),
+          ...((internalMagicContextFeatureTestOverride?.historianProtectedTokens ??
+          readInternalHistorianTestChannel().protectedTokens) === undefined
+            ? {}
+            : {
+                protected_tokens:
+                  internalMagicContextFeatureTestOverride?.historianProtectedTokens ??
+                  readInternalHistorianTestChannel().protectedTokens,
+              }),
 				},
 				null,
 				2,

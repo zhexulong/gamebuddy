@@ -352,6 +352,8 @@ export type MemoryItemV1 = Readonly<{
   content: string;
   category: "semantic" | "interaction";
   status: "active" | "permanent" | "archived";
+  /** Whose memory this is: the player's own writing, or the companion's. */
+  origin: "player" | "companion";
   pinned: boolean;
 }>;
 
@@ -764,7 +766,7 @@ const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn",
 const CHAT_COMPANION_KEYS = ["name"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
-const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "pinned"] as const;
+  const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
 const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories"] as const;
 const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
 const MEMORY_MUTATION_UPDATE_KEYS = [
@@ -777,6 +779,7 @@ const MEMORY_MUTATION_UPDATE_KEYS = [
 const MEMORY_MUTATION_ARCHIVE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle"] as const;
 const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
+const MEMORY_ORIGINS = ["player", "companion"] as const;
 const MAX_MEMORY_ITEMS = 200;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const SAVE_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "text"] as const;
@@ -1464,6 +1467,7 @@ function isMemoryItem(value: unknown): value is MemoryItemV1 {
     isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES) &&
     isOneOf(value.category, MEMORY_CATEGORIES) &&
     isOneOf(value.status, MEMORY_STATUSES) &&
+    isOneOf(value.origin, MEMORY_ORIGINS) &&
     typeof value.pinned === "boolean"
   );
 }

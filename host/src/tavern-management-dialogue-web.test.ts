@@ -149,6 +149,7 @@ const memoryReadStub: MemoryReadV1 = Object.freeze({
       content: "Visible player memory",
       category: "semantic",
       status: "active",
+      origin: "companion",
       pinned: false,
     }),
   ]),

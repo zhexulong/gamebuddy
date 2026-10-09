@@ -121,6 +121,10 @@ const en = {
   editMemory: "Edit memory",
   archiveMemory: "Archive memory",
   deleteMemory: "Delete memory",
+  // Whose memory a row is. Shown as a badge so a player can tell their own writing from what the
+  // companion remembers, and can audit or correct either.
+  originPlayer: "I told her this",
+  originCompanion: "She remembers this",
 
   // Composer
   typeMessagePlaceholder: "Type a message to your companion… (Enter to send, Shift+Enter for newline)",
@@ -509,6 +513,8 @@ const zh: Messages = {
   editMemory: "编辑记忆",
   archiveMemory: "归档记忆",
   deleteMemory: "删除记忆",
+  originPlayer: "我告诉她的",
+  originCompanion: "她自己记得的",
 
   // Composer
   typeMessagePlaceholder: "给伴侣发送消息… (Enter 发送, Shift+Enter 换行)",

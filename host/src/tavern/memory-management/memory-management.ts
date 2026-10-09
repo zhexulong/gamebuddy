@@ -121,6 +121,10 @@ export function createMemoryManagementService(
         content: row.content,
         category: row.category,
         status: row.status,
+        // The product's own vocabulary, mapped once here: the store says `historian | agent |
+        // dreamer | user`, and the player only needs to know whose memory it is. Everything that is
+        // not the player's own writing is the companion's, including her own `ctx_memory` writes.
+        origin: row.sourceType === "user" ? ("player" as const) : ("companion" as const),
         pinned: row.status === "permanent",
       });
     });

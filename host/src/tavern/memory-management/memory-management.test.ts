@@ -218,9 +218,9 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
       listMemories: async (input) => {
         if (input.continuityId !== manifest.principal.continuityId) throw new Error("gamebuddy_memory_continuity_mismatch");
         return [
-          { stateToken: "tok_abc_original", content: "  The farmer  loves  blueberries.   ", category: "semantic", status: "active" },
-          { stateToken: "tok_xyz_original", content: "Mira is a forest spirit.", category: "interaction", status: "permanent" },
-          { stateToken: "tok_789_original", content: "Old quest notes.", category: "semantic", status: "archived" },
+          { sourceType: "historian", stateToken: "tok_abc_original", content: "  The farmer  loves  blueberries.   ", category: "semantic", status: "active" },
+          { sourceType: "historian", stateToken: "tok_xyz_original", content: "Mira is a forest spirit.", category: "interaction", status: "permanent" },
+          { sourceType: "historian", stateToken: "tok_789_original", content: "Old quest notes.", category: "semantic", status: "archived" },
         ];
       },
     });
@@ -237,6 +237,9 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
     process.stdout.write(JSON.stringify({
       result,
       hasPermanent: result.memories.some((m) => m.status === "permanent" && m.pinned === true),
+      // Provenance reaches the player: the store only distinguishes the player's own writing from what
+      // the companion's machinery produced, and that is the distinction a player audits.
+      origins: Object.freeze(result.memories.map((m) => m.origin)),
       hasActiveUnpinned: result.memories.some((m) => m.status === "active" && m.pinned === false),
       hasArchivedUnpinned: result.memories.some((m) => m.status === "archived" && m.pinned === false),
       leakedRaw,
@@ -263,11 +266,14 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
   assert.equal(results.leakedRaw, false);
   assert.equal(results.contentLeak, true);
   assert.equal(results.stableRevision, true);
-  assert.equal(results.schemaOk, true);
-  // Exposure is exactly the bounded player-managed browser DTO, nothing else.
-  for (const keys of results.exposedKeys as readonly (readonly string[])[]) {
-    assert.deepEqual(keys, ["category", "content", "handle", "pinned", "status", "title"]);
-  }
+    assert.equal(results.schemaOk, true);
+    // Every fixture row is a system-written row, so the projection must call it the companion's - the
+    // mapping is the whole point of carrying provenance at all.
+    assert.deepEqual(results.origins, ["companion", "companion", "companion"]);
+    // Exposure is exactly the bounded player-managed browser DTO, nothing else.
+    for (const keys of results.exposedKeys as readonly (readonly string[])[]) {
+      assert.deepEqual(keys, ["category", "content", "handle", "origin", "pinned", "status", "title"]);
+    }
   assert.equal(results.projectionRevisionLen, 43);
   assert.equal((results.afterClose as { ok: boolean }).ok, false);
   assert.equal(results.continuityId, "continuity_01");
@@ -368,13 +374,13 @@ test("mounted memory service reads the exact embedded runtime's vendor Memory pa
 
 test("mounted memory service mutates only after projection CAS and always returns a fresh safe reread", async () => {
   const results = await mounted(`
-    let rows = [{ stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
+    let rows = [{ sourceType: "historian", stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
     const writes = [];
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async ({ content }) => {
         writes.push({ operation: "create", content });
-        rows = [...rows, { stateToken: "tok_created", content, category: "semantic", status: "active" }];
+        rows = [...rows, { sourceType: "historian", stateToken: "tok_created", content, category: "semantic", status: "active" }];
       },
       update: async ({ stateToken, content }) => {
         writes.push({ operation: "update", stateToken, content });
@@ -414,7 +420,7 @@ test("mounted memory service rejects concurrent creates sharing the same project
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async ({ content }) => {
-        rows = [...rows, { stateToken: "tok_" + content, content, category: "semantic", status: "active" }];
+        rows = [...rows, { sourceType: "historian", stateToken: "tok_" + content, content, category: "semantic", status: "active" }];
       },
       update: async () => { throw new Error("unexpected update"); },
       archive: async () => { throw new Error("unexpected archive"); },
@@ -449,12 +455,12 @@ test("mounted memory service rejects concurrent creates sharing the same project
 
 test("mounted memory service maps a vendor CAS conflict to 409 without a stale success projection", async () => {
   const results = await mounted(`
-    let rows = [{ stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
+    let rows = [{ sourceType: "historian", stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async () => { throw new Error("unexpected create"); },
       update: async () => {
-        rows = [{ stateToken: "tok_newer", content: "Concurrent writer won", category: "semantic", status: "active" }];
+        rows = [{ sourceType: "historian", stateToken: "tok_newer", content: "Concurrent writer won", category: "semantic", status: "active" }];
         throw new Error("Memory state token was not found or is stale");
       },
       archive: async () => { throw new Error("unexpected archive"); },
