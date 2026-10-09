@@ -291,3 +291,36 @@ test("reports terminal and fixture-integrity failures together after transaction
   assert.deepEqual((await readdir(root)).sort(), ["AppData", "fixture", "game", "loader", "probe"]);
   await rm(root, { recursive: true, force: true });
 });
+
+/**
+ * The owner ruling: this runner stages its working save inside the REAL Stardew
+ * saves root, so the fixture manifest may only ever name a slot this tooling
+ * created. A manifest that names a save the player owns -- a `GameBuddyFarm_*`
+ * companion world included -- is refused loudly, before any staging directory,
+ * rename or removal under the saves root, rather than being resolved through.
+ */
+test("a fixture manifest can never name a save the player owns", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-manifest-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixtureRoot = await fixture(root);
+  const manifestPath = join(fixtureRoot, "fixture-manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const companionSlot = "GameBuddyFarm_451234657";
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      ...manifest,
+      saveDirectoryName: companionSlot,
+      files: manifest.files.map((file) => ({
+        ...file,
+        path: file.path.replace("GameBuddyFixtureTest_123", companionSlot),
+      })),
+    }),
+  );
+
+  await assert.rejects(
+    readFixtureManifest(fixtureRoot),
+    /p4_runtime_fixture_manifest_invalid/,
+    "a non-fixture slot name must be refused, not staged or removed",
+  );
+});
