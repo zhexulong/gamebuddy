@@ -1380,15 +1380,22 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool TryReadObserveSceneAffordance(JsonElement value, out ObserveSceneAffordancePayload? affordance)
     {
         affordance = null;
-        if (!HasExactProperties(value, "ref", "kind", "name", "distance", "direction", "actionHint", "reachable")
+        // `reachable` is OPTIONAL on the wire: it is written only when the observation could measure it, because an
+        // explicit `null` costs bytes without carrying information (measured: it pushed the golden payload from 571
+        // to 622 bytes and the worst-case fill past the headroom the byte ceiling reserves). ABSENT and `null` both
+        // mean undecided, and NEITHER may be read as `false`: "nobody measured this" is not "you cannot go there".
+        bool hasReachable = value.TryGetProperty("reachable", out JsonElement reachableElement);
+        string[] expectedNames = hasReachable
+            ? new[] { "ref", "kind", "name", "distance", "direction", "actionHint", "reachable" }
+            : new[] { "ref", "kind", "name", "distance", "direction", "actionHint" };
+        bool? reachable = null;
+        if (!HasOptionalProperties(value, expectedNames)
             || !ReadSceneReference(value.GetProperty("ref"), out string? reference)
             || !ReadSceneText(value.GetProperty("name"), 128, out string? name)
             || !value.GetProperty("distance").TryGetInt32(out int distance)
             || distance is < 0 or > 30
             || !TryReadSceneOptionalText(value.GetProperty("actionHint"), 160, out string? actionHint)
-            // `null` is UNDECIDED and must survive as null: reading an absent-or-null field as `false` would publish
-            // "you cannot act on this" for a target nobody measured.
-            || !TryReadSceneOptionalBoolean(value.GetProperty("reachable"), out bool? reachable)
+            || (hasReachable && !TryReadSceneOptionalBoolean(reachableElement, out reachable))
             || value.GetProperty("kind").ValueKind != JsonValueKind.String
             || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "tree" or "animal" or "forage" or "door" or "machine" or "water_source" or "weed" or "stone" or "debris" or "artifact_spot")
             || value.GetProperty("direction").ValueKind != JsonValueKind.String
@@ -1403,6 +1410,37 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             value.GetProperty("direction").GetString()!,
             actionHint,
             reachable);
+        return true;
+    }
+
+    /// <summary>
+    /// The exactness rule of <see cref="HasExactProperties"/> for a record whose optional members may be present or
+    /// absent: unknown and duplicated names still fail, and absence is allowed only from the tail of
+    /// <paramref name="names"/> onward, so a required field cannot go missing while an optional one is present.
+    /// </summary>
+    private static bool HasOptionalProperties(JsonElement value, string[] names)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+            return false;
+        HashSet<string> expected = new(names, StringComparer.Ordinal);
+        HashSet<string> actual = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!expected.Contains(property.Name) || !actual.Add(property.Name))
+                return false;
+        }
+        for (int index = 0; index < names.Length; index += 1)
+        {
+            if (actual.Contains(names[index]))
+                continue;
+            // First absent name: every later name must be absent as well.
+            for (int later = index; later < names.Length; later += 1)
+            {
+                if (actual.Contains(names[later]))
+                    return false;
+            }
+            return true;
+        }
         return true;
     }
 

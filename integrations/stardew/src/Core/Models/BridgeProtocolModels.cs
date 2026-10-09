@@ -737,9 +737,13 @@ public sealed record ObserveSceneAffordancePayload(
     string Direction,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionHint = null,
     // Whether the actor can act on this affordance from where it stands (walk onto the tile or stand beside it).
-    // `null` is UNDECIDED -- the reachability probe exceeded its budget -- and is written explicitly, because an
-    // omitted field would be read as `false` and turn "we could not measure" into "you cannot go there".
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? Reachable = null
+    //
+    // OMITTED when undecided: the projection cannot measure it (no probe) or the probe exceeded its budget, and
+    // writing an explicit `null` cost 17 bytes per affordance for no information -- measured, it pushed the golden
+    // payload from 571 to 622 bytes and the worst-case fill past the headroom reserve the byte ceiling keeps.
+    // The readers (Core `BridgeProtocol` and the Host validator) define ABSENT as undecided, which is why `null`
+    // and "absent" must never mean `false`.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Reachable = null
 );
 
 public sealed record ObserveSceneResultPayload(

@@ -781,6 +781,11 @@ internal sealed class StardewBodyController
         GameLocation? location = actor.currentLocation;
         if (location is null)
             return null;
+        // A location without a usable map (headless, or mid-load) has no walkable component to report. "No claim"
+        // is the honest answer, and the live probe fails closed the same way -- the integration suite caught this
+        // as a NullReferenceException from a test that runs no game at all.
+        if (location.map is null || location.map.Layers.Count == 0)
+            return null;
         var layer = location.map.Layers[0];
         HashSet<Point>? reachable = ReachableTiles(
             new Point((int)actor.Tile.X, (int)actor.Tile.Y),
