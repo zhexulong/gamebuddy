@@ -53,13 +53,27 @@
  * MEASURED 2026-10-08 (decisive run, `GAMEBUDDY_CHAPTER_FOLD_FORCE=1`, root kept): 59 passes,
  * `last_input_tokens = 16186`, `last_context_percentage = 2.16%` - well past the trigger, and the
  * vendor logged `proactive fire` from pass 29 onward - yet `compartments = 0` and no chapter ever
- * reached m[0]. So the trigger fires and the historian still publishes nothing. The next candidate,
- * and the reason this fixture cannot simply wait longer: the historian runs as an EMBEDDED subagent
- * (`resolveHistorianFromConfig` returns an `EmbeddedPiHistorianRunner` in this mode) and its model
- * registry is bound post-construction through the Host's `bindHistorianRunner` seam. A fire-and-forget
- * run that fails because that seam is not driven leaves no trace in the session at all - which is
- * exactly the shape of `compartments = 0` here. Verify that seam (and capture the runner's own
- * failure) before this fixture can assert anything about chapters.
+ * reached m[0].
+ *
+ * ANSWER (same run): `historian_runs = 0` rows. That table is written once in the runner's `finally`
+ * on EVERY exit path, so zero rows means the runner was never dispatched - and the vendor's own code
+ * says why, right after the trigger returns shouldFire:true (context-handler.ts:4846):
+ *
+ *   // Headless Pi exits after agent_end without dispatching session_shutdown.
+ *   // Leave the eligible history in the store for the next interactive pass.
+ *   if (!ctx.hasUI) return;
+ *   triggered = true;
+ *   sessionLog(sessionId, `historian trigger fired (reason=...) - spawning subagent`);
+ *
+ * A headless Pi host therefore NEVER spawns the historian. The `spawning subagent` line is absent
+ * from this fixture's captured vendor log, which is the same fact from the other side.
+ *
+ * This is the answer to H's question, and it is bigger than the fixture: GameBuddy's embedded runtime
+ * is a headless Pi host, so on it the historian never runs, no compartment is ever created, the
+ * decayed-history block stays empty, and a chapter can never be sealed - whatever
+ * `execute_threshold_*` is set to. The threshold work above is still true and still necessary, but it
+ * is not the binding gate. This fixture cannot assert a fold until the product decides how the
+ * historian runs on the embedded path; until then it is SKIPPED, never green.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
