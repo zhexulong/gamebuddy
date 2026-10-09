@@ -879,6 +879,79 @@ public sealed class BridgeProtocolSerializationTests
     }
 
     [Fact]
+    public void ObserveSceneResult_RoundTripsUndecidedAndMeasuredReachability()
+    {
+        // `reachable` is tri-state and the round trip must preserve all three, because the difference between them is
+        // the point of the field: `false` = measured and no; absent or null = nobody measured. Reading either of the
+        // last two as `false` would tell the Agent it cannot go somewhere that was never checked.
+        var undecided = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null);
+        var reachable = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null, true);
+        var blocked = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "tree", "Tree", 2, "West", "chop_tree_source", false);
+
+        RoundTrip(undecided).Reachable.Should().BeNull();
+        RoundTrip(reachable).Reachable.Should().BeTrue();
+        RoundTrip(blocked).Reachable.Should().BeFalse();
+
+        // Undecided costs no bytes: the payload that carries no measurement must not carry the field either.
+        BridgeProtocol.TrySerialize(Envelope(undecided), out string undecidedJson, out _).Should().BeTrue();
+        BridgeProtocol.TrySerialize(Envelope(reachable), out string reachableJson, out _).Should().BeTrue();
+        undecidedJson.Should().NotContain("reachable");
+        reachableJson.Should().Contain("\"reachable\":true");
+    }
+
+    [Fact]
+    public void TryDeserializeObserveSceneResult_TreatsAnExplicitNullAsUndecided()
+    {
+        // Built by mutating a payload the serializer itself produced, so nothing but `reachable` is in question.
+        string canonical = SerializedEnvelope(new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null));
+        canonical.Should().NotContain("reachable");
+        string withNull = canonical.Replace("\"actionHint\":null", "\"actionHint\":null,\"reachable\":null");
+        withNull.Should().NotBe(canonical);
+
+        BridgeProtocol.TryDeserializeObserveSceneResult(withNull, out var envelope, out string reasonCode).Should().BeTrue(reasonCode);
+        envelope!.Payload.Affordances.Single().Reachable.Should().NotHaveValue();
+    }
+
+    private static string SerializedEnvelope(ObserveSceneAffordancePayload affordance)
+    {
+        BridgeProtocol.TrySerialize(Envelope(affordance), out string json, out string serializeReason).Should().BeTrue(serializeReason);
+        return json;
+    }
+
+    private static ObserveSceneAffordancePayload RoundTrip(ObserveSceneAffordancePayload affordance)
+    {
+        BridgeProtocol.TrySerialize(Envelope(affordance), out string json, out string serializeReason).Should().BeTrue(serializeReason);
+        BridgeProtocol.TryDeserializeObserveSceneResult(json, out var parsed, out string reason).Should().BeTrue(reason);
+        return parsed!.Payload.Affordances.Single();
+    }
+
+    private static BridgeEnvelope<ObserveSceneResultPayload> Envelope(ObserveSceneAffordancePayload affordance) =>
+        new(1, "msg_1", "corr_1", 1000L, SampleScope, "observe_scene_result", new ObserveSceneResultPayload(
+            "so1_AAAAAAAAAAAAAAAAAAAAAA", "Farm", "outdoor", new[] { affordance }, "ok", false, null));
+
+    [Fact]
+    public void TryDeserializeObserveSceneResult_RejectsAMalformedReachabilityField()
+    {
+        // Mutations of a payload the serializer produced, so each case isolates `reachable`: a string is not a boolean;
+        // a required field may not go missing while the optional one is present; an unknown field is still refused.
+        string measured = SerializedEnvelope(new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null, true));
+        measured.Should().Contain("\"reachable\":true");
+        string[] malformed =
+        {
+            measured.Replace("\"reachable\":true", "\"reachable\":\"no\""),
+            measured.Replace("\"name\":\"Crop\",", string.Empty),
+            measured.Replace("\"reachable\":true", "\"reachable\":true,\"extra\":1"),
+        };
+
+        foreach (string payload in malformed)
+        {
+            BridgeProtocol.TryDeserializeObserveSceneResult(payload, out var envelope, out string reasonCode).Should().BeFalse(payload);
+            reasonCode.Should().Be("invalid_observe_scene_result");
+            envelope.Should().BeNull();
+        }
+    }
+
+    [Fact]
     public void ObserveSceneResult_RejectsUnknownAffordanceKind()
     {
         var result = new ObserveSceneResultPayload(
