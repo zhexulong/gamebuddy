@@ -400,6 +400,12 @@ export function fixtureActions(action) {
   // -> retry succeeded within one native-local session.
   if (action === "tool_recovery_chain")
     return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  // Body-ownership live gate: the SAME till_soil fixture is enough, because the gate needs a Farm with
+  // reachable live tiles and nothing else - it creates the in-flight body itself by issuing a walk and a second
+  // directive while that walk is running. No fixture fact about ownership is created: the ownership under test is
+  // the product own.
+  if (action === "body_owner_hold")
+    return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   // Lane G resource-depletion recovery chain: the empty-can water_crop fixture
   // drives breakpoint rejected/watering_can_empty -> refill recovery -> retry
   // succeeded on the SAME crop target within one native-local session.

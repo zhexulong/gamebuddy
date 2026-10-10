@@ -395,7 +395,7 @@ function parseTargetCoordinates(value) {
 export function summarizeWithSoil(snapshot) {
   return { ...summarizeSnapshot(snapshot), soilTiles: snapshot.soilTiles?.length ?? 0 };
 }
-function validateNativeLocalFixtureConfig(value) {
+export function validateNativeLocalFixtureConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
   if (
     fixture?.Enable !== true ||

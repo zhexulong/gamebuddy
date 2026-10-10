@@ -1,17 +1,20 @@
 import {
   assertRequiredCapabilities,
+  connectNativeLocalClient,
   executeFresh,
   observeFresh,
+  readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
   waitForFreshSnapshot,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import {
   execute,
-  moveToReachableSoil,
   parseStrictEvidence,
   travelToFarm,
+  validateNativeLocalFixtureConfig,
 } from "./run-stardew-native-local-player-tool-recovery-chain-smoke.mjs";
 
 /**
@@ -35,7 +38,6 @@ import {
  * different gate, and this file must not be reported as if it were that one.
  */
 const SCENARIO = "native_till_soil_v1";
-const EXPECTED_ACTIONS = ["move_to_tile", "travel", "till_soil", "equip_tool"];
 const REQUIRED_CAPABILITIES = [
   "inspect_self",
   "move_to_tile",
@@ -56,15 +58,19 @@ export async function runBodyOwnerHoldSmoke(
 ) {
   const trace = [];
   const startedAt = Date.now();
-  validateNativeLocalFixtureConfig(config);
   try {
+    // INSIDE the try: a fixture-contract mismatch has to name itself in the result, not escape as a bare
+    // non-zero exit that the harness can only report as "did not pass".
+    validateNativeLocalFixtureConfig(config);
     let snapshot = await observeFresh(client);
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
-    // Reach a tile from which the fixture's soil is workable, so the walk below is a REAL approach to a real
-    // target rather than a move into open ground.
-    snapshot = await moveToReachableSoil(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
+    // No approach step here on purpose. The shared \`moveToReachableSoil\` helper exists to put the actor in reach
+    // of the till_soil fixture's ground, and it fails live when a waypoint is ALREADY reached: the move resolves
+    // immediately with \`target_reached\` instead of an accepted receipt, which its caller reads as a refusal. This
+    // gate needs no soil adjacency - only an idle actor on the Farm and a target far enough away to still be
+    // walking when the second directive is issued - so the step is omitted rather than worked around.
     if (snapshot.actionable !== true || snapshot.activeExecution != null)
       throw new Error(`body_owner_hold_not_idle:actionable=${snapshot.actionable};active=${snapshot.activeExecution?.action}`);
 
@@ -248,11 +254,19 @@ function singleRequestFor(snapshot) {
   return { ...snapshot, activeExecution: null };
 }
 
-function validateNativeLocalFixtureConfig(value) {
-  if (value === null || typeof value !== "object") throw new Error("invalid_native_local_fixture_config");
-  if (value.fixtureScenario !== SCENARIO)
-    throw new Error(`native_local_fixture_scenario_mismatch:expected=${SCENARIO};actual=${String(value.fixtureScenario)}`);
-  const actions = Array.isArray(value.actions) ? value.actions : [];
-  for (const action of EXPECTED_ACTIONS)
-    if (!actions.includes(action)) throw new Error(`native_local_fixture_action_missing:${action}`);
+
+
+// The CLI entry point. Its ABSENCE was a real defect: the harness runs this file directly, so a runner without
+// it imports the module and exits 0 - the batch read that as PASS while nothing had run at all, and the same
+// vacuity would silently bless any future runner written this way.
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
+  try {
+    const result = await runBodyOwnerHoldSmoke(session.client, session.receipts, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
+  }
 }

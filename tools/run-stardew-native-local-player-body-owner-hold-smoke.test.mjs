@@ -11,10 +11,19 @@ import { runBodyOwnerHoldSmoke } from "./run-stardew-native-local-player-body-ow
  * does not happen.
  */
 const CONFIG = {
-  fixtureScenario: "native_till_soil_v1",
-  actions: ["move_to_tile", "travel", "till_soil", "equip_tool"],
-  saveSlot: "fixture_slot",
-  logicalSaveSlot: "fixture_slot",
+  NativeLocalPlayerFixture: {
+    Enable: true,
+    Bootstrap: { Enable: false },
+    FixtureScenario: "native_till_soil_v1",
+    LogicalSaveName: "GameBuddyFixtureLane",
+    ObservedSaveSlot: "GameBuddyFixtureLane_451057191",
+  },
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
+  HostAutomation: { Enable: false },
+  HostFarmhandProvisioning: { Enable: false },
+  FarmhandProvisioner: { Enable: false },
 };
 
 const SOIL = [
@@ -122,17 +131,15 @@ test("the gate fails closed when the superseded walk never reaches a terminal", 
 });
 
 test("the gate refuses a fixture whose scenario or actions drifted", async () => {
-  // The fixture contract is validated BEFORE the run and throws, matching the sibling recovery-chain runner: a
-  // drifted fixture is a harness fault, not a blocked action, and must not be reportable as a product verdict.
+  // A drifted fixture is a harness fault rather than a product verdict, but it must still REPORT: an escaping
+  // throw leaves the harness able to say only "did not pass", which is the diagnosis failure this run hit live.
   const { client, receipts } = makeClient();
-  await assert.rejects(
-    () => runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, fixtureScenario: "native_move_v1" }),
-    /^Error: native_local_fixture_scenario_mismatch/,
-  );
-  await assert.rejects(
-    () => runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, actions: ["move_to_tile"] }),
-    /^Error: native_local_fixture_action_missing:/,
-  );
+  const drifted = await runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, NativeLocalPlayerFixture: { ...CONFIG.NativeLocalPlayerFixture, FixtureScenario: "native_move_v1" } });
+  assert.equal(drifted.state, "blocked");
+  assert.match(drifted.reasonCode, /^native_local_fixture_config_invalid/);
+  const unisolated = await runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, HostAutomation: { Enable: true } });
+  assert.equal(unisolated.state, "blocked");
+  assert.match(unisolated.reasonCode, /^native_local_fixture_topology_not_isolated/);
 });
 
 test("a walk target closer than three tiles is refused as too near to prove anything", async () => {

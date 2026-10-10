@@ -311,6 +311,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // -> retry succeeded within one native-local session over the till_soil
   // fixture. Not a new action; it grants no capability.
   tool_recovery_chain: "run-stardew-native-local-player-tool-recovery-chain-smoke.mjs",
+  // Body-ownership live gate: observes the in-flight owner facts on a real snapshot and proves the supersede
+  // the remedy guidance promises. Not a new action; it grants no capability.
+  body_owner_hold: "run-stardew-native-local-player-body-owner-hold-smoke.mjs",
   // Lane G resource-depletion recovery-chain harness: drives breakpoint
   // rejected/watering_can_empty -> refill_watering_can recovery -> water_crop
   // retry succeeded on the same target within one native-local session over the
