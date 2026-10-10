@@ -34,6 +34,7 @@ function connectionState(overrides = {}) {
     modelId: "qwen2.5-coder:7b",
     modelLabel: "qwen2.5-coder:7b",
     thinkingLevel: "high",
+    allowedThinkingLevels: ["low", "high", "max"],
     baseUrl: "http://127.0.0.1:11434/v1",
     failure: null,
     lastCheckedAtMs: null,
