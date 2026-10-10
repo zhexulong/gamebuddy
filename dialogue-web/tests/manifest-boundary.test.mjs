@@ -66,10 +66,13 @@ test("Dialogue Web runtime boundary keeps the Vite toolchain build-only", async 
   const runtimeDependencies = Object.keys(manifest.dependencies ?? {}).sort();
   const developmentDependencies = Object.keys(manifest.devDependencies ?? {}).sort();
 
-  assert.deepEqual(runtimeDependencies, ["lucide-react", "react", "react-dom"]);
+  // The runtime set is a deliberate allowlist: the three UI libraries plus the
+  // two browser-only rendering libraries (marked + DOMPurify) the companion
+  // prose renderer needs. Everything else stays build/test-only.
+  assert.deepEqual(runtimeDependencies, ["dompurify", "lucide-react", "marked", "react", "react-dom"]);
   assert.deepEqual(
     developmentDependencies,
-    ["@playwright/test", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "tsx", "typescript", "vite"].sort(),
+    ["@axe-core/playwright", "@playwright/test", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "tsx", "typescript", "vite"].sort(),
   );
 
   // Vite and its PostCSS/nanoid transitive closure are used only by these
