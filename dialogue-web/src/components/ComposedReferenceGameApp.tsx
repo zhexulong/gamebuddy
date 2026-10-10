@@ -45,6 +45,8 @@ import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
+import { CharactersPanel } from "./CharactersPanel";
+import { createManagementPipelineApi } from "../management-pipeline-api";
 
 
 
@@ -196,6 +198,12 @@ export function ComposedReferenceGameApp() {
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const worldInfoEntryRef = useRef<HTMLButtonElement>(null);
   const managementApiRef = useRef(createComposedManagementPanelsApi());
+  // The Characters surface uses the same management pipeline client the management
+  // surface uses, on this shell's own origin: the composed root now serves those
+  // routes through the one broker session, so the library, the Persona/Scenario/
+  // Greeting records and the reviewed card import are the real ones rather than a
+  // second implementation (design/28 §2).
+  const managementPipelineApiRef = useRef(createManagementPipelineApi());
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -1499,7 +1507,11 @@ export function ComposedReferenceGameApp() {
                 icon={Users}
                 restoreFocusTo={charactersEntryRef}
               >
-                <p className="state-placeholder">{labels().charactersUnavailable}</p>
+                <CharactersPanel
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                />
               </SurfaceView>
             )}
             {shownSurface === SETTINGS_PANEL && (

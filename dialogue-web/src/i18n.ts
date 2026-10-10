@@ -718,7 +718,7 @@ const zh: Messages = {
   appMark: "GB",
   chatPanel: "聊天",
   gamePanel: "游戏",
-  chatsPanel: "聊天",
+  chatsPanel: "会话",
   charactersPanel: "角色",
   settingsPanel: "设置",
   memoryPanel: "记忆",
