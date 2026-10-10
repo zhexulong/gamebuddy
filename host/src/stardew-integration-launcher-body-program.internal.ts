@@ -148,10 +148,13 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
   const local = options;
   const executionGate = { executable: true };
   let closed = false;
-  // Liveness: an invalidated receipt closes the launcher-owned record used by
-  // preview/materializer immediately, while the native pipe stays open (no
-  // replay, retry, or transport close). The invalidated wake, gate freeze, and
-  // rejection behavior are preserved.
+  // Liveness: an invalidated receipt closes the launcher-owned records used by
+  // preview/materializer immediately (see `isLauncherClosed`), while the native
+  // pipe stays open (no replay, retry, or transport close). The invalidated wake
+  // and the launcher-port rejections are preserved; `executionGate` is deliberately
+  // NOT closed, so ordinary action dispatch keeps working after an interruption
+  // (see the invalidated branch in `bridge.onFact`). A real `disconnect` still
+  // closes the gate, because that must stop everything.
   let invalidated = false;
   const bootstrapFacts: WorldFact[] = [];
   const bufferedFacts: Array<readonly [WorldFact, LocalStardewBridgeFact]> = [];
@@ -201,7 +204,16 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     if (fact.type === "execution_receipt") {
       const receipt = fact.payload;
       if (receipt.state === "invalidated") {
-        executionGate.executable = false;
+        // This deliberately does NOT close `executionGate`.
+        //
+        // The invalidated wake freezes the launcher-owned records (presentation and body program) through
+        // `isLauncherClosed`, which is what stops an interrupted BODY PROGRAM. Also closing `executionGate`
+        // forbade ORDINARY action dispatch, and the receipt that invalidates an execution is exactly what a
+        // native modal interruption produces - so the one tool that could clear the modal (`dismiss_modal`) was
+        // refused by the gate the modal had just closed. Observed live on ladder 6: the Agent called
+        // `dismiss_modal` FIVE times and every call returned `integration_not_ready`, so it could not recover by
+        // construction, no matter what it decided. `disconnect()` still closes the gate: a genuine
+        // disconnection must stop everything.
         invalidated = true;
         publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
       } else if (isTerminalExecutionState(receipt.state))

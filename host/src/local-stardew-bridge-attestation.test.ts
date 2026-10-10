@@ -1064,7 +1064,11 @@ test("invalidated execution receipt immediately closes launcher-owned preview an
             }));
             await until(() => client.state.latestReceipt?.state === "invalidated", "invalidated_receipt_not_delivered");
             assert.equal(client.state.connected, true);
-            assert.equal(launch.connection.executionGate?.executable, false);
+            // The gate stays OPEN: an invalidated receipt freezes the launcher-owned program/presentation
+            // records (asserted just below), but it must not forbid ordinary action dispatch - otherwise the
+            // action that resolves the interruption is refused by the gate the interruption closed, and the Agent
+            // is trapped by construction (ladder 6 tried `dismiss_modal` five times and got integration_not_ready).
+            assert.equal(launch.connection.executionGate?.executable, true);
             assert.throws(
               () => materializeAuthenticatedStardewLaunchPorts(current, admission),
               /authenticated_stardew_launch_ports_required/,
