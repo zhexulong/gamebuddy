@@ -422,7 +422,10 @@ async function projectComposedChatSnapshot(
   ) {
     throw new Error("composed_reference_game_chat_snapshot_invalid");
   }
-  return snapshot as TavernStateSnapshotV1;
+  // The validator above is what establishes this shape at runtime; the assertion
+  // is only how the literal's inferred type reaches the contract's nominal one,
+  // and it goes through `unknown` so it cannot silently widen to a near-miss.
+  return snapshot as unknown as TavernStateSnapshotV1;
 }
 
 function navigationItem(itemId: string) {
