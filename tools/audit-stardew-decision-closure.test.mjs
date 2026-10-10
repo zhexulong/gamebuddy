@@ -68,7 +68,11 @@ test("the current workspace satisfies all three decision-closure assertions", ()
   assert.equal(byName.get(ASSERTION_FACT_SURFACE).checked, 2, "both declared RuntimeFacts are audited");
 });
 
-test("injecting a RuntimeFact key that is not on the observation surface is reported red", () => {
+test("a RuntimeFact nothing can read is reported red", () => {
+  // The failure this gate exists for: the Mod declares a fact, no snapshot/receipt/active-execution key
+  // projects it, and it is not an ADR-006 binding fact either - so the Agent can never read back what the
+  // action promised. An earlier version of this case mutated the published surface instead, which could not
+  // fail: the surface is an export of this very declaration.
   const injected = `${sourceOf(MOD_DEFINITIONS_PATH).replace(
     '["machine_target_id"] = "string"',
     '["machine_target_id"] = "string", ["injected_runtime_fact"] = "string"',
@@ -77,30 +81,37 @@ test("injecting a RuntimeFact key that is not on the observation surface is repo
 
   assert.equal(report.verdict, "blocked");
   const findings = report.assertions.find((entry) => entry.name === ASSERTION_FACT_SURFACE).findings;
-  const named = findings.filter((entry) => entry.code === "runtime_fact_not_on_observation_surface");
+  const named = findings.filter((entry) => entry.code === "runtime_fact_not_readable");
   assert.deepEqual(
     named.map((entry) => entry.identity),
     ["injected_runtime_fact"],
-    "the audit must name the injected fact",
+    "the audit must name the unreadable fact",
   );
 });
 
-test("removing a declared RuntimeFact key from the observation surface is reported red", () => {
+test("stripping a fact's registration is reported as the DRIFT it is, not as unreadability", () => {
+  // Removing the registration does NOT make a binding fact unreadable - the action program still consumes it -
+  // so it must be reported under its own code. Reporting it as unreadability is what the circular version did,
+  // and that is why it could not distinguish a stale artifact from a promise nobody can read.
   const overrides = artifactWith((artifact) => {
-    const inspect = artifact.actions.find((action) => action.actionId === "machine_inspect");
-    inspect.outputFacts = {};
+    artifact.actions.find((action) => action.actionId === "machine_inspect").outputFacts = {};
   });
   const report = auditStardewDecisionClosure({ overrides });
 
   assert.equal(report.verdict, "blocked");
-  const named = report.assertions
-    .find((entry) => entry.name === ASSERTION_FACT_SURFACE)
-    .findings.filter((entry) => entry.code === "runtime_fact_not_on_observation_surface");
+  const findings = report.assertions.find((entry) => entry.name === ASSERTION_FACT_SURFACE).findings;
   assert.deepEqual(
-    named.map((entry) => entry.identity),
+    findings.filter((entry) => entry.code === "declared_fact_not_registered_on_surface").map((entry) => entry.identity),
     ["machine_target_id"],
   );
+  assert.deepEqual(
+    findings.filter((entry) => entry.code === "runtime_fact_not_readable"),
+    [],
+    "a binding fact is still readable when its registration is stale; that is a drift finding, not a closure one",
+  );
 });
+
+
 
 test("a RuntimeFact registered with a different kind is reported red", () => {
   const overrides = artifactWith((artifact) => {
@@ -178,6 +189,34 @@ test("a read_only observation that declares a write effect is reported red", () 
   assert.deepEqual(codesFor(report, ASSERTION_POSTCONDITION), ["contract_readonly_declares_write"]);
 });
 
+test("a promise nobody can read stays red even when the surface is regenerated too", () => {
+  // The case that proves the criterion is no longer circular. A COMPLETE change - the Mod declares a fact AND
+  // the published artifact is regenerated to register it, which is what the real workflow does - satisfied the
+  // OLD check by construction, because that artifact is an export of this very declaration. The check now asks
+  // who can READ the fact, so it stays red however consistently the registration is updated.
+  const declared = sourceOf(MOD_DEFINITIONS_PATH).replace(
+    '["machine_target_id"] = "string"',
+    '["machine_target_id"] = "string", ["nobody_reads_me"] = "string"',
+  );
+  assert.notEqual(declared, sourceOf(MOD_DEFINITIONS_PATH), "the mutation must actually apply");
+  const registered = artifactWith((artifact) => {
+    artifact.actions.find((action) => action.actionId === "machine_inspect").outputFacts = {
+      machine_target_id: "string",
+      nobody_reads_me: "string",
+    };
+  });
+  const report = auditStardewDecisionClosure({ overrides: { [MOD_DEFINITIONS_PATH]: declared, ...registered } });
+
+  assert.equal(report.verdict, "blocked");
+  const findings = report.assertions.find((entry) => entry.name === ASSERTION_FACT_SURFACE).findings;
+  assert.deepEqual(
+    findings.filter((entry) => entry.code === "runtime_fact_not_readable").map((entry) => entry.identity),
+    ["nobody_reads_me"],
+    "registering a fact consistently does not make it readable",
+  );
+  // The drift legs stay quiet, so the redness comes from readability alone and not from a stale artifact.
+  assert.deepEqual(findings.filter((entry) => entry.code === "declared_fact_not_registered_on_surface"), []);
+});
 test("the surface-parseability precondition is reported under the fact-surface assertion", () => {
   const overrides = artifactWith((artifact) => {
     artifact.actions.find((action) => action.actionId === "till_soil").postcondition = { name: "" };

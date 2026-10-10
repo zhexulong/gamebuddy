@@ -25,8 +25,10 @@
 //   - SNAPSHOT_KEYS            validateSnapshot's whitelist: the Agent's snapshot view
 //   - ExecutionReceipt fields  the receipt projection
 //   - ActiveExecution fields   the live occupant projection
-// plus the typed fact identities the published action surface registers -- the
-// facts a later action can read back through the action-program binding contract.
+// A declared fact is readable when the Agent can see it on that surface, OR when it is one of the
+// explicitly enumerated ADR-006 BINDING facts a later action consumes. The published action surface is
+// deliberately NOT treated as evidence of readability: it is an export of the same declaration, so
+// accepting it made this assertion a tautology.
 //
 // RuntimeFact(a) is taken from the Mod source of truth:
 // integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs. The published
@@ -52,6 +54,17 @@ export const ASSERTION_FACT_SURFACE = "runtime-fact-on-observation-surface";
 export const PROTOCOL_PATH = "host/src/protocol.ts";
 export const MOD_DEFINITIONS_PATH = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 export const ACTION_SURFACE_PATH = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
+
+/**
+ * The ADR-006 BINDING facts: facts an action declares as output and a LATER action consumes through the
+ * action-program binding contract, without them ever appearing in the Agent's snapshot. They are the only
+ * facts exempt from the readability check, and they are enumerated here - rather than derived from the
+ * declaration - because deriving them is exactly what made the check circular before.
+ *
+ *  - `arrival`            the destination a completed navigation reached (consumed by the action program)
+ *  - `machine_target_id`  the machine an inspection bound (consumed by a later machine operation)
+ */
+const ADR006_BINDING_FACTS = Object.freeze(new Set(["arrival", "machine_target_id"]));
 
 /** The postcondition a read_only observation action declares; it names no world change. */
 const OBSERVATION_POSTCONDITION = "observation_complete";
@@ -284,19 +297,33 @@ function assertFactSurface({ artifact, surfaceFacts, conflicts, declaredFacts, o
     );
   }
   for (const [name, kind] of sortedEntries(declaredFacts)) {
-    if (observationKeys.has(name)) continue;
+    // A declared fact is readable when the Agent can SEE it, or when a later action consumes it as an ADR-006
+    // binding fact. The published surface is deliberately NOT accepted as evidence of readability: it is an
+    // export of this very declaration, so accepting it would make this loop a tautology (which is what an
+    // independent review found and reproduced, and why the earlier version could not go red for a fact nobody
+    // could read).
+    if (observationKeys.has(name) || ADR006_BINDING_FACTS.has(name)) continue;
+    push(
+      name,
+      "runtime_fact_not_readable",
+      `the Mod declares RuntimeFact '${name}:${kind}' and nothing can read it: no snapshot/receipt/active-execution key projects it, and it is not an ADR-006 binding fact`,
+    );
+  }
+  // Drift between the declaration and its published registration is a DIFFERENT failure (a stale artifact), and
+  // it is reported as such rather than being allowed to satisfy the check above.
+  for (const [name, kind] of sortedEntries(declaredFacts)) {
     const registered = surfaceFacts.get(name);
-    if (registered === undefined) {
-      push(
-        name,
-        "runtime_fact_not_on_observation_surface",
-        `the Mod declares RuntimeFact '${name}:${kind}' but no snapshot/receipt key and no published action registers it`,
-      );
-    } else if (registered.kind !== kind) {
+    if (registered !== undefined && registered.kind !== kind) {
       push(
         name,
         "runtime_fact_kind_mismatch",
         `the Mod declares '${name}:${kind}' but ${registered.actionId} registers it as '${registered.kind}'`,
+      );
+    } else if (registered === undefined) {
+      push(
+        name,
+        "declared_fact_not_registered_on_surface",
+        `the Mod declares RuntimeFact '${name}:${kind}' but the published action surface does not register it (stale artifact?)`,
       );
     }
   }
