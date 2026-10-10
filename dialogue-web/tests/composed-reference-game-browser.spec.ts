@@ -2005,3 +2005,229 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
   await expect(surface.getByText(refusedContent, { exact: true })).toHaveCount(0);
   await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
 });
+
+
+/**
+ * The product Settings surface's connection journey (design/28 §1, §5.1).
+ *
+ * The owner reported that Settings showed neither an API key field nor model
+ * selection. This is the end-to-end proof over the frozen routes: the
+ * OpenAI-compatible entry (the one catalog entry that declares `apiKey` and
+ * `baseUrl`) creates a draft record whose credential is write-only, the
+ * Host-owned probe is run, the now-ready record is activated, and the record's
+ * own thinking-level control goes through `/model`. A catalog provider with a
+ * real model dropdown is mounted alongside it, so both "API key" and "model
+ * selection" are exercised rather than asserted from source alone.
+ *
+ * The credential assertion is the point of the test: the typed key must be sent
+ * exactly once, and must never be readable from the document afterwards.
+ */
+test("the product Settings surface creates, tests and activates a connection whose API key never reaches the document", async ({ page }) => {
+  const connectionId = "H".repeat(42) + "A";
+  const baseUrl = "http://127.0.0.1:11434/v1";
+  const apiKey = "sk-local-probe-secret-0001";
+  const modelId = "qwen2.5-coder:7b";
+  const escapeHatch = {
+    providerId: "openai-compatible",
+    label: "OpenAI-compatible",
+    setupFields: ["apiKey", "baseUrl", "apiShape", "modelId"],
+    allowedPlayerModels: [],
+    escapeHatch: true,
+    environmentManaged: false,
+  };
+  const catalogProvider = {
+    providerId: "openai",
+    label: "OpenAI",
+    setupFields: ["apiKey"],
+    allowedPlayerModels: [
+      { modelId: "gpt-4o", modelLabel: "GPT-4o", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
+      { modelId: "gpt-4o-mini", modelLabel: "GPT-4o mini", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "low" },
+    ],
+    escapeHatch: false,
+    environmentManaged: false,
+  };
+
+  const writes: Array<{ path: string; method: string; body: unknown; csrf: string | undefined }> = [];
+  let recordCreated = false;
+  let readiness: "configured" | "ready" = "configured";
+  let active = false;
+  let recordModelId = modelId;
+  let recordThinkingLevel = "high";
+
+  // The active selection is a narrower projection than a list row (it has no
+  // `providerId`/`configured`/`active`/`allowedThinkingLevels`), and the client
+  // validates it with an exact key set; emitting the row shape here is rejected.
+  const activeRow = () => ({
+    connectionId,
+    label: escapeHatch.label,
+    providerLabel: escapeHatch.label,
+    modelId: recordModelId,
+    modelLabel: recordModelId,
+    thinkingLevel: recordThinkingLevel,
+    readiness,
+    baseUrl,
+    failure: null,
+    lastCheckedAtMs: null,
+  });
+  const connectionRow = () => ({
+    connectionId,
+    label: escapeHatch.label,
+    providerId: escapeHatch.providerId,
+    providerLabel: escapeHatch.label,
+    configured: true,
+    readiness,
+    active,
+    modelId: recordModelId,
+    modelLabel: recordModelId,
+    thinkingLevel: recordThinkingLevel,
+    allowedThinkingLevels: ["low", "high"],
+    baseUrl,
+    failure: null,
+    lastCheckedAtMs: null,
+  });
+  const connectionState = () => ({
+    apiVersion: 1,
+    revision: 1,
+    active: active ? activeRow() : null,
+    connections: recordCreated ? [connectionRow()] : [],
+    providers: [escapeHatch, catalogProvider],
+  });
+
+  const record = (route: import("@playwright/test").Route): void => {
+    writes.push({
+      path: new URL(route.request().url()).pathname,
+      method: route.request().method(),
+      body: route.request().postDataJSON(),
+      csrf: route.request().headers()["x-csrf-token"],
+    });
+  };
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: "en-US" }) }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ devices: [], defaultSelectable: true }) }),
+  );
+  // The read route is singular and the create route plural: the frozen contract,
+  // and the reason each one has its own anchored pattern (the plural is a prefix
+  // of the singularity, so an unanchored glob would let either serve the other).
+  await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connections$/, async (route) => {
+    record(route);
+    recordCreated = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/test$/, async (route) => {
+    record(route);
+    readiness = "ready";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, connectionId, outcome: "ready", failure: null, state: connectionState() }),
+    });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/, async (route) => {
+    record(route);
+    active = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/model$/, async (route) => {
+    record(route);
+    const command = route.request().postDataJSON() as { modelId: string; thinkingLevel: string };
+    recordModelId = command.modelId;
+    recordThinkingLevel = command.thinkingLevel;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface).toBeVisible();
+  const panel = surface.locator("[data-connection-settings]");
+  await expect(panel).toBeVisible();
+
+  // The catalog entry really offers a model dropdown; the escape hatch offers
+  // the API key and base URL the owner was missing. Both are reachable from the
+  // one provider control.
+  await panel.locator("#connection-provider").selectOption("openai");
+  await expect(panel.locator("#connection-model")).toBeVisible();
+  await expect(panel.locator("#connection-model option")).toHaveCount(2);
+  await panel.locator("#connection-provider").selectOption("openai-compatible");
+  await expect(panel.locator("#connection-api-key")).toBeVisible();
+  await expect(panel.locator("#connection-base-url")).toBeVisible();
+  await expect(panel.locator("#connection-model-id")).toBeVisible();
+
+  await panel.locator("#connection-base-url").fill(baseUrl);
+  await panel.locator("#connection-api-key").fill(apiKey);
+  await panel.locator("#connection-model-id").fill(modelId);
+  await panel.getByRole("button", { name: "Save connection" }).click();
+
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({
+    path: "/api/tavern/v1/settings/connections",
+    method: "POST",
+    body: {
+      apiVersion: 1,
+      providerId: "openai-compatible",
+      apiKey,
+      baseUrl,
+      apiShape: "openai-completions",
+      modelId,
+    },
+    csrf: csrfToken,
+  });
+  // The credential is write-only: the request carried it once, and the document
+  // must not carry it at all - neither as markup, nor as rendered text, nor left
+  // behind in the field.
+  const documentHtml = await page.evaluate(() => document.documentElement.outerHTML);
+  const documentText = await page.evaluate(() => document.body.innerText);
+  expect(documentHtml).not.toContain(apiKey);
+  expect(documentText).not.toContain(apiKey);
+  await expect(panel.locator("#connection-api-key")).toHaveValue("");
+
+  await panel.getByRole("button", { name: "Test connection" }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}/test`,
+    method: "POST",
+    body: { apiVersion: 1, expectedRevision: 1 },
+    csrf: csrfToken,
+  });
+  await expect(panel.locator("[data-connection-row]")).toContainText("Ready");
+  await expect(documentHtml).not.toContain(apiKey);
+
+  await panel.getByRole("button", { name: "Save and activate" }).click();
+  await expect.poll(() => writes.length).toBe(3);
+  expect(writes[2]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+    method: "POST",
+    body: { apiVersion: 1, expectedRevision: 1 },
+    csrf: csrfToken,
+  });
+  await expect(panel.locator("[data-connection-active-value]")).toHaveText("OpenAI-compatible");
+
+  // The record's own model control is the `/model` route, not a second create.
+  await panel.locator(`#connection-level-${connectionId}`).selectOption("low");
+  await expect.poll(() => writes.length).toBe(4);
+  expect(writes[3]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}/model`,
+    method: "POST",
+    body: { apiVersion: 1, expectedRevision: 1, modelId, thinkingLevel: "low" },
+    csrf: csrfToken,
+  });
+});
