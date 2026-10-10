@@ -694,3 +694,28 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
   assert.deepEqual(unreadable, { observed: false, reason: "session_not_readable" });
   assert.equal(agentTurnFailureReason(unreadable), undefined);
 });
+
+test("waitForSessionQuiet reaches quiet when only body_trace pings follow a terminal", async () => {
+  // The regression: the first implementation compared a TIMESTAMP against an array index and scanned the whole
+  // slice since the turn for any meaningful fact, so 20s of quiet was unreachable whenever a terminal had ever
+  // arrived - a live ladder-6 run burned 31 minutes without writing a result. This exercises the real function
+  // with the real pattern: a body_trace ping every second plus ONE modal_interrupted, then nothing.
+  const source = readFileSync(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function waitForSessionQuiet(");
+  const end = source.indexOf("\n}\n", start) + 3;
+  assert.ok(start >= 0, "the quiet wait must exist");
+  const actionTrace = [];
+  const factLog = [];
+  const build = new Function("actionTrace", "factLog", "LADDER", `return (async () => { ${source.slice(start, end)}; return waitForSessionQuiet; })();`);
+  const waitForSessionQuiet = await build(actionTrace, factLog, "6");
+  let tick = 0;
+  const timer = setInterval(() => {
+    tick += 1;
+    factLog.push({ type: "semantic_event", reasonCode: "body_trace", evidence: null });
+    if (tick === 2) factLog.push({ type: "execution_receipt", reasonCode: "modal_interrupted", requestId: "r", executionId: "e" });
+  }, 200);
+  const turn = {};
+  const settled = await waitForSessionQuiet(turn, { dispatchesBeforeTurn: 0, quietMs: 600, timeoutMs: 5_000 });
+  clearInterval(timer);
+  assert.equal(settled.quieter, true, "a ping-only tail must reach quiet rather than run to the deadline");
+});

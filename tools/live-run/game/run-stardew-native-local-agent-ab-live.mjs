@@ -608,21 +608,30 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
  * instead of pretending the agent chose to do nothing.
  */
 async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_000, timeoutMs = 300_000 } = {}) {
-  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. Meaningful = execution_receipt,
-  // lifecycle or error; the Mod pings semantic_event/body_trace every few seconds, and counting that as motion
-  // made the 20s window unreachable — the live run hung for 31 minutes and never wrote a result.
+  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window.
+  // Meaningful = execution_receipt / lifecycle / error. The Mod pings semantic_event/body_trace every few
+  // seconds; counting that as motion made the window unreachable, so it is excluded. The previous version had a
+  // real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where lastFactAt was ms) and checked the
+  // WHOLE slice since the turn for any meaningful fact, so quiet was unreachable whenever a meaningful fact had
+  // EVER arrived. Track the last-observed INDEX and check only the newly-appended facts each second.
   const meaningful = (entry) => entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
-  const dispatchMark = dispatchesBeforeTurn;
-  const factMark = factLog.length;
+  let lastSeenDispatch = dispatchesBeforeTurn;
+  let lastSeenFact = factLog.length;
   let lastActionAt = Date.now();
   let lastFactAt = Date.now();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const actionMoved = actionTrace.length > dispatchMark || actionTrace.length > lastActionAt;
-    const factMoved = factLog.slice(factMark).some(meaningful) || factLog.slice(lastFactAt).some(meaningful);
-    if (actionMoved) lastActionAt = Date.now();
-    if (factMoved) lastFactAt = Date.now();
+    const actionMoved = actionTrace.length > lastSeenDispatch;
+    if (actionMoved) {
+      lastSeenDispatch = actionTrace.length;
+      lastActionAt = Date.now();
+    }
+    const factMoved = factLog.slice(lastSeenFact).some(meaningful);
+    if (factMoved) {
+      lastSeenFact = factLog.length;
+      lastFactAt = Date.now();
+    }
     if (Date.now() - lastActionAt >= quietMs && Date.now() - lastFactAt >= quietMs) {
       turn.quieter = true;
       break;
@@ -630,7 +639,6 @@ async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_00
   }
   return turn;
 }
-
 async function runAgentTurn(text, tools) {
   turnStartedAtMs = Date.now();
   sampleAdvertisedActions();
