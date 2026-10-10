@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from
 import { spawn } from "node:child_process";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSdkLock, sdkVersionSatisfiesLock } from "./dotnet-sdk-lock.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
@@ -51,12 +52,11 @@ async function resolveRepositoryDotnet() {
 }
 
 async function readLockedSdkVersion() {
-  let parsed;
-  try { parsed = JSON.parse(await readFile(resolve(repositoryRoot, "global.json"), "utf8")); }
-  catch { throw new Error("windows_bootstrap_guardian_dotnet_sdk_lock_invalid"); }
-  const version = parsed?.sdk?.version;
-  if (typeof version !== "string" || !expectedSdkVersionPattern.test(version)) throw new Error("windows_bootstrap_guardian_dotnet_sdk_lock_invalid");
-  return version;
+  try {
+    return parseSdkLock(await readFile(resolve(repositoryRoot, "global.json"), "utf8"));
+  } catch {
+    throw new Error("windows_bootstrap_guardian_dotnet_sdk_lock_invalid");
+  }
 }
 
 function minimalDotnetEnvironment() {
@@ -85,7 +85,7 @@ async function runBounded(command, args, { timeout = timeoutMs } = {}) {
 
 async function assertLockedSdk(dotnet) {
   const result = await runBounded(dotnet, ["--version"]);
-  if (result.code !== 0 || result.signal || result.stdout.trim() !== await readLockedSdkVersion()) throw new Error("windows_bootstrap_guardian_dotnet_sdk_drift");
+  if (result.code !== 0 || result.signal || !sdkVersionSatisfiesLock({ actual: result.stdout.trim(), lock: await readLockedSdkVersion() })) throw new Error("windows_bootstrap_guardian_dotnet_sdk_drift");
 }
 
 async function publishProject(dotnet, project, destination, properties = []) {

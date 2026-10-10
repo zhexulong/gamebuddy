@@ -3,6 +3,7 @@ import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 
 import { spawn } from "node:child_process";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSdkLock, sdkVersionSatisfiesLock } from "./dotnet-sdk-lock.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const hostRoot = resolve(dirname(scriptPath), "..");
@@ -33,12 +34,11 @@ export async function resolveRepositoryDotnet() {
 }
 
 async function readLockedSdkVersion() {
-  let parsed;
-  try { parsed = JSON.parse(await readFile(resolve(repositoryRoot, "global.json"), "utf8")); }
-  catch { throw new Error("windows_reparse_dotnet_sdk_lock_invalid"); }
-  const version = parsed?.sdk?.version;
-  if (typeof version !== "string" || !expectedSdkVersionPattern.test(version)) throw new Error("windows_reparse_dotnet_sdk_lock_invalid");
-  return version;
+  try {
+    return parseSdkLock(await readFile(resolve(repositoryRoot, "global.json"), "utf8"));
+  } catch {
+    throw new Error("windows_reparse_dotnet_sdk_lock_invalid");
+  }
 }
 
 export function canonicalManifest(sha256) {
@@ -98,7 +98,7 @@ async function runBoundedDotnet(command, args) {
 async function assertLockedSdk(dotnet) {
   const expected = await readLockedSdkVersion();
   const actual = (await runBoundedDotnet(dotnet, ["--version"])).trim();
-  if (actual !== expected) throw new Error("windows_reparse_dotnet_sdk_drift");
+  if (!sdkVersionSatisfiesLock({ actual, lock: expected })) throw new Error("windows_reparse_dotnet_sdk_drift");
 }
 
 async function publishInspectorPair(destination) {

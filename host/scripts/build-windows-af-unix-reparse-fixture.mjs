@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSdkLock, sdkVersionSatisfiesLock } from "./dotnet-sdk-lock.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
@@ -53,9 +54,11 @@ async function runBounded(command, args, cwd, env) {
 }
 
 async function readLockedSdkVersion() {
-  const value = JSON.parse(await readFile(resolve(repositoryRoot, "global.json"), "utf8"));
-  if (typeof value?.sdk?.version !== "string" || !expectedSdkVersionPattern.test(value.sdk.version)) throw new Error("af_unix_fixture_sdk_lock_invalid");
-  return value.sdk.version;
+  try {
+    return parseSdkLock(await readFile(resolve(repositoryRoot, "global.json"), "utf8"));
+  } catch {
+    throw new Error("af_unix_fixture_sdk_lock_invalid");
+  }
 }
 
 async function resolveDotnet() {
@@ -78,7 +81,7 @@ function buildEnvironment() {
 export async function buildWindowsAfUnixReparseFixture() {
   if (process.platform !== "win32") throw new Error("af_unix_fixture_windows_required");
   const dotnet = await resolveDotnet();
-  if ((await runBounded(dotnet, ["--version"], repositoryRoot, buildEnvironment())).trim() !== await readLockedSdkVersion()) throw new Error("af_unix_fixture_sdk_drift");
+  if (!sdkVersionSatisfiesLock({ actual: (await runBounded(dotnet, ["--version"], repositoryRoot, buildEnvironment())).trim(), lock: await readLockedSdkVersion() })) throw new Error("af_unix_fixture_sdk_drift");
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
   await runBounded(dotnet, ["publish", projectFile, "--configuration", "Release", "--runtime", "win-x64", "--self-contained", "true", "--output", outputRoot, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", "--nologo"], repositoryRoot, buildEnvironment());
