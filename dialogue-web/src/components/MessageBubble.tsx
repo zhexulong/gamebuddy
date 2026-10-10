@@ -1,4 +1,5 @@
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export function MessageBubble({
   message,
@@ -54,7 +55,13 @@ export function MessageBubble({
             </div>
           )}
         </div>
-        <div className="message-bubble">{message.text}</div>
+        {isPlayer ? (
+          // The player's own words are literal input, not model output: they stay
+          // text, so the companion's narration treatment is never applied to them.
+          <div className="message-bubble">{message.text}</div>
+        ) : (
+          <MarkdownMessage className="message-bubble" text={message.text} />
+        )}
         {!isPlayer && onRegenerate && (
           <div className="message-actions">
             <button

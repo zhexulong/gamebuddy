@@ -17,7 +17,9 @@
     "clean": "node -e \"const{rmSync}=require('node:fs');['.build-staging','test-results','playwright-report'].forEach(p=>rmSync(p,{recursive:true,force:true}))\""
   },
   "dependencies": {
+    "dompurify": "3.4.16",
     "lucide-react": "1.31.0",
+    "marked": "18.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
