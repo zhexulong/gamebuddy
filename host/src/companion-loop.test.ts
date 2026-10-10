@@ -780,6 +780,49 @@ test("CompanionLoop chooses an authenticated world source for fact-only follow-u
   assert.deepEqual(observed, []);
 });
 
+test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without minting a presentation lineage", async () => {
+  const received: string[] = [];
+  const lineage: string[] = [];
+  const loop = new CompanionLoop(
+    settledSession(async (text) => {
+      received.push(text);
+    }) as never,
+    {
+      beginPlayerBatch(sourceEventId) {
+        lineage.push(`begin:${sourceEventId}`);
+      },
+      endBatch() {
+        lineage.push("end");
+      },
+      async presentNativeAssistantContent() {
+        assert.fail("a dialogue-only batch must not project native assistant content");
+      },
+    },
+  );
+  loop.pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "npc_dialogue_pierre_3",
+    sourceEventId: "npc_dialogue_pierre_3",
+    correlationId: "npc_dialogue_pierre_3",
+    revision: 1,
+    occurredAtMs: 1,
+    observedTick: 900,
+    semanticKind: "npc_dialogue_presented",
+    payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
+  });
+  await loop.flush();
+  // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact
+  // context with its readable payload. But `npc_dialogue_presented` is
+  // deliberately NOT in the isSalientSensoryKind allowlist: the companion turn
+  // runs without a native presentation lineage, so the Agent can act on the
+  // dialogue (e.g. answer_dialogue) but cannot voice a spoken reaction to it.
+  assert.equal(received.length, 1);
+  assert.deepEqual(lineage, []);
+  const batch = JSON.parse(received[0] ?? "{}") as { worldFacts: Array<{ payload: { speaker?: string } }> };
+  assert.equal(batch.worldFacts[0]?.payload.speaker, "Pierre");
+});
+
 test("CompanionLoop grants a bounded presentation lease to salient sensory world facts", async () => {
   const lifecycle: string[] = [];
   const listeners = new Set<(event: unknown) => void>();

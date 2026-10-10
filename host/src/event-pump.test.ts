@@ -410,3 +410,53 @@ test("event pump rejects Host-local data that attempts to impersonate Mod author
     /invalid_local_transport_fact/,
   );
 });
+
+test("event pump delivers an npc_dialogue_presented world fact to the Agent's context as readable text", async () => {
+  const pump = new CompanionEventPump();
+  const payload = Object.freeze({
+    speaker: "Marnie",
+    pages: ["早安，今天也要加油哦。", "你这阵子都没来看我。"],
+    isQuestion: false,
+    choices: [],
+  });
+  const fact = {
+    source: "stardew_mod",
+    kind: "world_fact" as const,
+    eventId: "npc_dialogue_marnie_7",
+    sourceEventId: "npc_dialogue_marnie_7",
+    correlationId: "npc_dialogue_marnie_7",
+    revision: 1,
+    observedTick: 4242,
+    semanticKind: "npc_dialogue_presented",
+    payload,
+  };
+  pump.enqueueFact(fact);
+  // Same dialogue identity (identical Mod eventId) re-emitted on a new transport
+  // correlation is still one fact; only the Host's world-fact key decides identity.
+  pump.enqueueFact({ ...fact, correlationId: "transport_retry" });
+
+  const delivered: string[] = [];
+  await pump.flush({
+    async deliver(text) {
+      delivered.push(text);
+    },
+  });
+
+  assert.equal(delivered.length, 1);
+  const batch = JSON.parse(delivered[0] ?? "{}") as {
+    triggerEventIds: string[];
+    worldFacts: Array<{ semanticKind?: string; payload: Record<string, unknown> }>;
+    events: Array<{ kind: string; semanticKind?: string; payload: Record<string, unknown> }>;
+  };
+  assert.deepEqual(batch.triggerEventIds, ["npc_dialogue_marnie_7"]);
+  // The Mod's payload IS the model-facing text: the Host keeps the readable
+  // speaker/pages/isQuestion/choices verbatim and adds no reinterpretation, so
+  // these assertions are on agent-visible content, not on an internal code.
+  const worldFact = batch.worldFacts.find((candidate) => candidate.semanticKind === "npc_dialogue_presented");
+  assert.deepEqual(worldFact?.payload, payload);
+  assert.equal("contextProjection" in (worldFact ?? {}), false);
+  const event = batch.events.find((candidate) => candidate.semanticKind === "npc_dialogue_presented");
+  assert.equal(event?.kind, "world_fact");
+  assert.equal(event?.payload.speaker, "Marnie");
+  assert.deepEqual(event?.payload.pages, ["早安，今天也要加油哦。", "你这阵子都没来看我。"]);
+});
