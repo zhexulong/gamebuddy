@@ -1077,16 +1077,16 @@ test("invalidated execution receipt immediately closes launcher-owned preview an
               () => getAuthenticatedStardewPresentationPortForPreview(launch),
               /authenticated_stardew_presentation_port_required/,
             );
-            // Already-retained launcher-owned projections fail closed too:
-            // body-program status rejects and the retained presentation
-            // projection is unavailable, each before any native forwarding.
+            // Already-retained launcher-owned PROGRAM projection fails closed (the record is unusable for new
+            // work), but the PRESENTATION projection stays live: the companion speaks through this same object,
+            // and silencing it on an execution invalidation killed a real ladder-6 run while it tried to speak.
             await assert.rejects(
               async () => { await ports.bodyProgram.status({ programId: "program_invalidated_after" }); },
               /stardew_launcher_ports_not_live/,
             );
-            assert.throws(
-              () => ports.presentation.state,
-              /stardew_launcher_ports_not_live/,
+            assert.ok(
+              ports.presentation.state.snapshot !== undefined || ports.presentation.state.snapshot === null,
+              "the live presentation port must keep working after an execution invalidation",
             );
             // No program frame reached the live native pipe after invalidation.
             assert.equal(

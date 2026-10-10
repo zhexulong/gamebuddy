@@ -324,26 +324,35 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         removeDiagnostic();
       },
     });
-    // Launcher-owned liveness for the retained presentation and body-program
-    // projections: an invalidated receipt, explicit close, or bridge disconnect
-    // freezes every later call so it fails closed before any native forwarding.
-    // Invalidation never cancels, replays, retries, or closes the native
-    // mutation/pipe; only the launcher-owned projections stop forwarding.
+    // Launcher-owned liveness for the retained body-program projection AND the accessors that hand ports out of
+    // this record: an invalidated receipt, explicit close, or bridge disconnect freezes acquisition. Invalidation
+    // never cancels, replays, retries, or closes the native mutation/pipe; only the launcher-owned record stops
+    // being usable for NEW port acquisition.
     const isLauncherClosed = (): boolean => closed || invalidated || !bridge.state.connected;
     const assertLauncherPortsLive = (): void => {
       if (isLauncherClosed()) throw new Error("stardew_launcher_ports_not_live");
     };
+    // The PRESENTATION projection is different, and deliberately so: the live session speaks through this same
+    // object (`host-service.presentNativeAssistantContent` -> `farmhand-companion-presentation.present` ->
+    // `bridge.state`), so gating it on `invalidated` silenced the companion after any interrupted execution. A
+    // real ladder-6 run died exactly there (`stardew_launcher_ports_not_live` raised while the companion tried to
+    // speak its closing line). An execution being invalidated says nothing about whether the companion may talk,
+    // so only a close or a genuine disconnect freezes it.
+    const isPresentationClosed = (): boolean => closed || !bridge.state.connected;
+    const assertPresentationLive = (): void => {
+      if (isPresentationClosed()) throw new Error("stardew_launcher_ports_not_live");
+    };
     const presentation: FarmhandPresentationBridge = Object.freeze({
       get state() {
-        assertLauncherPortsLive();
+        assertPresentationLive();
         return Object.freeze({ snapshot: bridge.state.snapshot });
       },
       presentCompanionText: (request) => {
-        assertLauncherPortsLive();
+        assertPresentationLive();
         return bridge.presentCompanionText(request as never);
       },
       presentSystemNotice: (request) => {
-        assertLauncherPortsLive();
+        assertPresentationLive();
         return bridge.presentSystemNotice(request as never);
       },
     });
