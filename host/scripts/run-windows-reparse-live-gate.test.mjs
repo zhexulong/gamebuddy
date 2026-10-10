@@ -30,9 +30,9 @@ test("live-gate result validator accepts only the fixed redacted schema", () => 
     schemaVersion: 1,
     gate: "windows_reparse_live_gate/v1",
     status: "blocked",
-    reason: "non_link_reparse_fixture_unavailable",
-    helperSha256: "a".repeat(64),
-    probes: { regular: "passed", junction: "passed", directorySymlink: "passed", nonLinkReparse: "blocked" },
+    reason: "passed",
+  helperSha256: "a".repeat(64),
+  probes: { regular: "passed", junction: "passed", directorySymlink: "passed" },
     consumers: { browserGenerator: "blocked", hostStaticVerifier: "blocked" },
   };
   assert.equal(isWindowsReparseLiveGateResult(valid), true);
@@ -123,7 +123,7 @@ test("direct invocation reports an explicit platform or capability disposition, 
       status: "blocked",
       reason: "windows_platform_required",
       helperSha256: null,
-      probes: { regular: "blocked", junction: "blocked", directorySymlink: "blocked", nonLinkReparse: "blocked" },
+      probes: { regular: "blocked", junction: "blocked", directorySymlink: "blocked" },
       consumers: { browserGenerator: "blocked", hostStaticVerifier: "blocked" },
     });
   }

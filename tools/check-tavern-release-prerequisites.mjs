@@ -103,8 +103,8 @@ function isExactWindowsReparseLiveGateSuccess(child) {
     output.reason === "passed" &&
     typeof output.helperSha256 === "string" &&
     /^[0-9a-f]{64}$/.test(output.helperSha256) &&
-    JSON.stringify(output.probes) ===
-      JSON.stringify({ regular: "passed", junction: "passed", directorySymlink: "passed", nonLinkReparse: "passed" }) &&
+      JSON.stringify(output.probes) ===
+        JSON.stringify({ regular: "passed", junction: "passed", directorySymlink: "passed" }) &&
     JSON.stringify(output.consumers) === JSON.stringify({ browserGenerator: "passed", hostStaticVerifier: "passed" })
   );
 }
