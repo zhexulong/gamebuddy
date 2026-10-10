@@ -781,7 +781,7 @@ export function fixtureScenario(actions, action) {
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
   if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
   if (action === "talk_to_npc") return "native_talk_to_npc_v1";
-  if (action === "dialogue_stream") return "native_talk_to_npc_v1";
+  if (action === "dialogue_stream") return "native_talk_to_npc_multi_page_v1";
   if (actions.includes("use_obelisk")) return "native_use_obelisk_v1";
   if (actions.includes("toggle_tool_light")) return "native_toggle_tool_light_v1";
   if (actions.includes("harvest_bush")) return "native_harvest_bush_v1";

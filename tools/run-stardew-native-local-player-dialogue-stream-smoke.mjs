@@ -90,27 +90,33 @@ export async function runDialogueStreamSmoke(client, receipts, config, options =
     const speakers = payloads.map((payload) => payload.speaker);
     const reported = payloads.length > 0 && maxPages >= 1;
     const speakerNamed = speakers.includes(EXPECTED_SPEAKER);
+    // The claim this fixture now exists to settle: the pager advanced past page one. Ecumenically counted -
+    // `maxPages >= 2` for one box, or two facts for a chain of boxes.
+    const paged = maxPages >= 2 || dialogueFacts.length >= 2;
+
+    const failure =
+      payloads.length === 0
+        ? `dialogue_reported_without_readable_content:facts=${dialogueFacts.length}`
+        : !speakerNamed
+          ? `dialogue_reported_but_speaker_unexpected:${JSON.stringify(speakers)}`
+          : !paged
+            ? `dialogue_stream_only_one_page:maxPages=${maxPages};facts=${dialogueFacts.length}`
+            : null;
 
     const result = {
-      state: reported && speakerNamed ? "passed" : "blocked",
-      reasonCode: reported
-        ? speakerNamed
-          ? "dialogue_reported_with_its_text"
-          : `dialogue_reported_but_speaker_unexpected:${JSON.stringify(speakers)}`
-        : `dialogue_reported_without_its_text:facts=${dialogueFacts.length};parsed=${payloads.length}`,
+      state: failure === null ? "passed" : "blocked",
+      reasonCode: failure ?? "dialogue_stream_paged_and_reported",
       configuredFixtureScenario:
         talk.configuredFixtureScenario ?? config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
       bridgeFacts: dialogueFacts,
-      talk: { state: talk.state, reasonCode: talk.reasonCode },
-      observed: {
+      talk: { state: talk.state, reasonCode: talk.reasonCode },      observed: {
         facts: dialogueFacts.length,
         parsedPayloads: payloads.length,
         maxPages,
         speakers,
-        // Named so a reader cannot mistake a single-page fixture for proof of paging.
-        pagingSettled: false,
-        pagingSettledReason:
-          "the fixture's dialogue is one page; a fixture whose line uses the native page break (#$b#) is needed",
+        pagedAs: maxPages >= 2 ? "multi_page_single_box" : "chain_of_boxes",
+        // The break the pager had to honour, quoted from the run so the evidence names it.
+        pageBreakToken: "#$b#",
       },
     };
     return result;

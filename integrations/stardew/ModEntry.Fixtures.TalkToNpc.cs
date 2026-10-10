@@ -22,6 +22,13 @@ public sealed partial class ModEntry
     private const string TalkToNpcFixtureVillager = "Gus";
 
     /// <summary>
+    /// The dialogue page break, taken from the GAME rather than spelled here:
+    /// <c>Dialogue.dialogueBreak</c> is the public constant the splitter itself uses, so this cannot drift
+    /// from the format the game reads.
+    /// </summary>
+    private static readonly string PageBreakToken = Dialogue.dialogueBreak;
+
+    /// <summary>
     /// talk_to_npc pre-attachment Given: an <b>empty-handed</b> actor standing one tile
     /// from a <b>named ordinary villager</b> that has a <b>friendship record</b> and a
     /// <b>dialogue for the actor's location</b>.
@@ -74,7 +81,13 @@ public sealed partial class ModEntry
     /// This fixture emits no receipt and invokes no action: production alone calls
     /// <c>NPC.checkAction</c> and emits <c>talk_to_npc_talked</c>.
     /// </summary>
-    private void InstallNativeLocalTalkToNpcFixture(Farmer player)
+    /// <param name="requireMultiPage">
+    /// When true the fixture GUARANTEES the talk's dialogue has a page break, because a single-page line leaves
+    /// the pager nothing to advance through. The line is selected from the villager's own loaded content - the
+    /// game's dialogue format starts a new page at <c>Dialogue.dialogueBreak</c> - and keyed where the native
+    /// lookup will reach it, so the pager pages NATIVE text. When false the shipped behaviour is unchanged.
+    /// </param>
+    private void InstallNativeLocalTalkToNpcFixture(Farmer player, bool requireMultiPage = false)
     {
         if (Game1.getLocationFromName(TalkToNpcFixtureLocation) is not GameLocation saloon)
             throw new InvalidOperationException($"fixture_native_local_talk_to_npc_location_missing:{TalkToNpcFixtureLocation}");
@@ -154,6 +167,43 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_native_local_talk_to_npc_other_target_in_reach:{other.Name};tile={(int)other.Tile.X},{(int)other.Tile.Y}");
 
+        // THE MULTI-PAGE LINE, chosen by scanning the villager's own loaded dialogue. Candidates are filtered by
+        // what can actually RENDER, not merely by what contains the break: a live run showed that keys carrying
+        // other dialogue commands (`accept_865` carries more than a break) throw out of `getCurrentString()` when
+        // re-keyed as the location dialogue, because those commands only work in the context they were written
+        // for. So a candidate must be plain text plus breaks, and the failure names every key it considered.
+        string multiPageSourceKey = string.Empty;
+        if (requireMultiPage)
+        {
+            List<string> breakKeys = villager.Dialogue
+                .Where(entry => entry.Value.Contains(PageBreakToken, StringComparison.Ordinal))
+                .Select(entry => entry.Key)
+                .ToList();
+            List<string> rejected = new();
+            foreach (string candidate in breakKeys)
+            {
+                string withoutBreaks = villager.Dialogue[candidate].Replace(PageBreakToken, string.Empty, StringComparison.Ordinal);
+                bool plain = !withoutBreaks.Contains('$', StringComparison.Ordinal)
+                    && !withoutBreaks.Contains('%', StringComparison.Ordinal)
+                    && !withoutBreaks.Contains('{', StringComparison.Ordinal)
+                    && !withoutBreaks.Contains('}', StringComparison.Ordinal);
+                if (!plain)
+                {
+                    rejected.Add(candidate);
+                    continue;
+                }
+                multiPageSourceKey = candidate;
+                break;
+            }
+            if (multiPageSourceKey.Length == 0)
+                throw new InvalidOperationException(
+                    $"fixture_native_local_talk_to_npc_no_plain_multi_page_dialogue:villager={villager.Name};"
+                        + $"break_keys={string.Join(",", breakKeys)};rejected_as_not_plain={string.Join(",", rejected)}");
+            if (!string.Equals(multiPageSourceKey, saloon.Name, StringComparison.Ordinal))
+                villager.Dialogue[saloon.Name] = villager.Dialogue[multiPageSourceKey];
+            villager.CurrentDialogue.Clear();
+        }
+
         // The branch-selection fact itself, asked through the game's own dialogue table with
         // the key the native lookup builds from the actor's location (NPC.cs:3948). If the
         // content ever loses it, this fails here instead of surfacing as a native
@@ -169,6 +219,7 @@ public sealed partial class ModEntry
                 + $"location={saloon.NameOrUniqueName};villager={villager.Name};villager_tile={(int)villagerTile.X},{(int)villagerTile.Y};"
                 + $"standing_tile={(int)standingTile.X},{(int)standingTile.Y};hands_empty=true;"
                 + $"friendship_points=0;talked_to_today=false;dialogue_key={saloon.Name};villager_schedule_pinned=true;"
+                + $"multi_page_required={requireMultiPage.ToString().ToLowerInvariant()};dialogue_source_key={(requireMultiPage ? multiPageSourceKey : saloon.Name)};"
                 + "production alone calls NPC.checkAction and emits the receipt.",
             LogLevel.Info);
     }
