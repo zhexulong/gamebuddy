@@ -1880,3 +1880,128 @@ test("the Game surface renders localized player outcomes in zh-CN with no Englis
   const panelText = await panel.innerText();
   expect(panelText).not.toMatch(/Game state|Connection|Compatibility|Not checked|unchecked|connected_idle/);
 });
+
+/**
+ * The product's Memory surface is the management surface's own panel, not a
+ * read-only lookalike: it authors through the frozen `memory.mutate` route and
+ * shows only the durable read-back the Host returns.
+ *
+ * The two assertions below own the two ways this can silently regress:
+ *
+ * 1. "the product Memory surface authors the exact memory.mutate command and
+ *    shows the Host read-back" fails if the surface never posts `memory.mutate`
+ *    (the read-only stub the product shipped with), if it posts a command the
+ *    frozen route would reject (no `expectedProjectionRevision` compare-and-swap,
+ *    a wrong operation), if it posts it without the broker session's CSRF token,
+ *    or if it renders a locally invented row instead of the Host's own title and
+ *    handle for the written memory.
+ * 2. "a rejected Memory mutation is reported, never shown as saved" fails if a
+ *    refused write is optimistically rendered as a created memory (the surface
+ *    must re-read the authority and then report the failure), and it also pins
+ *    that the failure notice is player-visible.
+ */
+test("the product Memory surface authors through memory.mutate and shows the Host read-back, and reports a rejected write instead of showing it as saved", async ({ page }) => {
+  const projectionRevision = `${"M".repeat(42)}A`;
+  const nextProjectionRevision = `${"P".repeat(42)}A`;
+  const memoryHandle = `${"N".repeat(42)}A`;
+  const writtenContent = "The player keeps a spare watering can by the cabin door.";
+  const refusedContent = "A memory the Host refused to write.";
+
+  const writes: Array<{ body: unknown; csrf: string | undefined }> = [];
+  let reads = 0;
+  let memories: ReadonlyArray<Record<string, unknown>> = [];
+  let refuseWrites = false;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/memory", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      reads += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ apiVersion: 1, projectionRevision, memories }),
+      });
+      return;
+    }
+    writes.push({ body: request.postDataJSON(), csrf: request.headers()["x-csrf-token"] });
+    if (refuseWrites) {
+      // The management route's own mapping of a Memory projection conflict: a
+      // safe 409 with no stale success projection.
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: "Memory projection conflict",
+          status: 409,
+          code: "state_reconciliation_required",
+          requestId: nextProjectionRevision,
+          retryable: false,
+        }),
+      });
+      return;
+    }
+    // The validated mutation response IS the durable read-back: the row carries a
+    // Host-chosen title and handle no local state could have guessed.
+    memories = [
+      {
+        handle: memoryHandle,
+        title: "Semantic memory",
+        content: writtenContent,
+        category: "semantic",
+        status: "active",
+        origin: "player",
+        pinned: false,
+      },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, projectionRevision: nextProjectionRevision, memories }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+  const surface = page.getByTestId("memory-surface");
+  await expect(surface).toBeVisible();
+  // The surface reads the management route itself; the composed Chat projection
+  // carries no Memory capability for it to hide behind.
+  await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
+  expect(reads).toBe(1);
+
+  await surface.getByRole("textbox", { name: "Memory content" }).fill(writtenContent);
+  await surface.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]?.body).toEqual({
+    apiVersion: 1,
+    operation: "create",
+    expectedProjectionRevision: projectionRevision,
+    content: writtenContent,
+  });
+  expect(writes[0]?.csrf).toBe(csrfToken);
+  await expect(surface.getByText("Semantic memory", { exact: true })).toBeVisible();
+  await expect(surface.getByText(writtenContent, { exact: true })).toBeVisible();
+
+  // A refresh re-reads the authority, and the written row is still the store's.
+  await surface.getByRole("button", { name: "Refresh Memory" }).click();
+  await expect.poll(() => reads).toBe(2);
+  await expect(surface.getByText(writtenContent, { exact: true })).toBeVisible();
+
+  // A refused write is re-read and reported, never rendered as a written memory.
+  refuseWrites = true;
+  memories = [];
+  await surface.getByRole("textbox", { name: "Memory content" }).fill(refusedContent);
+  await surface.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(surface.getByRole("status")).toContainText("Operation failed.");
+  await expect.poll(() => reads).toBe(3);
+  await expect(surface.getByText(refusedContent, { exact: true })).toHaveCount(0);
+  await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
+});

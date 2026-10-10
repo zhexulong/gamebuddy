@@ -35,7 +35,6 @@ import { Composer } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
 import {
   ChatsPanelView,
-  MemoryPanelView,
   SettingsPanelView,
   WorldInfoPanelView,
 } from "./composed-management-panels";
@@ -46,6 +45,7 @@ import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { CharactersPanel } from "./CharactersPanel";
+import { MemorySurfacePanel } from "./management-surface-panels";
 import { createManagementPipelineApi } from "../management-pipeline-api";
 
 
@@ -1531,7 +1531,12 @@ export function ComposedReferenceGameApp() {
                 icon={Brain}
                 restoreFocusTo={memoryEntryRef}
               >
-                <MemoryPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readMemory()} />
+                <MemorySurfacePanel
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  locale={view.locale}
+                />
               </SurfaceView>
             )}
             {shownSurface === WORLD_INFO_PANEL && (
