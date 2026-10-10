@@ -1,0 +1,16 @@
+{
+  "schema": "historian_prompt_ab/v1",
+  "purpose": "The two arms of the voice change (vendor 37bc69238), each an excerpt of a compartment the historian really wrote during a real provider fold of the same fixture (host/src/pi-magic-context-chapter-fold.test.ts). Recorded here so the comparison is reproducible by anyone instead of resting on a quotation in a design document.",
+  "arms": [
+    {
+      "variant": "legacy-third-person",
+      "recorded": "2026-10-08, before the voice change; fold measured 2 compartments; excerpt (elision marked)",
+      "text": "The player (U, msgs 1, 4, 6, 8, 10) cycled through the same topics each turn. … The assistant (A) responded without re-asking."
+    },
+    {
+      "variant": "companion-voice",
+      "recorded": "2026-10-10, after the voice change; fold sealed 1 chapter; excerpt (truncated)",
+      "text": "We passed a long, quiet stretch together going over the same ordinary things — the weather, the state of the road, the price of copper, and how the lanterns want trimming before the season turns. We weighed two suppliers against each other, bickered mildly about the colour of the shutters, and settled on leaving the upper room shut one more week. The same list came round again and again, and I answered it the same easy way each time, leaning on the counter, glancing at the sky, keeping you company."
+    }
+  ]
+}
