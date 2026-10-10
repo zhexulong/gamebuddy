@@ -46,6 +46,14 @@ internal sealed class NpcDialoguePager
     private readonly IMonitor? monitor;
     private readonly List<string> pages = new();
 
+    /// <summary>
+    /// A Mod-owned counter, added to the key so two dialogues can never share an identity. The key used to be
+    /// the game tick alone, which is unique per <c>Update</c> (`Game1.cs:3914`) EXCEPT while
+    /// <c>ShouldLoadIncrementally</c> - the increment is inside that condition, so two ticks can report the same
+    /// value and two dialogues would collapse into one fact.
+    /// </summary>
+    private static long dialogueSequence;
+
     private DialogueBox? trackedBox;
     private long dialogueStartTick;
     private bool capturedCurrentPage;
@@ -139,8 +147,16 @@ internal sealed class NpcDialoguePager
 
     /// <summary>
     /// The native click would ADVANCE the page rather than only settle typing:
-    /// the text is fully typed, the box's own post-page safety window has
-    /// elapsed, and the page is not a question.
+    /// the text has reached the box's own end-of-page index, the box's
+    /// post-page safety window has elapsed, and the page is not a question.
+    ///
+    /// "End of page" is the NATIVE boundary, not a finished typewriter: the
+    /// native click itself treats `characterIndexInDialogue` at
+    /// `getCurrentString().Length - 1` as settled (DialogueBox.cs:361-364) and
+    /// the game's `update` only reaches `Length` one step later (:843), so the
+    /// last character may still be undrawn when the page flips. That is the
+    /// boundary the player's own click uses, and the REPORTED text is complete
+    /// either way because `getCurrentString()` returns the whole string.
     ///
     /// The safety window is the box's <c>safetyTimer</c>, re-armed to
     /// <c>DialogueBox.safetyDelay</c> (750, :34) after every advance
@@ -185,9 +201,10 @@ internal sealed class NpcDialoguePager
     /// <summary>
     /// Emits the one fact for the box, at most once per tracked dialogue.
     /// <c>eventId</c>, <c>sourceEventId</c> and <c>deduplicationKey</c> are all
-    /// the same Mod-minted opaque identity - the game tick the dialogue first
-    /// appeared - so a consumer that sees the same dialogue twice collapses the
-    /// duplicate instead of presenting it again.
+    /// the same Mod-minted opaque identity - the tick the dialogue first appeared
+    /// plus a Mod-owned sequence - so a re-send inside the consumer's pending
+    /// window collapses instead of presenting the dialogue again. (The window is
+    /// what the Host dedupes within; this key does not pretend to be durable.)
     /// </summary>
     private void Report(BridgeSession? session, DialogueBox box)
     {
@@ -211,7 +228,8 @@ internal sealed class NpcDialoguePager
         string payloadJson = JsonSerializer.Serialize(
             new NpcDialoguePresentedPayload(SpeakerOf(box), this.pages.ToArray(), isQuestion, choices.ToArray()));
 
-        string eventId = $"npc_dialogue_{this.dialogueStartTick}";
+        long sequence = System.Threading.Interlocked.Increment(ref dialogueSequence);
+        string eventId = $"npc_dialogue_{this.dialogueStartTick}_{sequence}";
         var fact = new BridgeWorldFact(
             eventId,
             eventId,

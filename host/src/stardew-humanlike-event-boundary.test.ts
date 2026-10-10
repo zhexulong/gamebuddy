@@ -576,3 +576,25 @@ test("pump clear flushes all pending world facts", () => {
   assert.equal(pump.pendingCount, 0);
   assert.equal(pump.hasPendingDelivery, false);
 });
+
+test("toWorldFact carries the Mod semantic kind, which is what makes a fact salient enough to speak about", () => {
+  // The gap an independent review found: both existing toWorldFact tests assert payload/ids only, so if
+  // `payload.kind` stopped reaching `semanticKind` they would still pass while a dialogue silently lost the
+  // identity that `isSalientSensoryKind` matches on. Assert the chain end to end instead: the fact arrives with
+  // its kind intact and its readable payload untouched, because the Host never interprets the payload.
+  const message = createWorldFactMessage({
+    eventId: "npc_dialogue_900_1",
+    sourceEventId: "npc_dialogue_900_1",
+    kind: "npc_dialogue_presented",
+    observedTick: 900,
+    gameTime: "0900",
+    revision: 4,
+    payload: { speaker: "Pierre", pages: ["a", "b"], isQuestion: false, choices: [] },
+  }) as LocalStardewBridgeFact;
+
+  const fact = toWorldFact(message);
+
+  assert.equal(fact.semanticKind, "npc_dialogue_presented");
+  assert.equal(fact.kind, "world_fact");
+  assert.deepEqual(fact.payload, { speaker: "Pierre", pages: ["a", "b"], isQuestion: false, choices: [] });
+});

@@ -106,11 +106,15 @@ public sealed class ModalDismissActionTests
     /// <summary>
     /// Drift anchors for what the decision rests on. DialogueBox.closeDialogue is the ONE exit a DialogueBox
     /// clearance uses (:192) and it restores Farmer.CanMove (:226), so the actor really is free afterwards. The
-    /// pager closes the box ITSELF once the last page is clicked (:407-410), which is why an informational
-    /// dialogue is not meant to sit there holding the actor: the Mod's own dialogue observer drives the pager to
-    /// exhaustion (Sensory/NpcDialoguePager.cs, the AUTO path, which hard-stops on a question), and a box that is
-    /// still up is one the Agent must decide about (a question), one the Mod deliberately left to the player
-    /// (NpcDialoguePager.cs:82-83), or one the Agent clears by asking (this action).
+    /// pager closes the box ITSELF once the last page is clicked (:407-410).
+    ///
+    /// A box that is still up when an action arrives is therefore one of three things - and this list is an
+    /// OBSERVATION, not an argument that the pager prevents the hold: a question (the pager hard-stops on it), a
+    /// box the Mod deliberately left to the player (NpcDialoguePager.cs:82-83, which is exactly the case where the
+    /// box DOES hold the actor, because the pager declines to page what it cannot report), or a box the Agent
+    /// clears by asking (this action). An earlier version of this paragraph claimed the pager is why an
+    /// informational dialogue does not sit there holding the actor; those two facts are both true but do not
+    /// support each other, and the pager-versus-dismiss ordering is instead asserted where it belongs.
     /// </summary>
     [Fact]
     public void DriftAnchors_TheNativeCloseIsTheSettlement_AndThePagerClosesAtExhaustion()

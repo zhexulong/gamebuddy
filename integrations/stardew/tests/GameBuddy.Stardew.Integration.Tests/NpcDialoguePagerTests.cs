@@ -126,7 +126,13 @@ public sealed class NpcDialoguePagerTests
 
         BridgeWorldFact fact = FactOf(sink);
         fact.Kind.Should().Be(NpcDialoguePresentedPayload.Kind);
-        fact.DeduplicationKey.Should().Be($"npc_dialogue_{FakeTick}");
+        // The key carries the tick the dialogue appeared PLUS a Mod-owned sequence. It is asserted by its
+        // PROPERTY rather than by value (the sequence is a global counter, so a literal would be fragile), and
+        // the property is what matters: the tick alone could collide, because the increment is skipped while
+        // the game loads incrementally (Game1.cs:3911-3914).
+        fact.EventId.Should().Be(fact.DeduplicationKey);
+        fact.EventId.Should().Be(fact.SourceEventId);
+        fact.EventId.Should().StartWith($"npc_dialogue_{FakeTick}_", "the tick is still part of the identity");
         JsonElement payload = ParsePayload(fact);
         payload.GetProperty("speaker").GetString().Should().Be(NpcDialoguePager.NarratorSpeaker);
         payload.GetProperty("isQuestion").GetBoolean().Should().BeTrue();
