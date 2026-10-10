@@ -289,19 +289,20 @@ body {
 }
 
 .status-dot {
-  width: 6px;
-  height: 6px;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background-color: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  background-color: var(--success);
+  box-shadow: 0 0 6px rgba(79, 174, 154, 0.4);
 }
 
 .nav-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
-  padding: 0 10px;
+  min-height: var(--touch-target-min);
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -648,17 +649,32 @@ body {
   border-radius: var(--radius-sm);
 }
 
-.error-banner {
+/* The two one-line surface notices. Both shells mount them (the management
+   banner and the composed shell's in-place `SurfaceNotice`), so both are global
+   and both read from the semantic feedback tokens rather than a raw colour. */
+.error-banner,
+.success-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  background-color: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  gap: 12px;
+  padding: 10px 14px;
   font-size: 13px;
+  line-height: 1.5;
   border-radius: var(--radius-sm);
-  margin: 0 16px 12px 16px;
+  margin: 0;
+}
+
+.error-banner {
+  background-color: rgba(217, 101, 101, 0.12);
+  border: 1px solid rgba(217, 101, 101, 0.32);
+  color: var(--danger);
+}
+
+.success-banner {
+  background-color: rgba(79, 174, 154, 0.14);
+  border: 1px solid rgba(79, 174, 154, 0.4);
+  color: var(--success);
 }
 
 /* Saved-draft region: the labelled read-only band a shell shows above its
@@ -845,8 +861,10 @@ body {
 }
 
 .composer-button {
-  width: 36px;
-  height: 36px;
+  width: var(--touch-target-min);
+  height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -1053,8 +1071,10 @@ body {
 }
 
 .icon-button-small {
-  width: 28px;
-  height: 28px;
+  width: var(--touch-target-min);
+  height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
   border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
@@ -1063,6 +1083,9 @@ body {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
 }
 
 .icon-button-small:hover {
@@ -1306,14 +1329,32 @@ body {
 }
 
 .small-button {
-  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* design/26 §7.1: every pointer control keeps a 44 px minimum hit target. The
+     management shell already forced this; the composed shell had 32 px buttons. */
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
   padding: 0 12px;
   border-radius: var(--radius-sm);
   background-color: var(--surface-raised);
   border: 1px solid var(--border-subtle);
   color: var(--text-primary);
+  font-family: inherit;
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.small-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .small-button.primary {
@@ -1406,120 +1447,320 @@ body {
 }
 
 /* ==========================================================================
-   Management Surface (P9 gamebuddy.tavern-management.chat-list-title)
-   Scoped fixes for the mounted management journey: draft section and success
-   banner layout, app-bar title flex/ellipsis so the list button never leaves
-   the viewport, long list titles that cannot overflow the drawer, and touch
-   pointer targets that stay usable on narrow viewports. All selectors are
-   scoped to the management shell, so the read-only reference surface and the
-   taller conflict-journey viewports are untouched.
+   Settings & management panels (design/26 §4.2, §6.4; design/28 §2)
+
+   These panels are mounted by BOTH shells - the P9 management surface and the
+   composed product shell (management-surface-panels.tsx) - so their layout is
+   NOT scoped to one profile. Before this, the whole group was scoped to
+   [data-profile="management"], which left every shared panel unstyled on the
+   composed shell: the Settings surface rendered its fields with browser-default
+   spacing. Only a rule the management drawer alone wants stays scoped, below.
    ========================================================================== */
 
-[data-profile="management"] .app-bar {
-  gap: 8px;
-}
-
-[data-profile="management"] .management-settings-section {
+.management-settings-section {
   flex-shrink: 0;
-  border-top: 1px solid var(--border-subtle);
-  background-color: var(--surface-panel);
-  padding: 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Connection and model management (design/28 §1). The form stays one narrow
-   column with the panel's own controls, so a narrow viewport wraps instead of
-   overflowing the app shell. */
-[data-profile="management"] .connection-form,
-[data-profile="management"] [data-connection-list] {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-[data-profile="management"] .connection-form label {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-[data-profile="management"] .connection-form .field-hint {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-[data-profile="management"] .connection-rows {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 4px 0 16px;
+}
+
+/* A hairline separates one field group from the next; the first group has
+   nothing above it to separate itself from. */
+.management-settings-section + .management-settings-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 16px;
+}
+
+.management-settings-section h2 {
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-[data-profile="management"] .connection-row {
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-[data-profile="management"] .connection-row .composer-actions {
-  flex-wrap: wrap;
-}
-
-[data-profile="management"] .connection-row [data-connection-failure] {
-  color: var(--text-secondary);
-}
-
-@media (max-width: 560px) {
-  [data-profile="management"] .connection-row .composer-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}
-
-[data-profile="management"] .management-settings-section h2 {
-  margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--text-primary);
 }
 
-[data-profile="management"] .management-settings-section p {
+.management-settings-section > p {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
 }
 
-[data-profile="management"] .management-settings-details {
+.management-settings-hint,
+.field-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-disabled);
+  overflow-wrap: anywhere;
+}
+
+/* Label/value read-back rows: the label is quiet, the value is the fact. */
+.management-settings-details {
   display: grid;
   gap: 6px;
   margin: 0;
 }
 
-[data-profile="management"] .management-settings-details div {
+.management-settings-details div {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-[data-profile="management"] .management-settings-details dt {
+.management-settings-details dt {
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
-[data-profile="management"] .management-settings-details dd {
+.management-settings-details dd {
   margin: 0;
+  font-weight: 500;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
-[data-profile="management"] .voice-device-selector {
+/* One labelled control stack (companion language, voice device). */
+.voice-device-selector {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* --- Connection and model management (design/28 §1) --- */
+.connection-form,
+[data-connection-list] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connection-form label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.connection-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 0 0;
+  list-style: none;
+}
+
+/* One saved connection: a single-level card, because the section that holds it
+   is a group, not a card (design/26 §6.4). The readiness border is a second
+   carrier beside the status word, never the only one. */
+.connection-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.connection-row[data-readiness="ready"] {
+  border-color: rgba(79, 174, 154, 0.45);
+}
+
+.connection-row[data-readiness="failed"] {
+  border-color: rgba(217, 101, 101, 0.45);
+}
+
+.connection-row .composer-actions {
+  flex-wrap: wrap;
+}
+
+.connection-row [data-connection-failure] {
+  color: var(--danger);
+}
+
+@media (max-width: 560px) {
+  .connection-row .composer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* --- Model profiles (design/28 §2.3) --- */
+.model-profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.model-profile-editor h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.model-profile-editor label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.model-profile-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-profile-suggestions > span {
+  margin-right: 2px;
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+/* --- Memory panel --- */
+.tavern-memory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 4px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+}
+
+.tavern-memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tavern-memory-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tavern-memory-section .memory-list {
+  gap: 8px;
+}
+
+.tavern-memory-section .memory-item-card {
+  padding: 10px 12px;
+}
+
+.memory-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.memory-item-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chat-item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- Characters (design/28 §2) ---
+   The character domain owns this markup; these are the group/section and row
+   classes it adopts (the handoff is named in the commit message). The attribute
+   hooks below mirror the classes for the markup that exists today, so the
+   surface reads correctly on both shells before that handoff lands. */
+
+.management-settings-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* One authored-content group (companions, persona, scenario, opening) is a
+   single-level card inside its section group, like a saved connection. */
+.management-settings-section > section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.management-settings-section > section > h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Companion library rows: 52 px minimum, the documented list-row height. */
+.characters-list,
+[data-companion-list] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.characters-row,
+[data-companion-entry] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.companion-current-badge {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  color: var(--accent);
+  background-color: var(--palette-burgundy-dark);
+  border: 1px solid var(--palette-burgundy-border);
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+}
+
+/* One opening variant: its own small stack, so the textarea and its Discard
+   never drift away from the variant they belong to. */
+.opening-variant-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+/* ==========================================================================
+   Management shell only (P9 gamebuddy.tavern-management.chat-list-title).
+   Everything the two shells share moved above; what stays here is the
+   management drawer's own layout, which the composed shell does not mount.
+   ========================================================================== */
+
+[data-profile="management"] .app-bar {
+  gap: 8px;
 }
 
 [data-profile="management"] .reference-draft-section {
@@ -1529,66 +1770,6 @@ body {
 [data-profile="management"] .reference-draft-section textarea {
   resize: vertical;
   overflow-wrap: anywhere;
-}
-
-[data-profile="management"] .success-banner {
-  background-color: rgba(79, 174, 154, 0.14);
-  border-color: rgba(79, 174, 154, 0.45);
-  color: var(--palette-teal-base);
-}
-
-[data-profile="management"] .chat-item-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-[data-profile="management"] .small-button,
-[data-profile="management"] .icon-button-small {
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-}
-
-[data-profile="management"] .tavern-memory-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  padding: 4px 0 calc(12px + env(safe-area-inset-bottom)) 0;
-}
-
-[data-profile="management"] .tavern-memory-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-[data-profile="management"] .tavern-memory-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-[data-profile="management"] .tavern-memory-section .memory-list {
-  gap: 8px;
-}
-
-[data-profile="management"] .tavern-memory-section .memory-item-card {
-  padding: 10px 12px;
-}
-
-[data-profile="management"] .memory-item-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-[data-profile="management"] .memory-item-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
 }
 
 /* ==========================================================================
@@ -1634,15 +1815,16 @@ body {
 .game-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .game-group-title {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-disabled);
 }
 
 .game-panel-empty {
@@ -1652,29 +1834,39 @@ body {
   color: var(--text-disabled);
 }
 
-/* Connection facts: a compact labelled grid, never a bare definition list.
-   The `dt`/`dd` pair stays adjacent inside one row so the row's text content
-   is exactly `label` + `value`. */
+/* Connection facts: one bounded panel of label/value rows, not a loose wall of
+   underlined lines. The `dt`/`dd` pair stays adjacent inside one row so the
+   row's text content is exactly `label` + `value` (the browser spec reads it
+   that way), and a single column keeps the label and its value on one axis
+   however wide the surface grows. */
 .game-facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 16px;
+  grid-template-columns: 1fr;
+  gap: 0;
   margin: 0;
+  padding: 2px 14px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
 }
 
 .game-fact {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 30px;
-  padding: 6px 0;
+  gap: 16px;
+  min-height: 40px;
+  padding: 8px 0;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.game-fact:last-child {
+  border-bottom: none;
 }
 
 .game-fact dt {
   font-size: 12px;
-  color: var(--text-disabled);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -1685,6 +1877,7 @@ body {
   margin: 0;
   min-width: 0;
   font-size: 13px;
+  font-weight: 500;
   color: var(--text-primary);
   text-align: right;
   overflow-wrap: anywhere;
@@ -2110,15 +2303,24 @@ body {
 .surface-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 0 4px;
+  gap: 10px;
+  padding: 16px 0 12px;
   color: var(--text-primary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* The surface's own icon is the one spot of accent in the chrome, so the
+   heading reads as the surface's identity rather than as body copy. */
+.surface-header > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
 }
 
 .surface-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .surface-header h2:focus-visible {
