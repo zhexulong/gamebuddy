@@ -530,8 +530,25 @@ const onCompanionTextPresented = (text, locale) => {
   })();
 };
 client.onFact((fact) => {
-  if (fact.type === "execution_receipt" || fact.type === "semantic_event" || fact.type === "error" || fact.type === "lifecycle") {
-    const entry = { type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null };
+  if (
+    fact.type === "execution_receipt" ||
+    fact.type === "semantic_event" ||
+    fact.type === "error" ||
+    fact.type === "lifecycle" ||
+    // A `world_fact` is the Mod telling the Host something about the world (a dialogue it paged, a day that
+    // started). Recording it is observation, not instrumentation-of-the-verdict: the Mod emits it on its own and
+    // the Host delivers it regardless of this runner, and without recording it a fact the product DID produce
+    // would simply be absent from the result - which is how a gate ends up reading an empty field.
+    fact.type === "world_fact"
+  ) {
+    const entry = { type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null,
+      // A world fact's identity and payload. The Mod mints `eventId`/`sourceEventId` as the same opaque id, and
+      // for `npc_dialogue_presented` the payload IS the content a gate must read (speaker, pages, isQuestion,
+      // choices). The Host never interprets it, so it is recorded verbatim.
+      eventId: fact.eventId,
+      sourceEventId: fact.sourceEventId,
+      worldFactKind: fact.payload?.kind,
+      worldFactPayload: fact.payload };
     // The Mod legitimately delivers one bridge transition over two routes: the
     // fact route and the execute-response path, and the second delivery is an
     // idempotent no-op by contract (action-execution-coordinator.internal.test.ts:
