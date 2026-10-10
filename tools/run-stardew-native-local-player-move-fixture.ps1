@@ -328,6 +328,14 @@ try {
         if (-not (Test-Path -LiteralPath $actionResultPath -PathType Leaf)) { throw "Native-local package child produced no private action result." }
     } else {
         $phase = "live_child"
+        # Every smoke runner must declare a CLI entry point and print a result; a runner without one
+        # imports and exits 0, which used to read as PASS while nothing had run at all (the body-owner gate
+        # caught itself this way). The static guard in stardew-native-local-runner-entry.test.mjs covers the
+        # tables; this closes the same hole for a DIRECT invocation here.
+        $smokeSource = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot $smokeScript)
+        if ($smokeSource -notmatch "if \(import\.meta\.main\)") {
+            throw "Native-local $smokeScript has no CLI entry point; it would exit 0 while running nothing."
+        }
         node (Join-Path $PSScriptRoot $smokeScript) --client-config $clientConfig
         if ($LASTEXITCODE -ne 0) { throw "Native-local $Action smoke did not pass." }
         $evidenceScript = Join-Path $PSScriptRoot "lib\capture-stardew-window-evidence.ps1"
