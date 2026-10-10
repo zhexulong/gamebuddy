@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runTalkToNpcSmoke } from "./run-stardew-native-local-player-talk-to-npc-smoke.mjs";
+import { isAdmissionHold } from "./lib/stardew-admission-hold-codes.mjs";
 
 const ACTION = "talk_to_npc";
 const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
@@ -57,7 +58,10 @@ function makeClient({ holdingItem = false, targets = [VILLAGER] } = {}) {
           ...base,
           executionId: "talk-execution-not-actionable",
           state: "rejected",
-          reasonCode: "player_not_actionable",
+          // What the product ACTUALLY answers when the actor is held: the named hold, not the generic code
+          // the naming wave replaced. The fake used to emit the old string, which is why this gate could fail
+          // on correct behaviour without any test noticing.
+          reasonCode: "actor_held_by_modal",
           evidence: { detail: null },
         };
         receipts.push(receipt);
@@ -123,7 +127,10 @@ test("talk_to_npc: the dialogue is asserted from the world, and both negatives h
   assert.equal(result.dialogue.actionableAfter, false);
   assert.equal(result.negatives.unknownTarget.reasonCode, "talk_to_npc_target_not_found");
   assert.equal(result.negatives.unknownTarget.actionable, true);
-  assert.equal(result.negatives.repeat.reasonCode, "player_not_actionable");
+  // The gate's claim is about the HOLD, so the assertion is about the hold family - and the companion test
+  // below still requires that an UNRELATED refusal fails the run.
+  assert.equal(isAdmissionHold(result.negatives.repeat.reasonCode), true);
+  assert.equal(result.negatives.repeat.reasonCode, "actor_held_by_modal", "the code the Mod names for a dialogue hold");
   assert.equal(result.negatives.repeat.actionable, false);
 });
 
@@ -156,7 +163,7 @@ test("talk_to_npc: a successful repeat while the dialog is up fails the run", as
   const session = run();
   withForcedReceipt(
     session,
-    (receipt) => receipt.reasonCode === "player_not_actionable",
+    (receipt) => isAdmissionHold(receipt.reasonCode),
     (receipt) => {
       receipt.state = "succeeded";
       receipt.reasonCode = "talk_to_npc_talked";
@@ -171,7 +178,7 @@ test("talk_to_npc: a repeat refused for another reason fails the run", async () 
   const session = run();
   withForcedReceipt(
     session,
-    (receipt) => receipt.reasonCode === "player_not_actionable",
+    (receipt) => isAdmissionHold(receipt.reasonCode),
     (receipt) => {
       receipt.reasonCode = "talk_to_npc_target_not_found";
     },
@@ -186,7 +193,7 @@ test("talk_to_npc: a refusal that still released the dialog fails the run", asyn
   const session = run();
   withForcedReceipt(
     session,
-    (receipt) => receipt.reasonCode === "player_not_actionable",
+    (receipt) => isAdmissionHold(receipt.reasonCode),
     (receipt, current) => {
       current.client.state.snapshot = snapshotWith({ revision: receipt.revision, actionable: true });
     },

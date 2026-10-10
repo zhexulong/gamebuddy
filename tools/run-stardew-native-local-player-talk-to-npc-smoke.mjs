@@ -8,6 +8,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+import { isAdmissionHold } from "./lib/stardew-admission-hold-codes.mjs";
 
 const ACTION = "talk_to_npc";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
@@ -137,7 +138,10 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
     });
     const repeatTerminal = await waitForTerminal(receipts, repeatAccepted, terminalTimeoutMs);
     if (repeatTerminal.state === "succeeded") throw new Error("talk_to_npc_repeat_stacked_dialogue");
-    if (repeatTerminal.reasonCode !== "player_not_actionable")
+    // The refusal must be the ADMISSION's hold, not one chosen literal code: the naming wave made the code say
+    // what holds the actor (`actor_held_by_modal` here), and an anonymous `player_not_actionable` covers only
+    // the case where nothing more specific applies. An unrelated refusal still fails the run.
+    if (!isAdmissionHold(repeatTerminal.reasonCode))
       throw new Error(`talk_to_npc_repeat_not_refused:${repeatTerminal.reasonCode}`);
 
     const final = await observeFresh(client);
