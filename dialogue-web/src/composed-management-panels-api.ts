@@ -114,7 +114,9 @@ function asSettings(value: unknown): ManageSettingsPanel {
 export function createComposedManagementPanelsApi(): ManagementPanelsApi {
   return Object.freeze({
     async readChats(): Promise<ManageChatsPanel> {
-      return asChats(await readJson("/api/tavern/v1/chats"));
+      // `chat.list` requires the contract's `apiVersion` query on the wire; the
+      // route's frozen validator rejects a request without it.
+      return asChats(await readJson("/api/tavern/v1/chats?apiVersion=1"));
     },
     async readMemory(): Promise<ManageMemoryPanel> {
       return asMemory(await readJson("/api/tavern/v1/memory"));

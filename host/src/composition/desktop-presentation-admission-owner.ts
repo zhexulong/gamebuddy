@@ -11,7 +11,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
-import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
+import { type ComposedTavernProfile, composeTavernProfile, type BrowserTurnV1 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
@@ -30,6 +30,8 @@ import { startComposedReferenceGameStaticShellComposition } from "../tavern/comp
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import type { MemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import { createTavernConnectionService } from "../tavern/connection-service.js";
+import type { TavernManagementDialogueWebOptions } from "../tavern-management-dialogue-web.js";
+import type { TavernManagementDelegatedOptions } from "../tavern-management-dialogue-web.delegated.js";
 import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "../tavern/tavern-management-state.js";
@@ -184,6 +186,251 @@ export async function startChatOnlyPresentationAdmission(
 }
 
 /**
+ * The management domains the Chats/Characters/Game/Settings/Memory World Info
+ * panels read and write (design/104 §2, design/26 §4.2). Both presentation
+ * mounts - the standalone tavern_management shell and the composed
+ * reference-game shell - build them through this one assembly, over the same
+ * durable stores and the same lease-bound services, so a panel and the
+ * management surface are two views of one state rather than two owners of it.
+ *
+ * `owned` lists every created service in creation order: a mount that fails to
+ * construct drains it in reverse order, and a mount that starts closes it once
+ * its listener has drained.
+ */
+type TavernManagementDomains = Readonly<
+  Required<
+    Pick<
+      TavernManagementDialogueWebOptions,
+      | "libraryService"
+      | "companionDetailService"
+      | "newCompanionProvisioner"
+      | "personaService"
+      | "scenarioService"
+      | "greetingService"
+      | "stCardImportService"
+      | "stCardImportHistoryService"
+      | "confirmStCardImport"
+    >
+  > & {
+    managementService: ChatManagementService;
+    memoryService: MemoryManagementService;
+    worldInfoService: WorldInfoBindingManagementService;
+    modelProfileStore: ModelProfileStore;
+    playerPreferenceStore: PlayerPreferenceStore;
+  }
+>;
+
+/**
+ * The real durable managed repository backs the lease-bound binding service; no
+ * browser fixture and no alternate resolver is ever injected. Pristine bindings
+ * settle immediately; message-bearing chats keep the desired-state model and
+ * converge on the next turn's admission.
+ */
+function createTavernManagedWorldInfoService(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  profile: ComposedTavernProfile,
+): WorldInfoBindingManagementService {
+  return createWorldInfoBindingManagementService({
+    manifest,
+    lease,
+    profile,
+    repository: createWorldInfoManagementRepository(manifest.runtimeRoot),
+    settleAuthoredContext: () => settleMountedAuthoredContext(manifest, lease),
+  });
+}
+
+/**
+ * The identity's own PI agent directory for the exact mounted Chat session: the
+ * connection service owns the provider/model/credential selection of that one
+ * runtime, never a shared one.
+ */
+function managementAgentDir(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): string {
+  return resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId).agentDir;
+}
+
+/**
+ * The connection service's one activation rule: only a turn that is still in
+ * flight blocks activation; a terminal ledger entry (completed / cancelled /
+ * failed) is a settled turn (design/28 §5.3: "While a turn is active... returns
+ * dialogue_busy").
+ */
+function mountedTurnActive(turn: BrowserTurnV1 | null): boolean {
+  return (
+    turn !== null &&
+    (turn.state === "queued" ||
+      turn.state === "running" ||
+      turn.state === "response_visible" ||
+      turn.state === "stopping")
+  );
+}
+
+/**
+ * The management domains over the exact mounted lease and the one management
+ * profile: the durable Chat management, Memory, World Info, model-profile,
+ * player-preference and card-import services, and the Character library whose
+ * companion handles are minted through the mounted lease projection so the
+ * browser can never decode a durable companion identifier. `worldInfoService`
+ * is supplied because a mount that needs its own state facade must create that
+ * facade from the binding service before the rest of the domains exist.
+ */
+function createTavernManagementDomains(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  profile: ComposedTavernProfile,
+  worldInfoService: WorldInfoBindingManagementService,
+): Readonly<{ domains: TavernManagementDomains; owned: readonly { close(): Promise<void> }[] }> {
+  const owned: { close(): Promise<void> }[] = [];
+  const managementService = createChatManagementService({ manifest, lease, profile });
+  owned.push(managementService);
+  const memoryService = createMemoryManagementService({ manifest, lease, profile });
+  owned.push(memoryService);
+  // The one Host-owned Chat/Game model profile record (design/28 §2.3). It is
+  // the same durable `settings/model-profiles.json` the Chat and Game runtime
+  // construction reads at mount, so a profile saved here is the exact profile
+  // the next runtime for that surface is built with.
+  const modelProfileStore = new ModelProfileStore(
+    resolve(manifest.runtimeRoot, "settings", "model-profiles.json"),
+  );
+  // The one Host-owned player preference record: the companion language the
+  // runtimes read at mount and the cloud TTS consent/output, at the one
+  // root-level path every settings surface reads and writes.
+  const playerPreferenceStore = new PlayerPreferenceStore(playerPreferencePath(manifest.runtimeRoot));
+  // The Character / Persona / Scenario / Greeting library is the real durable
+  // tavern artifact store (design/28 §2).
+  const runtimePaths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId);
+  const tavernPaths = resolveTavernPaths(runtimePaths, manifest.principal);
+  const artifactStore = new TavernArtifactStore(manifest.runtimeRoot);
+  const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
+  const scenarioService = createScenarioManagementService(artifactStore, tavernPaths.companionRoot);
+  const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
+  // The library service owns one lazily opened thread connection; it is opened
+  // only if a Chat-creating route ever runs and is closed with this owner's drain.
+  const libraryThreads = createChatThreadStore(runtimePaths.runtimeCwd, identityKey(manifest.principal));
+  owned.push({
+    close: async () => {
+      libraryThreads.close?.();
+    },
+  });
+  const libraryBase = createTavernLibraryService(tavernPaths, artifactStore, libraryThreads, {
+    async readExact() {
+      return identityProfileMetadata(await readIdentityProfile(runtimePaths.identityProfilePath));
+    },
+  });
+  const currentCompanionId = manifest.principal.companionId;
+  const companionHandleFor = (companionId: string): string =>
+    lease.browserProjection.projectCompanionHandle(companionId);
+  // The mounted companion is ALWAYS the current library entry: the identity
+  // profile the runtime provisioned at mount is its authoritative display name,
+  // and its projected handle is the only handle the detail route will ever
+  // resolve. Created companions join the library durably below.
+  const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
+    .then((identityProfile) => identityProfile.identity.name)
+    .catch(() => undefined);
+  const libraryService = Object.freeze({
+    async listCompanions() {
+      const [mountedName, companions] = await Promise.all([
+        mountedNamePromise,
+        libraryBase.listCompanions(),
+      ]);
+      return [
+        // The unchanged mounted companion is always first with its projected
+        // handle and current marker; a provisioning failure of the identity
+        // profile would leave the name undefined, but the runtime always writes
+        // the profile at mount, so this is only a defense-in-depth guard, never
+        // the normal path.
+        ...(mountedName === undefined
+          ? []
+          : [
+              Object.freeze({
+                handle: companionHandleFor(currentCompanionId),
+                name: mountedName,
+                isCurrent: true,
+              }),
+            ]),
+        ...companions.map((companion: Readonly<{ companionId: string; name: string }>) =>
+          Object.freeze({
+            handle: companionHandleFor(companion.companionId),
+            name: companion.name,
+            isCurrent: companion.companionId === currentCompanionId,
+          }),
+        ),
+      ];
+    },
+  });
+  const companionDetailService = Object.freeze({
+    async read(handle: string) {
+      // Only the exact mounted companion's handle resolves; any other handle
+      // (foreign, forged, or a non-mounted library entry) is null and reported
+      // 404 rather than projected as a different identity.
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const mountedName = await mountedNamePromise;
+      if (mountedName === undefined) return null;
+      // The mounted companion's canonical display name is the identity profile
+      // the runtime provisioned at mount; the artifact-store companion.json
+      // only exists for library-created companions.
+      return Object.freeze({ name: mountedName });
+    },
+  });
+  const newCompanionProvisioner = Object.freeze({
+    async create(name: string) {
+      // The provisioner mints a new Host-owned identity namespace; the browser
+      // supplies a display name and receives the safe name back.
+      const provision = await provisionDirectNewCompanion(manifest.runtimeRoot, manifest.principal.playerId, name);
+      return Object.freeze({ name: provision.companion.name });
+    },
+  });
+  // Reviewed ST-card import pipeline: artifacts are persisted by the service
+  // under the tavern import path; confirm re-reads the exact reviewed candidate
+  // and provisions it (profile + reviewed world book) into a NEW Host-owned
+  // namespace through the same library threads.
+  const stCardImportService = new StCardImportService(artifactStore, tavernPaths);
+  // Durable evidence for every confirmed import (design/28 Import/export row):
+  // the player-readable loss report a confirmed card leaves behind. It is
+  // written from the same artifacts the import already produced and is never
+  // consulted by any keep/drop decision.
+  const stCardImportHistoryService = createStCardImportHistoryService(artifactStore, tavernPaths.playerRoot);
+  const confirmStCardImport = async (importId: string) => {
+    const imported = await stCardImportService.read(importId);
+    const review = await stCardImportService.confirmedReview(importId);
+    const provision = await provisionNewCompanion(
+      manifest.runtimeRoot,
+      manifest.principal.playerId,
+      imported.candidate.artifact,
+      review,
+      libraryThreads,
+    );
+    await stCardImportHistoryService.record({
+      importId,
+      occurredAtMs: Date.now(),
+      cardName: imported.candidate.artifact.name,
+      companionId: provision.companion.companionId,
+      dispositions: imported.report.artifact.dispositions,
+    });
+    return Object.freeze({ name: provision.companion.name });
+  };
+  return Object.freeze({
+    domains: Object.freeze({
+      managementService,
+      memoryService,
+      worldInfoService,
+      modelProfileStore,
+      playerPreferenceStore,
+      libraryService,
+      companionDetailService,
+      newCompanionProvisioner,
+      personaService,
+      scenarioService,
+      greetingService,
+      stCardImportService,
+      stCardImportHistoryService,
+      confirmStCardImport,
+    }),
+    owned: Object.freeze(owned),
+  });
+}
+
+/**
  * Starts the Tavern-management presentation admission over the exact supplied
  * Chat lease and verified browser artifact, with the one tavern_management
  * profile declared here. No Game coordinator or projection participates: the
@@ -201,18 +448,11 @@ export async function startTavernManagementPresentationAdmission(
   const createdServices: { close(): Promise<void> }[] = [];
   let server: Awaited<ReturnType<typeof startTavernManagementStaticShellComposition>>;
   try {
-    // The real durable managed repository backs the lease-bound binding
-    // service; no browser fixture or alternate resolver is ever injected.
-    const worldInfoRepository = createWorldInfoManagementRepository(input.manifest.runtimeRoot);
-    const worldInfoService = createWorldInfoBindingManagementService({
-      manifest: input.manifest,
-      lease: input.lease,
-      profile: tavernProfile,
-      repository: worldInfoRepository,
-      // Pristine bindings settle immediately; message-bearing chats keep the
-      // desired-state model and converge on the next turn's admission.
-      settleAuthoredContext: () => settleMountedAuthoredContext(input.manifest, input.lease),
-    });
+    const worldInfoService = createTavernManagedWorldInfoService(
+      input.manifest,
+      input.lease,
+      tavernProfile,
+    );
     createdServices.push(worldInfoService);
     const managementStateFacade = await createTavernManagementStateFacade(
       input.manifest,
@@ -221,197 +461,30 @@ export async function startTavernManagementPresentationAdmission(
       worldInfoService,
     );
     createdServices.push(managementStateFacade);
-    const managementService = createChatManagementService({
-      manifest: input.manifest,
-      lease: input.lease,
-      profile: tavernProfile,
-    });
-    createdServices.push(managementService);
-    const memoryService = createMemoryManagementService({
-      manifest: input.manifest,
-      lease: input.lease,
-      profile: tavernProfile,
-    });
-    createdServices.push(memoryService);
+    // The management domains: the same durable stores and the same lease-bound
+    // services the composed reference-game shell mounts, so a panel and the
+    // management surface are two views of one state rather than two owners.
+    const { domains, owned } = createTavernManagementDomains(
+      input.manifest,
+      input.lease,
+      tavernProfile,
+      worldInfoService,
+    );
+    createdServices.push(...owned);
     // The connection service owns the player's provider/model/credential
-    // selection. It reports the durable turn state of the exact mounted Chat so
-    // an activation cannot switch a running turn (design/28 §5.3).
+    // selection. Its turn-state reader is this mount's own management facade, so
+    // an activation cannot switch a turn that is still in flight (design/28 §5.3).
     const connectionService = createTavernConnectionService({
-      agentDir: resolveRuntimePaths(
-        input.manifest.principal,
-        input.manifest.runtimeRoot,
-        input.lease.chatSurfaceSessionId,
-      ).agentDir,
-      readTurnState: async () => {
-        const state = await managementStateFacade.read();
-        const turn = state.turn;
-        // Only a turn that is still in flight blocks activation; a terminal
-        // ledger entry (completed/cancelled/failed) is a settled turn
-        // (design/28 §5.3: "While a turn is active... returns dialogue_busy").
-        const active =
-          turn !== null && (turn.state === "queued" || turn.state === "running" || turn.state === "response_visible" || turn.state === "stopping");
-        return { turnActive: active };
-      },
+      agentDir: managementAgentDir(input.manifest, input.lease),
+      readTurnState: async () => ({
+        turnActive: mountedTurnActive((await managementStateFacade.read()).turn),
+      }),
     });
     createdServices.push(connectionService);
-    // The one Host-owned Chat/Game model profile record (design/28 §2.3). It is
-    // the same durable `settings/model-profiles.json` the Chat and Game runtime
-    // construction reads at mount, so a profile saved here is the exact profile
-    // the next runtime for that surface is built with.
-    const modelProfileStore = new ModelProfileStore(
-      resolve(input.manifest.runtimeRoot, "settings", "model-profiles.json"),
-    );
-    // The one Host-owned player preference record: the companion language the
-    // runtimes read at mount and the cloud TTS consent/output, at the one
-    // root-level path every settings surface reads and writes. Without this the
-    // routes would fail closed ("A profile that advertises a route without the
-    // exact service cannot serve it") and the player's choices would have
-    // nowhere to live.
-    const playerPreferenceStore = new PlayerPreferenceStore(
-      playerPreferencePath(input.manifest.runtimeRoot),
-    );
-    // The Character / Persona / Scenario / Greeting library is the real
-    // durable tavern artifact store (design/28 §2). Companion handles are
-    // minted through the exact mounted lease projection, so the browser can
-    // never decode a durable companion identifier; companion.create mints a
-    // Host-owned namespace from the player-supplied display name alone.
-    const runtimePaths = resolveRuntimePaths(
-      input.manifest.principal,
-      input.manifest.runtimeRoot,
-      input.lease.chatSurfaceSessionId,
-    );
-    const tavernPaths = resolveTavernPaths(runtimePaths, input.manifest.principal);
-    const artifactStore = new TavernArtifactStore(input.manifest.runtimeRoot);
-    const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
-    const scenarioService = createScenarioManagementService(artifactStore, tavernPaths.companionRoot);
-    const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
-    // The library service owns one lazily opened thread connection; it is
-    // opened only if a Chat-creating route ever runs and is closed with this
-    // management owner's drain.
-    const libraryThreads = createChatThreadStore(runtimePaths.runtimeCwd, identityKey(input.manifest.principal));
-    createdServices.push({
-      close: async () => {
-        libraryThreads.close?.();
-      },
-    });
-    const libraryBase = createTavernLibraryService(tavernPaths, artifactStore, libraryThreads, {
-      async readExact() {
-        return identityProfileMetadata(await readIdentityProfile(runtimePaths.identityProfilePath));
-      },
-    });
-    const currentCompanionId = input.manifest.principal.companionId;
-    const companionHandleFor = (companionId: string): string =>
-      input.lease.browserProjection.projectCompanionHandle(companionId);
-    // The mounted companion is ALWAYS the current library entry: the identity
-    // profile the runtime provisioned at mount is its authoritative display
-    // name, and its projected handle is the only handle the detail route will
-    // ever resolve. Created companions join the library durably below.
-    const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
-      .then((profile) => profile.identity.name)
-      .catch(() => undefined);
-    const libraryService = Object.freeze({
-      async listCompanions() {
-        const [mountedName, companions] = await Promise.all([
-          mountedNamePromise,
-          libraryBase.listCompanions(),
-        ]);
-        return [
-          // The unchanged mounted companion is always first with its projected
-          // handle and current marker; a provisioning failure of the identity
-          // profile would leave the name undefined, but the runtime always
-          // writes the profile at mount, so this is only a defense-in-depth
-          // guard, never the normal path.
-          ...(mountedName === undefined
-            ? []
-            : [
-                Object.freeze({
-                  handle: companionHandleFor(currentCompanionId),
-                  name: mountedName,
-                  isCurrent: true,
-                }),
-              ]),
-          ...companions.map((companion: Readonly<{ companionId: string; name: string }>) =>
-            Object.freeze({
-              handle: companionHandleFor(companion.companionId),
-              name: companion.name,
-              isCurrent: companion.companionId === currentCompanionId,
-            }),
-          ),
-        ];
-      },
-    });
-    const companionDetailService = Object.freeze({
-      async read(handle: string) {
-        // Only the exact mounted companion's handle resolves; any other
-        // handle (foreign, forged, or a non-mounted library entry) is null
-        // and reported 404 rather than projected as a different identity.
-        if (handle !== companionHandleFor(currentCompanionId)) return null;
-        const mountedName = await mountedNamePromise;
-        if (mountedName === undefined) return null;
-        // The mounted companion's canonical display name is the identity
-        // profile the runtime provisioned at mount; the artifact-store
-        // companion.json only exists for library-created companions.
-        return Object.freeze({ name: mountedName });
-      },
-    });
-    const newCompanionProvisioner = Object.freeze({
-      async create(name: string) {
-        // The provisioner mints a new Host-owned identity namespace; the
-        // browser supplies a display name and receives the safe name back.
-        const provision = await provisionDirectNewCompanion(
-          input.manifest.runtimeRoot,
-          input.manifest.principal.playerId,
-          name,
-        );
-        return Object.freeze({ name: provision.companion.name });
-      },
-    });
-    // Reviewed ST-card import pipeline: artifacts are persisted by the service
-    // under the tavern import path; confirm re-reads the exact reviewed
-    // candidate and provisions it (profile + reviewed world book) into a NEW
-    // Host-owned namespace through the same library threads.
-    const stCardImportService = new StCardImportService(artifactStore, tavernPaths);
-    // Durable evidence for every confirmed import (design/28 Import/export row):
-    // the player-readable loss report a confirmed card leaves behind. It is
-    // written from the same artifacts the import already produced and is never
-    // consulted by any keep/drop decision.
-    const stCardImportHistoryService = createStCardImportHistoryService(artifactStore, tavernPaths.playerRoot);
-    const confirmStCardImport = async (importId: string) => {
-      const imported = await stCardImportService.read(importId);
-      const review = await stCardImportService.confirmedReview(importId);
-      const provision = await provisionNewCompanion(
-        input.manifest.runtimeRoot,
-        input.manifest.principal.playerId,
-        imported.candidate.artifact,
-        review,
-        libraryThreads,
-      );
-      await stCardImportHistoryService.record({
-        importId,
-        occurredAtMs: Date.now(),
-        cardName: imported.candidate.artifact.name,
-        companionId: provision.companion.companionId,
-        dispositions: imported.report.artifact.dispositions,
-      });
-      return Object.freeze({ name: provision.companion.name });
-    };
     server = await startTavernManagementStaticShellComposition({
       managementStateFacade,
-      managementService,
-      memoryService,
-      worldInfoService,
-      playerPreferenceStore,
       connectionService,
-      modelProfileStore,
-      libraryService,
-      companionDetailService,
-      newCompanionProvisioner,
-      personaService,
-      scenarioService,
-      greetingService,
-      stCardImportService,
-      stCardImportHistoryService,
-      confirmStCardImport,
+      ...domains,
       ...(input.listVoiceOutputDevices === undefined
         ? {}
         : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
@@ -473,48 +546,57 @@ export async function startDesktopPresentationAdmission(
     eventStream: input.eventStream,
     ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
   });
-  // The management domains the shell's Chats/Characters/Game/Settings drawers read
-  // and write (design/104 §2, design/26 §4.2). They are the same lease-bound
-  // services the management surface builds, over the same durable stores, so a
-  // panel and the management surface are two views of one state rather than two
-  // owners of it.
+  // The management domains the shell's Chats/Characters/Game/Settings/Memory/
+  // World Info drawers read and write (design/104 §2, design/26 §4.2). They come
+  // from the one management-domain assembly, over the same durable stores and
+  // lease-bound services the standalone management surface mounts, so a panel and
+  // the management surface are two views of one state rather than two owners of
+  // it.
   //
   // They are built against the MANAGEMENT tavern profile, not the composed shell's
   // frozen reference profile: the composed browser contract pins that profile's
   // route list verbatim (it is what the browser validates), while these services
   // require the routes they own - chat.list, chat.rename, draft.save, draft.discard,
   // memory.read, world-info.read and their operations - to be declared. The shell
-  // mounts them under their own delegated dispatcher on the same loopback origin,
-  // so one frozen Chat contract and the management domains coexist instead of one
-  // masquerading as the other.
+  // mounts them under the management profile's own delegated dispatcher on the same
+  // loopback origin, so one frozen Chat contract and the management domains coexist
+  // instead of one masquerading as the other.
   const managementProfile = composeTavernManagementProfile();
   const createdManagement: { close(): Promise<void> }[] = [];
-  let management: Readonly<{
-    profile: ComposedTavernProfile;
-    managementService: ChatManagementService;
-    memoryService: MemoryManagementService;
-    worldInfoService: WorldInfoBindingManagementService;
-    playerPreferenceStore: PlayerPreferenceStore;
-  }>;
+  let management: Omit<TavernManagementDelegatedOptions, "capability">;
   try {
-    const managementService = createChatManagementService({ manifest: input.manifest, lease: input.lease, profile: managementProfile });
-    createdManagement.push(managementService);
-    const memoryService = createMemoryManagementService({ manifest: input.manifest, lease: input.lease, profile: managementProfile });
-    createdManagement.push(memoryService);
-    const worldInfoService = createWorldInfoBindingManagementService({
-      manifest: input.manifest,
-      lease: input.lease,
-      profile: managementProfile,
-      repository: createWorldInfoManagementRepository(input.manifest.runtimeRoot),
-      settleAuthoredContext: () => settleMountedAuthoredContext(input.manifest, input.lease),
-    });
+    const worldInfoService = createTavernManagedWorldInfoService(
+      input.manifest,
+      input.lease,
+      managementProfile,
+    );
     createdManagement.push(worldInfoService);
+    const { domains, owned } = createTavernManagementDomains(
+      input.manifest,
+      input.lease,
+      managementProfile,
+      worldInfoService,
+    );
+    createdManagement.push(...owned);
+    // The connection service owns the player's provider/model/credential
+    // selection for the exact mounted Chat runtime. Its turn-state reader is this
+    // admission's own reference facade: the same durable turn the composed broker
+    // already projects, so an activation cannot switch a running turn (design/28
+    // §5.3).
+    const connectionService = createTavernConnectionService({
+      agentDir: managementAgentDir(input.manifest, input.lease),
+      readTurnState: async () => ({
+        turnActive: mountedTurnActive((await referenceStateFacade.read()).turn),
+      }),
+    });
+    createdManagement.push(connectionService);
     management = Object.freeze({
       profile: managementProfile,
-      managementService,
-      memoryService,
-      worldInfoService,
-      playerPreferenceStore: new PlayerPreferenceStore(playerPreferencePath(input.manifest.runtimeRoot)),
+      ...domains,
+      connectionService,
+      ...(input.listVoiceOutputDevices === undefined
+        ? {}
+        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
     });
   } catch (error) {
     for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
@@ -544,8 +626,9 @@ export async function startDesktopPresentationAdmission(
       inspector,
       // The immutable browser artifact destination of one Host generation.
       artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
-      // The management panels' services: the composed shell serves Chats, Memory,
-      // World Info and Settings under /api/tavern/v1/ from them.
+      // The management domains' services: the composed shell serves the Chats,
+      // drafts, Memory, World Info, Settings, Characters, Persona/Scenario/
+      // Greeting and card-import routes under /api/tavern/v1/ from them.
       ...(management === undefined ? {} : { management }),
     });
   } catch (error) {

@@ -30,7 +30,11 @@ import {
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./browser-contract/index.js";
 import { createChatEventStream } from "./chat-event-stream.js";
 import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/index.test-support.js";
-import { startComposedReferenceGameStaticShellComposition } from "./composed-reference-game-static-shell-composition.js";
+import {
+  startComposedReferenceGameStaticShellComposition,
+  type ComposedReferenceGameStaticShellComposition,
+  type ComposedReferenceGameStaticShellCompositionOptions,
+} from "./composed-reference-game-static-shell-composition.js";
 
 const token = `${"A".repeat(42)}A`;
 const handle = `${"B".repeat(42)}A`;
@@ -926,6 +930,256 @@ test("composed shell rejects a profile declaring game.create/game.resume.cancel 
       }),
       /resume cancel operation is mismounted/,
     );
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+// ─── Delegated management domains on the composed shell ────────────────────
+//
+// The composed shell mounts the management domains under a delegated
+// dispatcher on the same loopback origin, so one frozen Chat contract and the
+// management surface coexist: the routes the management profile declares are
+// served, and a profile that advertises a route whose exact service was not
+// given still fails closed. These tests pin both halves.
+
+/**
+ * The management profile the composed admission mounts (the same canonical
+ * profile `composeTavernManagementProfile` declares, reduced here to the core
+ * group so the shell-level test needs only the core services).
+ */
+const managementTavernProfile = composeTavernProfile({
+  profileId: "gamebuddy.tavern-management.chat-list-title",
+  releaseTier: "tavern_management",
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "memory.read",
+    "memory.mutate",
+    "world-info.read",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
+  operationIds: [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "memory.mutate",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+  ],
+  navigationItemIds: ["chat", "memory", "characters"],
+});
+
+type ManagementBundle = NonNullable<ComposedReferenceGameStaticShellCompositionOptions["management"]>;
+
+const managedDraft = (revision: number, text: string | null) =>
+  Object.freeze({ apiVersion: 1 as const, revision, text });
+
+/** The core management services the profile above declares; all of them bound. */
+function managementBundle(): ManagementBundle {
+  return Object.freeze({
+    profile: managementTavernProfile,
+    managementService: Object.freeze({
+      listChats: async () =>
+        Object.freeze({
+          apiVersion: 1 as const,
+          chats: [
+            Object.freeze({
+              handle,
+              title: "Managed Chat",
+              status: "active" as const,
+              managementRevision: 1,
+              isSelected: true,
+            }),
+          ],
+        }),
+      renameChatTitle: async () => Object.freeze({ apiVersion: 1 as const, title: "Renamed", managementRevision: 2 }),
+      transitionLifecycle: async () => {
+        throw new Error("unused_lifecycle");
+      },
+      readDraft: async () => managedDraft(2, null),
+      saveDraft: async () => managedDraft(3, "Managed draft"),
+      discardDraft: async () => managedDraft(4, null),
+      close: async () => undefined,
+    }),
+    memoryService: Object.freeze({
+      read: async () => Object.freeze({ apiVersion: 1 as const, projectionRevision: handle, memories: [] }),
+      mutate: async () => {
+        throw new Error("unused_memory_mutate");
+      },
+      close: async () => undefined,
+    }),
+    worldInfoService: Object.freeze({
+      read: async () => Object.freeze({ state: "none" as const, revision: handle, items: [] }),
+      setBinding: async () => {
+        throw new Error("unused_bind");
+      },
+      close: async () => undefined,
+    }),
+    playerPreferenceStore: Object.freeze({
+      read: async () =>
+        Object.freeze({
+          revision: 0,
+          locale: null,
+          disclosureVersion: null,
+          consent: "undecided" as const,
+          decidedAtMs: null,
+          outputDevice: null,
+        }),
+      update: async () => {
+        throw new Error("unused_preference_update");
+      },
+    }),
+  });
+}
+
+/** One-time composed broker bootstrap; returns the broker cookie and CSRF token. */
+async function bootstrapBroker(server: ComposedReferenceGameStaticShellComposition) {
+  const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+    method: "POST",
+    headers: { Origin: server.origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+  });
+  assert.equal(bootstrap.status, 200);
+  const root = (await bootstrap.json()) as { chat: { csrfToken: string } };
+  return {
+    cookie: bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!,
+    csrfToken: root.chat.csrfToken,
+  };
+}
+
+test("composed shell serves the mounted management domains under the one broker session", async () => {
+  const fixture = await artifactFixture();
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    management: managementBundle(),
+  });
+  try {
+    const { cookie, csrfToken } = await bootstrapBroker(server);
+    const mutationHeaders = {
+      Origin: server.origin,
+      Cookie: cookie,
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    };
+    // draft.save and draft.discard are declared by the management profile and
+    // were answered 404 by the frozen Chat contract before the management
+    // domains were mounted; they are served now, from the injected service,
+    // under the composed broker's own session and CSRF token.
+    const saved = await fetch(`${server.origin}/api/tavern/v1/draft`, {
+      method: "PUT",
+      headers: mutationHeaders,
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, expectedRevision: 2, text: "Managed draft" }),
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), { apiVersion: 1, revision: 3, text: "Managed draft" });
+
+    const discarded = await fetch(`${server.origin}/api/tavern/v1/draft`, {
+      method: "DELETE",
+      headers: mutationHeaders,
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, expectedRevision: 3 }),
+    });
+    assert.equal(discarded.status, 200);
+    assert.deepEqual(await discarded.json(), { apiVersion: 1, revision: 4, text: null });
+
+    // A management read route reaches the same service through the same mount,
+    // with the query the frozen `chat.list` contract requires.
+    const chats = await fetch(`${server.origin}/api/tavern/v1/chats?apiVersion=1`, {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(chats.status, 200);
+    const chatsBody = (await chats.json()) as { chats: readonly { title: string }[] };
+    assert.deepEqual(chatsBody.chats.map((chat) => chat.title), ["Managed Chat"]);
+
+    // The Chat routes the frozen contract owns still answer from the Chat
+    // dispatcher: the two profiles coexist on the one prefix.
+    const draft = await fetch(`${server.origin}/api/tavern/v1/draft`, {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(draft.status, 200);
+    assert.deepEqual(await draft.json(), { apiVersion: 1, revision: 2, text: "Saved draft" });
+
+    // Management routes their own session can never reach without the broker.
+    const unauthenticated = await fetch(`${server.origin}/api/tavern/v1/draft`, {
+      method: "PUT",
+      headers: { Origin: server.origin, "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, expectedRevision: 2, text: "Managed draft" }),
+    });
+    assert.equal(unauthenticated.status, 401);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
+test("composed shell fails closed for management routes whose services were not given", async () => {
+  const fixture = await artifactFixture();
+  const shared = {
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+  };
+  try {
+    // A profile that advertises a route whose exact service was not given fails
+    // closed before the listener starts: the shell never mounts a management
+    // route it cannot serve, never a disabled lookalike. `memory.read` is
+    // declared, and the Memory service is exactly what this mount omits.
+    const partial = managementBundle();
+    await assert.rejects(
+      () =>
+        startComposedReferenceGameStaticShellComposition({
+          ...shared,
+          management: {
+            profile: managementTavernProfile,
+            managementService: partial.managementService!,
+            worldInfoService: partial.worldInfoService!,
+            playerPreferenceStore: partial.playerPreferenceStore!,
+          },
+        }),
+      /tavern_management_composition_unavailable/,
+    );
+
+    // With no management domains at all, the same routes stay exactly as absent
+    // as they were: the frozen Chat contract owns this prefix and answers 404.
+    const server = await startComposedReferenceGameStaticShellComposition(shared);
+    try {
+      const { cookie, csrfToken } = await bootstrapBroker(server);
+      const saved = await fetch(`${server.origin}/api/tavern/v1/draft`, {
+        method: "PUT",
+        headers: {
+          Origin: server.origin,
+          Cookie: cookie,
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, expectedRevision: 2, text: "Managed draft" }),
+      });
+      assert.equal(saved.status, 404);
+      assert.equal(((await saved.json()) as { code: string }).code, "profile_operation_unavailable");
+
+      const chats = await fetch(`${server.origin}/api/tavern/v1/chats?apiVersion=1`, {
+        headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.equal(chats.status, 404);
+    } finally {
+      await server.close();
+    }
   } finally {
     await fixture.dispose();
   }

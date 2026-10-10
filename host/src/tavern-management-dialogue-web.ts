@@ -57,6 +57,12 @@ import type {
   WorldInfoStateV1 as ManagedWorldInfoStateV1,
   WorldInfoBindingManagementService,
 } from "./tavern/world-info-binding/world-info-binding-management-service.js";
+import {
+  composedReferenceGameBrowserAuthProjection,
+  isComposedReferenceGameBrowserDelegatedAuthCapability,
+  verifyComposedReferenceGameBrowserAuth,
+  type ComposedReferenceGameBrowserDelegatedAuthCapability,
+} from "./composed-reference-game-browser.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
@@ -404,6 +410,16 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   }>;
   profile?: ComposedTavernProfile;
   bootstrapToken?: string;
+  /**
+   * Present only on the composed reference-game shell's delegated mount. The
+   * composed broker owns bootstrap/session/CSRF on the one loopback listener
+   * this dispatcher shares, so the dispatcher runs with no bootstrap, session
+   * or cookie of its own: every admission and its CSRF fact are brokered
+   * through the opaque branded capability. The route table is the same one the
+   * standalone management mount serves, so the composed shell cannot drift
+   * into a hand-copied subset of the management domains.
+   */
+  delegatedAdmission?: Readonly<{ capability: ComposedReferenceGameBrowserDelegatedAuthCapability }>;
   readonly [key: string]: unknown;
 }>;
 export type TavernManagementDialogueWebServer = Readonly<{
@@ -421,6 +437,13 @@ type BrowserSession = Readonly<{
   csrf: string;
   expiresAtMs: number;
 }>;
+/**
+ * The exact session facts a projected management snapshot reports. The
+ * standalone mount reads them from its own browser session; the delegated mount
+ * reads them from the composed broker's verified admission context, and neither
+ * can forge the other's.
+ */
+type AdmissionSession = Readonly<{ csrf: string; expiresAtMs: number }>;
 type ProblemCode = TavernProblemV1["code"] | "payload_too_large" | "settings_revision_conflict";
 
 /**
@@ -432,7 +455,16 @@ type ProblemCode = TavernProblemV1["code"] | "payload_too_large" | "settings_rev
 export function createTavernManagementDialogueWebRequestHandler(
   options: TavernManagementDialogueWebOptions,
 ): TavernManagementDialogueWebRequestHandler {
-  if (options.profile === undefined || options.bootstrapToken === undefined)
+  const delegatedAdmission = options.delegatedAdmission;
+  if (
+    delegatedAdmission !== undefined &&
+    !isComposedReferenceGameBrowserDelegatedAuthCapability(delegatedAdmission.capability)
+  )
+    throw new Error("tavern_management_delegated_capability_invalid");
+  if (options.profile === undefined) throw new Error("tavern_management_composition_unavailable");
+  // The standalone mount owns the one bootstrap the browser exchanges for its
+  // session; the delegated mount never mints a second one, so it needs none.
+  if (delegatedAdmission === undefined && options.bootstrapToken === undefined)
     throw new Error("tavern_management_composition_unavailable");
   const managementStateFacade = options.managementStateFacade;
   const managementService = options.managementService;
@@ -453,7 +485,17 @@ export function createTavernManagementDialogueWebRequestHandler(
   const stCardImportHistoryService = options.stCardImportHistoryService;
   const profile = options.profile;
   const bootstrapToken = options.bootstrapToken;
-  if (managementStateFacade === undefined || managementService === undefined)
+  // The standalone mount owns the one bootstrap token the browser exchanges for
+  // its session; the delegated mount owns none and answers no bootstrap route.
+  if (delegatedAdmission === undefined) {
+    if (bootstrapToken === undefined) throw new Error("tavern_management_composition_unavailable");
+    if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
+  }
+  if (managementService === undefined) throw new Error("tavern_management_composition_unavailable");
+  // Only the standalone mount serves `bootstrap` and `state.read` from this
+  // facade; the delegated mount leaves both to the composed broker that already
+  // owns the one root snapshot, so it needs no facade of its own.
+  if (delegatedAdmission === undefined && managementStateFacade === undefined)
     throw new Error("tavern_management_composition_unavailable");
   assertManagementProfile(profile);
   // The production profile declares `memory.read`; it is reachable only when a
@@ -483,7 +525,6 @@ export function createTavernManagementDialogueWebRequestHandler(
     playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
-  if (!isOpaqueHandle(bootstrapToken)) throw new Error("tavern_management_bootstrap_token_invalid");
   // The connection routes are mounted only when the exact service is injected;
   // a profile that advertises any of them without it fails closed before any
   // dispatch, so no route can claim a management capability it cannot serve.
@@ -546,6 +587,26 @@ export function createTavernManagementDialogueWebRequestHandler(
 
   let browser: BrowserSession | undefined;
   let bootstrapUsed = false;
+  /**
+   * One admission authority for both mounts. The standalone mount verifies its
+   * own browser-session cookie; the delegated mount verifies the composed
+   * broker's session through the capability the broker minted, and projects the
+   * broker's own CSRF token for the exact admitted session. Either way every
+   * route below checks the one CSRF fact of whichever root admitted it.
+   */
+  const admitRequest = (
+    request: IncomingMessage,
+    origin: string,
+  ): AdmissionSession | null => {
+    if (delegatedAdmission === undefined) return authenticate(request, browser, origin);
+    const context = verifyComposedReferenceGameBrowserAuth(delegatedAdmission.capability, request, origin);
+    if (context === null) return null;
+    const projection = composedReferenceGameBrowserAuthProjection(context);
+    return Object.freeze({
+      csrf: projection.csrfToken,
+      expiresAtMs: projection.browserSessionExpiresAtMs,
+    });
+  };
   let closed = false;
   let closePromise: Promise<void> | undefined;
   const activeDispatches = new Set<Promise<void>>();
@@ -557,7 +618,19 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (closed) return sendProblem(response, 503, "runtime_unavailable");
     const url = new URL(request.url ?? "/", origin);
     try {
+      // The composed broker owns bootstrap and the root `state.read` snapshot on
+      // this shared prefix; the delegated management mount never answers with a
+      // second session, cookie, or root projection.
+      if (
+        delegatedAdmission !== undefined &&
+        ((request.method === "POST" && url.pathname === "/api/tavern/v1/bootstrap") ||
+          (request.method === "GET" && url.pathname === "/api/tavern/v1/state"))
+      )
+        return sendProblem(response, 404, "profile_operation_unavailable");
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/bootstrap") {
+        // The one-time token exchange belongs to whichever root owns the
+        // browser session, so a dispatcher mounted without one refuses here.
+        if (bootstrapToken === undefined) return sendProblem(response, 404, "profile_operation_unavailable");
         if (url.search !== "") return sendProblem(response, 400, "invalid_request");
         if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -575,7 +648,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         response.setHeader("Set-Cookie", `gb_tavern_session=${session.bearer}; HttpOnly; SameSite=Strict; Path=/`);
         return await sendProjectedSnapshot(
           response,
-          managementStateFacade,
+          managementStateFacade!,
           profile,
           session,
           memoryService,
@@ -584,11 +657,11 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/state") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         return await sendProjectedSnapshot(
           response,
-          managementStateFacade,
+          managementStateFacade!,
           profile,
           session,
           memoryService,
@@ -597,7 +670,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (
           !profile.routeIds.includes("settings.voice.read") ||
           !profile.operationIds.includes("settings.voice.read") ||
@@ -611,7 +684,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/voice-preference") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -632,7 +705,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/voice-devices") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (
           !profile.routeIds.includes("settings.voice.devices") ||
           !profile.operationIds.includes("settings.voice.devices")
@@ -659,7 +732,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/language") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (
           !profile.routeIds.includes("settings.language.read") ||
           !profile.operationIds.includes("settings.language.read") ||
@@ -673,7 +746,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/language") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -698,7 +771,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("world-info.read") || worldInfoService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
@@ -709,7 +782,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/world-info") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
         if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
@@ -729,7 +802,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/draft") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         const draft = await managementService.readDraft();
         if (!TavernBrowserValidatorsV1.BrowserDraftV1Schema.Check(draft))
@@ -738,7 +811,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/draft") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -751,7 +824,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/draft") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -764,7 +837,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/chats") {
         if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         const queryValue: Record<string, string | number> = {};
         const seen = new Set<string>();
         for (const [key, value] of url.searchParams) {
@@ -783,7 +856,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/title") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
         if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
@@ -797,7 +870,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/memory") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -817,7 +890,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/memory") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("memory.read") || memoryService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const memory: MemoryReadV1 = await memoryService.read();
@@ -827,14 +900,14 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/connection") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!connectionRouteAvailable(profile, "settings.connection.read", connectionService))
           return sendProblem(response, 404, "profile_operation_unavailable");
         return sendJson(response, 200, await connectionService!.read());
       }
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/settings/connections") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -847,7 +920,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       const connectionRoute = matchConnectionRoute(request.method, url.pathname);
       if (connectionRoute !== null) {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -879,7 +952,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/profiles") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (
           !profile.routeIds.includes("settings.profiles.read") ||
           !profile.operationIds.includes("settings.profiles.read") ||
@@ -897,7 +970,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/profiles") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -925,7 +998,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/companions") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("companion.list") || libraryService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const companions = await libraryService.listCompanions();
@@ -950,7 +1023,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           // browser input can never name another durable companion identity.
           if (url.search !== "" || (await hasRequestBody(request)))
             return sendProblem(response, 400, "invalid_request");
-          if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
           if (
             !profile.routeIds.includes("companion.detail") ||
             libraryService === undefined ||
@@ -970,7 +1043,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/companions") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -995,7 +1068,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           // character.import.read: safe review data for the exact staged card.
           if (url.search !== "" || (await hasRequestBody(request)))
             return sendProblem(response, 400, "invalid_request");
-          if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
           if (!profile.routeIds.includes("character.import.read"))
             return sendProblem(response, 404, "profile_operation_unavailable");
           let imported;
@@ -1044,7 +1117,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         // character.import.stage: the card body is the ONLY input the browser
         // sends. Host mints the opaque importId; the player never names it.
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -1097,7 +1170,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (importReviewRoute !== null) {
           // character.import.review: an explicit eligible-field review record.
           if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = authenticate(request, browser, origin);
+          const session = admitRequest(request, origin);
           if (session === null) return sendProblem(response, 401, "unauthorized");
           if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
             return sendProblem(response, 403, "csrf_failed");
@@ -1137,7 +1210,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           // composition owns the runtime root/threads; the browser receives
           // only the safe confirmed name.
           if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = authenticate(request, browser, origin);
+          const session = admitRequest(request, origin);
           if (session === null) return sendProblem(response, 401, "unauthorized");
           if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
             return sendProblem(response, 403, "csrf_failed");
@@ -1169,7 +1242,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         // confirmed import. A read projection only; it can never change what an
         // import kept or dropped, and it never carries card body text.
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("character.import.history") || stCardImportHistoryService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const entries = await stCardImportHistoryService.list();
@@ -1195,7 +1268,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/persona") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("persona.read") || personaService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const persona = await personaService.read();
@@ -1211,7 +1284,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/persona") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -1241,7 +1314,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/scenario") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("scenario.read") || scenarioService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const scenario = await scenarioService.read();
@@ -1258,7 +1331,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/scenario") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -1289,7 +1362,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/greeting") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
-        if (authenticate(request, browser, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
         if (!profile.routeIds.includes("greeting.read") || greetingService === undefined)
           return sendProblem(response, 404, "profile_operation_unavailable");
         const greeting = await greetingService.read();
@@ -1307,7 +1380,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/greeting") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-        const session = authenticate(request, browser, origin);
+        const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
@@ -1343,7 +1416,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         const retentionRoute = matchRetentionRoute(request.method, url.pathname);
         if (retentionRoute !== null) {
           if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
-          const session = authenticate(request, browser, origin);
+          const session = admitRequest(request, origin);
           if (session === null) return sendProblem(response, 401, "unauthorized");
           if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
             return sendProblem(response, 403, "csrf_failed");
@@ -1403,14 +1476,20 @@ export function createTavernManagementDialogueWebRequestHandler(
         closed = true;
         browser = undefined;
         await Promise.allSettled([...activeDispatches]);
-        await managementService.close();
-        await memoryService?.close();
-        // The connection service drains after the handler has drained, so no
-        // admitted probe or mutation is still holding the credential path.
-        await connectionService?.close();
-        // The binding service's close is idempotent; the handler drain above
-        // guarantees it runs only after admitted dispatches have settled.
-        await worldInfoService?.close();
+        // The standalone mount is the owner of these services, so it drains
+        // them last. The delegated mount does not own them: the presentation
+        // admission that built them drains them itself, in reverse creation
+        // order, once this handler has drained.
+        if (delegatedAdmission === undefined) {
+          await managementService.close();
+          await memoryService?.close();
+          // The connection service drains after the handler has drained, so no
+          // admitted probe or mutation is still holding the credential path.
+          await connectionService?.close();
+          // The binding service's close is idempotent; the handler drain above
+          // guarantees it runs only after admitted dispatches have settled.
+          await worldInfoService?.close();
+        }
       })();
       await closePromise;
     },
@@ -1446,7 +1525,7 @@ async function sendProjectedSnapshot(
   response: ServerResponse,
   facade: TavernManagementStateFacade,
   profile: ComposedTavernProfile,
-  browser: BrowserSession,
+  browser: AdmissionSession,
   memoryService?: MemoryManagementService,
   worldInfoService?: WorldInfoBindingManagementService,
 ): Promise<void> {

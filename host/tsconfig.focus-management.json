@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-composed-management"
+  },
+  "include": [],
+  "files": [
+    "src/tavern-management-dialogue-web.player-preference.test.ts",
+    "src/tavern-management-dialogue-web.import-history.test.ts",
+    "src/tavern-management-model-profiles.test.ts"
+  ]
+}

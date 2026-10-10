@@ -27,7 +27,27 @@ import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/
 const scenario = process.argv[2] ?? "";
 const bootstrapToken = `${"A".repeat(42)}A`;
 const constructionFailure = new Error("presentation_lane_construction_failed");
-const counts = { facadeCreated: 0, serviceCreated: 0, serviceClosed: 0, readGameCalls: 0 };
+const counts = {
+  facadeCreated: 0,
+  serviceCreated: 0,
+  serviceClosed: 0,
+  readGameCalls: 0,
+  managementCreated: 0,
+  memoryCreated: 0,
+  worldInfoCreated: 0,
+  repositoryCreated: 0,
+  connectionCreated: 0,
+  managementClosed: 0,
+  memoryClosed: 0,
+  worldInfoClosed: 0,
+  connectionClosed: 0,
+};
+const observedProfileIds: Record<string, string | null> = {
+  management: null,
+  memory: null,
+  worldInfo: null,
+};
+let connectionSawTurnState = false;
 let tavernProfileIdObservedByFacade: string | null = null;
 let tavernProfileIdObservedByService: string | null = null;
 let facadeSawSharedStream = false;
@@ -53,6 +73,81 @@ const fakeFacade = Object.freeze({
   // The real facade owns its store and releases it on close; the composition
   // owner's close chain calls this, so the fixture must model it.
   close: async () => undefined,
+});
+
+/**
+ * The management domains the composed admission must mount for the shell's
+ * Chats/Characters/Game/Settings/Memory/World Info panels. Only their creation
+ * is observed here; one read route is driven end to end below.
+ */
+const fakeChatList = Object.freeze({
+  apiVersion: 1 as const,
+  chats: [
+    Object.freeze({
+      handle,
+      title: "Exact Chat",
+      status: "active" as const,
+      managementRevision: 1,
+      isSelected: true,
+    }),
+  ],
+});
+const fakeManagementService = Object.freeze({
+  listChats: async () => fakeChatList,
+  renameChatTitle: async () => {
+    throw new Error("unused_rename");
+  },
+  readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: null }),
+  saveDraft: async () => {
+    throw new Error("unused_draft_save");
+  },
+  discardDraft: async () => {
+    throw new Error("unused_draft_discard");
+  },
+  close: async () => {
+    counts.managementClosed += 1;
+  },
+});
+const fakeMemoryService = Object.freeze({
+  read: async () => Object.freeze({ projectionRevision: handle, memories: [] }),
+  mutate: async () => {
+    throw new Error("unused_memory_mutate");
+  },
+  close: async () => {
+    counts.memoryClosed += 1;
+  },
+});
+const fakeWorldInfoService = Object.freeze({
+  read: async () => Object.freeze({ state: "none", revision: handle, items: [] }),
+  setBinding: async () => {
+    throw new Error("unused_bind");
+  },
+  close: async () => {
+    counts.worldInfoClosed += 1;
+  },
+});
+const fakeConnectionService = Object.freeze({
+  read: async () => {
+    throw new Error("unused_connection_read");
+  },
+  create: async () => {
+    throw new Error("unused_connection_create");
+  },
+  test: async () => {
+    throw new Error("unused_connection_test");
+  },
+  activate: async () => {
+    throw new Error("unused_connection_activate");
+  },
+  selectModel: async () => {
+    throw new Error("unused_connection_model");
+  },
+  remove: async () => {
+    throw new Error("unused_connection_remove");
+  },
+  close: async () => {
+    counts.connectionClosed += 1;
+  },
 });
 
 function inspector() {
@@ -230,6 +325,70 @@ async function main(): Promise<void> {
     },
   );
 
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-management", "world-info-management.js")).href,
+    {
+      namedExports: {
+        createWorldInfoManagementRepository: () => {
+          counts.repositoryCreated += 1;
+          return Object.freeze({});
+        },
+      },
+    },
+  );
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-binding", "world-info-binding-management-service.js")).href,
+    {
+      namedExports: {
+        createWorldInfoBindingManagementService: (options: {
+          readonly profile?: { readonly profileId?: string };
+        }) => {
+          counts.worldInfoCreated += 1;
+          observedProfileIds.worldInfo = options?.profile?.profileId ?? null;
+          return fakeWorldInfoService;
+        },
+      },
+    },
+  );
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-management", "chat-management-service.js")).href,
+    {
+      namedExports: {
+        createChatManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
+          counts.managementCreated += 1;
+          observedProfileIds.management = options?.profile?.profileId ?? null;
+          return fakeManagementService;
+        },
+      },
+    },
+  );
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "memory-management", "memory-management.js")).href,
+    {
+      namedExports: {
+        createMemoryManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
+          counts.memoryCreated += 1;
+          observedProfileIds.memory = options?.profile?.profileId ?? null;
+          return fakeMemoryService;
+        },
+      },
+    },
+  );
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href,
+    {
+      namedExports: {
+        createTavernConnectionService: (options: { readonly readTurnState?: () => Promise<unknown> }) => {
+          counts.connectionCreated += 1;
+          // The reader must be bound to the exact mounted Chat; proving it is a
+          // function is enough here because the facade itself is the stub.
+          connectionSawTurnState = typeof options?.readTurnState === "function";
+          return fakeConnectionService;
+        },
+      },
+    },
+  );
+
   const { startDesktopPresentationAdmission } = await import(
     pathToFileURL(join(moduleDirectory, "..", "composition", "desktop-presentation-admission-owner.js")).href
   );
@@ -237,12 +396,20 @@ async function main(): Promise<void> {
   eventStream = createChatEventStream();
   const observations: Record<string, unknown> = {
     scenario,
+    runtimeRoot: "E:/fixture/runtime-root",
   };
   let admission: Awaited<ReturnType<typeof startDesktopPresentationAdmission>> | undefined;
   try {
     try {
       admission = await startDesktopPresentationAdmission({
-        manifest: Object.freeze({}) as never,
+        manifest: Object.freeze({
+          runtimeRoot: observations.runtimeRoot,
+          principal: Object.freeze({
+            playerId: "player_fixture",
+            companionId: "companion_fixture",
+            continuityId: "continuity_fixture",
+          }),
+        }) as never,
         hostArtifactRoot: fixture.hostArtifactRoot,
         bootstrapToken,
         eventStream,
@@ -278,6 +445,15 @@ async function main(): Promise<void> {
         observations.composedProfileId = root.build.profileId;
         observations.chatProfileId = root.chat.build.profileId;
         observations.gameProfileId = root.game?.build.profileId ?? null;
+        // The management domains are mounted on this same origin: one of their
+        // read routes answers from the injected service under broker auth, which
+        // is the route the shell previously answered 404 for.
+        const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+        const chats = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1`, {
+          headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+        });
+        observations.managementChatsStatus = chats.status;
+        observations.managementChatsBody = chats.status === 200 ? await chats.json() : null;
       }
       observations.issuerBoundBeforeClose = issuerBound;
       await Promise.all([admission.close(), admission.close()]);
@@ -301,6 +477,8 @@ async function main(): Promise<void> {
   process.stdout.write(
     `${JSON.stringify({
       ...counts,
+      observedProfileIds,
+      connectionSawTurnState,
       tavernProfileIdObservedByFacade,
       tavernProfileIdObservedByService,
       facadeSawSharedStream,

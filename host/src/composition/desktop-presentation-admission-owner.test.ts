@@ -24,6 +24,23 @@ type PresentationAdmissionObservations = Readonly<{
   tavernProfileIdObservedByService: string | null;
   facadeSawSharedStream: boolean;
   serviceSawSharedStream: boolean;
+  managementCreated: number;
+  memoryCreated: number;
+  worldInfoCreated: number;
+  repositoryCreated: number;
+  connectionCreated: number;
+  managementClosed: number;
+  memoryClosed: number;
+  worldInfoClosed: number;
+  connectionClosed: number;
+  connectionSawTurnState: boolean;
+  observedProfileIds: Readonly<{
+    management: string | null;
+    memory: string | null;
+    worldInfo: string | null;
+  }>;
+  managementChatsStatus?: number;
+  managementChatsBody?: unknown;
   propagatedOriginalFailure?: boolean;
   errorMessage?: string;
   launchUrlMatchesToken?: boolean;
@@ -191,12 +208,40 @@ test("presentation admission owner serves the composed reference-game shell over
   assert.equal(observed.chatProfileId, "gamebuddy.chat-core.reference-pipeline");
   assert.equal(observed.gameProfileId, "gamebuddy.game.preview");
   assert.ok(observed.readGameCalls >= 1);
+  // The management domains the shell's Chats/Characters/Game/Settings/Memory/
+  // World Info panels read and write are mounted by this exact admission: the
+  // management profile and the same lease-bound services over the same durable
+  // stores the standalone management surface mounts. Without them those panels
+  // report the route as unsupported while the functional backend behind it
+  // already worked.
+  assert.equal(observed.managementCreated, 1);
+  assert.equal(observed.memoryCreated, 1);
+  assert.equal(observed.worldInfoCreated, 1);
+  assert.equal(observed.repositoryCreated, 1);
+  assert.equal(observed.connectionCreated, 1);
+  assert.equal(observed.connectionSawTurnState, true);
+  const managementProfileId = "gamebuddy.tavern-management.chat-list-title";
+  assert.equal(observed.observedProfileIds.management, managementProfileId);
+  assert.equal(observed.observedProfileIds.memory, managementProfileId);
+  assert.equal(observed.observedProfileIds.worldInfo, managementProfileId);
+  // A management route the composed shell answered 404 for until now is served,
+  // from the injected service, under the composed broker's own session.
+  assert.equal(observed.managementChatsStatus, 200);
+  const chatsBody = observed.managementChatsBody as
+    | { apiVersion?: number; chats?: readonly { title?: string; status?: string }[] }
+    | null;
+  assert.equal(chatsBody?.apiVersion, 1);
+  assert.deepEqual(chatsBody?.chats?.map((chat) => [chat.title, chat.status]), [["Exact Chat", "active"]]);
   // The lifecycle owner's bind sink received the broker's admission issuer.
   assert.equal(observed.issuerBoundBeforeClose, true);
   // Closing once (twice requested) closes the one listener and drains the Chat
-  // pipeline service through its delegated handler exactly once.
+  // pipeline service and the management domains behind it exactly once.
   assert.equal(observed.listenerClosedAfterClose, true);
   assert.equal(observed.serviceClosedAfterClose, 1);
+  assert.equal(observed.managementClosed, 1);
+  assert.equal(observed.memoryClosed, 1);
+  assert.equal(observed.worldInfoClosed, 1);
+  assert.equal(observed.connectionClosed, 1);
 });
 
 test("presentation admission owner drains the Chat pipeline service and propagates an unverified artifact failure", async () => {
@@ -206,8 +251,14 @@ test("presentation admission owner drains the Chat pipeline service and propagat
   assert.equal(observed.facadeCreated, 1);
   assert.equal(observed.serviceCreated, 1);
   // The listener never started, so the created Chat admission owner is drained
-  // and the original artifact failure is propagated unchanged.
+  // and the original artifact failure is propagated unchanged. The management
+  // domains exist before the artifact is verified, so they drain in reverse
+  // creation order too: no created service outlives a failed construction.
   assert.equal(observed.serviceClosed, 1);
+  assert.equal(observed.managementClosed, 1);
+  assert.equal(observed.memoryClosed, 1);
+  assert.equal(observed.worldInfoClosed, 1);
+  assert.equal(observed.connectionClosed, 1);
   assert.equal(observed.propagatedOriginalFailure, false);
   assert.ok((observed.errorMessage ?? "").length > 0);
 });

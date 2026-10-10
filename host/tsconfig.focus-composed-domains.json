@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-composed-domains"
+  },
+  "include": [],
+  "files": [
+    "src/composed-reference-game-browser.test.ts",
+    "src/composed-reference-game-browser-client.test.ts",
+    "src/tavern/composed-reference-game-static-shell-composition.test.ts",
+    "src/composition/desktop-presentation-admission-owner.test.ts",
+    "src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
+    "src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
+    "src/test-fixtures/desktop-presentation-admission-management-worker.ts",
+    "src/composition/desktop-presentation-admission-owner.ts",
+    "src/tavern/tavern-management-state.ts",
+    "src/tavern/chat-management/chat-management-service.ts",
+    "src/tavern/memory-management/memory-management.ts",
+    "src/tavern/world-info-binding/world-info-binding-management-service.ts",
+    "src/tavern/world-info-management/world-info-management.ts",
+    "src/tavern/connection-service.ts",
+    "src/tavern/reference-pipeline-state.ts",
+    "src/tavern/chat-pipeline-service.ts"
+  ]
+}

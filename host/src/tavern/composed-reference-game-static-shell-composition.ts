@@ -12,18 +12,17 @@ import {
 import {
   createTavernManagementDialogueWebDelegatedHandler,
   type TavernManagementDelegatedHandler,
+  type TavernManagementDelegatedOptions,
 } from "../tavern-management-dialogue-web.delegated.js";
-import { TAVERN_BROWSER_API_V1, TavernBrowserValidatorsV1, type ComposedTavernProfile } from "./browser-contract/index.js";
+import {
+  TAVERN_BROWSER_API_V1,
+  TavernBrowserContractV1,
+  TavernBrowserValidatorsV1,
+  type ComposedTavernProfile,
+} from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
-import type { ChatManagementService } from "./chat-management/chat-management-service.js";
-import type { MemoryManagementService } from "./memory-management/memory-management.js";
-import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
-import type {
-  PlayerPreference,
-  PlayerPreferenceUpdate,
-} from "../settings/player-preference-store.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type {
@@ -63,21 +62,17 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   pipelineService?: ChatPipelineService;
   eventStream?: ChatEventStream;
   /**
-   * Optional management services for the composed shell's Chats/Memory/World Info/
-   * Settings panels. When every member is provided, a delegated management handler
-   * is mounted under `/api/tavern/v1/` for the management routes; otherwise those
-   * panels stay absent (design/26 §1), never a disabled lookalike.
+   * The management domains the shell's Chats/Characters/Game/Settings/Memory
+   * World Info panels read and write, on the management profile that declares
+   * them (design/104 §2, design/26 §4.2). When every route the profile declares
+   * has its exact bound service, a delegated management dispatcher is mounted
+   * under `/api/tavern/v1/`; a profile that advertises a route without the
+   * service that owns it fails closed before the listener starts (design/26 §1),
+   * never a disabled lookalike. The caller supplies the domains and the profile;
+   * this listener's own broker mints the admission capability they run under, so
+   * it is never supplied from outside.
    */
-  management?: Readonly<{
-    profile: ComposedTavernProfile;
-    managementService: ChatManagementService;
-    memoryService: MemoryManagementService;
-    worldInfoService: WorldInfoBindingManagementService;
-    playerPreferenceStore?: Readonly<{
-      read(): Promise<PlayerPreference>;
-      update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference>;
-    }>;
-  }>;
+  management?: Omit<TavernManagementDelegatedOptions, "capability">;
   artifactRoot: string;
   inspector?: WindowsReparseInspectorCapability;
   lifecycleActivationBindingSink?: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
@@ -215,32 +210,34 @@ export async function startComposedReferenceGameStaticShellComposition(
     ...(options.eventStream === undefined ? {} : { eventStream: options.eventStream }),
     capability: composedHandler.delegatedAuthCapability,
   });
-  // The management panels' delegated handler, mounted only when every service it
-  // needs is injected. Its routes (memory/world-info/settings/chat.list) do not
-  // overlap the reference handler's Chat routes, so the two dispatchers share the
-  // same `/api/tavern/v1/` prefix without ambiguity.
+  // The management domains' delegated dispatcher, mounted only when its
+  // services are injected. It is the same dispatcher the standalone
+  // tavern_management shell serves, so every management route that shell serves
+  // - Chats, drafts, Memory, World Info, Settings, Characters, Persona /
+  // Scenario / Greeting, retention and the reviewed card-import stages - is
+  // served here from the same durable state. Its routes do not overlap the
+  // reference handler's Chat routes, so the two dispatchers share the same
+  // `/api/tavern/v1/` prefix without ambiguity.
   const managementHandler: TavernManagementDelegatedHandler | undefined =
     options.management === undefined
       ? undefined
       : createTavernManagementDialogueWebDelegatedHandler({
-          profile: options.management.profile,
-          managementService: options.management.managementService,
-          memoryService: options.management.memoryService,
-          worldInfoService: options.management.worldInfoService,
-          ...(options.management.playerPreferenceStore === undefined
-            ? {}
-            : { playerPreferenceStore: options.management.playerPreferenceStore }),
+          ...options.management,
           capability: composedHandler.delegatedAuthCapability,
         });
-  // Management routes this shell mounts; every other /api/tavern/v1/* path stays
-  // with the reference handler (submit/cancel/state/draft/events).
-  const MANAGEMENT_PATHS = new Set([
-    "/api/tavern/v1/chats",
-    "/api/tavern/v1/memory",
-    "/api/tavern/v1/world-info",
-    "/api/tavern/v1/settings/voice-preference",
-    "/api/tavern/v1/settings/language",
-  ]);
+  const managementProfile = options.management?.profile;
+  // Whichever profile declares a /api/tavern/v1/ route owns it. The Chat
+  // dispatcher keeps the routes of the frozen reference Chat contract
+  // (bootstrap, state, draft read, the turn operations and the event stream) and
+  // the management dispatcher serves the rest; `state.read` and `draft.read`
+  // are declared by both and stay with the Chat dispatcher, which owns the one
+  // root snapshot the composed broker projects. Both route sets come from the
+  // one browser contract, so this routing can never drift from the profiles.
+  const servesManagementRoute = (method: string | undefined, pathname: string): boolean =>
+    managementHandler !== undefined &&
+    managementProfile !== undefined &&
+    declaresRoute(managementProfile, method, pathname) &&
+    !declaresRoute(options.profile.tavernProfile, method, pathname);
   try {
     options.lifecycleActivationBindingSink?.bindBrowserAdmissionIssuer(
       composedHandler.lifecycleActivationIssuer,
@@ -276,9 +273,8 @@ export async function startComposedReferenceGameStaticShellComposition(
     }
     if (pathname.startsWith("/api/composed-reference-game/")) {
       composedHandler.handle(request, response, origin);
-    } else if (pathname.startsWith("/api/tavern/") && managementHandler !== undefined
-        && MANAGEMENT_PATHS.has(pathname)) {
-      managementHandler.handle(request, response, origin);
+    } else if (pathname.startsWith("/api/tavern/") && servesManagementRoute(request.method, pathname)) {
+      managementHandler?.handle(request, response, origin);
     } else if (pathname.startsWith("/api/tavern/")) {
       referenceHandler.handle(request, response, origin);
     } else {
@@ -315,6 +311,40 @@ export async function startComposedReferenceGameStaticShellComposition(
       await managementDrain;
     },
   });
+}
+
+/**
+ * True when the profile declares the browser-contract route whose method and
+ * path match this request: the exact route set the profile advertises, so the
+ * routes the shell serves and the routes a profile declares can never drift
+ * apart. A `:param` segment matches any one non-empty path segment; the
+ * dispatcher behind this classification still validates the exact handle shape
+ * and answers 404 for anything it does not own.
+ */
+function declaresRoute(
+  profile: ComposedTavernProfile,
+  method: string | undefined,
+  pathname: string,
+): boolean {
+  return TavernBrowserContractV1.routes.some(
+    (route) =>
+      profile.routeIds.includes(route.routeId) &&
+      route.method === method &&
+      pathMatchesRoute(route.path, pathname),
+  );
+}
+
+function pathMatchesRoute(routePath: string, pathname: string): boolean {
+  const expected = routePath.split("/");
+  const actual = pathname.split("/");
+  return (
+    expected.length === actual.length &&
+    expected.every((segment, index) =>
+      segment.startsWith(":")
+        ? actual[index] !== undefined && actual[index] !== ""
+        : segment === actual[index],
+    )
+  );
 }
 
 async function closeServer(server: Server): Promise<void> {
