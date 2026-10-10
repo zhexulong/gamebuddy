@@ -71,9 +71,13 @@ test("every named body owner gets actionable guidance, and no two owners read th
 });
 
 test("only a supersedable owner is told to re-issue; every other owner must settle first", () => {
-  // The Mod's frozen table marks an in-flight local movement supersedable by a newer command, so re-issuing
-  // is the remedy there; re-issuing against any other owner would just be refused again.
-  assert.match(remedyForBodyHold("body_owned_by_movement", null)?.guidance ?? "", /Re-issue the same request now/);
+  // The Mod's frozen table marks an in-flight local movement supersedable by a newer command, but ONLY a
+  // movement displaces it: `RequestLocalMove` cancels `active`, while any other action goes through shared
+  // admission and is refused again. The guidance must therefore name both cases instead of promising a
+  // takeover to whichever request happens to be holding the code.
+  const movement = remedyForBodyHold("body_owned_by_movement", null)?.guidance ?? "";
+  assert.match(movement, /if you meant to walk somewhere, re-issue the request now/);
+  assert.match(movement, /Any other action has to wait/, "a tool action must not be told to re-issue blindly");
   for (const code of [
     "body_owned_by_travel",
     "body_owned_by_approach",

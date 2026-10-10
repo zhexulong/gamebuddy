@@ -125,9 +125,16 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
     case "body_owned_by_movement":
       return {
         action: null,
+        // The guidance is keyed on the OWNER, but what the Agent should do depends on the owner AND what it
+        // asked for: only a MOVEMENT directive displaces a walk in progress
+        // (farmhandexecutioncontroller.movementactions.cs:52-53 cancels `active`), so a re-issued tool action
+        // would simply be refused again. An earlier version promised "the new directive takes over" to any
+        // requester, which is false for everything that is not a move. The text now names which case the Agent
+        // is in rather than assuming one.
         guidance:
-          "The farmhand's body is held by an in-flight movement that a newer command supersedes. Re-issue " +
-          "the same request now; the new directive takes over from the walk in progress.",
+          "Wait for the walk to settle, or replace it: a new movement directive takes over from a walk in " +
+          "progress, so if you meant to walk somewhere, re-issue the request now. Any other action has to wait " +
+          "for the walk to end.",
       };
     case "body_owned_by_approach":
       return {
