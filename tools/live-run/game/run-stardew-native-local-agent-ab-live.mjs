@@ -607,22 +607,20 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
  * steer reached the session; none of them observed means the result must say so
  * instead of pretending the agent chose to do nothing.
  */
-async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_000, timeoutMs }) {
-  // The session is "quiet" when no new dispatch has appeared for a sustained window AND no new bridge fact
-  // has appeared. A terminal follow_up fact that the Agent acts on shows up as a new dispatch; a fact with no
-  // action behind it is still a delivery we must not cut off. The window is long enough for one agent turn
-  // after a terminal (dismiss/resume) but short enough not to stretch a run forever.
-  const dispatchesAtStart = dispatchesBeforeTurn;
-  const factsAtStart = factLog.length;
+async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_000, timeoutMs = 300_000 } = {}) {
+  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. Meaningful = execution_receipt,
+  // lifecycle or error; the Mod pings semantic_event/body_trace every few seconds, and counting that as motion
+  // made the 20s window unreachable — the live run hung for 31 minutes and never wrote a result.
+  const meaningful = (entry) => entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
+  const dispatchMark = dispatchesBeforeTurn;
+  const factMark = factLog.length;
   let lastActionAt = Date.now();
   let lastFactAt = Date.now();
-  const deadline = Date.now() + (timeoutMs ?? 300_000);
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const actionNow = actionTrace.length;
-    const factNow = factLog.length;
-    const actionMoved = actionNow > dispatchesAtStart || actionNow > lastActionAt;
-    const factMoved = factNow > factsAtStart || factNow > lastFactAt;
+    const actionMoved = actionTrace.length > dispatchMark || actionTrace.length > lastActionAt;
+    const factMoved = factLog.slice(factMark).some(meaningful) || factLog.slice(lastFactAt).some(meaningful);
     if (actionMoved) lastActionAt = Date.now();
     if (factMoved) lastFactAt = Date.now();
     if (Date.now() - lastActionAt >= quietMs && Date.now() - lastFactAt >= quietMs) {
