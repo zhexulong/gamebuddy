@@ -89,14 +89,72 @@ public sealed partial class ModEntry
     /// </param>
     private void InstallNativeLocalTalkToNpcFixture(Farmer player, bool requireMultiPage = false)
     {
-        if (Game1.getLocationFromName(TalkToNpcFixtureLocation) is not GameLocation saloon)
-            throw new InvalidOperationException($"fixture_native_local_talk_to_npc_location_missing:{TalkToNpcFixtureLocation}");
+        // WHICH PAIR: for the shipped scenario it stays Gus in the Saloon (the world his own schedule produces).
+        // For the multi-page scenario the pair is SEARCHED FOR, because the line has to be one the game presents
+        // by itself: a hand-pushed Dialogue produces a box whose text read throws (observed live), so the fixture
+        // must find a villager whose OWN dialogue for a LOADED LOCATION carries the page break.
+        string locationName = TalkToNpcFixtureLocation;
+        string villagerName = TalkToNpcFixtureVillager;
+        if (requireMultiPage)
+        {
+            List<string> searched = new();
+            foreach (NPC candidate in Utility.getAllCharacters().Where(c => c.IsVillager && !string.IsNullOrWhiteSpace(c.Name)))
+            {
+                Dictionary<string, string>? table;
+                try
+                {
+                    table = Game1.content.Load<Dictionary<string, string>>($"Characters/Dialogue/{candidate.Name}");
+                }
+                catch
+                {
+                    continue;
+                }
+                foreach ((string key, string text) in table)
+                {
+                    // Only a key that IS a loaded location can be talked in, and only a line with the break can
+                    // exercise the pager.
+                    if (!text.Contains(PageBreakToken, StringComparison.Ordinal))
+                        continue;
+                    if (Game1.getLocationFromName(key) is null)
+                        continue;
+                    // The acceptance test is the NATIVE selection itself: TryGetDialogue(key) is the call the
+                    // runner makes, and it can resolve a DIFFERENT row than the scan looked at (observed live:
+                    // Lewis@Saloon). Accept the pair only when BOTH the raw row and the native-selected line
+                    // carry the break.
+                    string? presented = candidate.TryGetDialogue(key)?.getCurrentDialogue();
+                    if (presented is null || !presented.Contains(PageBreakToken, StringComparison.Ordinal))
+                    {
+                        searched.Add($"{candidate.Name}@{key}:native_mismatch");
+                        continue;
+                    }
+                    searched.Add($"{candidate.Name}@{key}");
+                    // First match wins: the game's own lookup uses the location key, so this pair talks about
+                    // this line with no intervention.
+                    locationName = key;
+                    villagerName = candidate.Name;
+                    break;
+                }
+                if (!string.Equals(locationName, TalkToNpcFixtureLocation, StringComparison.Ordinal)
+                    || !string.Equals(villagerName, TalkToNpcFixtureVillager, StringComparison.Ordinal))
+                    break;
+            }
+            if (string.Equals(locationName, TalkToNpcFixtureLocation, StringComparison.Ordinal)
+                && string.Equals(villagerName, TalkToNpcFixtureVillager, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"fixture_native_local_talk_to_npc_no_native_multi_page_pair:searched={string.Join(",", searched)}");
+            this.Monitor.Log(
+                $"GameBuddy multi-page talk pair chosen by content: villager={villagerName};location={locationName}",
+                LogLevel.Info);
+        }
+
+        if (Game1.getLocationFromName(locationName) is not GameLocation saloon)
+            throw new InvalidOperationException($"fixture_native_local_talk_to_npc_location_missing:{locationName}");
 
         NPC? villager = Utility.getAllCharacters()
             .FirstOrDefault(candidate => candidate.IsVillager
-                && string.Equals(candidate.Name, TalkToNpcFixtureVillager, StringComparison.Ordinal));
+                && string.Equals(candidate.Name, villagerName, StringComparison.Ordinal));
         if (villager is null)
-            throw new InvalidOperationException($"fixture_native_local_talk_to_npc_villager_missing:{TalkToNpcFixtureVillager}");
+            throw new InvalidOperationException($"fixture_native_local_talk_to_npc_villager_missing:{villagerName}");
         // checkAction refuses an invisible or sleeping villager before any dialogue logic
         // (:2466-2478), so a run against one could never reach the branch under test.
         if (villager.IsInvisible || villager.isSleeping.Value)
@@ -250,6 +308,16 @@ public sealed partial class ModEntry
         if (villager.TryGetDialogue(saloon.Name) is null)
             throw new InvalidOperationException(
                 $"fixture_native_local_talk_to_npc_location_dialogue_missing:villager={villager.Name};dialogue_key={saloon.Name}");
+        // And for the multi-page scenario, the line the game will present must ITSELF carry the break: the search
+        // above found one, and this proves it is the one this pair actually talks about. Written as two steps
+        // because a pattern binding combined with `||` leaves the variable not-definitely-assigned.
+        if (requireMultiPage)
+        {
+            Dialogue? presented = villager.TryGetDialogue(saloon.Name);
+            if (presented is null || !presented.getCurrentDialogue().Contains(PageBreakToken, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"fixture_native_local_talk_to_npc_presented_line_not_multi_page:villager={villager.Name};dialogue_key={saloon.Name}");
+        }
 
         player.warpFarmer(new Warp(0, 0, saloon.NameOrUniqueName, (int)standingTile.X, (int)standingTile.Y, false));
         this.nativeLocalPlayerFixtureInitialized = true;
