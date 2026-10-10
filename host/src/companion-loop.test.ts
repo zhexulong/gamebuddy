@@ -780,7 +780,7 @@ test("CompanionLoop chooses an authenticated world source for fact-only follow-u
   assert.deepEqual(observed, []);
 });
 
-test("CompanionLoop delivers an npc_dialogue_presented fact to Pi AND mints its presentation lineage", async () => {
+test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without minting a presentation lineage", async () => {
   const received: string[] = [];
   const lineage: string[] = [];
   const loop = new CompanionLoop(
@@ -812,12 +812,13 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi AND mints its 
     payload: { speaker: "Pierre", pages: ["欢迎光临！"], isQuestion: false, choices: [] },
   });
   await loop.flush();
-  // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact context with its readable payload.
-  // Owner ruling 2026-10-10: `npc_dialogue_presented` IS a salient sensory kind, so the turn also mints a
-  // presentation lineage - a companion that hears a villager but may not say a word about it is deaf-mute rather
-  // than embodied. The allowlist stays narrow (no micro-telemetry); a villager speaking is not micro-telemetry.
+  // The Mod reads the NPC's own lines, so the typed fact reaches Pi's exact
+  // context with its readable payload. But `npc_dialogue_presented` is
+  // deliberately NOT in the isSalientSensoryKind allowlist: the companion turn
+  // runs without a native presentation lineage, so the Agent can act on the
+  // dialogue (e.g. answer_dialogue) but cannot voice a spoken reaction to it.
   assert.equal(received.length, 1);
-  assert.deepEqual(lineage, ["begin:npc_dialogue_pierre_3", "end"]);
+  assert.deepEqual(lineage, []);
   const batch = JSON.parse(received[0] ?? "{}") as { worldFacts: Array<{ payload: { speaker?: string } }> };
   assert.equal(batch.worldFacts[0]?.payload.speaker, "Pierre");
 });

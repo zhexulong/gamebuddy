@@ -42,9 +42,11 @@ type Model = Readonly<{
   transcript: readonly BrowserMessageV1[];
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
+  /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
+  pending: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
 }>;
 
-let model: Model = { transcript: [], preview: null, voice: null };
+let model: Model = { transcript: [], preview: null, voice: null, pending: null };
 let rerender: (() => void) | null = null;
 
 function Probe() {
@@ -63,6 +65,9 @@ function Probe() {
         companionName="Mira"
         chatTitle="Probe"
         labels={LABELS}
+        onSwipe={() => undefined}
+        onRegenerate={() => undefined}
+        pending={model.pending}
       />
       <Composer
         value=""
@@ -89,6 +94,47 @@ const chatProbe = {
   setVoice(state: VoiceSurfaceStateV1 | null): void {
     model = { ...model, voice: state };
     rerender?.();
+  },
+  setPending(pending: { kind: "swipe" | "regenerate"; handle: string } | null): void {
+    model = { ...model, pending };
+    rerender?.();
+  },
+  /** A transcript entry with swipe variants, so the swipe controls are offered. */
+  withSwipes(handle: string, text: string): void {
+    const existing = model.transcript.find((m) => m.handle === handle);
+    const swiped: BrowserMessageV1 = Object.freeze({
+      handle,
+      role: existing?.role ?? "companion",
+      text,
+      locale: existing?.locale ?? "und",
+      order: existing?.order ?? 0,
+      revision: existing?.revision ?? 1,
+      swipeInfo: Object.freeze({
+        currentIndex: 1,
+        totalSwipes: 3,
+        label: "2/3",
+        hasPrevious: true,
+        hasNext: true,
+      }),
+    });
+    const idx = model.transcript.findIndex((m) => m.handle === handle);
+    const transcript =
+      idx === -1
+        ? [...model.transcript, swiped]
+        : model.transcript.map((m, i) => (i === idx ? swiped : m));
+    model = { ...model, transcript };
+    rerender?.();
+  },
+  /** True when the bubble for `handle` carries the busy pending projection. */
+  pendingAttrs(handle: string): { ariaBusy: string | null; dataPending: string | null; swipeDisabled: boolean; regenerateDisabled: boolean } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    if (li === null) return null;
+    return {
+      ariaBusy: li.getAttribute("aria-busy"),
+      dataPending: li.getAttribute("data-pending"),
+      swipeDisabled: [...li.querySelectorAll(".swipe-btn")].every((b) => (b as HTMLButtonElement).disabled) && li.querySelectorAll(".swipe-btn").length > 0,
+      regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
+    };
   },
   voiceState(): string | null {
     return document.querySelector("[data-voice-state]")?.getAttribute("data-voice-state") ?? null;
