@@ -204,18 +204,39 @@ public sealed partial class ModEntry
             // still showed Gus's PLAIN Saloon line, byte for byte. `Dialogue` is a property, so that assignment
             // may well have mutated a temporary - and `CurrentDialogue` is the queue the game actually reads.
             // The TEXT is still the game's own (chosen from `villager.Dialogue` above); only the delivery differs.
-            villager.CurrentDialogue.Clear();
-            villager.CurrentDialogue.Push(new Dialogue(villager, saloon.Name, villager.Dialogue[multiPageSourceKey]));
+            // The middle parameter is the TRANSLATION key: documented as optional ("if known") and expected as
+            // `assetName:fieldKey`. Passing the location name there was malformed - and a malformed key is why
+            // the queued text could not be read. So: try the two honest forms, keep the one that VERIFIABLY
+            // carries the break, and record what each produced.
+            string multiPageText = villager.Dialogue[multiPageSourceKey];
+            string translationKey = $"Characters/Dialogue/{villager.Name}:{multiPageSourceKey}";
+            List<int> attemptLengths = new();
+            bool queuedWithBreak = false;
+            foreach (Dialogue candidate in new[]
+            {
+                new Dialogue(villager, null, multiPageText),
+                new Dialogue(villager, translationKey, multiPageText),
+            })
+            {
+                villager.CurrentDialogue.Clear();
+                villager.CurrentDialogue.Push(candidate);
+                string attemptText = villager.CurrentDialogue.Peek().getCurrentDialogue() ?? string.Empty;
+                attemptLengths.Add(attemptText.Length);
+                if (attemptText.Contains(PageBreakToken, StringComparison.Ordinal))
+                {
+                    queuedWithBreak = true;
+                    break;
+                }
+            }
 
             // THE ASSERTION WHOSE ABSENCE COST A RUN. The earlier attempt made the pager look broken while the
             // real fault was that the multi-page text never reached the box. So the fixture now verifies that
             // what the villager is QUEUED to say is the multi-page text - before any run can blame the pager.
-            string queued = villager.CurrentDialogue.Count > 0 ? villager.CurrentDialogue.Peek().getCurrentDialogue() ?? string.Empty : string.Empty;
-            if (!queued.Contains(PageBreakToken, StringComparison.Ordinal))
+            if (!queuedWithBreak)
                 throw new InvalidOperationException(
                     $"fixture_native_local_talk_to_npc_multi_page_not_queued:villager={villager.Name};"
-                        + $"source_key={multiPageSourceKey};queued_length={queued.Length};"
-                        + $"carries_break={queued.Contains(PageBreakToken, StringComparison.Ordinal).ToString().ToLowerInvariant()}");
+                        + $"source_key={multiPageSourceKey};source_length={multiPageText.Length};"
+                        + $"attempt_lengths={string.Join(",", attemptLengths)};translation_key={translationKey}");
         }
 
         // The branch-selection fact itself, asked through the game's own dialogue table with
