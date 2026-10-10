@@ -18,7 +18,8 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
         {
             "equip_tool" => this.executions.RequestLocalEquipTool(
                 request.RequestId,
-                request.Args.Tool),
+                request.Args.Tool,
+                request.DeadlineMs),
 
             "clear_debris" => this.executions.RequestLocalClearDebris(
                 request.RequestId,

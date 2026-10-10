@@ -19,24 +19,18 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class AdmissionForkReconciliationTests
 {
-    private static readonly Dictionary<string, int> ForkedTriples = new(StringComparer.Ordinal)
-    {
-        // The convergence wave left exactly TWO sites, each with a source-level reason recorded on the handler:
-        //   advance_day   - its deadline ceiling is 600_000 ms (LifecycleWatchdogMs) while AdmitExecution validates
-        //                   nowMs + 1 minute, so converging would refuse a legitimate co-op night.
-        //   equip_tool    - its handler signature carries no deadline at all, and its two callers are outside this
-        //                   file; converging needs a signature change first.
-        ["farmhandexecutioncontroller.lifecycleactions.cs"] = 1,
-    };
+    /// <summary>
+    /// EMPTY, and that is the point: the convergence wave moved every entry point onto the shared admission.
+    /// The table stays (rather than being deleted) because it is what makes a NEW fork fail loudly - a handler
+    /// that copies the body-environment triple again lands here and this test goes red.
+    /// </summary>
+    private static readonly Dictionary<string, int> ForkedTriples = new(StringComparer.Ordinal);
 
-    /// <summary>The same triple spelled as separate guards, which is how `till_soil`/`equip_tool` write it.</summary>
-    private static readonly Dictionary<string, int> ForkedSplitGuards = new(StringComparer.Ordinal)
-    {
-        // equip_tool only: till_soil converged in the same wave.
-        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 1,
-    };
+    /// <summary>The split spelling (`player_menu_open` / `player_event_active` / `player_cannot_move`): empty too.</summary>
+    private static readonly Dictionary<string, int> ForkedSplitGuards = new(StringComparer.Ordinal);
 
     /// <summary>How many entry points in each file already call the shared admission.</summary>
+    /// <summary>How many entry points in each file call the shared admission. Measured, not remembered.</summary>
     private static readonly Dictionary<string, int> ConvergedSites = new(StringComparer.Ordinal)
     {
         ["farmhandexecutioncontroller.actorstateactions.cs"] = 3,
@@ -48,18 +42,19 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.craftingactions.cs"] = 1,
         ["farmhandexecutioncontroller.facilityactions.cs"] = 5,
         ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 11,
-        ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
         ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
+        ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
+        ["farmhandexecutioncontroller.lifecycleactions.cs"] = 1,
         ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 9,
         ["farmhandexecutioncontroller.modalactions.cs"] = 2,
         ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,
-        ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
         ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
+        ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
         ["farmhandexecutioncontroller.petbowlactions.cs"] = 1,
-        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 8,
-        ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
+        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 9,
         ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
+        ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,
         ["farmhandexecutioncontroller.transportactions.cs"] = 3,
         ["farmhandexecutioncontroller.treebushactions.cs"] = 3,

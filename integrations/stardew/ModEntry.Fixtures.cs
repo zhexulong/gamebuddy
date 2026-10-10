@@ -5173,7 +5173,11 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.Monitor.Log($"Usage: gamebuddy_equip_tool_fixture <tool> <request-id>; tool must be one of {string.Join(",", FarmhandActionCatalog.ToolEnum)} and request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
             return;
         }
-        LocalExecutionReceipt receipt = state.Executions!.RequestLocalEquipTool(args[1], args[0]);
+        // The debug ingress mirrors what the Host sends: a live deadline at the ordinary ceiling.
+        LocalExecutionReceipt receipt = state.Executions!.RequestLocalEquipTool(
+            args[1],
+            args[0],
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + FarmhandActionCatalog.OrdinaryActionCeilingMs);
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 

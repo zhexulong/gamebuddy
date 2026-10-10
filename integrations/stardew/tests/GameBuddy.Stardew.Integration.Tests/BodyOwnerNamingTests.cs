@@ -214,6 +214,8 @@ public sealed class BodyOwnerNamingTests
                 nowMs + 30_000,
                 nowMs,
                 ExecutionManager.AdmissionActionabilityProfile.Physical,
+                // Reflection does NOT honour a C# optional parameter: the ceiling must be passed explicitly.
+                FarmhandActionCatalog.OrdinaryActionCeilingMs,
             });
         return (LocalExecutionReceipt?)result;
     }

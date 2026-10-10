@@ -392,13 +392,14 @@ internal sealed partial class ExecutionManager
     /// slot, and proves it with a ReferenceEquals postcondition. slot stays
     /// Mod-private and is never accepted from the wire.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool)
+    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
             return existing;
 
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // Scope-bound actor proof. Authorization precedes the world/location
         // readiness checks: a caller that is not the scope-bound actor is refused
         // for that reason rather than for where it happens to be standing.
@@ -407,14 +408,11 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_menu_open", null);
-        if (Game1.eventUp)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_event_active", null);
-        if (!Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_cannot_move", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity -> actionability -> deadline -> body exclusivity). The three
+        // separate guards this replaces (`player_menu_open` / `player_event_active` / `player_cannot_move`)
+        // were the same fork with its own reason codes; the refusal is now the authority's NAMED hold.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
+            return admissionRefusal;
         if (requestedTool is null || !FarmhandActionCatalog.ToolEnum.Contains(requestedTool, StringComparer.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_tool_selector", requestedTool is null ? null : $"tool={requestedTool}");
 

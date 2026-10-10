@@ -332,7 +332,8 @@ public sealed class ModalAdmissionTests
     private static LocalExecutionReceipt? Admit(
         ExecutionManager manager,
         ExecutionManager.AdmissionActionabilityProfile profile,
-        long deadlineDeltaMs = 30_000)
+        long deadlineDeltaMs = 30_000,
+        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         // AdmitExecution is deliberately private (pre-WIA source pin
@@ -348,6 +349,9 @@ public sealed class ModalAdmissionTests
                 nowMs + deadlineDeltaMs,
                 nowMs,
                 profile,
+                // Reflection does NOT honour a C# optional parameter: the ceiling must be passed explicitly, or
+                // the call fails on arity.
+                maxDurationMs,
             });
         return (LocalExecutionReceipt?)result;
     }

@@ -70,6 +70,14 @@ public static class FarmhandActionCatalog
     /// <summary>Action-specific Body Program watchdog for navigate_to_destination,</summary>
     /// matching its ordinary-pipeline 10-minute deadline ceiling
     /// (BridgeSession.IsFreshExecutionRequest; action-specific coarse upper bound).</summary>
+    /// <summary>
+    /// The ceiling for an ORDINARY action's declared deadline: one minute. It was a literal inside the shared
+    /// admission's deadline check until the convergence wave, where it turned out to be the reason
+    /// `advance_day` could not converge - a co-op night needs ten. `AdmitExecution` now takes the ceiling as a
+    /// parameter and defaults to this, so the ordinary case stays one minute and the lifecycle says otherwise.
+    /// </summary>
+    public const long OrdinaryActionCeilingMs = 60_000;
+
     public const long NavigationWatchdogMs = 600_000;
 
     /// <summary>

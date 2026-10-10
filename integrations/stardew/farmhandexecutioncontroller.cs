@@ -715,7 +715,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string executionId,
         long requestedDeadlineMs,
         long nowMs,
-        AdmissionActionabilityProfile profile)
+        AdmissionActionabilityProfile profile,
+        // The deadline ceiling the caller's action family declares. One minute for an ordinary action; the
+        // lifecycle passes its own ten-minute watchdog rather than forking this gate to get one.
+        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs)
     {
         // Kept private by the pre-WIA source pin (ToolApproachContractTests:
         // admission must count an approach as a busy body).
@@ -754,7 +757,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
         }
 
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + maxDurationMs)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
         if (profile is not AdmissionActionabilityProfile.Modal

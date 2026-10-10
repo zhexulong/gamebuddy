@@ -77,25 +77,13 @@ internal sealed partial class ExecutionManager
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-
-        // The lifecycle needs the ceiling its own watchdog declares; the ordinary
-        // one-minute action ceiling cannot cover a co-op night.
-        if (requestedDeadlineMs <= nowMs
-            || requestedDeadlineMs > nowMs + FarmhandActionCatalog.LifecycleWatchdogMs)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-
-        if (this.active is not null
-            || this.activeTravel is not null
-            || this.activeNavigate is not null
-            || this.activePet is not null
-            || this.activeAnimalProduct is not null
-            || this.activeItemUse is not null
-            || this.activeItemPickup is not null
-            || this.activeDayAdvance is not null
-            || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity -> actionability -> deadline -> body exclusivity), with the
+        // LIFECYCLE's own ceiling: a co-op night legitimately waits ten minutes, so the ordinary one-minute
+        // action ceiling cannot cover it. That mismatch was the whole reason this site stayed forked, and the
+        // ceiling is now a parameter of the shared admission rather than a reason to bypass it.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs,
+                AdmissionActionabilityProfile.General, FarmhandActionCatalog.LifecycleWatchdogMs) is { } admissionRefusal)
+            return admissionRefusal;
 
         SleepAndAdvanceDayLifecycleConfig config = new()
         {
