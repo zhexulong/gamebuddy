@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import test from "node:test";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import {
@@ -2288,6 +2288,230 @@ test("the lifecycle activation route stages through the mounted owner seam and r
     assert.equal(activated.status, 204);
     assert.equal(await activated.text(), "");
     assert.deepEqual(calls, ["activate"]);
+  } finally { await server.close(); }
+});
+
+/**
+ * The bounded, non-secret cause header the composed bootstrap route adds to its exact
+ * problem DTO. The body is the same `unauthorized` / `state_unavailable` every other
+ * refusal sends; this header is the only place the branch that fired is readable,
+ * because the page has no session, no other route, and no other way to ask.
+ */
+const BOOTSTRAP_CAUSE_HEADER = "x-gamebuddy-bootstrap-cause";
+
+/** A raw request, so a test can move the facts Node's `fetch` fixes for it (Host, Origin). */
+function rawPost(
+  origin: string,
+  path: string,
+  headers: Record<string, string>,
+  body: string,
+): Promise<{ status: number; body: string; cause: string | undefined }> {
+  return new Promise((settle, reject) => {
+    const target = new URL(path, origin);
+    const request = httpRequest(
+      { hostname: target.hostname, port: target.port, path: target.pathname + target.search, method: "POST", headers },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () => {
+          const cause = response.headers[BOOTSTRAP_CAUSE_HEADER];
+          settle({
+            status: response.statusCode!,
+            body: Buffer.concat(chunks).toString("utf8"),
+            cause: typeof cause === "string" ? cause : undefined,
+          });
+        });
+      },
+    );
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
+async function bootstrapRefusal(
+  origin: string,
+  body: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: string; cause: string | undefined }> {
+  return rawPost(
+    origin,
+    "/api/composed-reference-game/v1/bootstrap",
+    { origin, "content-type": "application/json", ...headers },
+    body,
+  );
+}
+
+function chatOnlyHandler(readChat: (context: ComposedReferenceGameBrowserReadContext) => Promise<unknown>) {
+  return createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    readChat: readChat as (context: ComposedReferenceGameBrowserReadContext) => Promise<ReturnType<typeof stateForChat>>,
+  });
+}
+
+test("the bootstrap route names the branch of every origin and token refusal, and the body stays exactly the problem it was", async () => {
+  // Failure caught: the launch that could not be diagnosed. A bootstrap refusal said
+  // only `unauthorized` whichever of its five branches fired - a foreign host, a
+  // foreign Origin, a malformed request, a token this server never minted, or a
+  // one-shot token already spent - so there was nothing to read but "it did not open".
+  const handler = chatOnlyHandler(async (context) => stateForChat(context));
+  const server = await start(handler);
+  try {
+    const foreignHost = await bootstrapRefusal(
+      server.origin,
+      JSON.stringify({ apiVersion: 1, bootstrapToken }),
+      { host: "127.0.0.1:1" },
+    );
+    assert.equal(foreignHost.status, 401);
+    assert.deepEqual(JSON.parse(foreignHost.body), { code: "unauthorized" });
+    assert.equal(foreignHost.cause, "bootstrap_origin_rejected");
+
+    const foreignOrigin = await bootstrapRefusal(
+      server.origin,
+      JSON.stringify({ apiVersion: 1, bootstrapToken }),
+      { origin: "http://127.0.0.1:1" },
+    );
+    assert.equal(foreignOrigin.status, 401);
+    assert.deepEqual(JSON.parse(foreignOrigin.body), { code: "unauthorized" });
+    assert.equal(foreignOrigin.cause, "bootstrap_origin_header_mismatch");
+
+    const malformed = await bootstrapRefusal(
+      server.origin,
+      JSON.stringify({ apiVersion: 1, bootstrapToken, extra: true }),
+    );
+    assert.equal(malformed.status, 401);
+    assert.deepEqual(JSON.parse(malformed.body), { code: "unauthorized" });
+    assert.equal(malformed.cause, "bootstrap_request_malformed");
+
+    const wrongShape = await bootstrapRefusal(
+      server.origin,
+      JSON.stringify({ apiVersion: 1, bootstrapToken: "short" }),
+    );
+    assert.equal(wrongShape.status, 401);
+    assert.deepEqual(JSON.parse(wrongShape.body), { code: "unauthorized" });
+    assert.equal(wrongShape.cause, "bootstrap_token_shape_invalid");
+
+    // A token this server never minted, in the exact shape a real one has: the
+    // refusal may say that much and no more.
+    const mismatched = await bootstrapRefusal(
+      server.origin,
+      JSON.stringify({ apiVersion: 1, bootstrapToken: "A".repeat(bootstrapToken.length) }),
+    );
+    assert.equal(mismatched.status, 401);
+    assert.deepEqual(JSON.parse(mismatched.body), { code: "unauthorized" });
+    assert.equal(mismatched.cause, "bootstrap_token_mismatch");
+
+    const redeemed = await bootstrap(server.origin);
+    assert.equal(redeemed.status, 200);
+    const second = await bootstrap(server.origin);
+    assert.equal(second.status, 401);
+    assert.deepEqual(await second.json(), { code: "unauthorized" });
+    assert.equal(second.headers.get(BOOTSTRAP_CAUSE_HEADER), "bootstrap_token_consumed");
+  } finally { await server.close(); }
+});
+
+test("the bootstrap route names the malformed-request branches without changing their statuses", async () => {
+  const handler = chatOnlyHandler(async (context) => stateForChat(context));
+  const server = await start(handler);
+  try {
+    const query = await rawPost(
+      server.origin,
+      "/api/composed-reference-game/v1/bootstrap?unexpected=1",
+      { origin: server.origin, "content-type": "application/json" },
+      JSON.stringify({ apiVersion: 1, bootstrapToken }),
+    );
+    assert.equal(query.status, 409);
+    assert.deepEqual(JSON.parse(query.body), { code: "malformed_request" });
+    assert.equal(query.cause, "bootstrap_query_rejected");
+
+    const contentType = await rawPost(
+      server.origin,
+      "/api/composed-reference-game/v1/bootstrap",
+      { origin: server.origin, "content-type": "text/plain" },
+      JSON.stringify({ apiVersion: 1, bootstrapToken }),
+    );
+    assert.equal(contentType.status, 409);
+    assert.deepEqual(JSON.parse(contentType.body), { code: "malformed_request" });
+    assert.equal(contentType.cause, "bootstrap_content_type_rejected");
+  } finally { await server.close(); }
+});
+
+test("a bootstrap whose root projection breaks names the projection, not just state_unavailable", async () => {
+  // Failure caught: the launch whose one-shot token was spent by a root projection
+  // that then threw. Every later request answered `unauthorized` because the token was
+  // consumed, so the projection fault was invisible and the page looked like an expired
+  // session. The refusal now names the check that failed, and the producer's own
+  // bounded code when the producer named one.
+  const mismatchedChat = chatOnlyHandler(async (context) => ({
+    ...stateForChat(context),
+    build: { ...stateForChat(context).build, profileId: "gamebuddy.chat-core.other" },
+  }));
+  const mismatchServer = await start(mismatchedChat);
+  try {
+    const response = await bootstrap(mismatchServer.origin);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "state_unavailable" });
+    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_snapshot_mismatch");
+  } finally { await mismatchServer.close(); }
+
+  const failingChat = chatOnlyHandler(async () => {
+    throw new Error("composed_reference_game_chat_snapshot_invalid");
+  });
+  const failingServer = await start(failingChat);
+  try {
+    const response = await bootstrap(failingServer.origin);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "state_unavailable" });
+    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "composed_reference_game_chat_snapshot_invalid");
+  } finally { await failingServer.close(); }
+
+  // An unbounded producer message (a path, OS text) is never projected: the closed-set
+  // code of the check that failed stands in for it.
+  const unboundedChat = chatOnlyHandler(async () => {
+    throw new Error("C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked");
+  });
+  const unboundedServer = await start(unboundedChat);
+  try {
+    const response = await bootstrap(unboundedServer.origin);
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_projection_failed");
+  } finally { await unboundedServer.close(); }
+
+  const failingGame = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async () => {
+      throw new Error("stardew_player_host_launch_failed", {
+        cause: new Error("stardew_player_host_launch_runtime_unavailable"),
+      });
+    },
+  });
+  const gameServer = await start(failingGame);
+  try {
+    const response = await bootstrap(gameServer.origin);
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "stardew_player_host_launch_runtime_unavailable");
+  } finally { await gameServer.close(); }
+});
+
+test("no route but the bootstrap names a cause, and no refusal body gained a field", async () => {
+  const handler = chatOnlyHandler(async (context) => stateForChat(context));
+  const server = await start(handler);
+  try {
+    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, "sec-fetch-site": "same-origin" },
+    });
+    assert.equal(state.status, 401);
+    assert.equal(state.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.deepEqual(await state.json(), { code: "unauthorized" });
+
+    const unknown = await fetch(`${server.origin}/api/composed-reference-game/v1/unknown`, {
+      headers: { origin: server.origin },
+    });
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.deepEqual(await unknown.json(), { code: "not_found" });
   } finally { await server.close(); }
 });
 

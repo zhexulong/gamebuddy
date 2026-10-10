@@ -198,6 +198,27 @@ const SESSION_DURATION_MS = 7_200_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4_096;
 const BOOTSTRAP_TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 
+/**
+ * The bounded, non-secret reason a composed *bootstrap* refusal fired.
+ *
+ * The bootstrap route is the one refusal a launch cannot see any other way: it is
+ * the first request the page makes, it happens before any session exists, and - by
+ * design - every one of its failure modes answers the same `unauthorized`, so the
+ * launch said only "it did not open". Naming the branch on the response is additive
+ * to the problem DTO rather than a change to it, because the browser client's
+ * vocabulary is closed on purpose (`unauthorized`/`csrf_failed` are its session
+ * category, and a `cause` field must be a coordinator `stardew_*` code), so every
+ * code and status stays exactly what it was and the client keeps classifying a
+ * bootstrap 401 as the expired session it actually is.
+ *
+ * The value is always a bounded code: an origin guard, a token shape, a token
+ * match, a consumed one-shot token, or the exact producer or projection check that
+ * failed. It never names, contains or is derived from the token, so a caller cannot
+ * learn a valid token from it - not even the branch that says "yours was not this
+ * server's".
+ */
+const BOOTSTRAP_CAUSE_HEADER = "x-gamebuddy-bootstrap-cause";
+
 const INVALID_PROFILE_ERROR = "Invalid composed reference game browser profile.";
 const INVALID_BOOTSTRAP_TOKEN_ERROR =
   "Invalid composed reference game browser bootstrap token.";
@@ -205,8 +226,17 @@ const INVALID_GAME_READER_ERROR =
   "Invalid composed reference game browser game reader configuration.";
 
 class ControlledStateError extends Error {
-  public constructor() {
+  /**
+   * The bounded, non-secret refusal this projection failed on, when it names one.
+   * A producer failure keeps the producer's own bounded code, so the projection that
+   * broke is distinguishable from every other one; anything that is not a bounded
+   * code is never projected.
+   */
+  public readonly refusalCode: string | undefined;
+
+  public constructor(refusalCode?: string) {
     super("Composed reference game browser state is invalid.");
+    this.refusalCode = refusalCode;
   }
 }
 
@@ -287,6 +317,21 @@ function sendProblem(
 }
 
 /**
+ * The bootstrap refusal: exactly the problem DTO every other refusal sends, plus the
+ * one additive fact the browser client's closed vocabulary cannot carry - which cause
+ * fired. The body is unchanged, so nothing classifies differently; the bounded cause
+ * is readable from the response by whoever has to diagnose the launch.
+ */
+function sendBootstrapProblem(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+  cause: string,
+): void {
+  sendJson(response, statusCode, { code }, { [BOOTSTRAP_CAUSE_HEADER]: cause });
+}
+
+/**
  * Coordinator-owned bounded code. Every lifecycle fault the coordinator mints is
  * one of these. OS text, an installation path, a token or a raw exception message
  * never is, so this pattern is what decides whether a nested message may cross.
@@ -320,6 +365,28 @@ function boundedLifecycleCause(error: unknown): string | undefined {
   }
   return error instanceof Error && BOUNDED_LIFECYCLE_CODE_PATTERN.test(error.message)
     ? error.message
+    : undefined;
+}
+
+/**
+ * The bounded producer code a broken projection names, when it names one. A producer
+ * reports its own fault as its exception message - a composed projection code such as
+ * `composed_reference_game_chat_snapshot_invalid`, or a coordinator `stardew_*`
+ * wrapper whose own bounded cause names the fault underneath. Those are exactly the
+ * facts that tell two projection failures apart. Anything that is not a bounded code
+ * (OS text, a path, a token, a raw message) yields `undefined` and is never projected,
+ * and the caller then gets the closed-set code of the check that failed.
+ */
+const BOUNDED_PRODUCER_CODE_PATTERN = /^[a-z][a-z0-9_]{0,95}$/;
+
+function boundedProducerCode(error: unknown): string | undefined {
+  const nested = boundedLifecycleCause(error);
+  if (nested !== undefined) {
+    return nested;
+  }
+  const message = error instanceof Error ? error.message : undefined;
+  return message !== undefined && BOUNDED_PRODUCER_CODE_PATTERN.test(message)
+    ? message
     : undefined;
 }
 
@@ -1027,11 +1094,8 @@ export function createComposedReferenceGameBrowserRequestHandler(
     let game: GameBrowserStateV1 | null = null;
     try {
       chat = await options.readChat(context);
-      if (options.readGame !== undefined) {
-        game = await options.readGame(context);
-      }
-    } catch {
-      throw new ControlledStateError();
+    } catch (error) {
+      throw new ControlledStateError(boundedProducerCode(error) ?? "chat_projection_failed");
     }
 
     if (
@@ -1040,7 +1104,15 @@ export function createComposedReferenceGameBrowserRequestHandler(
       chat.csrfToken !== context.csrfToken ||
       chat.browserSession.expiresAtMs !== context.browserSessionExpiresAtMs
     ) {
-      throw new ControlledStateError();
+      throw new ControlledStateError("chat_snapshot_mismatch");
+    }
+
+    if (options.readGame !== undefined) {
+      try {
+        game = await options.readGame(context);
+      } catch (error) {
+        throw new ControlledStateError(boundedProducerCode(error) ?? "game_projection_failed");
+      }
     }
 
     if (game !== null) {
@@ -1051,7 +1123,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         game.csrfToken !== context.csrfToken ||
         game.browserSession.expiresAtMs !== context.browserSessionExpiresAtMs
       ) {
-        throw new ControlledStateError();
+        throw new ControlledStateError("game_snapshot_mismatch");
       }
     }
 
@@ -1070,7 +1142,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         composed,
       )
     ) {
-      throw new ControlledStateError();
+      throw new ControlledStateError("composed_root_invalid");
     }
 
     return composed;
@@ -1122,27 +1194,38 @@ export function createComposedReferenceGameBrowserRequestHandler(
       return;
     }
 
+    // Every refusal on the bootstrap route carries its bounded cause, and every
+    // refusal on every other route is exactly what it was: the same code, the same
+    // status, the same body, and no added header.
+    const refuseBootstrap = (statusCode: number, code: string, cause: string): void => {
+      if (requestUrl.pathname === BOOTSTRAP_PATH) {
+        sendBootstrapProblem(response, statusCode, code, cause);
+      } else {
+        sendProblem(response, statusCode, code);
+      }
+    };
+
     if (
       originUrl.protocol !== "http:" ||
       !isLiteralLoopbackOrigin(originUrl) ||
       requestUrl.origin !== originUrl.origin ||
       !requestHasExpectedHost(request, originUrl)
     ) {
-      sendProblem(response, 401, "unauthorized");
+      refuseBootstrap(401, "unauthorized", "bootstrap_origin_rejected");
       return;
     }
 
     if (request.method === "POST" && requestUrl.pathname === BOOTSTRAP_PATH) {
       if (!isEmptyQuery(requestUrl)) {
-        sendProblem(response, 409, "malformed_request");
+        refuseBootstrap(409, "malformed_request", "bootstrap_query_rejected");
         return;
       }
       if (!isExactOrigin(request, origin)) {
-        sendProblem(response, 401, "unauthorized");
+        refuseBootstrap(401, "unauthorized", "bootstrap_origin_header_mismatch");
         return;
       }
       if (!isExactJsonContentType(request.headers["content-type"])) {
-        sendProblem(response, 409, "malformed_request");
+        refuseBootstrap(409, "malformed_request", "bootstrap_content_type_rejected");
         return;
       }
 
@@ -1150,17 +1233,31 @@ export function createComposedReferenceGameBrowserRequestHandler(
       try {
         body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
       } catch {
-        sendProblem(response, 409, "malformed_request");
+        refuseBootstrap(409, "malformed_request", "bootstrap_body_unreadable");
         return;
       }
 
       const submittedToken = parseBootstrapRequest(body);
-      if (
-        submittedToken === undefined ||
-        bootstrapConsumed ||
-        !timingSafeStringEqual(submittedToken, options.bootstrapToken)
-      ) {
-        sendProblem(response, 401, "unauthorized");
+      if (submittedToken === undefined) {
+        refuseBootstrap(401, "unauthorized", "bootstrap_request_malformed");
+        return;
+      }
+      if (!BOOTSTRAP_TOKEN_PATTERN.test(submittedToken)) {
+        refuseBootstrap(401, "unauthorized", "bootstrap_token_shape_invalid");
+        return;
+      }
+      if (bootstrapConsumed) {
+        // The one-shot token was already redeemed. This is what a reload, a second
+        // tab or a stale entry looks like, and it is a different situation from a
+        // token this server never minted.
+        refuseBootstrap(401, "unauthorized", "bootstrap_token_consumed");
+        return;
+      }
+      if (!timingSafeStringEqual(submittedToken, options.bootstrapToken)) {
+        // The one refusal that is deliberately reported no further than this: the
+        // caller learns its token is not this server's, and nothing at all about
+        // the token that is.
+        refuseBootstrap(401, "unauthorized", "bootstrap_token_mismatch");
         return;
       }
 
@@ -1178,12 +1275,21 @@ export function createComposedReferenceGameBrowserRequestHandler(
         sendJson(response, 200, composed, {
           "set-cookie": `${SESSION_COOKIE_NAME}=${activeSession.bearerToken}; HttpOnly; SameSite=Strict; Path=/`,
         });
-      } catch {
+      } catch (error) {
         // A session becomes usable only after its first authoritative root
         // projection validates; a broken producer cannot leave an authenticated
-        // browser context behind for a later retry.
+        // browser context behind for a later retry. The refusal names the projection
+        // that broke (or the producer's own bounded code), because a bootstrap that
+        // consumed its one-shot token and then answered a bare `state_unavailable` is
+        // exactly the launch that could not be diagnosed.
         if (session === activeSession) session = undefined;
-        sendProblem(response, 409, "state_unavailable");
+        refuseBootstrap(
+          409,
+          "state_unavailable",
+          error instanceof ControlledStateError && error.refusalCode !== undefined
+            ? error.refusalCode
+            : "composed_root_projection_failed",
+        );
       }
       return;
     }
