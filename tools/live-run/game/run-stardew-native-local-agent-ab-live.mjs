@@ -216,6 +216,22 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
   move_to_tile: ["走过去", "走到", "过去看看"],
   travel: ["前往", "出发去", "去镇上"],
 });
+  // Ensure the native stale-lock pair exists before the ladder tries to use it. A clean script wiped the
+  // .dist directory once, and without this the run failed later with
+  // `windows_stale_lock_reclaimer_unavailable`. Building on demand is the self-heal (the builder is 4s); the
+  // published capability still requires the inventory binding, which is asserted separately.
+  {
+    const fsRequired = await import("node:fs");
+    const required = ["GameBuddy.WindowsStaleLockReclaimer.exe", "windows-stale-lock-reclaimer.manifest.json"];
+    const pairRoot = new URL("../../../native/windows-stale-lock-reclaimer/.dist/win-x64/", import.meta.url);
+    if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot)))) {
+      const { execFileSync } = await import("node:child_process");
+      execFileSync(process.execPath, ["host/scripts/build-windows-stale-lock-reclaimer.mjs"], { stdio: "inherit" });
+      if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot))))
+        throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
+    }
+  }
+
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await readFile(configPath, "utf8"));
 const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
