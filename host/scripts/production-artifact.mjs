@@ -47,7 +47,6 @@ const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
   "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
   "tavern/composed-reference-game-static-shell-composition.js",
-  "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
   "tavern/static-artifact/index.js",
 ]);

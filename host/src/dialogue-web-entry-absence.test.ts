@@ -21,9 +21,15 @@ test("dialogue-web entry and launch-mode sources no longer exist", async () => {
 test("production roots never reference the removed entry or the chat-live machine", async () => {
   const config = JSON.parse(await readFile(resolve(hostRoot, "production-artifact.config.json"), "utf8"));
   assert.ok(!config.entryRoots.includes("dialogue-web-main.js"));
-  // verificationRoots keep the E1 migration API/static-shell layers.
+  // verificationRoots keep the migration API/static-shell layers that production
+  // still assembles. The reference shell's own handler is no longer one of them:
+  // the single frontend talks to the composed shell, whose Chat path is the
+  // delegated handler over the reference *core* (reference-pipeline-dialogue-web.core.js),
+  // so the reference server module is neither compiled into the artifact nor a
+  // root that must exist in it - asserting its presence here is what made the
+  // artifact build fail with `production_entry_missing`.
   assert.ok(config.verificationRoots.includes("tavern-management-dialogue-web.js"));
-  assert.ok(config.verificationRoots.includes("reference-pipeline-dialogue-web.js"));
+  assert.ok(!config.verificationRoots.includes("reference-pipeline-dialogue-web.js"));
 
   const productionTsconfig = JSON.parse(await readFile(resolve(hostRoot, "tsconfig.production.json"), "utf8"));
   assert.ok(!productionTsconfig.files.includes("src/dialogue-web-main.ts"));
