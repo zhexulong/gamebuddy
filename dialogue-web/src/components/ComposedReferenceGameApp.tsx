@@ -33,11 +33,7 @@ import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-contro
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
-import {
-  ChatsPanelView,
-  SettingsPanelView,
-  WorldInfoPanelView,
-} from "./composed-management-panels";
+import { SettingsPanelView, WorldInfoPanelView } from "./composed-management-panels";
 import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
@@ -45,7 +41,7 @@ import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { CharactersPanel } from "./CharactersPanel";
-import { MemorySurfacePanel } from "./management-surface-panels";
+import { ChatsSurfacePanel, MemorySurfacePanel } from "./management-surface-panels";
 import { createManagementPipelineApi } from "../management-pipeline-api";
 
 
@@ -546,6 +542,17 @@ export function ComposedReferenceGameApp() {
     }
     setPreview(null);
     commit({ ...current, root, session: current.session.applySnapshot(root.chat), draft });
+  };
+
+  /**
+   * A rename from the Chats surface is a management mutation, and the composed
+   * root owns this shell's Chat projection (its title heading included), so the
+   * composed `/state` read is the authority that moves the heading. The panel
+   * already shows the validated read-back; a reread that cannot reconcile leaves
+   * this shell's projection as it was instead of adopting a mismatched one.
+   */
+  const handleRenamedTitle = (): void => {
+    void reread().catch(() => undefined);
   };
 
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
@@ -1497,7 +1504,14 @@ export function ComposedReferenceGameApp() {
                 icon={MessagesSquare}
                 restoreFocusTo={chatsEntryRef}
               >
-                <ChatsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readChats()} />
+                <ChatsSurfacePanel
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
+                  currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
+                  onRenamedTitle={handleRenamedTitle}
+                />
               </SurfaceView>
             )}
             {shownSurface === CHARACTERS_PANEL && (
