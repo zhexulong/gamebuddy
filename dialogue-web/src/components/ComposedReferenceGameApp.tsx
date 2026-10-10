@@ -33,7 +33,6 @@ import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-contro
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
-import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
@@ -42,12 +41,12 @@ import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { CharactersPanel } from "./CharactersPanel";
 import {
   ChatsSurfacePanel,
+  createManagementPipelineApi,
   MemorySurfacePanel,
   SettingsSurfacePanel,
   type WorldInfoSurfaceSource,
   WorldInfoSurfacePanel,
 } from "./management-surface-panels";
-import { createManagementPipelineApi } from "../management-pipeline-api";
 
 
 
@@ -198,12 +197,12 @@ export function ComposedReferenceGameApp() {
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const worldInfoEntryRef = useRef<HTMLButtonElement>(null);
-  const managementApiRef = useRef(createComposedManagementPanelsApi());
-  // The Characters surface uses the same management pipeline client the management
-  // surface uses, on this shell's own origin: the composed root now serves those
-  // routes through the one broker session, so the library, the Persona/Scenario/
-  // Greeting records and the reviewed card import are the real ones rather than a
-  // second implementation (design/28 §2).
+  // Every management surface - Characters, Chats, Settings, Memory and World Info
+  // - runs on the one management pipeline client the management shell uses, on this
+  // shell's own origin: the composed root serves those routes through the one
+  // broker session, so the library, the Persona/Scenario/Greeting records, the
+  // reviewed card import and the Chat, Memory, World Info and Settings panels are
+  // the real ones rather than a second implementation (design/28 §2, design/104 §2).
   const managementPipelineApiRef = useRef(createManagementPipelineApi());
 
   const commit = useCallback((next: ViewState): void => {
