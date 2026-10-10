@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Brain, Gamepad2, MessagesSquare, Settings, Users } from "lucide-react";
 import type { Locale } from "../i18n";
-import { applyDocumentLocale, messages, resolveLocale } from "../i18n";
+import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import {
   type BrowserDraftV1,
   type BrowserEventV1,
@@ -33,7 +33,6 @@ import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-contro
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
-import { SettingsPanelView } from "./composed-management-panels";
 import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
@@ -44,6 +43,7 @@ import { CharactersPanel } from "./CharactersPanel";
 import {
   ChatsSurfacePanel,
   MemorySurfacePanel,
+  SettingsSurfacePanel,
   type WorldInfoSurfaceSource,
   WorldInfoSurfacePanel,
 } from "./management-surface-panels";
@@ -576,6 +576,20 @@ export function ComposedReferenceGameApp() {
         current.kind === "ready" ? current.session.snapshot.selection?.generation ?? 0 : 0,
     };
   }, []);
+
+  /**
+   * The interface's own display language, not the companion's: it changes what
+   * the player reads here (and the document locale), while the companion language
+   * keeps the separate choice the settings panel owns and persists.
+   */
+  const handleUiLocale = (locale: Locale): void => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    localeRef.current = locale;
+    persistLocale(locale);
+    applyDocumentLocale(locale);
+    commit({ ...current, locale });
+  };
 
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
     if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
@@ -1557,7 +1571,13 @@ export function ComposedReferenceGameApp() {
                 icon={Settings}
                 restoreFocusTo={settingsEntryRef}
               >
-                <SettingsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readSettings()} />
+                <SettingsSurfacePanel
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  uiLocale={view.locale}
+                  onSelectUiLocale={handleUiLocale}
+                />
               </SurfaceView>
             )}
             {shownSurface === MEMORY_PANEL && (
