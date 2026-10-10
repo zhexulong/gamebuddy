@@ -26,6 +26,25 @@ namespace GameBuddy.Stardew;
 /// </summary>
 public sealed partial class ModEntry : Mod
 {
+    // A DIAGNOSTIC helper, kept in the main partial rather than ModEntry.Fixtures.cs: the fixtures partial is a
+    // curated surface (every declared method there must be whitelisted and owner-approved), and this only
+    // reports why a fixture tick is not advancing. Its callers are the fixture tick path below.
+    /// <summary>
+    /// The early returns on the fixture tick path that leave NO trace. A stall at the title screen therefore
+    /// presents as a bare pipe timeout with no Mod line at all - observed live, and it cost hours - so each
+    /// return reports once, naming itself. Once per distinct reason, so a per-tick condition cannot flood the log.
+    /// </summary>
+    private readonly HashSet<string> blockedTickReasonsLogged = new(StringComparer.Ordinal);
+
+    private void LogBlockedTickReasonOnce(string reason)
+    {
+        if (this.blockedTickReasonsLogged.Add(reason))
+        {
+            this.Monitor.Log($"GameBuddy fixture tick is not advancing: {reason}", LogLevel.Warn);
+        }
+    }
+
+
     /// <summary>
     /// Launcher-injected per-launch generation for the formal AI Farmhand
     /// client role. Only valid for farmhand_client topology; absent or invalid
@@ -1161,7 +1180,7 @@ public sealed partial class ModEntry : Mod
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
         {
-            this.LogFixtureTickStallOnce("the configuration was rejected at launch (see the rejection line above)");
+            this.LogBlockedTickReasonOnce("the configuration was rejected at launch (see the rejection line above)");
             return;
         }
         // Before anything else this tick: the engine decides whether to start and
@@ -1173,13 +1192,13 @@ public sealed partial class ModEntry : Mod
         ScreenEmbodimentState pendingTeardownState = this.GetEmbodimentState();
         if (pendingTeardownState.BodyProgramTeardownPending)
         {
-            this.LogFixtureTickStallOnce("a body-program teardown is pending, so this tick clears state and yields");
+            this.LogBlockedTickReasonOnce("a body-program teardown is pending, so this tick clears state and yields");
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
             return;
         }
         if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
         {
-            this.LogFixtureTickStallOnce("a sleep probe/lifecycle request was rejected at launch");
+            this.LogBlockedTickReasonOnce("a sleep probe/lifecycle request was rejected at launch");
             return;
         }
         if (this.worldCreationBootstrap is { IsArmed: true })
@@ -1187,7 +1206,7 @@ public sealed partial class ModEntry : Mod
             // Drive the one native creation request while the title menu owns the
             // screen, and start no host/provisioning work until the created world
             // has been observed (or the attempt failed closed).
-            this.LogFixtureTickStallOnce("a formal Player Host world creation is armed, which owns the title screen");
+            this.LogBlockedTickReasonOnce("a formal Player Host world creation is armed, which owns the title screen");
             this.worldCreationBootstrap.TryCreate();
             if (this.worldCreationBootstrap.IsArmed)
                 return;

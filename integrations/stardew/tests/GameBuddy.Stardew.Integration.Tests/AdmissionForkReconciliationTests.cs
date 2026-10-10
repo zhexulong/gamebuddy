@@ -21,19 +21,19 @@ public sealed class AdmissionForkReconciliationTests
 {
     private static readonly Dictionary<string, int> ForkedTriples = new(StringComparer.Ordinal)
     {
-        ["farmhandexecutioncontroller.movementactions.cs"] = 2,
-        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 8,
-        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 7,
-        ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
-        ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
+        // The convergence wave left exactly TWO sites, each with a source-level reason recorded on the handler:
+        //   advance_day   - its deadline ceiling is 600_000 ms (LifecycleWatchdogMs) while AdmitExecution validates
+        //                   nowMs + 1 minute, so converging would refuse a legitimate co-op night.
+        //   equip_tool    - its handler signature carries no deadline at all, and its two callers are outside this
+        //                   file; converging needs a signature change first.
         ["farmhandexecutioncontroller.lifecycleactions.cs"] = 1,
-        ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
     };
 
     /// <summary>The same triple spelled as separate guards, which is how `till_soil`/`equip_tool` write it.</summary>
     private static readonly Dictionary<string, int> ForkedSplitGuards = new(StringComparer.Ordinal)
     {
-        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 2,
+        // equip_tool only: till_soil converged in the same wave.
+        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 1,
     };
 
     /// <summary>How many entry points in each file already call the shared admission.</summary>
@@ -47,15 +47,19 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.crabpotactions.cs"] = 1,
         ["farmhandexecutioncontroller.craftingactions.cs"] = 1,
         ["farmhandexecutioncontroller.facilityactions.cs"] = 5,
-        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 3,
+        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 11,
         ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
-        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 2,
+        ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
+        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 9,
         ["farmhandexecutioncontroller.modalactions.cs"] = 2,
+        ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,
         ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
+        ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
         ["farmhandexecutioncontroller.petbowlactions.cs"] = 1,
-        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 7,
+        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 8,
         ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
+        ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,
         ["farmhandexecutioncontroller.transportactions.cs"] = 3,
         ["farmhandexecutioncontroller.treebushactions.cs"] = 3,
@@ -85,7 +89,9 @@ public sealed class AdmissionForkReconciliationTests
                 + CountOccurrences(source, "Game1.activeClickableMenu is not null || Game1.eventUp || !actor.CanMove");
             if (triple > 0) triples[fileName] = triple;
             // The variant spelling: three separate guards, told apart by their own reason code.
-            int split = CountOccurrences(source, "player_menu_open");
+            // Counted by the refusal SHAPE, not the bare name: a comment that documents the change names
+            // these codes too, and counting the raw string would read documentation as a fork.
+            int split = CountOccurrences(source, "ExecutionState.Rejected, \"player_menu_open\"");
             if (split > 0) splits[fileName] = split;
         }
 

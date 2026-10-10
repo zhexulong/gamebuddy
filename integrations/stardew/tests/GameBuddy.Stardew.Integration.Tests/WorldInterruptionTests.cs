@@ -247,8 +247,14 @@ public sealed class WorldInterruptionTests
             "ClassifyLocalDisposition now delegates to the landed WorldModel authority");
         source.Should().Contain("WorldModel.Classify(",
             "the body disposition projection must consume the shared WorldModel authority");
-        source.Should().Contain("private const int TransientWindowMs = 2000;",
-            "the WIA §4.4 default window is 2000ms");
+        // The window is now SOURCED from the World Model rather than written twice: an Agent told to wait 2000 ms
+        // while the body loop waits some other number would retry into a live lock. The pin therefore checks the
+        // sourcing and the value it still resolves to, not a literal that could drift away from the loop.
+        source.Should().Contain("private const int TransientWindowMs = WorldModel.TransientRetryWindowMs;",
+            "the transient window and the retry window reported to the Agent must be the same number");
+        File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "WorldModel.cs")))
+            .Should().Contain("TransientRetryWindowMs = 2000",
+                "and that shared window is still 2000ms (WIA §4.4)");
 
         int dispositionSwitch = source.IndexOf("switch (disposition)", StringComparison.Ordinal);
         int stallWatchdog = source.IndexOf("StallWatchdogAction stallAction = AssessStall", StringComparison.Ordinal);
