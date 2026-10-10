@@ -199,9 +199,23 @@ public sealed partial class ModEntry
                 throw new InvalidOperationException(
                     $"fixture_native_local_talk_to_npc_no_plain_multi_page_dialogue:villager={villager.Name};"
                         + $"break_keys={string.Join(",", breakKeys)};rejected_as_not_plain={string.Join(",", rejected)}");
-            if (!string.Equals(multiPageSourceKey, saloon.Name, StringComparison.Ordinal))
-                villager.Dialogue[saloon.Name] = villager.Dialogue[multiPageSourceKey];
+            // Queue it on the villager rather than re-keying the dialogue table. The earlier attempt assigned
+            // `villager.Dialogue[saloon.Name] = …` and a live run proved that does nothing observable: the box
+            // still showed Gus's PLAIN Saloon line, byte for byte. `Dialogue` is a property, so that assignment
+            // may well have mutated a temporary - and `CurrentDialogue` is the queue the game actually reads.
+            // The TEXT is still the game's own (chosen from `villager.Dialogue` above); only the delivery differs.
             villager.CurrentDialogue.Clear();
+            villager.CurrentDialogue.Push(new Dialogue(villager, saloon.Name, villager.Dialogue[multiPageSourceKey]));
+
+            // THE ASSERTION WHOSE ABSENCE COST A RUN. The earlier attempt made the pager look broken while the
+            // real fault was that the multi-page text never reached the box. So the fixture now verifies that
+            // what the villager is QUEUED to say is the multi-page text - before any run can blame the pager.
+            string queued = villager.CurrentDialogue.Count > 0 ? villager.CurrentDialogue.Peek().getCurrentDialogue() ?? string.Empty : string.Empty;
+            if (!queued.Contains(PageBreakToken, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"fixture_native_local_talk_to_npc_multi_page_not_queued:villager={villager.Name};"
+                        + $"source_key={multiPageSourceKey};queued_length={queued.Length};"
+                        + $"carries_break={queued.Contains(PageBreakToken, StringComparison.Ordinal).ToString().ToLowerInvariant()}");
         }
 
         // The branch-selection fact itself, asked through the game's own dialogue table with
