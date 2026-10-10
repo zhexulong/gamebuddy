@@ -11,7 +11,6 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
-import type { PlayerPreference, PlayerPreferenceUpdate } from "../settings/player-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
@@ -73,21 +72,6 @@ export type DesktopPresentationAdmissionInput = Readonly<{
    * selection only, never a fabricated device list.
    */
   listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
-  /**
-   * Optional management services for the composed shell's Chats/Memory/World Info/
-   * Settings panels. When provided, the composed root mounts the delegated management
-   * routes under `/api/tavern/v1/`; a panel whose service is absent stays absent
-   * (design/26 §1) rather than a disabled lookalike.
-   */
-  management?: Readonly<{
-    managementService: ChatManagementService;
-    memoryService: MemoryManagementService;
-    worldInfoService: WorldInfoBindingManagementService;
-    playerPreferenceStore?: Readonly<{
-      read(): Promise<PlayerPreference>;
-      update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference>;
-    }>;
-  }>;
 }>;
 
 /**
@@ -489,6 +473,53 @@ export async function startDesktopPresentationAdmission(
     eventStream: input.eventStream,
     ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
   });
+  // The management domains the shell's Chats/Characters/Game/Settings drawers read
+  // and write (design/104 §2, design/26 §4.2). They are the same lease-bound
+  // services the management surface builds, over the same durable stores, so a
+  // panel and the management surface are two views of one state rather than two
+  // owners of it. A construction failure drains what was created in reverse order
+  // and leaves the Chat lease and Game authority untouched.
+  const createdManagement: { close(): Promise<void> }[] = [];
+  let management: Readonly<{
+    managementService: ChatManagementService;
+    memoryService: MemoryManagementService;
+    worldInfoService: WorldInfoBindingManagementService;
+    playerPreferenceStore: PlayerPreferenceStore;
+  }>;
+  try {
+    const managementService = createChatManagementService({ manifest: input.manifest, lease: input.lease, profile: tavernProfile });
+    createdManagement.push(managementService);
+    const memoryService = createMemoryManagementService({ manifest: input.manifest, lease: input.lease, profile: tavernProfile });
+    createdManagement.push(memoryService);
+    const worldInfoService = createWorldInfoBindingManagementService({
+      manifest: input.manifest,
+      lease: input.lease,
+      profile: tavernProfile,
+      repository: createWorldInfoManagementRepository(input.manifest.runtimeRoot),
+      settleAuthoredContext: () => settleMountedAuthoredContext(input.manifest, input.lease),
+    });
+    createdManagement.push(worldInfoService);
+    management = Object.freeze({
+      managementService,
+      memoryService,
+      worldInfoService,
+      playerPreferenceStore: new PlayerPreferenceStore(playerPreferencePath(input.manifest.runtimeRoot)),
+    });
+  } catch (error) {
+    for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
+      try {
+        await createdManagement[index]!.close();
+      } catch {
+        // Preserve the management construction failure.
+      }
+    }
+    try {
+      await pipelineService.close();
+    } catch {
+      // Preserve the management construction failure.
+    }
+    throw error;
+  }
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>>;
   try {
     server = await startComposedReferenceGameStaticShellComposition({
@@ -502,15 +533,21 @@ export async function startDesktopPresentationAdmission(
       inspector,
       // The immutable browser artifact destination of one Host generation.
       artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
-      // The management panels' services, when the caller injects them: the composed
-      // shell then serves Chats/Memory/World Info/Settings under /api/tavern/v1/.
-      // Absent, those panels stay absent rather than becoming disabled shell.
-      ...(input.management === undefined ? {} : { management: input.management }),
+      // The management panels' services: the composed shell serves Chats, Memory,
+      // World Info and Settings under /api/tavern/v1/ from them.
+      ...(management === undefined ? {} : { management }),
     });
   } catch (error) {
-    // No listener and no Game-side effect exist yet; the Chat pipeline service is
-    // the only admission owner this construction created, so drain it and
-    // preserve the construction failure unchanged.
+    // No listener and no Game-side effect exist yet; the Chat pipeline service and
+    // the management services this admission created are the only owners it holds,
+    // so drain them and preserve the construction failure unchanged.
+    for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
+      try {
+        await createdManagement[index]!.close();
+      } catch {
+        // Preserve the presentation construction failure.
+      }
+    }
     try {
       await pipelineService.close();
     } catch {
@@ -529,6 +566,15 @@ export async function startDesktopPresentationAdmission(
         try {
           await server.close();
         } finally {
+          // Listener first, then the management domains it served, then the state
+          // facade they projected: creation order reversed.
+          for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
+            try {
+              await createdManagement[index]!.close();
+            } catch {
+              // Keep draining the rest; one close failure must not leak the others.
+            }
+          }
           await referenceStateFacade.close();
         }
       })()),
@@ -553,8 +599,33 @@ function composeReferenceTavernProfile(): ComposedTavernProfile {
       "chat.cancel",
       "chat.submission_status",
       "events",
+      // The composed shell is the product's only surface, and design/104 §2 puts
+      // Chats, Characters, Game and Settings in its AppBar with one contextual
+      // drawer each; design/26 §4.2 adds World Info and Import/Export. Those
+      // panels read and write the management domains, so this profile declares
+      // exactly the routes the mounted services below can serve - a route that is
+      // declared but unservable fails closed, and one that is missing makes its
+      // panel absent (design/26 §1) rather than a disabled lookalike.
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+      "memory.mutate",
+      "world-info.read",
+      "world-info.bind",
+      "settings.language.read",
+      "settings.language.update",
+      "settings.voice.read",
+      "settings.voice.consent",
     ],
-    operationIds: ["chat.submit", "chat.cancel"],
+    operationIds: [
+      "chat.submit",
+      "chat.cancel",
+      "chat.rename",
+      "memory.mutate",
+      "world-info.bind",
+      "settings.language.update",
+      "settings.voice.consent",
+    ],
     navigationItemIds: ["chat"],
   });
 }
