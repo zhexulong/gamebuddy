@@ -33,7 +33,7 @@ import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-contro
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
-import { SettingsPanelView, WorldInfoPanelView } from "./composed-management-panels";
+import { SettingsPanelView } from "./composed-management-panels";
 import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
@@ -41,7 +41,12 @@ import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { CharactersPanel } from "./CharactersPanel";
-import { ChatsSurfacePanel, MemorySurfacePanel } from "./management-surface-panels";
+import {
+  ChatsSurfacePanel,
+  MemorySurfacePanel,
+  type WorldInfoSurfaceSource,
+  WorldInfoSurfacePanel,
+} from "./management-surface-panels";
 import { createManagementPipelineApi } from "../management-pipeline-api";
 
 
@@ -554,6 +559,23 @@ export function ComposedReferenceGameApp() {
   const handleRenamedTitle = (): void => {
     void reread().catch(() => undefined);
   };
+
+  /**
+   * The World Info revision this surface shows. The composed Chat projection
+   * carries no World Info at all (`chat.worldInfo: null` in the composed root and
+   * a profile identity the management wire validator rejects), so this mount reads
+   * the dedicated `GET /world-info` route the management dispatcher serves on the
+   * same origin; the bind's compare-and-swap carries the composed snapshot's own
+   * selection generation.
+   */
+  const readProductWorldInfo = useCallback(async (): Promise<WorldInfoSurfaceSource> => {
+    const current = viewRef.current;
+    return {
+      worldInfo: await managementPipelineApiRef.current.readWorldInfo(),
+      selectionGeneration:
+        current.kind === "ready" ? current.session.snapshot.selection?.generation ?? 0 : 0,
+    };
+  }, []);
 
   const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
     if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
@@ -1560,7 +1582,12 @@ export function ComposedReferenceGameApp() {
                 icon={BookOpen}
                 restoreFocusTo={worldInfoEntryRef}
               >
-                <WorldInfoPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readWorldInfo()} />
+                <WorldInfoSurfacePanel
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  read={readProductWorldInfo}
+                />
               </SurfaceView>
             )}
           </main>
