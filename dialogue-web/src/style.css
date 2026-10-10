@@ -2089,3 +2089,60 @@ body {
     animation: none;
   }
 }
+
+/* The composed shell's surfaces (design/104 §2; design/26 §4).
+
+   Chat, Chats, Characters, Game, Settings, Memory and World Info are peers: each
+   one takes the main region in full, exactly one is shown at a time, and the
+   conversation is simply the default one rather than a privileged surface. None
+   of them is a modal overlay, so there is no backdrop and no focus trap -
+   selecting a surface replaces the previous one, and Escape or Browser Back
+   returns to the conversation. */
+.surface-view {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+}
+
+.surface-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+  color: var(--text-primary);
+}
+
+.surface-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.surface-header h2:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.surface-content {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+/* The conversation is a surface like the others, but its transcript scrolls
+   above a composer that stays at the bottom, so it manages its own scrolling. */
+.surface-conversation .surface-content {
+  overflow: hidden;
+  gap: 0;
+  padding-bottom: 0;
+}

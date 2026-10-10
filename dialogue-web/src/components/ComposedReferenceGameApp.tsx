@@ -32,7 +32,7 @@ import { composedProblemView as problemView, type ProblemViewState } from "../co
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
-import { ContextDrawer } from "./ContextDrawer";
+import { SurfaceView } from "./SurfaceView";
 import {
   ChatsPanelView,
   MemoryPanelView,
@@ -40,7 +40,6 @@ import {
   WorldInfoPanelView,
 } from "./composed-management-panels";
 import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
-import { GameDrawer } from "./GameDrawer";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
@@ -83,6 +82,7 @@ const STARDEW_GAME_INTEGRATION_ID = "stardew" as const;
  * before it leaves the chat (design/26 §7.2, design/104 §2).
  */
 const PANEL_PARAM = "panel";
+const CHAT_PANEL = "chat" as const;
 const GAME_PANEL = "game" as const;
 const CHATS_PANEL = "chats" as const;
 const CHARACTERS_PANEL = "characters" as const;
@@ -184,7 +184,12 @@ export function ComposedReferenceGameApp() {
   // The open contextual panel, as the URL states it. A refresh with
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
+  // The surface occupying the main region. Chat is the default surface, not a
+  // privileged one: every surface takes the same region, and the URL names the
+  // selected one so Back returns to the previous surface.
+  const shownSurface = openPanel ?? CHAT_PANEL;
   const gameEntryRef = useRef<HTMLButtonElement>(null);
+  const chatEntryRef = useRef<HTMLButtonElement>(null);
   const chatsEntryRef = useRef<HTMLButtonElement>(null);
   const charactersEntryRef = useRef<HTMLButtonElement>(null);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
@@ -203,45 +208,41 @@ export function ComposedReferenceGameApp() {
     applyDocumentLocale(localeRef.current);
   }, []);
 
-  // Browser Back and mobile back close the open panel first; the drawer is a
-  // history entry, not hidden state (design/26 §7.2).
+  // Browser Back moves between surfaces, because the selected surface is a
+  // history entry rather than hidden state (design/26 §7.2). Escape returns to
+  // the conversation from any other surface.
   useEffect(() => {
     const syncPanelWithHistory = (): void => setOpenPanel(readPanelFromUrl());
     window.addEventListener("popstate", syncPanelWithHistory);
     return () => window.removeEventListener("popstate", syncPanelWithHistory);
   }, []);
 
-  const openGamePanel = (): void => {
-    if (openPanel !== GAME_PANEL) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      if (shownSurface === CHAT_PANEL) return;
+      // Stepping the history back removes the entry that selected this surface,
+      // so a later refresh cannot resurrect it; a surface restored from a URL
+      // this session never pushed returns to the conversation in place instead.
+      if (window.history.state?.gbPanel !== undefined) {
+        window.history.back();
+        return;
+      }
       const url = new URL(window.location.href);
       const params = new URLSearchParams(url.hash.slice(1));
-      params.set(PANEL_PARAM, GAME_PANEL);
+      params.delete(PANEL_PARAM);
       url.hash = params.toString();
-      window.history.pushState({ gbPanel: GAME_PANEL }, "", url.toString());
-    }
-    setOpenPanel(GAME_PANEL);
-  };
+      window.history.replaceState(null, "", url.toString());
+      setOpenPanel(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shownSurface]);
 
-  const closeGamePanel = (): void => {
-    // Closing steps the history back, so the entry that opened the drawer is
-    // really gone and a later refresh cannot resurrect it. A drawer restored
-    // from a URL this session never pushed is closed in place instead.
-    if (window.history.state?.gbPanel === GAME_PANEL) {
-      window.history.back();
-      return;
-    }
-    const url = new URL(window.location.href);
-    const params = new URLSearchParams(url.hash.slice(1));
-    params.delete(PANEL_PARAM);
-    url.hash = params.toString();
-    window.history.replaceState(null, "", url.toString());
-    setOpenPanel(null);
-  };
-
-  // The generic panel open/close pair for the management drawers (Chats,
-  // Characters, Settings, Memory, World Info). Each is one history entry and
-  // one drawer (design/26 §4.2); closing restores focus to its entry.
+  // Selecting a surface is one history entry (design/104 §2). The entries are the
+  // shell's surface switcher, so all of them share this one behaviour.
   const openPanelOf = (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) => (): void => {
+    void entryRef;
     if (openPanel !== panel) {
       const url = new URL(window.location.href);
       const params = new URLSearchParams(url.hash.slice(1));
@@ -250,18 +251,6 @@ export function ComposedReferenceGameApp() {
       window.history.pushState({ gbPanel: panel }, "", url.toString());
     }
     setOpenPanel(panel);
-  };
-  const closePanelOf = (panel: string): (() => void) => (): void => {
-    if (window.history.state?.gbPanel === panel) {
-      window.history.back();
-      return;
-    }
-    const url = new URL(window.location.href);
-    const params = new URLSearchParams(url.hash.slice(1));
-    params.delete(PANEL_PARAM);
-    url.hash = params.toString();
-    window.history.replaceState(null, "", url.toString());
-    setOpenPanel(null);
   };
 
   useEffect(() => {
@@ -1318,16 +1307,13 @@ export function ComposedReferenceGameApp() {
     view.kind === "ready" &&
     view.session.snapshot.chat !== null;
 
+  const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
+  const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
   const openChats = openPanelOf(CHATS_PANEL, chatsEntryRef);
   const openCharacters = openPanelOf(CHARACTERS_PANEL, charactersEntryRef);
   const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
   const openWorldInfo = openPanelOf(WORLD_INFO_PANEL, worldInfoEntryRef);
-  const closeChats = closePanelOf(CHATS_PANEL);
-  const closeCharacters = closePanelOf(CHARACTERS_PANEL);
-  const closeSettings = closePanelOf(SETTINGS_PANEL);
-  const closeMemory = closePanelOf(MEMORY_PANEL);
-  const closeWorldInfo = closePanelOf(WORLD_INFO_PANEL);
 
   return (
     <div className="tavern-app-shell" data-profile="composed-reference-game">
@@ -1343,204 +1329,210 @@ export function ComposedReferenceGameApp() {
              statusLabel={turnInFlight ? labels().generating : labels().online}
              statusTone={turnInFlight ? "progress" : "idle"}
              entries={[
+               // The surfaces are peers: each entry selects the region's content and
+               // the conversation is simply the default one (design/104 §2).
+               {
+                 id: CHAT_PANEL,
+                 label: labels().chatPanel,
+                 icon: MessagesSquare,
+                 active: shownSurface === CHAT_PANEL,
+                 onClick: openChat,
+                 ref: chatEntryRef,
+               },
                {
                  id: GAME_PANEL,
                  label: labels().gamePanel,
                  icon: Gamepad2,
-                 active: openPanel === GAME_PANEL,
+                 active: shownSurface === GAME_PANEL,
                  onClick: openGamePanel,
                  ref: gameEntryRef,
                },
                ...(managementPanelsAvailable
                  ? [
-                     { id: CHATS_PANEL, label: labels().chatsPanel, icon: MessagesSquare, active: openPanel === CHATS_PANEL, onClick: openChats, ref: chatsEntryRef },
-                     { id: CHARACTERS_PANEL, label: labels().charactersPanel, icon: Users, active: openPanel === CHARACTERS_PANEL, onClick: openCharacters, ref: charactersEntryRef },
-                     { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: openPanel === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
-                     { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: openPanel === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
-                     { id: WORLD_INFO_PANEL, label: labels().worldInfoPanel, icon: BookOpen, active: openPanel === WORLD_INFO_PANEL, onClick: openWorldInfo, ref: worldInfoEntryRef },
+                     { id: CHATS_PANEL, label: labels().chatsPanel, icon: MessagesSquare, active: shownSurface === CHATS_PANEL, onClick: openChats, ref: chatsEntryRef },
+                     { id: CHARACTERS_PANEL, label: labels().charactersPanel, icon: Users, active: shownSurface === CHARACTERS_PANEL, onClick: openCharacters, ref: charactersEntryRef },
+                     { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: shownSurface === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
+                     { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: shownSurface === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
+                     { id: WORLD_INFO_PANEL, label: labels().worldInfoPanel, icon: BookOpen, active: shownSurface === WORLD_INFO_PANEL, onClick: openWorldInfo, ref: worldInfoEntryRef },
                    ]
                  : []),
              ]}
            />
           <main id="main-content" className="app-main-content">
-            <Timeline
-              transcript={view.session.snapshot.chat.transcript}
-              preview={preview}
-              companionName={view.session.snapshot.chat.companion.name}
-              chatTitle={view.session.snapshot.chat.title}
-              labels={labels()}
-            />
-             {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
-             <section className="reference-draft-section" aria-label={labels().savedDraft}>
-               <h2>{labels().savedDraft}</h2>
-               {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (
-                 <p>{view.draft.text}</p>
-               ) : (
-                 <p>{labels().noSavedDraft}</p>
-               )}
-             </section>
-            <Composer
-              value={inputText}
-              onChange={setInputText}
-              onSend={() => void handleSend()}
-              onStop={() => void handleStop()}
-              isGenerating={stopAvailable}
-              disabled={!submitAvailable}
-              labels={labels()}
-            />
+            {/* Every surface is a peer: it takes this region in full, none of them
+                covers another, and the conversation is simply the default one
+                (design/104 §2). The URL names the selected surface, so Back
+                returns to the previous one and a reload restores it. */}
+            {shownSurface === CHAT_PANEL && (
+              <SurfaceView
+                title={labels().chatPanel}
+                testId="chat-surface"
+                icon={MessagesSquare}
+                className="surface-conversation"
+              >
+                <Timeline
+                  transcript={view.session.snapshot.chat.transcript}
+                  preview={preview}
+                  companionName={view.session.snapshot.chat.companion.name}
+                  chatTitle={view.session.snapshot.chat.title}
+                  labels={labels()}
+                />
+                {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
+                <section className="reference-draft-section" aria-label={labels().savedDraft}>
+                  <h2>{labels().savedDraft}</h2>
+                  {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (
+                    <p>{view.draft.text}</p>
+                  ) : (
+                    <p>{labels().noSavedDraft}</p>
+                  )}
+                </section>
+                <Composer
+                  value={inputText}
+                  onChange={setInputText}
+                  onSend={() => void handleSend()}
+                  onStop={() => void handleStop()}
+                  isGenerating={stopAvailable}
+                  disabled={!submitAvailable}
+                  labels={labels()}
+                />
+              </SurfaceView>
+            )}
+            {shownSurface === GAME_PANEL && (
+              <SurfaceView
+                title={labels().gamePanel}
+                testId="game-surface"
+                icon={Gamepad2}
+                restoreFocusTo={gameEntryRef}
+              >
+                {/* Installation discovery is a sibling of the Game state region,
+                    never inside it, so the region's scope stays exactly its own
+                    controls (its Retry/Cancel would otherwise make the region's
+                    strict-mode queries ambiguous). */}
+                <GameStatePanel
+                  game={view.root.game}
+                  labels={labels()}
+                  integrationId={STARDEW_GAME_INTEGRATION_ID}
+                  syncing={gameSyncing}
+                  lifecycle={{
+                    activation: {
+                      available: gameActivationAvailable,
+                      active: gameActivationActive,
+                      failed: gameActivationFailed,
+                      unavailable: gameActivationUnavailable,
+                    },
+                    setup: {
+                      available: gameSetupAvailable,
+                      active: gameSetupActive,
+                      failed: gameSetupFailed,
+                      notStaged: gameSetupNotStaged,
+                    },
+                    launch: {
+                      available: gameLaunchAvailable,
+                      active: gameLaunchActive,
+                      failed: gameLaunchFailed,
+                      notStaged: gameLaunchNotStaged,
+                    },
+                  }}
+                  session={{
+                    stop: { available: gameStopAvailable, active: gameStopActive, failed: gameStopFailed },
+                    disconnect: {
+                      available: disconnectAvailable,
+                      active: disconnectActive,
+                      failed: disconnectFailed,
+                    },
+                  }}
+                  resume={{
+                    available: gameResumeAvailable,
+                    active: gameResumeActive,
+                    failed: gameResumeFailed,
+                    unavailable: gameResumeUnavailable,
+                    cancelActive: gameResumeCancelActive,
+                    cancelFailed: gameResumeCancelFailed,
+                    failureSurface: resumeFailureSurface,
+                  }}
+                  reopen={{
+                    available: gameReopenAvailable,
+                    active: gameReopenActive,
+                    failed: gameReopenFailed,
+                    unavailable: gameReopenUnavailable,
+                  }}
+                  create={{
+                    active: gameCreateActive,
+                    failed: gameCreateFailed,
+                    unavailable: gameCreateUnavailable,
+                    formOpen: createFormOpen,
+                    continuityIdentity: continuityIdentityInput,
+                  }}
+                  cabin={cabinView}
+                  handlers={{
+                    activate: () => void handleLifecycleActivate(),
+                    setup: () => void handleGameSetup(),
+                    launch: () => void handleGameLaunch(),
+                    stop: () => void handleGameStop(),
+                    disconnect: () => void handleDisconnect(),
+                    resume: () => void handleGameResume(),
+                    resumeCancel: () => void handleGameResumeCancel(),
+                    reopen: () => void handleGameReopen(),
+                    create: () => void handleGameCreate(),
+                    toggleCreateForm: () => setCreateFormOpen((open) => !open),
+                    setContinuityIdentity: setContinuityIdentityInput,
+                    confirmCabin: (choice) => void handleCabinConfirmation(choice),
+                  }}
+                />
+                <StardewInstallationDiscovery api={composedApiRef.current} labels={labels()} />
+              </SurfaceView>
+            )}
+            {shownSurface === CHATS_PANEL && (
+              <SurfaceView
+                title={labels().chatsPanel}
+                testId="chats-surface"
+                icon={MessagesSquare}
+                restoreFocusTo={chatsEntryRef}
+              >
+                <ChatsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readChats()} />
+              </SurfaceView>
+            )}
+            {shownSurface === CHARACTERS_PANEL && (
+              <SurfaceView
+                title={labels().charactersPanel}
+                testId="characters-surface"
+                icon={Users}
+                restoreFocusTo={charactersEntryRef}
+              >
+                <p className="state-placeholder">{labels().charactersUnavailable}</p>
+              </SurfaceView>
+            )}
+            {shownSurface === SETTINGS_PANEL && (
+              <SurfaceView
+                title={labels().settingsPanel}
+                testId="settings-surface"
+                icon={Settings}
+                restoreFocusTo={settingsEntryRef}
+              >
+                <SettingsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readSettings()} />
+              </SurfaceView>
+            )}
+            {shownSurface === MEMORY_PANEL && (
+              <SurfaceView
+                title={labels().memoryPanel}
+                testId="memory-surface"
+                icon={Brain}
+                restoreFocusTo={memoryEntryRef}
+              >
+                <MemoryPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readMemory()} />
+              </SurfaceView>
+            )}
+            {shownSurface === WORLD_INFO_PANEL && (
+              <SurfaceView
+                title={labels().worldInfoPanel}
+                testId="world-info-surface"
+                icon={BookOpen}
+                restoreFocusTo={worldInfoEntryRef}
+              >
+                <WorldInfoPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readWorldInfo()} />
+              </SurfaceView>
+            )}
           </main>
-          {/* Exactly one contextual panel is mounted at a time, and only while the
-              URL names it open (design/26 §4.2, §7.2; design/104 §2). The Game
-              region keeps its own frozen anchors inside the drawer.
-              Installation discovery is a sibling inside the same drawer, never
-              inside the Game state region, so the region's scope stays exactly
-              its own controls (its Retry/Cancel would otherwise make the
-              region's strict-mode queries ambiguous). */}
-          {openPanel === GAME_PANEL && (
-            <GameDrawer
-              title={labels().gamePanel}
-              closeLabel={labels().close}
-              onClose={closeGamePanel}
-              restoreFocusTo={gameEntryRef}
-              testId="game-drawer"
-            >
-              <GameStatePanel
-                game={view.root.game}
-                labels={labels()}
-                integrationId={STARDEW_GAME_INTEGRATION_ID}
-                syncing={gameSyncing}
-                lifecycle={{
-                  activation: {
-                    available: gameActivationAvailable,
-                    active: gameActivationActive,
-                    failed: gameActivationFailed,
-                    unavailable: gameActivationUnavailable,
-                  },
-                  setup: {
-                    available: gameSetupAvailable,
-                    active: gameSetupActive,
-                    failed: gameSetupFailed,
-                    notStaged: gameSetupNotStaged,
-                  },
-                  launch: {
-                    available: gameLaunchAvailable,
-                    active: gameLaunchActive,
-                    failed: gameLaunchFailed,
-                    notStaged: gameLaunchNotStaged,
-                  },
-                }}
-                session={{
-                  stop: { available: gameStopAvailable, active: gameStopActive, failed: gameStopFailed },
-                  disconnect: {
-                    available: disconnectAvailable,
-                    active: disconnectActive,
-                    failed: disconnectFailed,
-                  },
-                }}
-                resume={{
-                  available: gameResumeAvailable,
-                  active: gameResumeActive,
-                  failed: gameResumeFailed,
-                  unavailable: gameResumeUnavailable,
-                  cancelActive: gameResumeCancelActive,
-                  cancelFailed: gameResumeCancelFailed,
-                  failureSurface: resumeFailureSurface,
-                }}
-                reopen={{
-                  available: gameReopenAvailable,
-                  active: gameReopenActive,
-                  failed: gameReopenFailed,
-                  unavailable: gameReopenUnavailable,
-                }}
-                create={{
-                  active: gameCreateActive,
-                  failed: gameCreateFailed,
-                  unavailable: gameCreateUnavailable,
-                  formOpen: createFormOpen,
-                  continuityIdentity: continuityIdentityInput,
-                }}
-                cabin={cabinView}
-                handlers={{
-                  activate: () => void handleLifecycleActivate(),
-                  setup: () => void handleGameSetup(),
-                  launch: () => void handleGameLaunch(),
-                  stop: () => void handleGameStop(),
-                  disconnect: () => void handleDisconnect(),
-                  resume: () => void handleGameResume(),
-                  resumeCancel: () => void handleGameResumeCancel(),
-                  reopen: () => void handleGameReopen(),
-                  create: () => void handleGameCreate(),
-                  toggleCreateForm: () => setCreateFormOpen((open) => !open),
-                  setContinuityIdentity: setContinuityIdentityInput,
-                  confirmCabin: (choice) => void handleCabinConfirmation(choice),
-                }}
-              />
-              <StardewInstallationDiscovery api={composedApiRef.current} labels={labels()} />
-            </GameDrawer>
-          )}
-          {/* The management panels (design/104 §2, design/26 §4.2): exactly one
-              drawer at a time, each backed by the delegated routes the composed
-              root serves. A panel whose route is not mounted is absent. */}
-          {openPanel === CHATS_PANEL && (
-            <ContextDrawer
-              title={labels().chatsPanel}
-              closeLabel={labels().close}
-              onClose={closeChats}
-              restoreFocusTo={chatsEntryRef}
-              testId="chats-drawer"
-              icon={MessagesSquare}
-            >
-              <ChatsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readChats()} />
-            </ContextDrawer>
-          )}
-          {openPanel === CHARACTERS_PANEL && (
-            <ContextDrawer
-              title={labels().charactersPanel}
-              closeLabel={labels().close}
-              onClose={closeCharacters}
-              restoreFocusTo={charactersEntryRef}
-              testId="characters-drawer"
-              icon={Users}
-            >
-              <p className="state-placeholder">{labels().charactersUnavailable}</p>
-            </ContextDrawer>
-          )}
-          {openPanel === SETTINGS_PANEL && (
-            <ContextDrawer
-              title={labels().settingsPanel}
-              closeLabel={labels().close}
-              onClose={closeSettings}
-              restoreFocusTo={settingsEntryRef}
-              testId="settings-drawer"
-              icon={Settings}
-            >
-              <SettingsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readSettings()} />
-            </ContextDrawer>
-          )}
-          {openPanel === MEMORY_PANEL && (
-            <ContextDrawer
-              title={labels().memoryPanel}
-              closeLabel={labels().close}
-              onClose={closeMemory}
-              restoreFocusTo={memoryEntryRef}
-              testId="memory-drawer"
-              icon={Brain}
-            >
-              <MemoryPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readMemory()} />
-            </ContextDrawer>
-          )}
-          {openPanel === WORLD_INFO_PANEL && (
-            <ContextDrawer
-              title={labels().worldInfoPanel}
-              closeLabel={labels().close}
-              onClose={closeWorldInfo}
-              restoreFocusTo={worldInfoEntryRef}
-              testId="world-info-drawer"
-              icon={BookOpen}
-            >
-              <WorldInfoPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readWorldInfo()} />
-            </ContextDrawer>
-          )}
         </>
       )}
     </div>

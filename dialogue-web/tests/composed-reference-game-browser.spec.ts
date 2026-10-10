@@ -72,19 +72,19 @@ const root = {
 const draft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
 
 /**
- * The Game surface is the shell's single contextual drawer (design/26 §4.2,
- * design/104 §2), so a journey reaches it the way a player does: through the
- * AppBar entry. Every assertion about the panel stays a behavioural assertion
- * about the panel - it just has to be open first.
+ * The Game surface is one of the shell's peer surfaces (design/104 §2), so a
+ * journey reaches it the way a player does: through the AppBar entry. Every
+ * assertion about the panel stays a behavioural assertion about the panel - it
+ * just has to be selected first.
  */
 async function openGameDrawer(page: Page): Promise<void> {
-  const drawer = page.getByTestId("game-drawer");
-  // The drawer restores itself from the URL, so this is "open if closed": a
-  // journey that already has it open (after a refresh) does not click the entry
-  // that its own backdrop now covers.
-  if (await drawer.isVisible()) return;
+  const surface = page.getByTestId("game-surface");
+  // The selected surface restores itself from the URL, so this is "select if not
+  // already selected": a journey that already has it shown (after a refresh)
+  // does not click the entry again.
+  if (await surface.isVisible()) return;
   await page.getByRole("button", { name: "Game", exact: true }).click();
-  await expect(drawer).toBeVisible();
+  await expect(surface).toBeVisible();
 }
 
 test("composed profile redeems once, renders nested Chat and redacted Game, then reloads from composed state", async ({ page }) => {
@@ -171,10 +171,13 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   expect(tavernStateRequests).toBe(0);
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
-  // Refresh restores the open drawer, and redeems no second bootstrap.
-  await expect(page.getByTestId("game-drawer")).toBeVisible();
+  // A reload restores the selected surface, so the conversation is not on screen yet.
+  await expect(page.getByTestId("game-surface")).toBeVisible();
   await expect.poll(() => composedStateRequests).toBe(1);
+  // Back from it shows the same conversation the journey left; no second bootstrap
+  // was redeemed to get there.
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   expect(bootstrapRequests).toBe(1);
   expect(tavernBootstrapRequests).toBe(0);
   expect(tavernStateRequests).toBe(0);
@@ -486,6 +489,10 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await expect.poll(() => stateReads).toBe(2);
   await expect(panel).toContainText("InstanceStardew Valley");
   await expect(launch).toHaveCount(0);
+  // The conversation is a peer surface, so proving it stayed independent of the
+  // Game surface means returning to it and finding it untouched.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
 
@@ -541,6 +548,10 @@ test("Game STOP is generation-bound, single-flight, rereads stopped, and remains
   await expect.poll(() => stateRequests).toBe(1);
   await expect(panel).toContainText("ConnectionStopped");
   await expect(gameStop).toHaveCount(0);
+  // The conversation is a peer surface, so proving it stayed independent of the
+  // Game surface means returning to it and finding it untouched.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
 
@@ -811,6 +822,10 @@ test("Game Resume is generation-bound and single-flight, rereads authoritative s
   await expect(panel).not.toContainText("The game could not be resumed");
   await expect(panel).not.toContainText("accepted");
   await expect(panel).not.toContainText("generation: 1");
+  // The conversation is a peer surface, so proving it stayed independent of the
+  // Game surface means returning to it and finding it untouched.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
   expect(tavernMutationRequests).toBe(0);
@@ -896,6 +911,10 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   await expect(panel).not.toContainText("ConnectionConnected");
   await page.waitForTimeout(100);
   expect(resumeRequests).toBe(1);
+  // The transcript is the conversation surface, so reaching it means returning to
+  // it: the Game surface is a peer, not an overlay over the transcript.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
   expect(tavernMutationRequests).toBe(0);
   // The test returns while the bounded reread budget (60 x 500ms) still has
@@ -1043,6 +1062,10 @@ test("resume-phase syncing projection passes the browser gate, visualizes sync, 
   await expect(panel.getByRole("button", { name: "Resume game" })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Stop game" })).toHaveCount(0);
   await expect(panel).not.toContainText("connected_idle");
+  // The conversation is a peer surface, so proving it stayed independent of the
+  // Game surface means returning to it and finding it untouched.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
 test("ready-actions-paused renders the Resume actions control and converges on the authoritative reopened projection", async ({ page }) => {
@@ -1122,6 +1145,10 @@ test("ready-actions-paused renders the Resume actions control and converges on t
   await expect(panel.getByText("Game actions are paused.")).toHaveCount(0);
   await expect(panel).not.toContainText("could not be resumed");
   await expect(panel).not.toContainText("reopened");
+  // The conversation is a peer surface, so proving it stayed independent of the
+  // Game surface means returning to it and finding it untouched.
+  await page.goBack();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
   expect(tavernMutationRequests).toBe(0);
@@ -1699,9 +1726,13 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
      const panel = page.getByRole("region", { name: "Game state" });
     await panel.getByRole("button", { name: "Enable companion play" }).click();
     await expect(panel).toContainText(scenario.expected);
-    // The refusal is a Game-drawer fact: the Chat surface is never replaced.
+    // The refusal is a Game-surface fact; the conversation returns when the
+    // player goes back to it.
+    await page.goBack();
     await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Enable companion play" })).toBeVisible();
+    await openGameDrawer(page);
+    const panelAgain = page.getByRole("region", { name: "Game state" });
+    await expect(panelAgain.getByRole("button", { name: "Enable companion play" })).toBeVisible();
   }
 });
 
@@ -1710,7 +1741,7 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
  * the AppBar entry opens it, the URL names it while it is open, Browser Back
  * closes it before it leaves the chat, and a refresh restores it.
  */
-test("the AppBar Game entry opens the single drawer, the URL names it, and Back closes it without dropping the draft", async ({ page }) => {
+test("the AppBar Game entry selects the Game surface, the URL names it, and Back returns to the conversation without dropping the draft", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
@@ -1723,56 +1754,52 @@ test("the AppBar Game entry opens the single drawer, the URL names it, and Back 
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
-  // Closed until a player opens it: the Game surface is a drawer, never an
-  // inline technical status block (design/104 §2).
+  // Closed until a player selects it: the Game surface is a peer of the
+  // conversation, never an inline technical status block (design/104 §2).
   await expect(page.getByTestId("game-state-panel")).toHaveCount(0);
   await expect(page).toHaveURL(/#profile=composed-reference-game$/);
   const entry = page.getByRole("button", { name: "Game", exact: true });
   await expect(entry).toBeVisible();
 
   await entry.click();
-  const drawer = page.getByTestId("game-drawer");
-  await expect(drawer).toBeVisible();
-  // One modal drawer: animated backdrop, focus trap, Escape/backdrop close.
-  await expect(drawer).toHaveAttribute("aria-modal", "true");
-  await expect(page.getByTestId("game-drawer-backdrop")).toBeVisible();
-  // The panel keeps its frozen anchors inside the drawer.
+  const surface = page.getByTestId("game-surface");
+  await expect(surface).toBeVisible();
+  // A peer surface, not a modal overlay: it takes the main region, it is a
+  // region rather than a dialog, and nothing dims or covers the shell.
+  await expect(surface).toHaveAttribute("role", "region");
+  await expect(page.locator("[aria-modal='true']")).toHaveCount(0);
+  await expect(page.locator(".composed-drawer-backdrop")).toHaveCount(0);
+  // The panel keeps its frozen anchors inside the surface.
   const panel = page.getByTestId("game-state-panel");
   await expect(panel).toHaveAttribute("data-game-state", "available");
   await expect(page.getByRole("region", { name: "Game state" })).toBeVisible();
-  // Opening names the panel in the URL and moves focus into it.
+  // Selecting names the surface in the URL and moves focus into it.
   await expect(page).toHaveURL(/#profile=composed-reference-game&panel=game$/);
-  await expect(drawer.getByRole("heading", { name: "Game", exact: true })).toBeFocused();
+  await expect(surface.getByRole("heading", { name: "Game", exact: true })).toBeFocused();
   // A player reads localized outcomes, never a raw Host enum (design/104 §10).
   const panelText = await panel.innerText();
   expect(panelText).not.toContain("connected_idle");
   expect(panelText).not.toContain("unchecked");
   expect(panelText).not.toContain("not_configured");
 
-  // Browser Back closes the open panel first; the chat and the draft are
-  // untouched, and no message is replayed.
+  // Browser Back re-shows the surface the player came from; the conversation and
+  // the draft are untouched, and no message is replayed.
   await page.goBack();
-  await expect(drawer).toHaveCount(0);
+  await expect(surface).toHaveCount(0);
   await expect(page).toHaveURL(/#profile=composed-reference-game$/);
   await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 
-  // Escape closes it too, and focus returns to the entry that opened it.
+  // Escape returns to the conversation from any other surface.
   await entry.click();
-  await expect(drawer).toBeVisible();
+  await expect(surface).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(drawer).toHaveCount(0);
-  await expect(entry).toBeFocused();
+  await expect(surface).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   await expect(page).toHaveURL(/#profile=composed-reference-game$/);
-
-  // The backdrop is the third documented way out.
-  await entry.click();
-  await expect(drawer).toBeVisible();
-  await page.getByTestId("game-drawer-backdrop").click({ position: { x: 8, y: 8 } });
-  await expect(drawer).toHaveCount(0);
 });
 
-test("the Game drawer is restored from the URL after a refresh and keeps keyboard focus inside itself", async ({ page }) => {
+test("the selected surface is restored from the URL after a refresh and takes keyboard focus into itself", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
@@ -1788,35 +1815,39 @@ test("the Game drawer is restored from the URL after a refresh and keeps keyboar
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await page.getByRole("button", { name: "Game", exact: true }).click();
-  await expect(page.getByTestId("game-drawer")).toBeVisible();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
 
   await page.reload();
-  // Refresh restores the open panel without touching the conversation behind it.
-  const drawer = page.getByTestId("game-drawer");
-  await expect(drawer).toBeVisible();
+  // Refresh restores the selected surface without touching the conversation it
+  // replaced: going back shows the same chat and draft the player left.
+  const surface = page.getByTestId("game-surface");
+  await expect(surface).toBeVisible();
   await expect(page.getByTestId("game-state-panel")).toHaveAttribute("data-game-state", "available");
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toHaveCount(0);
+  await page.goBack();
   await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 
-  // Modal means the keyboard cannot leave it: tabbing forward and backward walks
-  // the drawer's own controls and wraps inside it.
+  // Selecting a surface moves focus to its heading, and Tab then reaches the
+  // surface's own controls: it is a peer region, not a modal trap, so the
+  // keyboard path in is one-way and the way out is Escape or Browser Back.
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(surface.getByRole("heading", { name: "Game", exact: true })).toBeFocused();
+  let reachedSurfaceControl = false;
   for (let press = 0; press < 12; press += 1) {
     await page.keyboard.press("Tab");
-    const inside = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
-    expect(inside, `tab stop ${press} stays inside the drawer`).toBe(true);
+    const inside = await page.evaluate(() => document.activeElement?.closest('[data-testid="game-surface"]') !== null);
+    if (inside) reachedSurfaceControl = true;
   }
-  for (let press = 0; press < 4; press += 1) {
-    await page.keyboard.press("Shift+Tab");
-    const inside = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null);
-    expect(inside, `shift-tab stop ${press} stays inside the drawer`).toBe(true);
-  }
+  expect(reachedSurfaceControl, "tabbing reaches the surface's own controls").toBe(true);
 
   await page.keyboard.press("Escape");
-  await expect(drawer).toHaveCount(0);
+  await expect(surface).toHaveCount(0);
   await expect(page).toHaveURL(/#profile=composed-reference-game$/);
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
 });
 
-test("the Game drawer renders localized player outcomes in zh-CN with no English chrome", async ({ page }) => {
+test("the Game surface renders localized player outcomes in zh-CN with no English chrome", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
@@ -1832,7 +1863,12 @@ test("the Game drawer renders localized player outcomes in zh-CN with no English
 
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await page.getByRole("button", { name: "游戏", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveAccessibleName("游戏");
+  // The surface's own accessible name is the localized entry text; the fixture's
+  // other regions (the game state region and the installation panel) are named
+  // separately, so match this one by its test id.
+  const localizedSurface = page.getByTestId("game-surface");
+  await expect(localizedSurface).toBeVisible();
+  await expect(localizedSurface).toHaveAccessibleName("游戏");
   const panel = page.getByTestId("game-state-panel");
   // Group vocabulary, fact labels and fact values all come from the zh-CN
   // catalog; the panel is not a mix of English chrome and Chinese content.

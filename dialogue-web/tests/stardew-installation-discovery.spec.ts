@@ -20,21 +20,18 @@ const realTopologySkipReason =
  * before reaching for the panel.
  */
 async function openGameDrawer(page: import("@playwright/test").Page): Promise<void> {
-  const drawer = page.getByTestId("game-drawer");
+  const surface = page.getByTestId("game-surface");
   const entry = page.getByRole("button", { name: "Game", exact: true });
-  // The drawer restores itself from the URL, so "it is already open" is a normal
-  // outcome - including straight after a reload, when the visibility check can
-  // run before the restored drawer has rendered. The entry is the shell's own
-  // control and is present either way, so wait for the shell and then click only
-  // when the drawer really is closed; if it opens between the check and the
-  // click, the click lands on the drawer's own backdrop and the outcome is the
-  // one this helper wants anyway, so that is tolerated rather than failed.
+  // The selected surface restores itself from the URL, so "it is already
+  // selected" is a normal outcome - including straight after a reload. The entry
+  // is the shell's own control and is present either way, so wait for the shell
+  // and then select only when the surface really is not shown.
   await expect(entry).toBeVisible();
-  if (await drawer.isVisible()) return;
+  if (await surface.isVisible()) return;
   await entry.click().catch(async (error: unknown) => {
-    if (!(await drawer.isVisible())) throw error;
+    if (!(await surface.isVisible())) throw error;
   });
-  await expect(drawer).toBeVisible();
+  await expect(surface).toBeVisible();
 }
 
 test.describe("B2 installation discovery: route-mocked UI behavior", () => {

@@ -314,6 +314,7 @@ const en = {
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
+  chatPanel: "Chat",
   gamePanel: "Game",
   chatsPanel: "Chats",
   charactersPanel: "Characters",
@@ -715,6 +716,7 @@ const zh: Messages = {
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",
+  chatPanel: "聊天",
   gamePanel: "游戏",
   chatsPanel: "聊天",
   charactersPanel: "角色",
