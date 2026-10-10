@@ -43,12 +43,12 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_precondition_failed", null);
         if (!this.sceneTargetResolver(sceneTarget, out binding, out sceneReason))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sceneReason, null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity), behavior-equivalent to the inline sequence it
+        // replaced: identical reasonCodes, identical order. Geometry, target
+        // identity and the postcondition stay action-specific.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_out_of_range", $"target={targetX},{targetY}");
 
@@ -107,12 +107,12 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activeToolApproach is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity), behavior-equivalent to the inline sequence it
+        // replaced: identical reasonCodes, identical order. Geometry, target
+        // identity and the postcondition stay action-specific.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target = FindItemTarget(location, Game1.player, expectedTargetId, expectedQualifiedItemId, radius: 8);

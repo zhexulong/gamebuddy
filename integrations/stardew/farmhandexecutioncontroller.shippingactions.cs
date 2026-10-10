@@ -61,12 +61,12 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity), behavior-equivalent to the inline sequence it
+        // replaced: identical reasonCodes, identical order. Geometry, target
+        // identity and the postcondition stay action-specific.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
         if (ResolveShippingBin(Game1.player) is not ResolvedShippingBin bin)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
