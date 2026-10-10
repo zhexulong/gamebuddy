@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
-import type { Messages } from "../i18n";
+import type { Locale, Messages } from "../i18n";
 import type {
   CompanionListV1,
   GreetingV1,
@@ -8,29 +8,37 @@ import type {
   ScenarioV1,
 } from "../management-pipeline-api";
 import { CharacterCardImport } from "./CharacterCardImport";
+import { characterLabels } from "./character-domain-labels";
 
 /**
- * Characters surface (design/28 §2): companion library + Persona / Scenario /
- * Greeting management, all through the mounted management profile routes.
+ * Characters surface (design/28 §2): the companion library and the companion's
+ * own authored content.
+ *
+ * The functional side is the authority for what a character *is*: a character
+ * card contributes a persona, a scenario, dialogue examples, lorebook entries
+ * and an opening. The surface therefore talks in exactly those names, and the
+ * opening (the chat's first message - the card's `first_mes`) belongs to the
+ * character and is chosen when a chat starts, not a standalone record.
  *
  * Every control reflects a durable read-back: a save succeeds only when the
- * Host store re-reads the written artifact and validates it (revision CAS),
- * so the UI never shows a local value the store did not accept. Reads that
- * fail (profile without the routes, service unavailable) render the section
- * as unavailable instead of fabricating a capability.
+ * Host store re-reads the written artifact and validates it (revision CAS), so
+ * the UI never shows a local value the store did not accept. Reads that fail
+ * render the section as unavailable instead of fabricating a capability.
  *
- * The reviewed card import is `CharacterCardImport`, the same component the
- * Import/Export drawer mounts, so the staged flow exists once.
+ * `labels` is retained only for the standalone management mount that is being
+ * retired; this panel renders the character domain's own vocabulary.
  */
 export function CharactersPanel({
   api,
   csrfToken,
-  labels,
+  locale = "en",
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
-  labels: Messages;
+  labels?: Messages;
+  locale?: Locale;
 }): ReactElement {
+  const labels = characterLabels(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
   const [createName, setCreateName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -48,17 +56,13 @@ export function CharactersPanel({
   const [scenarioSaving, setScenarioSaving] = useState(false);
   const [scenarioNotice, setScenarioNotice] = useState<"saved" | "error" | null>(null);
 
-  const [greeting, setGreeting] = useState<GreetingV1 | "loading" | "unavailable">("loading");
-  const [greetingLabel, setGreetingLabel] = useState("");
-  const [greetingVariants, setGreetingVariants] = useState<readonly { label: string; text: string }[]>([
+  const [opening, setOpening] = useState<GreetingV1 | "loading" | "unavailable">("loading");
+  const [openingLabel, setOpeningLabel] = useState("");
+  const [openingVariants, setOpeningVariants] = useState<readonly { label: string; text: string }[]>([
     { label: "", text: "" },
   ]);
-  const [greetingSaving, setGreetingSaving] = useState(false);
-  const [greetingNotice, setGreetingNotice] = useState<"saved" | "error" | null>(null);
-
-  // The reviewed ST-card import (design/28 Import row) lives in
-  // `CharacterCardImport`; the panel only refreshes its library when it created
-  // a companion.
+  const [openingSaving, setOpeningSaving] = useState(false);
+  const [openingNotice, setOpeningNotice] = useState<"saved" | "error" | null>(null);
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -101,16 +105,16 @@ export function CharactersPanel({
       try {
         const value = await api.readGreeting();
         if (!activeRef.current) return;
-        setGreeting(value);
-        setGreetingLabel(value.present ? value.label ?? "" : "");
-        setGreetingVariants(
+        setOpening(value);
+        setOpeningLabel(value.present ? value.label ?? "" : "");
+        setOpeningVariants(
           value.present && value.variants.length > 0
             ? value.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
             : [{ label: "", text: "" }],
         );
       } catch {
         if (!activeRef.current) return;
-        setGreeting("unavailable");
+        setOpening("unavailable");
       }
     })();
     return () => {
@@ -188,19 +192,19 @@ export function CharactersPanel({
     }
   };
 
-  const handleSaveGreeting = async (): Promise<void> => {
-    if (greetingSaving || greeting === "loading" || greeting === "unavailable") return;
-    const allowedVariants = greetingVariants
+  const handleSaveOpening = async (): Promise<void> => {
+    if (openingSaving || opening === "loading" || opening === "unavailable") return;
+    const allowedVariants = openingVariants
       .map((variant) => ({ label: variant.label.trim(), text: variant.text.trim() }))
       .filter((variant) => variant.text.length > 0);
     if (allowedVariants.length === 0) return;
-    setGreetingSaving(true);
-    setGreetingNotice(null);
+    setOpeningSaving(true);
+    setOpeningNotice(null);
     try {
       const saved = await api.updateGreeting(
         {
-          expectedRevision: (greeting.present ? greeting.revision : 0) ?? 0,
-          ...(greetingLabel.trim().length === 0 ? {} : { label: greetingLabel.trim() }),
+          expectedRevision: (opening.present ? opening.revision : 0) ?? 0,
+          ...(openingLabel.trim().length === 0 ? {} : { label: openingLabel.trim() }),
           variants: allowedVariants.map((variant) => ({
             ...(variant.label.length === 0 ? {} : { label: variant.label }),
             text: variant.text,
@@ -209,68 +213,26 @@ export function CharactersPanel({
         csrfToken,
       );
       if (activeRef.current) {
-        setGreeting(saved);
-        setGreetingNotice("saved");
+        setOpening(saved);
+        setOpeningNotice("saved");
       }
     } catch {
-      if (activeRef.current) setGreetingNotice("error");
+      if (activeRef.current) setOpeningNotice("error");
     } finally {
-      if (activeRef.current) setGreetingSaving(false);
+      if (activeRef.current) setOpeningSaving(false);
     }
   };
 
   return (
-    <section className="management-settings-section" aria-label={labels.charactersTitle} data-characters-panel>
-      <h2>{labels.charactersTitle}</h2>
-
+    <section className="management-settings-section" aria-label={labels.personaTitle} data-characters-panel>
       {companionList === "unavailable" ? (
-        <p>{labels.charactersUnavailable}</p>
+        <p>{labels.unavailable}</p>
       ) : (
         <>
-          <section aria-label={labels.companionListTitle}>
-            <h3>{labels.companionListTitle}</h3>
-            {companionList === "loading" ? (
-              <p className="loading-text">{labels.openingChat}</p>
-            ) : companionList.companions.length === 0 ? (
-              <p>{labels.companionListEmpty}</p>
-            ) : (
-              <ul data-companion-list>
-                {companionList.companions.map((entry) => (
-                  <li key={entry.handle} data-companion-entry>
-                    <span>{entry.name}</span>
-                    {entry.isCurrent && <em className="companion-current-badge">{labels.companionCurrent}</em>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="management-settings-hint">{labels.companionCreateHint}</p>
-            <div className="composer-actions">
-              <input
-                type="text"
-                className="form-input"
-                aria-label={labels.companionCreateTitle}
-                value={createName}
-                maxLength={128}
-                onChange={(event) => setCreateName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleCreate();
-                }}
-              />
-              <button type="button" className="small-button" disabled={creating || createName.trim().length === 0} onClick={() => void handleCreate()}>
-                {creating ? labels.authoredContentSaving : labels.companionCreateSubmit}
-              </button>
-            </div>
-            {createNotice !== null && (
-              <p role="status" className={createNotice === "saved" ? "success-banner" : "error-banner"}>
-                {createNotice === "saved" ? labels.authoredContentSaved : labels.authoredContentError}
-              </p>
-            )}
-          </section>
-
-                    <CharacterCardImport
+          <CharacterCardImport
             api={api}
             csrfToken={csrfToken}
-            labels={labels}
+            locale={locale}
             onCreated={() => {
               void (async () => {
                 try {
@@ -283,16 +245,61 @@ export function CharactersPanel({
             }}
           />
 
-{persona !== "unavailable" && (
-<section aria-label={labels.personaEditTitle} data-persona-editor>
-              <h3>{labels.personaEditTitle}</h3>
-              <p className="management-settings-hint">{labels.personaEditHint}</p>
+          <section aria-label={labels.companionsTitle} data-companion-list-section>
+            <h3>{labels.companionsTitle}</h3>
+            {companionList === "loading" ? (
+              <p className="loading-text">{labels.loading}</p>
+            ) : companionList.companions.length === 0 ? (
+              <p>{labels.companionsEmpty}</p>
+            ) : (
+              <ul data-companion-list>
+                {companionList.companions.map((entry) => (
+                  <li key={entry.handle} data-companion-entry>
+                    <span>{entry.name}</span>
+                    {entry.isCurrent && <em className="companion-current-badge">{labels.companionCurrent}</em>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="management-settings-hint">{labels.newCompanionHint}</p>
+            <div className="composer-actions">
+              <input
+                type="text"
+                className="form-input"
+                aria-label={labels.newCompanionTitle}
+                value={createName}
+                maxLength={128}
+                onChange={(event) => setCreateName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void handleCreate();
+                }}
+              />
+              <button
+                type="button"
+                className="small-button"
+                disabled={creating || createName.trim().length === 0}
+                onClick={() => void handleCreate()}
+              >
+                {creating ? labels.saving : labels.newCompanionCreate}
+              </button>
+            </div>
+            {createNotice !== null && (
+              <p role="status" className={createNotice === "saved" ? "success-banner" : "error-banner"}>
+                {createNotice === "saved" ? labels.saved : labels.saveFailed}
+              </p>
+            )}
+          </section>
+
+          {persona !== "unavailable" && (
+            <section aria-label={labels.personaTitle} data-persona-editor>
+              <h3>{labels.personaTitle}</h3>
+              <p className="management-settings-hint">{labels.personaHint}</p>
               {persona === "loading" ? (
-                <p className="loading-text">{labels.openingChat}</p>
+                <p className="loading-text">{labels.loading}</p>
               ) : persona.present ? (
-                <p>{labels.personaPresentHint}</p>
+                <p>{labels.personaPresent}</p>
               ) : (
-                <p>{labels.personaNotPresent}</p>
+                <p>{labels.personaAbsent}</p>
               )}
               {persona !== "loading" && (
                 <>
@@ -319,13 +326,18 @@ export function CharactersPanel({
                     onChange={(event) => setPersonaDescription(event.target.value)}
                   />
                   <div className="composer-actions">
-                    <button type="button" className="small-button" disabled={personaSaving || personaName.trim().length === 0} onClick={() => void handleSavePersona()}>
-                      {personaSaving ? labels.authoredContentSaving : labels.personaSave}
+                    <button
+                      type="button"
+                      className="small-button"
+                      disabled={personaSaving || personaName.trim().length === 0}
+                      onClick={() => void handleSavePersona()}
+                    >
+                      {personaSaving ? labels.saving : labels.personaSave}
                     </button>
                   </div>
                   {personaNotice !== null && (
                     <p role="status" className={personaNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {personaNotice === "saved" ? labels.authoredContentSaved : labels.authoredContentError}
+                      {personaNotice === "saved" ? labels.saved : labels.saveFailed}
                     </p>
                   )}
                 </>
@@ -334,18 +346,18 @@ export function CharactersPanel({
           )}
 
           {scenario !== "unavailable" && (
-            <section aria-label={labels.scenarioEditTitle} data-scenario-editor>
-              <h3>{labels.scenarioEditTitle}</h3>
-              <p className="management-settings-hint">{labels.scenarioEditHint}</p>
+            <section aria-label={labels.scenarioTitle} data-scenario-editor>
+              <h3>{labels.scenarioTitle}</h3>
+              <p className="management-settings-hint">{labels.scenarioHint}</p>
               {scenario === "loading" ? (
-                <p className="loading-text">{labels.openingChat}</p>
+                <p className="loading-text">{labels.loading}</p>
               ) : !scenario.present ? (
-                <p>{labels.scenarioNotPresent}</p>
+                <p>{labels.scenarioAbsent}</p>
               ) : null}
               {scenario !== "loading" && (
                 <>
                   <label className="management-settings-label" htmlFor="scenario-name">
-                    {labels.personaName}
+                    {labels.scenarioName}
                   </label>
                   <input
                     id="scenario-name"
@@ -356,7 +368,7 @@ export function CharactersPanel({
                     onChange={(event) => setScenarioName(event.target.value)}
                   />
                   <label className="management-settings-label" htmlFor="scenario-description">
-                    {labels.personaDescription}
+                    {labels.scenarioDescription}
                   </label>
                   <textarea
                     id="scenario-description"
@@ -367,13 +379,20 @@ export function CharactersPanel({
                     onChange={(event) => setScenarioDescription(event.target.value)}
                   />
                   <div className="composer-actions">
-                    <button type="button" className="small-button" disabled={scenarioSaving || scenarioName.trim().length === 0 || scenarioDescription.trim().length === 0} onClick={() => void handleSaveScenario()}>
-                      {scenarioSaving ? labels.authoredContentSaving : labels.scenarioSave}
+                    <button
+                      type="button"
+                      className="small-button"
+                      disabled={
+                        scenarioSaving || scenarioName.trim().length === 0 || scenarioDescription.trim().length === 0
+                      }
+                      onClick={() => void handleSaveScenario()}
+                    >
+                      {scenarioSaving ? labels.saving : labels.scenarioSave}
                     </button>
                   </div>
                   {scenarioNotice !== null && (
                     <p role="status" className={scenarioNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {scenarioNotice === "saved" ? labels.authoredContentSaved : labels.authoredContentError}
+                      {scenarioNotice === "saved" ? labels.saved : labels.saveFailed}
                     </p>
                   )}
                 </>
@@ -381,41 +400,41 @@ export function CharactersPanel({
             </section>
           )}
 
-          {greeting !== "unavailable" && (
-            <section aria-label={labels.greetingEditTitle} data-greeting-editor>
-              <h3>{labels.greetingEditTitle}</h3>
-              <p className="management-settings-hint">{labels.greetingEditHint}</p>
-              {greeting === "loading" ? (
-                <p className="loading-text">{labels.openingChat}</p>
-              ) : !greeting.present ? (
-                <p>{labels.greetingNotPresent}</p>
+          {opening !== "unavailable" && (
+            <section aria-label={labels.openingTitle} data-opening-editor>
+              <h3>{labels.openingTitle}</h3>
+              <p className="management-settings-hint">{labels.openingHint}</p>
+              {opening === "loading" ? (
+                <p className="loading-text">{labels.loading}</p>
+              ) : !opening.present ? (
+                <p>{labels.openingAbsent}</p>
               ) : null}
-              {greeting !== "loading" && (
+              {opening !== "loading" && (
                 <>
-                  <label className="management-settings-label" htmlFor="greeting-label">
-                    {labels.greetingVariantLabel}
+                  <label className="management-settings-label" htmlFor="opening-label">
+                    {labels.openingLabel}
                   </label>
                   <input
-                    id="greeting-label"
+                    id="opening-label"
                     type="text"
                     className="form-input"
-                    value={greetingLabel}
+                    value={openingLabel}
                     maxLength={128}
-                    onChange={(event) => setGreetingLabel(event.target.value)}
+                    onChange={(event) => setOpeningLabel(event.target.value)}
                   />
-                  {greetingVariants.map((variant, index) => (
-                    <div key={index} className="greeting-variant-row">
-                      <label className="management-settings-label" htmlFor={`greeting-variant-${index}-text`}>
-                        {labels.greetingVariantText} #{index + 1}
+                  {openingVariants.map((variant, index) => (
+                    <div key={index} className="opening-variant-row">
+                      <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
+                        {labels.openingVariantText} #{index + 1}
                       </label>
                       <textarea
-                        id={`greeting-variant-${index}-text`}
+                        id={`opening-variant-${index}-text`}
                         className="form-textarea"
                         rows={2}
                         value={variant.text}
                         maxLength={8192}
                         onChange={(event) =>
-                          setGreetingVariants((current) =>
+                          setOpeningVariants((current) =>
                             current.map((item, itemIndex) =>
                               itemIndex === index ? { label: item.label, text: event.target.value } : item,
                             ),
@@ -426,9 +445,11 @@ export function CharactersPanel({
                         <button
                           type="button"
                           className="small-button"
-                          disabled={greetingVariants.length <= 1}
+                          disabled={openingVariants.length <= 1}
                           onClick={() =>
-                            setGreetingVariants((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                            setOpeningVariants((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index),
+                            )
                           }
                         >
                           {labels.discard}
@@ -440,9 +461,9 @@ export function CharactersPanel({
                     <button
                       type="button"
                       className="small-button"
-                      onClick={() => setGreetingVariants((current) => [...current, { label: "", text: "" }])}
+                      onClick={() => setOpeningVariants((current) => [...current, { label: "", text: "" }])}
                     >
-                      {labels.greetingAddVariant}
+                      {labels.openingAdd}
                     </button>
                   </div>
                   <div className="composer-actions">
@@ -450,17 +471,16 @@ export function CharactersPanel({
                       type="button"
                       className="small-button"
                       disabled={
-                        greetingSaving ||
-                        greetingVariants.every((variant) => variant.text.trim().length === 0)
+                        openingSaving || openingVariants.every((variant) => variant.text.trim().length === 0)
                       }
-                      onClick={() => void handleSaveGreeting()}
+                      onClick={() => void handleSaveOpening()}
                     >
-                      {greetingSaving ? labels.authoredContentSaving : labels.greetingSave}
+                      {openingSaving ? labels.saving : labels.openingSave}
                     </button>
                   </div>
-                  {greetingNotice !== null && (
-                    <p role="status" className={greetingNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {greetingNotice === "saved" ? labels.authoredContentSaved : labels.authoredContentError}
+                  {openingNotice !== null && (
+                    <p role="status" className={openingNotice === "saved" ? "success-banner" : "error-banner"}>
+                      {openingNotice === "saved" ? labels.saved : labels.saveFailed}
                     </p>
                   )}
                 </>
