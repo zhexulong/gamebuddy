@@ -209,12 +209,15 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity) in the one authority, in that same order: the
+        // refusal now NAMES the hold (actor_held_by_modal / cutscene_active /
+        // actor_passed_out / transient_busy) where the inline copy reported the
+        // anonymous player_not_actionable. The station geometry, the ride
+        // resolution and the Warped postcondition stay action-specific.
+        // Physical: the ride drives the native minecart object, not a tool swing.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
+            return admissionRefusal;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
@@ -287,12 +290,17 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity) in the one authority, in that same order: the
+        // refusal now NAMES the hold (actor_held_by_modal / cutscene_active /
+        // actor_passed_out / transient_busy) where the inline copy reported the
+        // anonymous player_not_actionable. One edit serves BOTH travel and
+        // enter_exit; the resolved warp, the native door dispatch and the
+        // Warped postcondition stay action-specific.
+        // General: a location transition is not a tool-driven or object-directed
+        // action (use_warp_item declares the same profile).
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
+            return admissionRefusal;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Microsoft.Xna.Framework.Point sourcePoint = new(sourceX, sourceY);

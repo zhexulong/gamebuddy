@@ -312,16 +312,15 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_menu_open", null);
-        if (Game1.eventUp)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_event_active", null);
-        if (!Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_cannot_move", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RejectBodyOwned(requestId, executionId);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity) in the one authority, in that same order: the
+        // refusal now NAMES the hold (actor_held_by_modal / cutscene_active /
+        // actor_passed_out / transient_busy) where the three split guards
+        // reported player_menu_open / player_event_active / player_cannot_move.
+        // Geometry, target identity and the postcondition stay action-specific.
+        // Physical: tilling drives the Hoe.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
+            return admissionRefusal;
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             // Distinguish "wrong tile" from "right tile, too far to act on". A
