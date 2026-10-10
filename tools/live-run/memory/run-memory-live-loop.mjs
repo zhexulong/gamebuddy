@@ -50,7 +50,7 @@ import { launchDesktopCompositionGateChild } from "../../desktop-composition-lau
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "../chat/run-chat-live-audit.mjs";
 import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, m0SourcesFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
-import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../../lib/historian-rubric.mjs";
+import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
 // (settings/player-preference-store.ts). Spelled here for the same reason the browser
@@ -126,7 +126,10 @@ function usage() {
 function parseArguments(argv) {
   // Flags that stand alone. Everything else takes exactly one value; treating a boolean as
   // value-taking made `--require-chapter` demand an argument it never has.
-  const booleanFlags = new Set(["--require-chapter"]);
+  const booleanFlags = new Set([
+    "--require-chapter",
+    "--require-historian-rubric",
+  ]);
   const flags = new Map([
     ["--report", undefined],
     ["--seed", undefined],
