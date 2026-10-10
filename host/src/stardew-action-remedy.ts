@@ -105,10 +105,15 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
     case "body_owned_by_navigation":
       return {
         action: null,
+        // This owner is NOT supersedable, and the Mod says so (`interruptible=false`, pinned by a test). I checked
+        // which side was wrong by reading the movement path: `RequestLocalMove`'s own occupancy guard
+        // (farmhandexecutioncontroller.movementactions.cs:50) does not include `activeNavigate`, and the only place
+        // a navigation ends is its own approach handoff (`HandleNavigationApproachTransition`, :3763). So there is
+        // no takeover to offer - a new move either gets `body_release_unavailable` or proceeds while the
+        // navigation is still nominally the owner. The TEXT was the wrong half, so the text is what changed.
         guidance:
-          "The farmhand is already walking to a target an earlier request chose. Wait for the walk to settle, " +
-          "then re-issue the same request; a new movement directive for a different tile also takes over from " +
-          "the walk in progress, so issue one only if you mean to change the target.",
+          "The farmhand is already walking to a target an earlier request chose, and that walk cannot be taken " +
+          "over. Wait for it to settle, then re-issue the same request.",
       };
     case "body_owned_by_travel":
       return {

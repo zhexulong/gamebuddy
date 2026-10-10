@@ -80,14 +80,17 @@ test("only a supersedable owner is told to re-issue; every other owner must sett
     "body_owned_by_ride",
     "body_owned_by_day_advance",
     "body_owned_by_activity",
+    "body_owned_by_navigation",
   ]) {
     assert.match(remedyForBodyHold(code, null)?.guidance ?? "", /Wait for/, `${code} cannot be interrupted`);
   }
-  // Navigation ends on its own, but a new movement directive also takes over from it, so it is the one owner
-  // whose remedy must offer both: wait it out, or actively take it over.
+  // Navigation is deliberately in the settle-only list above, matching the Mod's own `interruptible=false`.
+  // It used to offer a takeover here as well; that contradicted the structured fact published in the same
+  // snapshot, and the movement path has no clean takeover to offer (`RequestLocalMove`'s occupancy guard does
+  // not include `activeNavigate`). One authority, one answer.
   const navigation = remedyForBodyHold("body_owned_by_navigation", null)?.guidance ?? "";
-  assert.match(navigation, /Wait for/);
-  assert.match(navigation, /new movement directive/);
+  assert.match(navigation, /cannot be taken over/, "the guidance must say so plainly");
+  assert.doesNotMatch(navigation, /also takes over|takes over from/, "and must not promise a takeover the Mod denies");
 });
 
 test("a body_owned_* code the table does not list still gets a generic actionable remedy", () => {
