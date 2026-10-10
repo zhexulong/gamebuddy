@@ -33,6 +33,7 @@ export type CharacterLabels = Readonly<{
   importCreated: string;
   importCreatedDetail: string;
   importKept: string;
+  importLorebookCount: string;
   importPreserved: string;
   importNotUsed: string;
   importAllUsed: string;
@@ -112,6 +113,7 @@ const en: CharacterLabels = Object.freeze({
   importCreated: "Imported {{name}}.",
   importCreatedDetail: "It is now a companion you can chat with.",
   importKept: "Kept {{count}} card fields.",
+  importLorebookCount: "Carries {{count}} lorebook entries.",
   importPreserved: "Kept {{count}} fields unchanged.",
   importNotUsed: "Could not use: {{fields}}.",
   importAllUsed: "Every card field was usable.",
@@ -190,6 +192,7 @@ const zh: CharacterLabels = Object.freeze({
   importCreated: "已导入 {{name}}。",
   importCreatedDetail: "它现在是一个可以聊天的伙伴。",
   importKept: "已保留 {{count}} 个卡片字段。",
+  importLorebookCount: "包含 {{count}} 条世界书词条。",
   importPreserved: "有 {{count}} 个字段原样保留。",
   importNotUsed: "无法使用：{{fields}}。",
   importAllUsed: "卡片的所有字段均可使用。",

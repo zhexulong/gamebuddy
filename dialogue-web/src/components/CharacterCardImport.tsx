@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useRef, useState } from "react";
+import { type ReactElement, useEffect, useState } from "react";
 import type { Locale } from "../i18n";
 import type {
   ManagementPipelineApi,
@@ -18,6 +18,7 @@ type ImportOutcome =
       kind: "created";
       name: string;
       kept: number;
+      lorebookCount: number;
       preserved: number;
       notUsed: readonly string[];
       longFieldChars: number | null;
@@ -52,7 +53,6 @@ export function CharacterCardImport({
   onCreated?: () => void;
 }): ReactElement {
   const labels = characterLabels(locale);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   const [pasted, setPasted] = useState("");
@@ -106,10 +106,12 @@ export function CharacterCardImport({
         (disposition) => disposition.classification === "preserved_opaque",
       ).length;
       const longField = staged.fields.find((field) => field.field === "persona_core" && field.chars > 4_000);
+      const lorebookCount = staged.fields.filter((field) => field.field.startsWith("worldbook_")).length;
       setOutcome({
         kind: "created",
         name: confirmed.name,
         kept: eligible.length,
+        lorebookCount,
         preserved,
         notUsed,
         longFieldChars: longField?.chars ?? null,
@@ -153,11 +155,11 @@ export function CharacterCardImport({
       <p className="management-settings-hint">{labels.importHint}</p>
 
       <input
-        ref={fileInputRef}
         type="file"
         accept=".json,.png,application/json,image/png"
         aria-label={labels.importFileLabel}
-        style={{ display: "none" }}
+        className="form-input"
+        disabled={busy}
         data-card-import-file
         onChange={(event) => {
           const file = event.target.files?.[0];
@@ -166,16 +168,7 @@ export function CharacterCardImport({
           if (file !== undefined) void handleFile(file);
         }}
       />
-      <div className="composer-actions">
-        <button
-          type="button"
-          className="small-button primary"
-          disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          {busy ? labels.importBusy : labels.importChooseFile}
-        </button>
-      </div>
+      {busy && <p className="loading-text">{labels.importBusy}</p>}
 
       <details>
         <summary>{labels.importPasteLabel}</summary>
@@ -207,6 +200,9 @@ export function CharacterCardImport({
               <p>{labels.importCreated.replace("{{name}}", outcome.name)}</p>
               <p>{labels.importCreatedDetail}</p>
               <p>{labels.importKept.replace("{{count}}", String(outcome.kept))}</p>
+              {outcome.lorebookCount > 0 && (
+                <p>{labels.importLorebookCount.replace("{{count}}", String(outcome.lorebookCount))}</p>
+              )}
               {outcome.preserved > 0 && (
                 <p>{labels.importPreserved.replace("{{count}}", String(outcome.preserved))}</p>
               )}
