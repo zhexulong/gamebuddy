@@ -314,7 +314,7 @@ const en = {
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
-  gamePanel: "Game",
+  gamePanel: "Game",\n  charactersUnavailable: "Character management is not available in this session.",
   chatsPanel: "Chats",
   charactersPanel: "Characters",
   settingsPanel: "Settings",
@@ -715,7 +715,7 @@ const zh: Messages = {
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",
-  gamePanel: "游戏",
+  gamePanel: "游戏",\n  charactersUnavailable: "当前会话中不可用角色管理。",
   chatsPanel: "聊天",
   charactersPanel: "角色",
   settingsPanel: "设置",
