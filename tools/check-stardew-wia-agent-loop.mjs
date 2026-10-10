@@ -42,7 +42,14 @@ export function judgeWiaLoop(result, { fixtureScenario = EXPECTED_FIXTURE, pinne
       d1: false, d2: false, d3: false, ordered: false, unresumedSameIntent: false,
     };
 
-  const facts = Array.isArray(result?.factLog) ? result.factLog : [];
+  // The ladder-6 runner writes the bridge facts under `bridgeFacts`; the sibling gate harness used `factLog`.
+  // Reading only `factLog` made a run that was genuinely interrupted (the evidence is fully there) judge as
+  // `unobserved`, which is the exact vacuity this judge exists to prevent - a wrong empty array read as "never
+  // happened". Accept both, prefer the one the actual result carries.
+  const rawFacts = Array.isArray(result?.bridgeFacts) && result.bridgeFacts.length > 0
+    ? result.bridgeFacts
+    : (Array.isArray(result?.factLog) ? result.factLog : []);
+  const facts = rawFacts.map((fact) => ({ ...fact, evidence: fact?.evidence ?? null }));
   const trace = Array.isArray(result?.actionTrace) ? result.actionTrace : [];
 
   // O1: the breakpoint must be in the FACT stream (delivered to the Agent), not only in the harness log.
