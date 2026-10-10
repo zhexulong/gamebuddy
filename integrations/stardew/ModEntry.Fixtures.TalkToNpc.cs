@@ -222,7 +222,11 @@ public sealed partial class ModEntry
                 villager.CurrentDialogue.Push(candidate);
                 string attemptText = villager.CurrentDialogue.Peek().getCurrentDialogue() ?? string.Empty;
                 attemptLengths.Add(attemptText.Length);
-                if (attemptText.Contains(PageBreakToken, StringComparison.Ordinal))
+                // `getCurrentDialogue()` is the CURRENT PAGE, so a split text shows up as a page STRICTLY
+                // SHORTER than the whole line. Asking a page whether it contains the break is false by
+                // construction - the break is consumed when the text is split - which is the mistake that made
+                // a working delivery look broken and stopped every run at the fixture.
+                if (attemptText.Length > 0 && attemptText.Length < multiPageText.Length)
                 {
                     queuedWithBreak = true;
                     break;
