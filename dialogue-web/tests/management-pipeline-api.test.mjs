@@ -72,6 +72,10 @@ function memoryRead(overrides = {}) {
         content: "The farmer likes blueberries.",
         category: "semantic",
         status: "active",
+        // Whose memory it is. The read contract carries it and the panel splits on
+        // it, so the fixture must too - a fixture that predates a field the
+        // validator requires is what turned this suite red.
+        origin: "companion",
         pinned: false,
       },
     ],
