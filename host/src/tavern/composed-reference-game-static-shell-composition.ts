@@ -9,10 +9,21 @@ import {
 import {
   createReferencePipelineDialogueWebDelegatedHandler,
 } from "../reference-pipeline-dialogue-web.delegated.js";
+import {
+  createTavernManagementDialogueWebDelegatedHandler,
+  type TavernManagementDelegatedHandler,
+} from "../tavern-management-dialogue-web.delegated.js";
 import { TAVERN_BROWSER_API_V1, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
+import type { ChatManagementService } from "./chat-management/chat-management-service.js";
+import type { MemoryManagementService } from "./memory-management/memory-management.js";
+import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
+import type {
+  PlayerPreference,
+  PlayerPreferenceUpdate,
+} from "../settings/player-preference-store.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type {
@@ -51,6 +62,21 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   referenceStateFacade: ReferencePipelineStateFacade;
   pipelineService?: ChatPipelineService;
   eventStream?: ChatEventStream;
+  /**
+   * Optional management services for the composed shell's Chats/Memory/World Info/
+   * Settings panels. When every member is provided, a delegated management handler
+   * is mounted under `/api/tavern/v1/` for the management routes; otherwise those
+   * panels stay absent (design/26 §1), never a disabled lookalike.
+   */
+  management?: Readonly<{
+    managementService: ChatManagementService;
+    memoryService: MemoryManagementService;
+    worldInfoService: WorldInfoBindingManagementService;
+    playerPreferenceStore?: Readonly<{
+      read(): Promise<PlayerPreference>;
+      update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference>;
+    }>;
+  }>;
   artifactRoot: string;
   inspector?: WindowsReparseInspectorCapability;
   lifecycleActivationBindingSink?: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
@@ -188,12 +214,42 @@ export async function startComposedReferenceGameStaticShellComposition(
     ...(options.eventStream === undefined ? {} : { eventStream: options.eventStream }),
     capability: composedHandler.delegatedAuthCapability,
   });
+  // The management panels' delegated handler, mounted only when every service it
+  // needs is injected. Its routes (memory/world-info/settings/chat.list) do not
+  // overlap the reference handler's Chat routes, so the two dispatchers share the
+  // same `/api/tavern/v1/` prefix without ambiguity.
+  const managementHandler: TavernManagementDelegatedHandler | undefined =
+    options.management === undefined
+      ? undefined
+      : createTavernManagementDialogueWebDelegatedHandler({
+          profile: options.profile.tavernProfile,
+          managementService: options.management.managementService,
+          memoryService: options.management.memoryService,
+          worldInfoService: options.management.worldInfoService,
+          ...(options.management.playerPreferenceStore === undefined
+            ? {}
+            : { playerPreferenceStore: options.management.playerPreferenceStore }),
+          capability: composedHandler.delegatedAuthCapability,
+        });
+  // Management routes this shell mounts; every other /api/tavern/v1/* path stays
+  // with the reference handler (submit/cancel/state/draft/events).
+  const MANAGEMENT_PATHS = new Set([
+    "/api/tavern/v1/chats",
+    "/api/tavern/v1/memory",
+    "/api/tavern/v1/world-info",
+    "/api/tavern/v1/settings/voice-preference",
+    "/api/tavern/v1/settings/language",
+  ]);
   try {
     options.lifecycleActivationBindingSink?.bindBrowserAdmissionIssuer(
       composedHandler.lifecycleActivationIssuer,
     );
   } catch (bindError) {
-    const cleanup = await Promise.allSettled([composedHandler.close(), referenceHandler.close()]);
+    const cleanup = await Promise.allSettled([
+      composedHandler.close(),
+      referenceHandler.close(),
+      managementHandler?.close(),
+    ]);
     const cleanupErrors = cleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []
     );
@@ -219,6 +275,9 @@ export async function startComposedReferenceGameStaticShellComposition(
     }
     if (pathname.startsWith("/api/composed-reference-game/")) {
       composedHandler.handle(request, response, origin);
+    } else if (pathname.startsWith("/api/tavern/") && managementHandler !== undefined
+        && MANAGEMENT_PATHS.has(pathname)) {
+      managementHandler.handle(request, response, origin);
     } else if (pathname.startsWith("/api/tavern/")) {
       referenceHandler.handle(request, response, origin);
     } else {
@@ -247,10 +306,12 @@ export async function startComposedReferenceGameStaticShellComposition(
       closed = true;
       const composedDrain = composedHandler.close();
       const referenceDrain = referenceHandler.close();
+      const managementDrain = managementHandler?.close();
       server.closeAllConnections();
       await closeServer(server);
       await composedDrain;
       await referenceDrain;
+      await managementDrain;
     },
   });
 }

@@ -11,10 +11,12 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
+import type { PlayerPreference, PlayerPreferenceUpdate } from "../settings/player-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
+import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { createGreetingManagementService } from "../tavern/greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "../tavern/library-service.js";
@@ -27,12 +29,14 @@ import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
+import type { MemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import { createTavernConnectionService } from "../tavern/connection-service.js";
 import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "../tavern/tavern-management-state.js";
 import { startTavernManagementStaticShellComposition } from "../tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
+import type { WorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
 import {
@@ -69,6 +73,21 @@ export type DesktopPresentationAdmissionInput = Readonly<{
    * selection only, never a fabricated device list.
    */
   listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
+  /**
+   * Optional management services for the composed shell's Chats/Memory/World Info/
+   * Settings panels. When provided, the composed root mounts the delegated management
+   * routes under `/api/tavern/v1/`; a panel whose service is absent stays absent
+   * (design/26 §1) rather than a disabled lookalike.
+   */
+  management?: Readonly<{
+    managementService: ChatManagementService;
+    memoryService: MemoryManagementService;
+    worldInfoService: WorldInfoBindingManagementService;
+    playerPreferenceStore?: Readonly<{
+      read(): Promise<PlayerPreference>;
+      update(expectedRevision: number, update: PlayerPreferenceUpdate): Promise<PlayerPreference>;
+    }>;
+  }>;
 }>;
 
 /**
@@ -483,6 +502,10 @@ export async function startDesktopPresentationAdmission(
       inspector,
       // The immutable browser artifact destination of one Host generation.
       artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
+      // The management panels' services, when the caller injects them: the composed
+      // shell then serves Chats/Memory/World Info/Settings under /api/tavern/v1/.
+      // Absent, those panels stay absent rather than becoming disabled shell.
+      ...(input.management === undefined ? {} : { management: input.management }),
     });
   } catch (error) {
     // No listener and no Game-side effect exist yet; the Chat pipeline service is
