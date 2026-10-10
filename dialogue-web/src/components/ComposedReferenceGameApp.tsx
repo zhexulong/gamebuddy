@@ -38,6 +38,7 @@ import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
+import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { CharactersSurfacePanel } from "./CharactersSurfacePanel";
 import {
   ChatsSurfacePanel,
@@ -132,6 +133,15 @@ export function ComposedReferenceGameApp() {
   const viewRef = useRef<ViewState>({ kind: "loading" });
   const [inputText, setInputText] = useState("");
   const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
+  // The durable draft's own authoring state (the removed management surface's
+  // textarea), plus the closed outcome line its Save/Discard report through.
+  const [draftText, setDraftText] = useState("");
+  const draftTextRef = useRef("");
+  const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
+  // The durable revision the editor was last seeded from: what lets a later
+  // authoritative revision replace the editor without ever discarding text the
+  // player has typed past the last seed.
+  const seededDraftRef = useRef<Readonly<{ revision: number; text: string }> | null>(null);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
   const pollActiveRef = useRef(false);
@@ -200,7 +210,21 @@ export function ComposedReferenceGameApp() {
   // broker session, so the library, the Persona/Scenario/Greeting records, the
   // reviewed card import and the Chat, Memory, World Info and Settings panels are
   // the real ones rather than a second implementation (design/28 §2, design/104 §2).
-  const managementPipelineApiRef = useRef(createManagementPipelineApi());
+  const managementPipelineApiRef = useRef(
+    createManagementPipelineApi(fetch, (observation) => {
+      // The opt-in, content-free operation-observation hook the removed
+      // management surface owned, preserved verbatim (same fragment parameter,
+      // same storage key). The Tavern release live gate consumes the mapping
+      // `tools/record-tavern-ui-operation-evidence.mjs` builds from outcomes
+      // that came from a real same-origin UI session, and this sessionStorage
+      // key is that session's only export; without the hook here the gate's
+      // producer stops existing.
+      if (new URLSearchParams(location.hash.slice(1)).get("record") !== "operations") return;
+      const key = "gamebuddy.tavern.ui.operation-observations";
+      const current = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      sessionStorage.setItem(key, JSON.stringify([...current, observation]));
+    }),
+  );
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -543,6 +567,129 @@ export function ComposedReferenceGameApp() {
     }
     setPreview(null);
     commit({ ...current, root, session: current.session.applySnapshot(root.chat), draft });
+  };
+
+  /**
+   * The editor follows the durable draft: the first authoritative revision seeds
+   * it, and a later revision the player has not typed past replaces it. An
+   * unsaved local value is never silently discarded by a background reread -
+   * the mutation that owns it resolves it.
+   */
+  useEffect(() => {
+    if (view.kind !== "ready") return;
+    const seeded = seededDraftRef.current;
+    if (seeded !== null && seeded.revision === view.draft.revision) return;
+    const durable = view.draft.text ?? "";
+    if (seeded !== null && draftTextRef.current !== seeded.text) {
+      seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: draftTextRef.current });
+      return;
+    }
+    seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: durable });
+    draftTextRef.current = durable;
+    setDraftText(durable);
+  }, [view]);
+
+  /** Takes a validated durable draft read-back as the editor's new truth. */
+  const seedDraft = (draft: BrowserDraftV1): void => {
+    const text = draft.text ?? "";
+    seededDraftRef.current = Object.freeze({ revision: draft.revision, text });
+    draftTextRef.current = text;
+    setDraftText(text);
+  };
+
+  /**
+   * Durable draft authoring, merged from the removed management surface: the
+   * PUT/DELETE carries this mount's exact expected revision and the validated
+   * durable read-back replaces the draft - nothing is ever guessed locally.
+   *
+   * The composed Chat projection pins the reference profile's operation list,
+   * which declares no `draft.save`/`draft.discard`, so there is no capability
+   * flag to gate these two controls on and the served route IS the capability -
+   * the same rule `management-surface-panels.tsx` documents for a panel mounted
+   * here. A rejected mutation is therefore reported, never hidden.
+   *
+   * Any rejection first re-reads the authoritative durable draft: a rejected
+   * write means the durable draft may no longer match this mount's revision (a
+   * stale tab's 409 draft/selection conflict), so the editor and the mounted
+   * draft both take the server read-back and the stale local value can never
+   * survive the conflict.
+   */
+  const handleDraftMutation = async (kind: "save" | "discard"): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready" || current.session.snapshot.selection === null) return;
+    try {
+      const command = {
+        apiVersion: 1 as const,
+        selectionGeneration: current.session.snapshot.selection.generation,
+        expectedRevision: current.draft.revision,
+        ...(kind === "save" ? { text: draftTextRef.current.trim() } : {}),
+      };
+      const result =
+        kind === "save"
+          ? await managementPipelineApiRef.current.saveDraft(
+              command as { apiVersion: 1; selectionGeneration: number; expectedRevision: number; text: string },
+              current.session.snapshot.csrfToken,
+            )
+          : await managementPipelineApiRef.current.discardDraft(command, current.session.snapshot.csrfToken);
+      seedDraft(result);
+      setDraftNotice({ kind: "success", text: labels().success });
+      commit({ ...current, draft: result });
+    } catch {
+      try {
+        const draft = await managementPipelineApiRef.current.readDraft();
+        seedDraft(draft);
+        setDraftNotice({ kind: "failure", text: labels().failure });
+        const fresh = viewRef.current;
+        if (fresh.kind === "ready") commit({ ...fresh, draft });
+      } catch {
+        setDraftNotice({ kind: "failure", text: labels().failure });
+      }
+    }
+  };
+
+  /**
+   * Swipe selection and regenerate are Chat-owned mutations the reference
+   * surface offered and the composed shell did not: with the reference entry
+   * gone they live here. Both take their own idempotency key and never append a
+   * response locally; the authoritative reread owns what the transcript shows,
+   * and a failed attempt resolves through that same reread rather than a local
+   * guess.
+   */
+  const handleSwipe = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    try {
+      await tavernApiRef.current.selectSwipe(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await reread();
+    } catch (error) {
+      await reread().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    }
+  };
+
+  const handleRegenerate = async (messageHandle: string): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    try {
+      await tavernApiRef.current.regenerate(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
+        { csrfToken: current.session.snapshot.csrfToken, idempotencyKey: newIdempotencyKey() },
+      );
+      await reread();
+      startPolling();
+    } catch (error) {
+      await reread().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    }
   };
 
   /**
@@ -1421,16 +1568,56 @@ export function ComposedReferenceGameApp() {
                   companionName={view.session.snapshot.chat.companion.name}
                   chatTitle={view.session.snapshot.chat.title}
                   labels={labels()}
+                  onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
+                  onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 />
                 {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
                 <section className="reference-draft-section" aria-label={labels().savedDraft}>
                   <h2>{labels().savedDraft}</h2>
-                  {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (
-                    <p>{view.draft.text}</p>
-                  ) : (
-                    <p>{labels().noSavedDraft}</p>
+                  <textarea
+                    aria-label={labels().savedDraft}
+                    className="form-textarea"
+                    value={draftText}
+                    onChange={(event) => {
+                      draftTextRef.current = event.target.value;
+                      setDraftText(event.target.value);
+                    }}
+                    placeholder={labels().noSavedDraft}
+                    rows={3}
+                  />
+                  <div className="composer-actions">
+                    <button
+                      type="button"
+                      className="small-button"
+                      disabled={draftText.trim().length === 0}
+                      onClick={() => void handleDraftMutation("save")}
+                    >
+                      {labels().save}
+                    </button>
+                    <button
+                      type="button"
+                      className="small-button"
+                      disabled={view.draft.text === null}
+                      onClick={() => void handleDraftMutation("discard")}
+                    >
+                      {labels().discard}
+                    </button>
+                  </div>
+                  {draftNotice !== null && (
+                    <p role="status" className={draftNotice.kind === "success" ? "success-banner" : "error-banner"}>
+                      {draftNotice.text}
+                    </p>
                   )}
                 </section>
+                {/* The conversation's own model settings, on the surface the model belongs
+                    to (design/architecture/product-surfaces.md): Chat owns its model choice
+                    and the Host stores it under the chat half of settings/profiles. */}
+                <SurfaceModelSettings
+                  surface="chat"
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                />
                 <Composer
                   value={inputText}
                   onChange={setInputText}
@@ -1439,6 +1626,7 @@ export function ComposedReferenceGameApp() {
                   isGenerating={stopAvailable}
                   disabled={!submitAvailable}
                   labels={labels()}
+                  voice={view.session.snapshot.voice}
                 />
               </SurfaceView>
             )}
@@ -1525,6 +1713,15 @@ export function ComposedReferenceGameApp() {
                   }}
                 />
                 <StardewInstallationDiscovery api={composedApiRef.current} labels={labels()} />
+                {/* The Game Agent's own model settings, on the Game surface (design/
+                    architecture/product-surfaces.md); the Host stores this half of
+                    settings/profiles separately from Chat's. */}
+                <SurfaceModelSettings
+                  surface="game"
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                />
               </SurfaceView>
             )}
             {shownSurface === CHATS_PANEL && (
