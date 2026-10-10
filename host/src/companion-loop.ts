@@ -460,9 +460,16 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   return sensorySources.length > 0 ? sensorySources.at(-1) : undefined;
 }
 
-/** White-listed salient sensory kinds allowed to mint a bounded presentation lease. */
+/**
+ * White-listed salient sensory kinds allowed to mint a bounded presentation lease.
+ *
+ * The list is narrow on purpose: it exists to stop micro-telemetry (per-step coordinates, stamina deltas, a weed
+ * swaying) from waking the model at tick rate. A villager SPEAKING is the opposite of that - low-frequency,
+ * narrative, and the one event where a companion that cannot comment is not merely less useful but deaf-mute -
+ * so `npc_dialogue_presented` belongs here. Owner ruling, 2026-10-10.
+ */
 function isSalientSensoryKind(kind: string | undefined): boolean {
-  return kind === "day_started" || kind === "time_milestone";
+  return kind === "day_started" || kind === "time_milestone" || kind === "npc_dialogue_presented";
 }
 
 function isOpaqueSource(value: unknown): value is string {
