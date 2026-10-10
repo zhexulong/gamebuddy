@@ -144,6 +144,7 @@ public sealed partial class ModEntry : Mod
     private bool nativeChatStopCommandRegistered;
     private static ModEntry? nativeChatIngressOwner;
     private StardewSalientEventHooks? salientEventHooks;
+    private NpcDialoguePager? npcDialoguePager;
     private readonly ISalientEventFilter salientEventFilter = new SalientEventFilter();
 
     public override void Entry(IModHelper helper)
@@ -155,6 +156,7 @@ public sealed partial class ModEntry : Mod
             () => this.TryGetAiState(out ScreenEmbodimentState state) ? state.BridgeSession : null,
             () => this.TryGetAiState(out ScreenEmbodimentState state) ? state.BridgeSession?.Scope : null,
             this.Monitor);
+        this.npcDialoguePager = new NpcDialoguePager(this.Monitor);
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -1265,6 +1267,7 @@ public sealed partial class ModEntry : Mod
             // admission/native seams are wired. Without it, an accepted A→B
             // program stays pending on this fixture topology.
             nativeLocalState.BodyProgramController?.Update();
+            this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
             this.PublishPendingStopObservation(nativeLocalState);
             return;
         }
@@ -1309,6 +1312,7 @@ public sealed partial class ModEntry : Mod
         // never waits for Host IPC or invents a challenge/grant while the
         // transport bridge route is still absent.
         state.BodyProgramController?.Update();
+        this.npcDialoguePager?.Observe(state.BridgeSession);
         this.PublishPendingStopObservation(state);
     }
 
@@ -2656,6 +2660,9 @@ public sealed partial class ModEntry : Mod
 
     private bool ClearState(ScreenEmbodimentState state, string reasonCode)
     {
+        // The box this observer is driving belongs to the world and bridge that
+        // are going away; drop it rather than report it against the next one.
+        this.npcDialoguePager?.Reset();
         state.Executions?.InvalidateForLifecycle(reasonCode);
         state.BridgeSession?.ClearNavigationForWorldUnload();
         state.BridgeSession?.ClearSceneForWorldUnload();

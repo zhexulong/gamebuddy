@@ -20,6 +20,17 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// Game1.exitActiveMenu + dialogueUp=false). Question dialogues are refused:
     /// answering them is answer_dialogue's future seam (design 7.4.2), and
     /// closeDialogue would skip the native answer lifecycle.
+    ///
+    /// This is the clearance a caller ASKS FOR, and the receipt names it in both terminals of the call
+    /// that performed the native close: `cleared_modal=` carries the modal type name and
+    /// `close_effect=` states what that close itself changed. There is deliberately NO automatic
+    /// eviction in the shared admission: an action arriving while an
+    /// informational box is up is refused with `actor_held_by_modal` plus the
+    /// modal facts, and the Agent clears the box with this action and re-issues.
+    /// Clearing a dialogue is a world-affecting step of its own (closeDialogue
+    /// pops the speaker's CurrentDialogue and can re-open a queued box), so it
+    /// stays a decision the Agent makes and a receipt states, never a side
+    /// effect of an unrelated request.
     /// </summary>
     /// <summary>
     /// Operation-shaped native menus whose CLOSE path is a pure cancel with no
@@ -107,6 +118,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"modal_type={modalType};ready_to_close=false");
         }
 
+        // What the close below itself changed. A whitelisted operation menu is a PURE CANCEL (no
+        // exitThisMenu override; every effect it owns is on its own commit path), but a DialogueBox is not:
+        // closeDialogue also advances native dialogue state (it pops the speaker's CurrentDialogue, dequeues
+        // an object dialogue and can re-open the next queued box -- DialogueBox.cs:198-216 -- and runs
+        // Game1.afterDialogues, :243-248). Both terminals below state which of the two ran rather than
+        // repeating a claim that is only true of one of them.
+        string closeEffect = modal is DialogueBox ? "native_dialogue_close" : "pure_cancel";
         try
         {
             if (modal is DialogueBox dialogueBox)
@@ -131,7 +149,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Succeeded,
                 "modal_dismissed",
-                $"modal_type={modalType};dismissed=true;side_effects=none",
+                $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}",
                 this.TryCreateLocalObservation(actor));
         }
 
@@ -140,7 +158,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             executionId,
             ExecutionState.Failed,
             "postcondition_failed",
-            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp}",
+            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp};cleared_modal={modalType};close_effect={closeEffect}",
             this.TryCreateLocalObservation(actor));
     }
 

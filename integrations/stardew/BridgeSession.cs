@@ -895,6 +895,18 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
             && BridgeProtocol.TrySerialize(Reply("execution_receipt", receipt.RequestId, bridgeReceipt), out json, out _);
     }
 
+    /// <summary>
+    /// Whether a world fact submitted right now would leave on the
+    /// authenticated bridge generation. A producer that has to MUTATE the world
+    /// to observe something (the native dialogue pager is the only one today)
+    /// checks this first, so it never runs a native side effect whose resulting
+    /// fact could not be reported.
+    /// </summary>
+    internal bool CanPublishWorldFact =>
+        this.authenticatedGeneration >= 0
+        && (this.outboundSink is not null
+            || (this.pipeBridge is not null && this.pipeBridge.CurrentGeneration == this.authenticatedGeneration));
+
     internal bool TryCreateWorldFactEvent(BridgeWorldFact fact)
     {
         if (fact is null
