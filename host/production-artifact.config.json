@@ -1,0 +1,145 @@
+{
+  "schema": "gamebuddy-host-production-artifact-config/v3",
+  "entryRoots": [
+    "main.js",
+    "stardew-attachment.js",
+    "farmhand-companion-preview.js"
+  ],
+  "bundledRuntime": {
+    "kind": "verified_host_bundled_node_runtime",
+    "sourceUrl": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
+    "archiveSha256": "6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba",
+    "archiveRoot": "node-v24.20.0-win-x64",
+    "runtimePath": "runtime/node.exe",
+    "nodeSha256": "5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+    "bootstrapPath": "bootstrap/entry/desktop-host-entry.internal.js",
+    "runtimeVersion": "v24.20.0",
+    "runtimePlatform": "win32",
+    "runtimeArch": "x64"
+  },
+  "verificationRoots": [
+    "tavern/player-turn-acceptance.js",
+    "tavern/provider-attempt-claim.js",
+    "tavern/chat-provider-start.js",
+    "tavern/composed-reference-game-static-shell-composition.js",
+    "reference-pipeline-dialogue-web.js",
+    "tavern-management-dialogue-web.js",
+    "tavern/static-artifact/index.js"
+  ],
+  "resources": [
+    {
+      "source": "resources/windows-named-mutex-broker.ps1",
+      "destination": "windows-named-mutex-broker.ps1"
+    },
+    {
+      "source": "resources/windows-current-user-control-pipe.ps1",
+      "destination": "windows-current-user-control-pipe.ps1"
+    }
+  ],
+  "browserArtifact": {
+    "kind": "verified_tavern_browser_artifact",
+    "destination": "browser/tavern/v1",
+    "browserContract": "tavern_browser_api/v1",
+    "profileId": "gamebuddy.tavern.browser.v1",
+    "manifest": "tavern-browser-artifact-manifest.json"
+  },
+  "windowsReparseInspector": {
+    "kind": "verified_windows_reparse_inspector",
+    "destination": "native/windows-reparse-inspector/win-x64",
+    "helper": "GameBuddy.WindowsReparseInspector.exe",
+    "manifest": "windows-reparse-inspector.manifest.json",
+    "probeEvidence": "windows-reparse-inspector.probe-evidence.json"
+  },
+  "windowsStaleLockReclaimer": {
+    "kind": "verified_windows_stale_lock_reclaimer",
+    "destination": "native/windows-stale-lock-reclaimer/win-x64",
+    "helper": "GameBuddy.WindowsStaleLockReclaimer.exe",
+    "manifest": "windows-stale-lock-reclaimer.manifest.json"
+  },
+  "windowsStardewFolderPicker": {
+    "kind": "verified_windows_stardew_folder_picker",
+    "destination": "native/windows-stardew-folder-picker/win-x64",
+    "helper": "GameBuddy.WindowsStardewFolderPicker.exe",
+    "manifest": "windows-stardew-folder-picker.manifest.json"
+  },
+  "windowsBootstrapGuardian": {
+    "kind": "verified_windows_bootstrap_guardian",
+    "destination": "native/windows-bootstrap-guardian/win-x64",
+    "helper": "GameBuddy.WindowsBootstrapGuardian.exe",
+    "manifest": "windows-bootstrap-guardian.manifest.json"
+  },
+  "externalRuntimeClosure": {
+    "kind": "declared_external_runtime_closure",
+    "packages": [
+      "@cortexkit/pi-magic-context",
+      "@earendil-works/pi-coding-agent",
+      "@gamebuddy/voice-protocol",
+      "typebox"
+    ],
+    "dynamicExternalImports": [
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 1
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 2
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 3
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime-core.internal.js",
+        "expression": "\"@cortexkit/pi-magic-context/memory\"",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "tavern/memory-management/memory-management.js",
+        "expression": "\"@cortexkit/pi-magic-context/memory\"",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js",
+        "expression": "\"@cortexkit/pi-magic-context/tavern\"",
+        "occurrence": 0
+      }
+    ]
+  },
+  "stardewModPackage": {
+    "kind": "verified_stardew_mod_package",
+    "destination": "native/stardew-mod/GameBuddy",
+    "contract": "stardew-mod-package-contract.json",
+    "entries": [
+      "GameBuddy.Stardew.dll",
+      "GameBuddy.Stardew.Core.dll",
+      "GameBuddy.Stardew.deps.json",
+      "manifest.json"
+    ],
+    "manifest": "manifest.json"
+  },
+  "voiceGateway": {
+    "kind": "verified_voice_gateway",
+    "entry": {
+      "destination": "voice-gateway/entry"
+    },
+    "protocol": {
+      "destination": "voice-gateway/protocol"
+    }
+  }
+}

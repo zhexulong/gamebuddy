@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".dist-production-emitted",
+    "noEmit": false,
+    "noEmitOnError": true
+  },
+  "include": [],
+  "files": [
+    "src/main.ts",
+    "src/bootstrap/entry/desktop-host-entry.internal.ts",
+    "src/stardew-attachment.ts",
+    "src/farmhand-companion-preview.ts",
+    "src/tavern/static-artifact/index.ts",
+    "src/tavern/player-turn-acceptance.ts",
+    "src/tavern/provider-attempt-claim.ts",
+    "src/tavern/chat-provider-start.ts",
+    "src/tavern/composed-reference-game-static-shell-composition.ts",
+    "src/tavern-management-dialogue-web.ts"
+  ]
+}
