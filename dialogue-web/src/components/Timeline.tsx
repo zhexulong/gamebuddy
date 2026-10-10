@@ -10,6 +10,7 @@ export function Timeline({
   preview = null,
   onSwipe,
   onRegenerate,
+  pending = null,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -20,9 +21,19 @@ export function Timeline({
     emptyChat: string;
     untitledChat: string;
     you: string;
+    swipeNavigation: string;
+    swipePrevious: string;
+    swipeNext: string;
+    regenerateVariant: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
+  /**
+   * The chat mutation in flight and the message it belongs to, if any. Only that
+   * message's own controls go busy, so a swipe on one variant never disables the
+   * regenerate affordance of another.
+   */
+  pending?: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
 }) {
   const displayTitle = chatTitle ?? labels.untitledChat;
   const sectionRef = useRef<HTMLElement>(null);
@@ -85,6 +96,8 @@ export function Timeline({
               message={message}
               companionName={companionName}
               playerLabel={labels.you}
+              labels={labels}
+              pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
               onSwipe={swipeHandler}
               onRegenerate={regenerateHandler}
             />
@@ -103,6 +116,7 @@ export function Timeline({
               })}
               companionName={companionName}
               playerLabel={labels.you}
+              labels={labels}
             />
           )}
         </ol>

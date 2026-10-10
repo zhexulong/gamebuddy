@@ -242,6 +242,12 @@ const en = {
   modelProfilesRevisionConflict: "This profile changed elsewhere. Reopen the panel and try again.",
   modelProfilesUnavailable: "Model profiles are unavailable.",
   modelProfilesModelRequired: "Enter a model ID.",
+  // The companion's message affordances (design/26 §6.3: one declared icon family,
+  // never an emoji standing in for a structural control).
+  swipeNavigation: "Message variants",
+  swipePrevious: "Previous variant",
+  swipeNext: "Next variant",
+  regenerateVariant: "Regenerate",
 
   problemBootstrapUnavailableTitle: "Unable to open chat",
   problemBootstrapUnavailableDetail: "The bootstrap handoff is unavailable.",
@@ -644,6 +650,11 @@ const zh: Messages = {
   modelProfilesRevisionConflict: "该配置已在其它地方被修改，请重新打开面板后再试。",
   modelProfilesUnavailable: "模型配置不可用。",
   modelProfilesModelRequired: "请填写模型 ID。",
+  // 伴侣消息上的控件(design/26 §6.3:只用一套已声明的图标族,不用 emoji 冒充结构控件)。
+  swipeNavigation: "消息变体",
+  swipePrevious: "上一个变体",
+  swipeNext: "下一个变体",
+  regenerateVariant: "重新生成",
 
   problemBootstrapUnavailableTitle: "无法打开聊天",
   problemBootstrapUnavailableDetail: "Bootstrap 令牌不可用。",

@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -15,20 +16,40 @@ export const MessageBubble = memo(function MessageBubble({
   playerLabel,
   onSwipe,
   onRegenerate,
+  pending = null,
+  labels,
 }: {
   message: BrowserMessageV1;
   companionName: string;
   playerLabel: string;
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
+  /**
+   * The mutation this exact message is waiting on, if any. While it is set the
+   * message's own controls are disabled: the shell already guards against a second
+   * command with its single-flight ref, and the control saying so is what keeps a
+   * double click from looking like it did nothing.
+   */
+  pending?: "swipe" | "regenerate" | null;
+  labels: Readonly<{
+    swipeNavigation: string;
+    swipePrevious: string;
+    swipeNext: string;
+    regenerateVariant: string;
+  }>;
 }) {
   const isPlayer = message.role === "player";
   const authorName = isPlayer ? playerLabel : companionName;
   const initial = authorName.slice(0, 1).toUpperCase();
   const swipeInfo = message.swipeInfo;
+  const busy = pending !== null;
 
   return (
-    <li className={`message ${isPlayer ? "player" : "companion"}`} data-handle={message.handle}>
+    <li
+      className={`message ${isPlayer ? "player" : "companion"}`}
+      data-handle={message.handle}
+      {...(busy ? { "aria-busy": "true" as const, "data-pending": pending } : {})}
+    >
       {!isPlayer && (
         <div className="avatar avatar-small" aria-hidden="true">
           {initial}
@@ -38,27 +59,27 @@ export const MessageBubble = memo(function MessageBubble({
         <div className="message-header">
           <span className="message-author">{authorName}</span>
           {!isPlayer && swipeInfo && swipeInfo.totalSwipes > 1 && (
-            <div className="swipe-controls" aria-label="Swipe navigation">
+            <div className="swipe-controls" aria-label={labels.swipeNavigation}>
               <button
                 type="button"
                 className="swipe-btn"
-                disabled={!swipeInfo.hasPrevious}
+                disabled={busy || !swipeInfo.hasPrevious}
                 onClick={() => onSwipe?.(message.handle, "prev")}
-                aria-label="Previous swipe"
-                title="Previous variant"
+                aria-label={labels.swipePrevious}
+                title={labels.swipePrevious}
               >
-                ◀
+                <ChevronLeft size={14} aria-hidden="true" />
               </button>
               <span className="swipe-indicator">{swipeInfo.label}</span>
               <button
                 type="button"
                 className="swipe-btn"
-                disabled={!swipeInfo.hasNext}
+                disabled={busy || !swipeInfo.hasNext}
                 onClick={() => onSwipe?.(message.handle, "next")}
-                aria-label="Next swipe"
-                title="Next variant"
+                aria-label={labels.swipeNext}
+                title={labels.swipeNext}
               >
-                ▶
+                <ChevronRight size={14} aria-hidden="true" />
               </button>
             </div>
           )}
@@ -75,11 +96,13 @@ export const MessageBubble = memo(function MessageBubble({
             <button
               type="button"
               className="action-btn regenerate-btn"
+              disabled={busy}
               onClick={() => onRegenerate(message.handle)}
-              title="重新生成 (Regenerate variant)"
-              aria-label="Regenerate variant"
+              title={labels.regenerateVariant}
+              aria-label={labels.regenerateVariant}
             >
-              🔄 重新生成
+              <RefreshCw size={14} aria-hidden="true" />
+              {labels.regenerateVariant}
             </button>
           </div>
         )}
