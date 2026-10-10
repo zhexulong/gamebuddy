@@ -354,6 +354,8 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // published enter_mine gate (the Mine entrance map) does not cover.
   enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
   talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+  // Reads what the Mod REPORTS about the conversation (the enquiry-and-hold chain stays with talk_to_npc).
+  dialogue_stream: "run-stardew-native-local-player-dialogue-stream-smoke.mjs",
   // The actor's own attachment state, Experimental: each ships with its own shared-harness runner
   // and its own fixture scenario. A runner is neither a capability grant nor a success claim.
   // The building-chest pair (Data/Buildings BuildingData.Chests): the building's own Load and

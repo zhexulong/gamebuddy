@@ -28,6 +28,26 @@ function parseArguments(args) {
   return { values, positional };
 }
 
+/**
+ * The dialogue's typed content out of a recorded world fact.
+ *
+ * The Mod puts it in `payloadJson` as a STRING (the Host parses that when no structured payload is present), so
+ * reading `payload.pages` directly sees nothing - observed live as `maxPages=0` on a run where the Mod HAD
+ * reported `speaker: "Gus", pages: [...]`. A structured payload wins when one is present.
+ */
+export function dialoguePayloadOf(fact) {
+  const payload = fact?.worldFactPayload ?? fact?.payload ?? fact;
+  if (payload === null || payload === undefined) return null;
+  if (Array.isArray(payload.pages)) return payload;
+  const json = payload.payloadJson;
+  if (typeof json !== "string" || json.length === 0) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return parsed !== null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 /** The world facts the runner recorded, whatever type it wrote them under. */
 export function dialogueFacts(result) {
   const facts = Array.isArray(result?.bridgeFacts) ? result.bridgeFacts : [];
@@ -35,8 +55,8 @@ export function dialogueFacts(result) {
 }
 
 function pagesOf(fact) {
-  const pages = fact?.worldFactPayload?.pages;
-  return Array.isArray(pages) ? pages : [];
+  const payload = dialoguePayloadOf(fact);
+  return Array.isArray(payload?.pages) ? payload.pages : [];
 }
 
 /**
@@ -61,15 +81,17 @@ export function judgeDialogueStream(result, { expectSpeaker = "Gus", sessionText
   const g2 = maxPages >= 2 || chain >= 2;
 
   // G3 - the speaker is the NPC the fixture provided.
-  const speakers = facts.map((fact) => fact?.worldFactPayload?.speaker);
+  const speakers = facts.map((fact) => dialoguePayloadOf(fact)?.speaker);
   const g3 = speakers.includes(expectSpeaker);
 
   // G4 - each box reported once, and distinct identities (a re-report would share one).
-  const ids = facts.map((fact) => fact?.eventId);
-  const g4 = new Set(ids).size === ids.length && ids.every((id) => typeof id === "string" && id.length > 0);
+  const ids = facts.map((fact) => fact?.eventId ?? fact?.correlationId ?? fact?.sourceEventId);
+  // Presence AND uniqueness. A set of `undefined`s is unique and would pass while checking nothing - which is
+  // exactly what happened when the recorded fact had no `eventId` key at all.
+  const g4 = ids.every((id) => typeof id === "string" && id.length > 0) && new Set(ids).size === ids.length;
 
   // G5 - the Mod must not answer for the Agent. An informational dialogue means no answer receipt at all.
-  const isQuestion = facts.some((fact) => fact?.worldFactPayload?.isQuestion === true);
+  const isQuestion = facts.some((fact) => dialoguePayloadOf(fact)?.isQuestion === true);
   const receipts = (Array.isArray(result?.bridgeFacts) ? result.bridgeFacts : []).filter(
     (fact) => fact?.type === "execution_receipt",
   );
