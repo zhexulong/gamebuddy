@@ -38,6 +38,25 @@ public sealed class NpcDialoguePagerTests
         "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs";
     private const string ImplementationRelativePath = "integrations/stardew/Sensory/NpcDialoguePager.cs";
 
+    [Fact]
+    public void ABrokenPageReadIsNotSettled_AndNeverEscapes()
+    {
+        // The regression a LIVE run found: `Observe` threw a NullReferenceException EVERY tick and starved the
+        // bridge (`bridge_response_timeout`). It came out of `getCurrentString()`, which is NOT total -
+        // `DialogueBox.cs:716` dereferences `characterDialogue.getCurrentDialogue()`. That accessor is not
+        // virtual, so the state is built through the real chain: an uninitialized `Dialogue` (its `dialogues` list
+        // is null) with a non-empty broken-up stack takes exactly that branch and throws for real.
+        DialogueBox box = CreateDialogueBox("unreadable");
+        box.characterDialogue = (Dialogue)FormatterServices.GetUninitializedObject(typeof(Dialogue));
+        box.characterDialoguesBrokenUp.Push("broken up");
+
+        // The read fails, so nothing may claim it succeeded.
+        NpcDialoguePager.CurrentTextOrNull(box).Should().BeNull();
+        NpcDialoguePager.IsTextSettled(box).Should().BeFalse(
+            "an unreadable page is not settled: the alternative is clicking a page this code cannot see");
+        NpcDialoguePager.CanAdvance(box).Should().BeFalse();
+    }
+
     // ---- the advance predicate -------------------------------------------------
 
     [Fact]
@@ -430,6 +449,7 @@ public sealed class NpcDialoguePagerTests
     /// the question hard stop - against a box whose pages the test controls,
     /// while the native contract stays pinned by the drift anchors.
     /// </summary>
+
     private sealed class ScriptedDialogueBox : DialogueBox
     {
         // Never executed: instances come from GetUninitializedObject so the real

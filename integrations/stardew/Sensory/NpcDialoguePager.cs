@@ -54,6 +54,9 @@ internal sealed class NpcDialoguePager
     /// </summary>
     private static long dialogueSequence;
 
+    /// <summary>Distinct failures already reported, so a per-tick fault cannot flood the log.</summary>
+    private readonly HashSet<string> reportedFailures = new(StringComparer.Ordinal);
+
     private DialogueBox? trackedBox;
     private long dialogueStartTick;
     private bool capturedCurrentPage;
@@ -70,6 +73,24 @@ internal sealed class NpcDialoguePager
     /// non-publishable session leaves the box entirely to the player.
     /// </summary>
     internal void Observe(BridgeSession? session)
+    {
+        try
+        {
+            this.ObserveCore(session);
+        }
+        catch (Exception error)
+        {
+            // The game-loop boundary. A per-tick event handler that throws takes the bridge with it (observed
+            // live as `bridge_response_timeout`), so this reports once per distinct failure and then keeps
+            // ticking - the dialogue is skipped, not the session.
+            string key = error.GetType().Name + ":" + error.Message;
+            if (this.reportedFailures.Add(key))
+                this.monitor?.Log($"GameBuddy dialogue pager skipped a box: {key}", LogLevel.Warn);
+            this.Reset();
+        }
+    }
+
+    private void ObserveCore(BridgeSession? session)
     {
         DialogueBox? box = Game1.activeClickableMenu as DialogueBox;
 
@@ -175,9 +196,37 @@ internal sealed class NpcDialoguePager
     /// native click settles typing before it flips the page
     /// (DialogueBox.cs:361-364), so a page still typing is not presented yet and
     /// must not be clicked again.
+    ///
+    /// An UNREADABLE page is reported as not settled: the conservative answer,
+    /// because the alternative is clicking a page this code cannot see.
     /// </summary>
-    internal static bool IsTextSettled(DialogueBox box) =>
-        box.characterIndexInDialogue >= box.getCurrentString().Length - 1;
+    internal static bool IsTextSettled(DialogueBox box)
+    {
+        string? text = CurrentTextOrNull(box);
+        return text is not null && box.characterIndexInDialogue >= text.Length - 1;
+    }
+
+    /// <summary>
+    /// The box's current page, or null when the game cannot produce one.
+    /// `getCurrentString()` is NOT total: it trims
+    /// `characterDialogue.getCurrentDialogue()` (DialogueBox.cs:716) and a
+    /// dialogue line's `Text` can be null, and it reads
+    /// `characterDialogue.speaker.getName()` (:719) where the speaker can be null.
+    /// A live run threw a NullReferenceException out of it EVERY TICK, which
+    /// silenced the bridge (`bridge_response_timeout`) - so this read is allowed
+    /// to fail here instead of escaping into the game loop.
+    /// </summary>
+    internal static string? CurrentTextOrNull(DialogueBox box)
+    {
+        try
+        {
+            return box.getCurrentString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// The box is playing its reverse transition. <c>beginOutro</c>
@@ -193,8 +242,8 @@ internal sealed class NpcDialoguePager
         if (this.capturedCurrentPage)
             return;
         this.capturedCurrentPage = true;
-        string page = box.getCurrentString();
-        if (page.Length > 0)
+        string? page = CurrentTextOrNull(box);
+        if (!string.IsNullOrEmpty(page))
             this.pages.Add(page);
     }
 
