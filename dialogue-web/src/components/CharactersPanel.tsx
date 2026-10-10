@@ -6,17 +6,8 @@ import type {
   ManagementPipelineApi,
   PersonaV1,
   ScenarioV1,
-  StCardImportHistoryV1,
-  StCardImportStageResultV1,
 } from "../management-pipeline-api";
-
-/** The decoder's closed disposition classes, in the order the loss report reads. */
-const DISPOSITION_CLASSES = [
-  "accepted_typed",
-  "preserved_opaque",
-  "dropped_unsupported",
-  "rejected_invalid",
-] as const;
+import { CharacterCardImport } from "./CharacterCardImport";
 
 /**
  * Characters surface (design/28 §2): companion library + Persona / Scenario /
@@ -27,6 +18,9 @@ const DISPOSITION_CLASSES = [
  * so the UI never shows a local value the store did not accept. Reads that
  * fail (profile without the routes, service unavailable) render the section
  * as unavailable instead of fabricating a capability.
+ *
+ * The reviewed card import is `CharacterCardImport`, the same component the
+ * Import/Export drawer mounts, so the staged flow exists once.
  */
 export function CharactersPanel({
   api,
@@ -62,17 +56,9 @@ export function CharactersPanel({
   const [greetingSaving, setGreetingSaving] = useState(false);
   const [greetingNotice, setGreetingNotice] = useState<"saved" | "error" | null>(null);
 
-  // Reviewed ST-card import (design/28 Import row): stage -> review -> confirm.
-  const [importCardText, setImportCardText] = useState("");
-  const [importStaged, setImportStaged] = useState<StCardImportStageResultV1 | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importNotice, setImportNotice] = useState<"created" | "error" | null>(null);
-  // The durable loss report of every confirmed import (design/28 Import/export
-  // row). It is read back from the Host verbatim: the panel never re-derives a
-  // disposition, and it renders no card body text.
-  const [importHistory, setImportHistory] = useState<StCardImportHistoryV1 | "failed" | "unavailable">(
-    "unavailable",
-  );
+  // The reviewed ST-card import (design/28 Import row) lives in
+  // `CharacterCardImport`; the panel only refreshes its library when it created
+  // a companion.
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -125,16 +111,6 @@ export function CharactersPanel({
       } catch {
         if (!activeRef.current) return;
         setGreeting("unavailable");
-      }
-    })();
-    void (async () => {
-      try {
-        const value = await api.readStCardImportHistory();
-        if (!activeRef.current) return;
-        setImportHistory(value);
-      } catch {
-        if (!activeRef.current) return;
-        setImportHistory("unavailable");
       }
     })();
     return () => {
@@ -243,63 +219,6 @@ export function CharactersPanel({
     }
   };
 
-  const handleStageImport = async (): Promise<void> => {
-    const card = importCardText.trim();
-    if (card.length === 0 || importBusy) return;
-    setImportBusy(true);
-    setImportNotice(null);
-    try {
-      const staged = await api.stageStCardImport(card, csrfToken);
-      if (activeRef.current) {
-        setImportStaged(staged);
-        setImportNotice(null);
-      }
-    } catch {
-      if (activeRef.current) setImportNotice("error");
-    } finally {
-      if (activeRef.current) setImportBusy(false);
-    }
-  };
-
-  const handleConfirmImport = async (): Promise<void> => {
-    if (importStaged === null || importBusy) return;
-    setImportBusy(true);
-    setImportNotice(null);
-    try {
-      // Confirm is only legal on a SIGNED review credential: the product refuses
-      // to provision a card nobody approved. The dialog has already shown every
-      // included and excluded field, so confirming signs the reviewable set it
-      // displayed and then provisions exactly that set.
-      const reviewable = importStaged.fields
-        .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
-        .map((field) => field.field);
-      if (reviewable.length > 0)
-        await api.reviewStCardImport(importStaged.importId, reviewable, Date.now(), csrfToken);
-      await api.confirmStCardImport(importStaged.importId, csrfToken);
-      const list = await api.listCompanions();
-      if (activeRef.current) {
-        setCompanionList(list);
-        setImportStaged(null);
-        setImportCardText("");
-        setImportNotice("created");
-      }
-      // The confirmed import is durable evidence by the time confirm returns, so
-      // the loss report shows it without waiting for a reload. A failed history
-      // read is reported as exactly that; it never turns a created companion
-      // into a failed import.
-      try {
-        const history = await api.readStCardImportHistory();
-        if (activeRef.current) setImportHistory(history);
-      } catch {
-        if (activeRef.current) setImportHistory("failed");
-      }
-    } catch {
-      if (activeRef.current) setImportNotice("error");
-    } finally {
-      if (activeRef.current) setImportBusy(false);
-    }
-  };
-
   return (
     <section className="management-settings-section" aria-label={labels.charactersTitle} data-characters-panel>
       <h2>{labels.charactersTitle}</h2>
@@ -348,112 +267,24 @@ export function CharactersPanel({
             )}
           </section>
 
-          <section aria-label={labels.cardImportTitle} data-card-import>
-            <h3>{labels.cardImportTitle}</h3>
-            <p className="management-settings-hint">{labels.cardImportHint}</p>
-            {importStaged === null ? (
-              <>
-                <textarea
-                  className="form-textarea"
-                  rows={5}
-                  placeholder='{"spec":"chara_card_v3","data":{"name":"…"}}'
-                  value={importCardText}
-                  onChange={(event) => setImportCardText(event.target.value)}
-                />
-                <div className="composer-actions">
-                  <button
-                    type="button"
-                    className="small-button"
-                    disabled={importBusy || importCardText.trim().length === 0}
-                    onClick={() => void handleStageImport()}
-                  >
-                    {importBusy ? labels.cardImportStaging : labels.cardImportStage}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p>
-                  <strong>{importStaged.name}</strong>
-                </p>
-                <details>
-                  <summary>{labels.cardImportFieldsTitle}</summary>
-                  <ul data-import-fields>
-                    {importStaged.fields.map((field) => (
-                      <li key={field.field}>
-                        {field.field} · {field.eligibility} · {field.chars} chars
-                        {field.field === "persona_core" && field.chars > 4000 && (
-                          <em className="management-settings-hint">{labels.cardImportLongHint.replace("{{chars}}", String(field.chars))}</em>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-                {importStaged.dispositions.length > 0 && (
-                  <details>
-                    <summary>{labels.cardImportDispositionsTitle}</summary>
-                    <ul data-import-dispositions>
-                      {importStaged.dispositions.map((disposition) => (
-                        <li key={`${disposition.field}-${disposition.reason}`}>
-                          {disposition.field} · {disposition.classification} · {disposition.reason}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-                <div className="composer-actions">
-                  <button
-                    type="button"
-                    className="small-button"
-                    disabled={importBusy}
-                    onClick={() => void handleConfirmImport()}
-                  >
-                    {importBusy ? labels.cardImportConfirming : labels.cardImportReviewSelected}
-                  </button>
-                </div>
-              </>
-            )}
-            {importNotice !== null && (
-              <p role="status" className={importNotice === "created" ? "success-banner" : "error-banner"}>
-                {importNotice === "created" ? labels.cardImportCreated : labels.cardImportError}
-              </p>
-            )}
-          </section>
+                    <CharacterCardImport
+            api={api}
+            csrfToken={csrfToken}
+            labels={labels}
+            onCreated={() => {
+              void (async () => {
+                try {
+                  const list = await api.listCompanions();
+                  if (activeRef.current) setCompanionList(list);
+                } catch {
+                  // keep the already-rendered library
+                }
+              })();
+            }}
+          />
 
-          {importHistory !== "unavailable" && (
-            <section aria-label={labels.cardImportHistoryTitle} data-card-import-history>
-              <h3>{labels.cardImportHistoryTitle}</h3>
-              <p className="management-settings-hint">{labels.cardImportHistoryHint}</p>
-              {importHistory === "failed" ? (
-                <p className="error-banner" role="status">
-                  {labels.cardImportHistoryFailed}
-                </p>
-              ) : importHistory.entries.length === 0 ? (
-                <p>{labels.cardImportHistoryEmpty}</p>
-              ) : (
-                <ul data-import-history-entries>
-                  {importHistory.entries.map((entry) => (
-                    <li key={entry.importId} data-import-history-entry>
-                      <span>{entry.cardName}</span>
-                      <span className="management-settings-hint">
-                        {new Date(entry.occurredAtMs).toLocaleString()}
-                      </span>
-                      <ul data-import-history-counts>
-                        {DISPOSITION_CLASSES.map((classification) => (
-                          <li key={classification}>
-                            {classification} · {entry.counts[classification]}
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-
-          {persona !== "unavailable" && (
-            <section aria-label={labels.personaEditTitle} data-persona-editor>
+{persona !== "unavailable" && (
+<section aria-label={labels.personaEditTitle} data-persona-editor>
               <h3>{labels.personaEditTitle}</h3>
               <p className="management-settings-hint">{labels.personaEditHint}</p>
               {persona === "loading" ? (
