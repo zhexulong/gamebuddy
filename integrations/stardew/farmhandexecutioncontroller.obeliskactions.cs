@@ -414,12 +414,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (!Context.IsWorldReady || location is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !actor.CanMove)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (request.DeadlineMs <= nowMs || request.DeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        // Shared mechanical admission (identity → actionability → deadline →
+        // body exclusivity). The single authority names the hold it refuses on;
+        // route resolution, reach and the postcondition stay action-specific.
+        if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
+            return admissionRefusal;
 
         // A pending native warp or freeze already exists: the obelisk's own fade
         // arms freezePause for 1000ms before it warps (Building.cs:1045,
@@ -432,19 +432,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 ExecutionState.Rejected,
                 "obelisk_warp_already_pending",
                 $"is_warping={Game1.isWarping};freeze_pause={actor.freezePause}");
-
-        // One body at a time: the shared travel slot and every other long-lived
-        // owner this action would otherwise race.
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null
-            || this.activeAnimalProduct is not null || this.activeItemUse is not null
-            || this.activeItemPickup is not null || this.activePedestalTaking is not null
-            || this.activeToolApproach is not null || this.activeMountTransport is not null
-            || this.activeBusRide is not null || this.activeDayAdvance is not null
-            || this.activeNavigate is not null
-            || this.controller.HasActiveExecution)
-        {
-            return this.RejectBodyOwned(request.RequestId, executionId);
-        }
 
         if (string.IsNullOrWhiteSpace(request.Args.ExpectedTargetId))
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "missing_expected_target_id", null);
