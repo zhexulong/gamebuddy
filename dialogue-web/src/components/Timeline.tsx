@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MessageBubble } from "./MessageBubble";
 
@@ -26,6 +26,29 @@ export function Timeline({
 }) {
   const displayTitle = chatTitle ?? labels.untitledChat;
   const sectionRef = useRef<HTMLElement>(null);
+  const onSwipeRef = useRef(onSwipe);
+  const onRegenerateRef = useRef(onRegenerate);
+
+  // The handler props are re-created by the shell on every render - including
+  // every streaming delta - so they are re-read through refs and the callbacks
+  // handed to the bubbles keep one identity for their whole life. With a
+  // per-delta identity, `memo` could never bail out and every settled message
+  // would re-render (and re-parse its Markdown) on every token.
+  useLayoutEffect(() => {
+    onSwipeRef.current = onSwipe;
+    onRegenerateRef.current = onRegenerate;
+  });
+
+  const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
+    onSwipeRef.current?.(messageHandle, direction);
+  }, []);
+  const handleRegenerate = useCallback((messageHandle: string) => {
+    onRegenerateRef.current?.(messageHandle);
+  }, []);
+  // A caller that passed no handler keeps no control: the bubble gates its
+  // swipe/regenerate affordances on the handler being present.
+  const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
+  const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
 
   // Keep the newest message in view: the effect re-runs when the visible
   // content changes (message count or the streaming preview text) and also on
@@ -62,8 +85,8 @@ export function Timeline({
               message={message}
               companionName={companionName}
               playerLabel={labels.you}
-              onSwipe={onSwipe}
-              onRegenerate={onRegenerate}
+              onSwipe={swipeHandler}
+              onRegenerate={regenerateHandler}
             />
           ))}
           {preview !== null && (

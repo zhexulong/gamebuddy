@@ -1,7 +1,15 @@
+import { memo } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
-export function MessageBubble({
+/**
+ * Memoised so a streaming delta - which re-renders the conversation with a new
+ * preview - cannot re-render a settled message and re-parse its Markdown. The
+ * transcript's message objects are immutable and keep their identity across a
+ * preview-only update, so the default shallow comparison is enough; `Timeline`
+ * keeps the handler identities stable for the same reason.
+ */
+export const MessageBubble = memo(function MessageBubble({
   message,
   companionName,
   playerLabel,
@@ -83,4 +91,4 @@ export function MessageBubble({
       )}
     </li>
   );
-}
+});
