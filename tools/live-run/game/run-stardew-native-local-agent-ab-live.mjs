@@ -607,6 +607,32 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
  * steer reached the session; none of them observed means the result must say so
  * instead of pretending the agent chose to do nothing.
  */
+async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_000, timeoutMs }) {
+  // The session is "quiet" when no new dispatch has appeared for a sustained window AND no new bridge fact
+  // has appeared. A terminal follow_up fact that the Agent acts on shows up as a new dispatch; a fact with no
+  // action behind it is still a delivery we must not cut off. The window is long enough for one agent turn
+  // after a terminal (dismiss/resume) but short enough not to stretch a run forever.
+  const dispatchesAtStart = dispatchesBeforeTurn;
+  const factsAtStart = factLog.length;
+  let lastActionAt = Date.now();
+  let lastFactAt = Date.now();
+  const deadline = Date.now() + (timeoutMs ?? 300_000);
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const actionNow = actionTrace.length;
+    const factNow = factLog.length;
+    const actionMoved = actionNow > dispatchesAtStart || actionNow > lastActionAt;
+    const factMoved = factNow > factsAtStart || factNow > lastFactAt;
+    if (actionMoved) lastActionAt = Date.now();
+    if (factMoved) lastFactAt = Date.now();
+    if (Date.now() - lastActionAt >= quietMs && Date.now() - lastFactAt >= quietMs) {
+      turn.quieter = true;
+      break;
+    }
+  }
+  return turn;
+}
+
 async function runAgentTurn(text, tools) {
   turnStartedAtMs = Date.now();
   sampleAdvertisedActions();
@@ -655,6 +681,13 @@ async function runAgentTurn(text, tools) {
     if (quick !== null) { turn = quick; break; }
   }
   if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
+  // LADDER-6 ONLY: after the turn settles, keep waiting until the session is QUIET instead of closing the turn
+  // on the first settle. A terminal receipt (e.g. `modal_interrupted`) is a follow_up fact, not a player
+  // message, and it may trigger the Agent to act again (dismiss, resume) BEFORE the session truly rests. With
+  // the old boundary the runner stopped waiting at the first settle, so an interrupted turn could never
+  // recover - the very gap this ladder rung exists to expose. This extension is confined to ladder 6 so the
+  // scripted rungs keep their exact turn semantics.
+  if (LADDER === "6") turn = await waitForSessionQuiet(turn, { dispatchesBeforeTurn, timeoutMs: turnWaitSeconds * 1000 });
   turn.steerObserved =
     agentProgramId !== null ||
     (typeof presentedSummary === "string" && presentedSummary.length > 0) ||
