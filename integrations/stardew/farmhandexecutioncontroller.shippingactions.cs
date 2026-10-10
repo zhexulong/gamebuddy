@@ -9,14 +9,14 @@ namespace GameBuddy.Stardew;
 // Seam decision (Step 1, recorded in
 // design/tasks/active/loop-closure-lane-e-ship-item-seam-decision.md):
 //
-// - Candidate: `Farm.shipItem(Item i, Farmer who)` (Farm.cs:1034). It is the
+// - Candidate: `Farm.shipItem(Item i, Farmer who)` (`StardewValley/Farm.cs:1033`). It is the
 //   native wrapped entry and the exact delegate the game itself hands to
-//   ItemGrabMenu (`ShippingBin.doAction` -> `shipItem`, ShippingBin.cs:256;
-//   `IslandWest.checkAction` -> `Game1.getFarm().shipItem`, IslandWest.cs:295):
+//   ItemGrabMenu (`ShippingBin.doAction` -> `shipItem`, `StardewValley.Buildings/ShippingBin.cs:259`;
+//   `IslandWest.checkAction` -> `Game1.getFarm().shipItem`, `StardewValley.Locations/IslandWest.cs:313`):
 //   it performs `who.removeItemFromInventory(i)` -> `getShippingBin(who).Add(i)`
 //   -> `showShipment(obj, playThrowSound: false)` -> `lastItemShipped = i`, and
 //   `getShippingBin` itself picks the personal vs shared bin from the live
-//   `useSeparateWallets` flag (Farm.cs:1025-1051).
+//   `useSeparateWallets` flag (`StardewValley/Farm.cs:1025-1051`).
 //   It differs from `ShippingBin.shipItem` (ShippingBin.cs:157, private,
 //   building-level): that one needs a cached `farm` field, silently skips the
 //   bin write when `farm` is null, and never calls `showNotCarrying`/`Halt`.

@@ -216,6 +216,14 @@ internal sealed partial class ExecutionManager
         // anonymous player_not_actionable. The station geometry, the ride
         // resolution and the Warped postcondition stay action-specific.
         // Physical: the ride drives the native minecart object, not a tool swing.
+        //
+        // EVIDENCE PENDING, recorded rather than hidden: the native entry this mirrors (`GameLocation.MinecartWarp`,
+        // `GameLocation.cs:10302`) has NO precondition guard of its own - the only native gate is
+        // `ShowMineCartMenu`'s `mount != null` check (`:10216`), on the CLICK path this action bypasses. So a state
+        // this admission now refuses here (a freezePause, an eating actor) is not PROVABLY native-forbidden; the
+        // ride self-heals in 700 ms. An independent reviewer flagged exactly this and I am not claiming otherwise:
+        // the refusal is the shared authority's, and settling whether the native path would have admitted the same
+        // tick needs a live probe.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
             return admissionRefusal;
 

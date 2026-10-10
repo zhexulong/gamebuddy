@@ -31,6 +31,25 @@ const REASON_COMPONENT = Object.freeze({
   unsupported_argument: "contract",
   // Native execution state: the game world was not in a state that allows acting.
   player_not_actionable: "native_state",
+  // The NAMED holds (WorldModel.HoldReasonCode): one anonymous code for a menu, a cutscene, a faint, an eating
+  // animation and a tool swing told a reader nothing, so each now names itself. Exact matches, because
+  // `componentOf` matches the head literally.
+  actor_held_by_modal: "native_state",
+  cutscene_active: "native_state",
+  actor_passed_out: "native_state",
+  transient_busy: "native_state",
+  // The modal family's own refusals: the UI was not in a state where the requested modal action applies.
+  no_modal_present: "native_state",
+  modal_not_answerable: "native_state",
+  modal_not_dismissible: "native_state",
+  // The NAMED body owners: WHICH in-flight execution owns the body, and whether it can be taken over.
+  body_owned_by_movement: "orchestration",
+  body_owned_by_navigation: "orchestration",
+  body_owned_by_travel: "orchestration",
+  body_owned_by_approach: "orchestration",
+  body_owned_by_ride: "orchestration",
+  body_owned_by_day_advance: "orchestration",
+  body_owned_by_activity: "orchestration",
   player_cannot_move: "native_state",
   player_menu_open: "native_state",
   world_not_ready: "native_state",

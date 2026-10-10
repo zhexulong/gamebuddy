@@ -510,9 +510,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal enum AdmissionActionabilityProfile
     {
         /// <summary>
-        /// Menu / event / unmovable, plus an in-progress tool swing (`UsingTool`
-        /// or a nonzero `toolPower`). Used by actions that drive a tool or a
-        /// native object interaction.
+        /// The profile for actions that drive a tool or a native object interaction.
+        ///
+        /// It used to ADD a tool-swing check (`UsingTool` / nonzero `toolPower`) on top of menu / event /
+        /// unmovable. It no longer does, and deliberately: since the WorldModel swap an in-progress swing and
+        /// an eating actor are `Transient` DISPOSITIONS, and every non-Modal profile refuses those. So
+        /// `Physical` and `General` are BEHAVIOURALLY IDENTICAL today (see `AdmitExecution`, which branches on
+        /// `Modal` alone). The label says which family the action belongs to; it does not add a check.
         /// </summary>
         Physical,
 
