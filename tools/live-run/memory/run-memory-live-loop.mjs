@@ -50,6 +50,7 @@ import { launchDesktopCompositionGateChild } from "../../desktop-composition-lau
 import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "../chat/run-chat-live-audit.mjs";
 import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, m0SourcesFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../../lib/historian-rubric.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
 // (settings/player-preference-store.ts). Spelled here for the same reason the browser
@@ -119,7 +120,7 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--require-chapter]";
+  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--fixture-fold-threshold <tokens>] [--require-chapter]";
 }
 
 function parseArguments(argv) {
@@ -133,8 +134,16 @@ function parseArguments(argv) {
     ["--manifest", undefined],
     ["--card", undefined],
     ["--language", undefined],
+  // Compress the fold's window-derived trigger for this run, so a fold (and therefore a chapter)
+  // happens inside a CI-sized conversation. This sets the Host's TEST-ONLY channel, which the runtime
+  // writes into its OWN user-scope config inside the run's root - the only scope Magic Context accepts
+  // a lowered trigger from (a project file may only raise it). Never an operator surface.
+  ["--fixture-fold-threshold", undefined],
   // Refuse to pass when no chapter appeared, so a fold fixture cannot silently stop folding.
   ["--require-chapter", undefined],
+  // Same idea for the historian output obligations: a run may only be cited as evidence when the
+  // mechanical obligations in historian-prompt-rubric.md held.
+  ["--require-historian-rubric", undefined],
 ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -157,6 +166,12 @@ function parseArguments(argv) {
   const requireChapter = flags.get("--require-chapter");
   if (requireChapter !== undefined && requireChapter !== "true")
     throw new Error(`${usage()} (--require-chapter takes no value)`);
+  const requireHistorianRubric = flags.get("--require-historian-rubric");
+  if (requireHistorianRubric !== undefined && requireHistorianRubric !== "true")
+    throw new Error(`${usage()} (--require-historian-rubric takes no value)`);
+  const foldThreshold = flags.get("--fixture-fold-threshold");
+  if (foldThreshold !== undefined && !/^[1-9][0-9]{2,6}$/u.test(foldThreshold))
+    throw new Error(`${usage()} (--fixture-fold-threshold is a token count, for example 6000)`);
   const reportPath = flags.get("--report");
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
   return Object.freeze({
@@ -165,7 +180,9 @@ function parseArguments(argv) {
     manifestPath: flags.get("--manifest"),
     cardPath: flags.get("--card"),
     language,
+    foldThreshold: foldThreshold === undefined ? undefined : Number.parseInt(foldThreshold, 10),
     requireChapter: requireChapter === "true",
+    requireHistorianRubric: requireHistorianRubric === "true",
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -1243,6 +1260,16 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // cannot say whether the id was missing or we simply asked the wrong question.
     // Resolve the chapters rendered into m[0] (v1 chapter rollup marker).
     const chapters = renderedChaptersFromMarkers(chatResult.markers);
+  // Historian output rubric + prompt identity (design/architecture/historian-prompt-rubric.md). The
+  // root still exists here, and the compartments in it are what the historian actually wrote, so the
+  // mechanical obligations are checked against real output rather than against the prompt text. This is
+  // what makes a prompt edit comparable: same fixture, two prompt variants, one table of obligations.
+  const historianRubric = checkHistorianRubric(readCompartments(root));
+  const historianPrompt = identifyHistorianPrompt(
+    process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT === undefined
+      ? root
+      : process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT,
+  );
 
     const renderedIds = renderedIdsForRun(chatResult.markers);
     // Real-fold evidence for a `fold`-distance probe: the vendor's fold-commit
@@ -1353,10 +1380,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       // is the chapter block byte-stable? `null` means the vendor never
       // emitted the marker; a number (possibly 0) means it did.
       chapters: Object.freeze({
-        markerObserved: chapters !== undefined,
-        renderedCount: chapters?.count ?? null,
-        ...(chapters?.digest === undefined ? {} : { blockDigest: chapters.digest }),
-      }),
+      markerObserved: chapters !== undefined,
+      renderedCount: chapters?.count ?? null,
+      ...(chapters?.digest === undefined ? {} : { blockDigest: chapters.digest }),
+    }),
+    // Which prompt produced the compartments above, and whether the output kept the obligations the
+    // prompt exists to teach. A prompt change is invisible without the variant name; the violations are
+    // per-compartment so a reader sees WHICH one broke an obligation.
+    historianPrompt,
+    historianRubric,
       chat: Object.freeze({
         attempted: true,
         turnState: chat.turnState ?? null,
@@ -1379,23 +1411,42 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	if (parsed.help) {
 		process.stdout.write(`${usage()}\n`);
 	} else {
-		requestedLanguage = parsed.language;
-		const report = await runMemoryLiveLoop({
+    requestedLanguage = parsed.language;
+    if (parsed.foldThreshold !== undefined) {
+      process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS = String(parsed.foldThreshold);
+      // The schema's floor for the protected tail; without it the fold has nothing eligible.
+      if (process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS === undefined)
+        process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS = "4000";
+      process.stderr.write(
+        `[memory-loop] fold fixture: execute_threshold=${parsed.foldThreshold} protected=${process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS}\n`,
+      );
+    }
+    const report = await runMemoryLiveLoop({
 			reportPath: parsed.reportPath,
 			manifestPath: parsed.manifestPath,
 			seed: parsed.seed,
 			question: parsed.question,
 			cardPath: parsed.cardPath,
 		});
-		if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
+    if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
 			process.stderr.write(
 				`[memory-loop] FAILED: --require-chapter but m[0] carried no chapter (markerObserved=${String(
 					report.chapters?.markerObserved,
 				)}, renderedCount=${String(report.chapters?.renderedCount)}); the fold did not happen in this fixture\n`,
 			);
-			process.exit(1);
-		}
-		process.stdout.write(
+      process.exit(1);
+    }
+    if (parsed.requireHistorianRubric && (report.historianRubric?.violations?.length ?? 0) > 0) {
+      process.stderr.write(
+        `[memory-loop] FAILED: --require-historian-rubric and the historian output broke ${String(
+          report.historianRubric?.violations?.length,
+        )} obligation(s): ${report.historianRubric.violations
+          .map((violation) => `${violation.obligation}@${violation.where}`)
+          .join(", ")}\n`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(
       `${JSON.stringify({
         state: report.seed.durable ? "collected" : "blocked",
         verdict: report.chat.verdict ?? null,
