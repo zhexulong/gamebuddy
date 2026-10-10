@@ -2472,3 +2472,60 @@ the same disposable native-local launcher under `-Action scene_reachable_probe`.
 What this does NOT establish (deliberately): whether the Agent, given the field, re-aims less. That is a
 behavioural question whose live answer needs a session that observes at all, and the session outcome still varies
 with the model's own choices.
+
+---
+
+### Ladder-6: the Agent closes the interruption loop itself (first PASS, 2026-10-10)
+
+Command (the ladder runner drives the REAL Host tool layer, not the bridge directly):
+
+```
+GAMEBUDDY_AGENT_PROMPT=<player-level goal, no action id / no coordinates>
+GAMEBUDDY_WIA_PROMPT_SHA256=755043f5343f672b141c61e57ea681c92755097227f0a6434f57d35f2beede18
+node tools/live-run/game/launch-ladder-live.mjs --ladder 6 \
+  --action wia_modal_dismiss_chain --label <label> --save <observed slot>
+```
+
+`--action` selects the FIXTURE only (the world). The Agent never sees it; the fixture policy is deny-by-exception,
+so the Agent sees the whole advertised surface (82 actions). `GAMEBUDDY_AGENT_SESSION_GOALS` is deliberately
+UNSET: a second player message is itself a steer and could be the nudge that produces the recovery, which would
+turn "it closed the loop" into "it was pushed". A harness bound (not a product verdict) limits the run.
+
+Judged by an INDEPENDENT checker, not by the harness verdict (`state:passed` is not the gate):
+
+```
+node tools/check-stardew-wia-agent-loop.mjs tools/_ladder6-<label>.result.json
+```
+
+Verdict on the first passing run: `passed / wia_agent_loop_closed`, `d1=d2=d3=true`, `ordered=true`.
+
+```
+D1  modal_interrupted  interrupted_by=DialogueBox;target_tile=50,20;interrupted_at=19,20;remaining_distance=31
+                      requestId=eed85d66-...  executionId=e6938d8d...      (the walk the Agent started)
+D2  modal_dismissed    requestId=d3651b3f-...  executionId=d7ffb1ba...      (its own dismiss, AFTER D1)
+D3  target_reached     requestId=7e7dca33-...  executionId=9365b486...      (a NEW move after D2)
+```
+
+All three requestIds are distinct (a replay would reuse one) and none carries a harness prefix, so every dispatch
+came from the Host tool layer, i.e. from the model's own tool calls. `succeededActionIds` =
+`[dismiss_modal, equip_tool, break_rock_source, cut_weeds]`, `sessionVerdict=completed`, `spokeToPlayer=true`.
+
+**Reading, honestly:** the STRONG reading of D3 (the resumed move aims at the SAME tile the interruption cut off)
+is NOT satisfied - the Agent continued the errand toward the far side of the farm instead of re-aiming at `50,20`.
+So this is the WIDE reading: it completed a new body-owning action after clearing the modal. "Same intent" stays
+`unverified` unless a future fixture anchors the target id.
+
+**What had to be fixed before this could pass** (both were real defects, both found by THIS gate, not by the
+bridge-driven smoke runners which bypass the launcher path):
+
+1. `stardew-integration-launcher-body-program.internal.ts` closed `executionGate` on any `invalidated` receipt,
+   and a modal interruption IS an invalidated receipt - so `dismiss_modal` was refused by the gate the modal had
+   just closed. Three live runs showed the Agent calling `dismiss_modal` five times and every call returning
+   `integration_not_ready`. The gate now freezes the launcher-owned PROGRAM record (and the accessors that hand
+   ports out of it) but not ordinary action dispatch.
+2. The same freeze gated the PRESENTATION projection, and the live session speaks through that object - so a run
+   that DID recover then died with `stardew_launcher_ports_not_live` while the companion tried to speak. The
+   presentation projection now fails closed only on a close or a genuine disconnect.
+
+What this does NOT establish: that the Agent recovers on EVERY run (this is one run; the interruption is
+conditional on the Agent starting a walk), nor that it re-aims at the exact interrupted target.
