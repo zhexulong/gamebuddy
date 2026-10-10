@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, Brain, Gamepad2, MessagesSquare, Settings, Users } from "lucide-react";
+import { Brain, Gamepad2, MessagesSquare, Settings, Users } from "lucide-react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import {
@@ -38,14 +38,13 @@ import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
-import { CharactersPanel } from "./CharactersPanel";
+import { CharactersSurfacePanel } from "./CharactersSurfacePanel";
 import {
   ChatsSurfacePanel,
   createManagementPipelineApi,
   MemorySurfacePanel,
   SettingsSurfacePanel,
   type WorldInfoSurfaceSource,
-  WorldInfoSurfacePanel,
 } from "./management-surface-panels";
 
 
@@ -90,7 +89,6 @@ const CHATS_PANEL = "chats" as const;
 const CHARACTERS_PANEL = "characters" as const;
 const SETTINGS_PANEL = "settings" as const;
 const MEMORY_PANEL = "memory" as const;
-const WORLD_INFO_PANEL = "world-info" as const;
 
 function readPanelFromUrl(): string | null {
   return new URLSearchParams(window.location.hash.slice(1)).get(PANEL_PARAM);
@@ -196,9 +194,8 @@ export function ComposedReferenceGameApp() {
   const charactersEntryRef = useRef<HTMLButtonElement>(null);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
-  const worldInfoEntryRef = useRef<HTMLButtonElement>(null);
-  // Every management surface - Characters, Chats, Settings, Memory and World Info
-  // - runs on the one management pipeline client the management shell uses, on this
+  // Every management surface - Characters, Chats, Settings and Memory - runs on
+  // the one management pipeline client the management shell uses, on this
   // shell's own origin: the composed root serves those routes through the one
   // broker session, so the library, the Persona/Scenario/Greeting records, the
   // reviewed card import and the Chat, Memory, World Info and Settings panels are
@@ -1363,7 +1360,6 @@ export function ComposedReferenceGameApp() {
   const openCharacters = openPanelOf(CHARACTERS_PANEL, charactersEntryRef);
   const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
-  const openWorldInfo = openPanelOf(WORLD_INFO_PANEL, worldInfoEntryRef);
 
   return (
     <div className="tavern-app-shell" data-profile="composed-reference-game">
@@ -1403,7 +1399,6 @@ export function ComposedReferenceGameApp() {
                      { id: CHARACTERS_PANEL, label: labels().charactersPanel, icon: Users, active: shownSurface === CHARACTERS_PANEL, onClick: openCharacters, ref: charactersEntryRef },
                      { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: shownSurface === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
                      { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: shownSurface === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
-                     { id: WORLD_INFO_PANEL, label: labels().worldInfoPanel, icon: BookOpen, active: shownSurface === WORLD_INFO_PANEL, onClick: openWorldInfo, ref: worldInfoEntryRef },
                    ]
                  : []),
              ]}
@@ -1556,10 +1551,11 @@ export function ComposedReferenceGameApp() {
                 icon={Users}
                 restoreFocusTo={charactersEntryRef}
               >
-                <CharactersPanel
+                <CharactersSurfacePanel
                   api={managementPipelineApiRef.current}
                   csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
+                  locale={view.locale}
+                  read={readProductWorldInfo}
                 />
               </SurfaceView>
             )}
@@ -1591,21 +1587,6 @@ export function ComposedReferenceGameApp() {
                   csrfToken={view.session.snapshot.csrfToken}
                   labels={labels()}
                   locale={view.locale}
-                />
-              </SurfaceView>
-            )}
-            {shownSurface === WORLD_INFO_PANEL && (
-              <SurfaceView
-                title={labels().worldInfoPanel}
-                testId="world-info-surface"
-                icon={BookOpen}
-                restoreFocusTo={worldInfoEntryRef}
-              >
-                <WorldInfoSurfacePanel
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  read={readProductWorldInfo}
                 />
               </SurfaceView>
             )}
