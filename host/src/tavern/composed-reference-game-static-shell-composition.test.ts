@@ -96,6 +96,11 @@ function fakeReadState() {
     turn: null,
     operations: base.operations,
     eventStream: null,
+    // The mounted facade always names its voice projection, and it is null when no
+    // Host voice surface is attached - the shape a launch actually has. A fixture
+    // that omits the field entirely hides exactly the projected-shape faults this
+    // file is supposed to catch.
+    voice: null,
   };
 }
 
@@ -1183,4 +1188,47 @@ test("composed shell fails closed for management routes whose services were not 
   } finally {
     await fixture.dispose();
   }
+});
+
+test("the composed Chat snapshot carries the voice surface where the snapshot contract puts it", async () => {
+  // Failure caught: the composed projection wrote `voice` INSIDE the snapshot's `chat`
+  // object, which is a strict object of six named fields. Every non-null Chat snapshot
+  // therefore failed its own validator, so the composed bootstrap consumed its one-shot
+  // token and answered `state_unavailable` - and every retry, the token now spent,
+  // answered `unauthorized`. The product could only report that it did not open. The
+  // field belongs to the snapshot itself, exactly where the reference projection and
+  // the browser client read it.
+  const fixture = await artifactFixture();
+  for (const voice of [{ state: "ready" as const }, null]) {
+    const server = await startComposedReferenceGameStaticShellComposition({
+      profile,
+      bootstrapToken: `${"C".repeat(42)}A`,
+      referenceStateFacade: Object.freeze({
+        read: async () => ({ ...fakeReadState(), voice }),
+        readDraft: async () => Object.freeze({ apiVersion: 1, revision: 2, text: "Saved draft" }),
+      }) as unknown as ComposedReferenceGameStaticShellCompositionOptions["referenceStateFacade"],
+      eventStream,
+      artifactRoot: fixture.root,
+      inspector: inspector(),
+    });
+    try {
+      const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+        method: "POST",
+        headers: { Origin: server.origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: `${"C".repeat(42)}A` }),
+      });
+      assert.equal(bootstrap.status, 200);
+      const root = (await bootstrap.json()) as { chat: { chat: Record<string, unknown>; voice?: unknown } };
+      assert.equal(Object.hasOwn(root.chat.chat, "voice"), false);
+      if (voice === null) {
+        // Absent, not null: the client renders no mic icon for an absent field.
+        assert.equal(Object.hasOwn(root.chat, "voice"), false);
+      } else {
+        assert.deepEqual(root.chat.voice, { state: "ready" });
+      }
+    } finally {
+      await server.close();
+    }
+  }
+  await fixture.dispose();
 });

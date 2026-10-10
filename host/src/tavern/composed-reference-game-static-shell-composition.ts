@@ -400,17 +400,21 @@ async function projectComposedChatSnapshot(
       },
       turn: state.turn,
       worldInfo: null,
-      // The additive v1 `voice` field the one app's composer reads for its mic
-      // status: the composed Chat projection carries it exactly as the reference
-      // projection does, so the single frontend keeps the voice surface rather
-      // than losing it with the reference shell.
-      voice: state.voice,
     },
     memory: {
       readAvailable: false,
       mutationAvailable: false,
       projectionRevision: null,
     },
+    // The additive optional v1 `voice` field belongs to the SNAPSHOT, exactly where
+    // the reference projection puts it: the contract's `chat` object is a strict object
+    // of six named fields and does not accept a seventh, while `voice` is an optional
+    // union on the snapshot that also accepts null. Writing it inside `chat` therefore
+    // made every non-null Chat snapshot fail its own validator: the composed bootstrap
+    // consumed its one-shot token and answered `state_unavailable`, and every retry
+    // answered `unauthorized`, so the launch could only report that it did not open.
+    // Projected only when a Host voice surface is attached; absent means no mic icon.
+    ...(state.voice === null ? {} : { voice: state.voice }),
     eventStream:
       tavernProfile.routeIds.includes("events") && state.eventStream !== null
         ? state.eventStream
