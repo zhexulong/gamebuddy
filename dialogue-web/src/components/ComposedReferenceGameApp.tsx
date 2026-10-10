@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Gamepad2 } from "lucide-react";
+import { BookOpen, Brain, Gamepad2, MessagesSquare, Settings, Users } from "lucide-react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, resolveLocale } from "../i18n";
 import {
@@ -32,12 +32,21 @@ import { composedProblemView as problemView, type ProblemViewState } from "../co
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
+import { ContextDrawer } from "./ContextDrawer";
+import {
+  ChatsPanelView,
+  MemoryPanelView,
+  SettingsPanelView,
+  WorldInfoPanelView,
+} from "./composed-management-panels";
+import { createComposedManagementPanelsApi } from "../composed-management-panels-api";
 import { GameDrawer } from "./GameDrawer";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
+
 
 
 const POLL_FIRST_MS = 250;
@@ -75,6 +84,11 @@ const STARDEW_GAME_INTEGRATION_ID = "stardew" as const;
  */
 const PANEL_PARAM = "panel";
 const GAME_PANEL = "game" as const;
+const CHATS_PANEL = "chats" as const;
+const CHARACTERS_PANEL = "characters" as const;
+const SETTINGS_PANEL = "settings" as const;
+const MEMORY_PANEL = "memory" as const;
+const WORLD_INFO_PANEL = "world-info" as const;
 
 function readPanelFromUrl(): string | null {
   return new URLSearchParams(window.location.hash.slice(1)).get(PANEL_PARAM);
@@ -171,6 +185,12 @@ export function ComposedReferenceGameApp() {
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
   const gameEntryRef = useRef<HTMLButtonElement>(null);
+  const chatsEntryRef = useRef<HTMLButtonElement>(null);
+  const charactersEntryRef = useRef<HTMLButtonElement>(null);
+  const settingsEntryRef = useRef<HTMLButtonElement>(null);
+  const memoryEntryRef = useRef<HTMLButtonElement>(null);
+  const worldInfoEntryRef = useRef<HTMLButtonElement>(null);
+  const managementApiRef = useRef(createComposedManagementPanelsApi());
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -207,6 +227,32 @@ export function ComposedReferenceGameApp() {
     // really gone and a later refresh cannot resurrect it. A drawer restored
     // from a URL this session never pushed is closed in place instead.
     if (window.history.state?.gbPanel === GAME_PANEL) {
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    const params = new URLSearchParams(url.hash.slice(1));
+    params.delete(PANEL_PARAM);
+    url.hash = params.toString();
+    window.history.replaceState(null, "", url.toString());
+    setOpenPanel(null);
+  };
+
+  // The generic panel open/close pair for the management drawers (Chats,
+  // Characters, Settings, Memory, World Info). Each is one history entry and
+  // one drawer (design/26 §4.2); closing restores focus to its entry.
+  const openPanelOf = (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) => (): void => {
+    if (openPanel !== panel) {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.hash.slice(1));
+      params.set(PANEL_PARAM, panel);
+      url.hash = params.toString();
+      window.history.pushState({ gbPanel: panel }, "", url.toString());
+    }
+    setOpenPanel(panel);
+  };
+  const closePanelOf = (panel: string): (() => void) => (): void => {
+    if (window.history.state?.gbPanel === panel) {
       window.history.back();
       return;
     }
@@ -1268,6 +1314,21 @@ export function ComposedReferenceGameApp() {
       !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state))
   );
 
+  const managementPanelsAvailable =
+    view.kind === "ready" &&
+    view.session.snapshot.chat !== null;
+
+  const openChats = openPanelOf(CHATS_PANEL, chatsEntryRef);
+  const openCharacters = openPanelOf(CHARACTERS_PANEL, charactersEntryRef);
+  const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
+  const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
+  const openWorldInfo = openPanelOf(WORLD_INFO_PANEL, worldInfoEntryRef);
+  const closeChats = closePanelOf(CHATS_PANEL);
+  const closeCharacters = closePanelOf(CHARACTERS_PANEL);
+  const closeSettings = closePanelOf(SETTINGS_PANEL);
+  const closeMemory = closePanelOf(MEMORY_PANEL);
+  const closeWorldInfo = closePanelOf(WORLD_INFO_PANEL);
+
   return (
     <div className="tavern-app-shell" data-profile="composed-reference-game">
       <SkipLink label={labels().skipToChat} />
@@ -1290,6 +1351,15 @@ export function ComposedReferenceGameApp() {
                  onClick: openGamePanel,
                  ref: gameEntryRef,
                },
+               ...(managementPanelsAvailable
+                 ? [
+                     { id: CHATS_PANEL, label: labels().chatsPanel, icon: MessagesSquare, active: openPanel === CHATS_PANEL, onClick: openChats, ref: chatsEntryRef },
+                     { id: CHARACTERS_PANEL, label: labels().charactersPanel, icon: Users, active: openPanel === CHARACTERS_PANEL, onClick: openCharacters, ref: charactersEntryRef },
+                     { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: openPanel === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
+                     { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: openPanel === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
+                     { id: WORLD_INFO_PANEL, label: labels().worldInfoPanel, icon: BookOpen, active: openPanel === WORLD_INFO_PANEL, onClick: openWorldInfo, ref: worldInfoEntryRef },
+                   ]
+                 : []),
              ]}
            />
           <main id="main-content" className="app-main-content">
@@ -1407,6 +1477,69 @@ export function ComposedReferenceGameApp() {
               />
               <StardewInstallationDiscovery api={composedApiRef.current} labels={labels()} />
             </GameDrawer>
+          )}
+          {/* The management panels (design/104 §2, design/26 §4.2): exactly one
+              drawer at a time, each backed by the delegated routes the composed
+              root serves. A panel whose route is not mounted is absent. */}
+          {openPanel === CHATS_PANEL && (
+            <ContextDrawer
+              title={labels().chatsPanel}
+              closeLabel={labels().close}
+              onClose={closeChats}
+              restoreFocusTo={chatsEntryRef}
+              testId="chats-drawer"
+              icon={MessagesSquare}
+            >
+              <ChatsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readChats()} />
+            </ContextDrawer>
+          )}
+          {openPanel === CHARACTERS_PANEL && (
+            <ContextDrawer
+              title={labels().charactersPanel}
+              closeLabel={labels().close}
+              onClose={closeCharacters}
+              restoreFocusTo={charactersEntryRef}
+              testId="characters-drawer"
+              icon={Users}
+            >
+              <p className="state-placeholder">{labels().charactersUnavailable}</p>
+            </ContextDrawer>
+          )}
+          {openPanel === SETTINGS_PANEL && (
+            <ContextDrawer
+              title={labels().settingsPanel}
+              closeLabel={labels().close}
+              onClose={closeSettings}
+              restoreFocusTo={settingsEntryRef}
+              testId="settings-drawer"
+              icon={Settings}
+            >
+              <SettingsPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readSettings()} />
+            </ContextDrawer>
+          )}
+          {openPanel === MEMORY_PANEL && (
+            <ContextDrawer
+              title={labels().memoryPanel}
+              closeLabel={labels().close}
+              onClose={closeMemory}
+              restoreFocusTo={memoryEntryRef}
+              testId="memory-drawer"
+              icon={Brain}
+            >
+              <MemoryPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readMemory()} />
+            </ContextDrawer>
+          )}
+          {openPanel === WORLD_INFO_PANEL && (
+            <ContextDrawer
+              title={labels().worldInfoPanel}
+              closeLabel={labels().close}
+              onClose={closeWorldInfo}
+              restoreFocusTo={worldInfoEntryRef}
+              testId="world-info-drawer"
+              icon={BookOpen}
+            >
+              <WorldInfoPanelView api={managementApiRef.current} labels={labels()} load={() => managementApiRef.current.readWorldInfo()} />
+            </ContextDrawer>
           )}
         </>
       )}
