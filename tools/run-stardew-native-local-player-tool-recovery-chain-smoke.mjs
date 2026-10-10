@@ -238,7 +238,7 @@ if (import.meta.main) {
   }
 }
 
-async function execute(phase, action, args, snapshot, trace, client) {
+export async function execute(phase, action, args, snapshot, trace, client) {
   if (snapshot.actionable !== true || snapshot.activeExecution != null)
     throw new Error(`${phase}_player_not_actionable`);
   const nonce = `${Date.now()}_${trace.length}`;
@@ -254,7 +254,7 @@ async function execute(phase, action, args, snapshot, trace, client) {
   trace.push({ phase, action, args, requestId, receipt: summarizeReceipt(receipt) });
   return receipt;
 }
-async function moveToReachableSoil(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs) {
+export async function moveToReachableSoil(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs) {
   if (chooseReachableSoilTile(snapshot)) return snapshot;
   for (let radius = 2; radius <= 12; radius++) {
     const candidates = [];
@@ -289,7 +289,7 @@ async function moveToReachableSoil(client, receipts, snapshot, trace, stabilizeT
   }
   throw new Error("no_reachable_native_till_fixture_ground");
 }
-async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
+export async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
   let fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
   const warp = resolveFarmWarp(fresh);
   if (!adjacent(fresh.tile, { x: warp.sourceX, y: warp.sourceY }))
@@ -316,7 +316,7 @@ async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutM
   });
 }
 
-async function moveToTile(client, receipts, snapshot, target, phase, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
+export async function moveToTile(client, receipts, snapshot, target, phase, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
   const fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
   const accepted = await execute(phase, "move_to_tile", target, fresh, trace, client);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
@@ -331,7 +331,7 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
   });
 }
 
-function resolveFarmWarp(snapshot) {
+export function resolveFarmWarp(snapshot) {
   const matches = Array.isArray(snapshot.warps)
     ? snapshot.warps.filter(
         (warp) =>
@@ -350,7 +350,7 @@ function resolveFarmWarp(snapshot) {
   return matches[0];
 }
 
-function adjacent(left, right) {
+export function adjacent(left, right) {
   return (
     Number.isInteger(left?.x) &&
     Number.isInteger(left?.y) &&
@@ -361,18 +361,18 @@ function adjacent(left, right) {
   );
 }
 
-function sameTile(left, right) {
+export function sameTile(left, right) {
   return Number.isInteger(left?.x) && Number.isInteger(left?.y) && left.x === right?.x && left.y === right?.y;
 }
 
-function chooseReachableSoilTile(snapshot) {
+export function chooseReachableSoilTile(snapshot) {
   return (
     snapshot.soilTiles?.find(
       (tile) => Number.isInteger(tile.x) && Number.isInteger(tile.y) && adjacent(snapshot.tile, tile),
     ) ?? null
   );
 }
-function parseStrictEvidence(evidence) {
+export function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   const expected = ["location", "target", "before", "after", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
   const result = {};
@@ -392,7 +392,7 @@ function parseTargetCoordinates(value) {
   if (!match) return { x: null, y: null };
   return { x: Number(match[1]), y: Number(match[2]) };
 }
-function summarizeWithSoil(snapshot) {
+export function summarizeWithSoil(snapshot) {
   return { ...summarizeSnapshot(snapshot), soilTiles: snapshot.soilTiles?.length ?? 0 };
 }
 function validateNativeLocalFixtureConfig(value) {
