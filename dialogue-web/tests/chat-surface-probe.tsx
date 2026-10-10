@@ -13,14 +13,11 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { BrowserMessageV1 } from "../src/reference-pipeline-api";
+import { Composer, type VoiceSurfaceStateV1 } from "../src/components/Composer";
 import { Timeline } from "../src/components/Timeline";
+import { messages } from "../src/i18n";
 
-const LABELS = {
-  chatTranscript: "Chat transcript",
-  emptyChat: "No messages in this chat.",
-  untitledChat: "Untitled chat",
-  you: "You",
-};
+const LABELS = messages("en");
 
 const reads = new Map<string, number>();
 
@@ -44,9 +41,10 @@ function tracked(handle: string, text: string, order: number): BrowserMessageV1 
 type Model = Readonly<{
   transcript: readonly BrowserMessageV1[];
   preview: Readonly<{ turnHandle: string; text: string }> | null;
+  voice: VoiceSurfaceStateV1 | null;
 }>;
 
-let model: Model = { transcript: [], preview: null };
+let model: Model = { transcript: [], preview: null, voice: null };
 let rerender: (() => void) | null = null;
 
 function Probe() {
@@ -58,13 +56,24 @@ function Probe() {
     };
   }, []);
   return (
-    <Timeline
-      transcript={model.transcript}
-      preview={model.preview}
-      companionName="Mira"
-      chatTitle="Probe"
-      labels={LABELS}
-    />
+    <>
+      <Timeline
+        transcript={model.transcript}
+        preview={model.preview}
+        companionName="Mira"
+        chatTitle="Probe"
+        labels={LABELS}
+      />
+      <Composer
+        value=""
+        onChange={() => undefined}
+        onSend={() => undefined}
+        onStop={() => undefined}
+        isGenerating={false}
+        labels={LABELS}
+        voice={model.voice}
+      />
+    </>
   );
 }
 
@@ -76,6 +85,16 @@ const chatProbe = {
   setPreview(text: string | null): void {
     model = { ...model, preview: text === null ? null : { turnHandle: "T", text } };
     rerender?.();
+  },
+  setVoice(state: VoiceSurfaceStateV1 | null): void {
+    model = { ...model, voice: state };
+    rerender?.();
+  },
+  voiceState(): string | null {
+    return document.querySelector("[data-voice-state]")?.getAttribute("data-voice-state") ?? null;
+  },
+  voiceLabel(): string | null {
+    return document.querySelector(".voice-status-label")?.textContent ?? null;
   },
   bubbleHtml(handle: string): string | null {
     return (

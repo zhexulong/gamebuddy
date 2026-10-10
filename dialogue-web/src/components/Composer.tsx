@@ -27,6 +27,13 @@ export function Composer({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const voiceLabel =
+    voice?.state === "speaking"
+      ? labels.voiceSpeaking
+      : voice?.state === "ready"
+        ? labels.voiceReady
+        : labels.voiceUnavailable;
+
   // Height is recomputed before paint on every value change so the textarea
   // grows and shrinks with the drafted text without a visible jump.
   useLayoutEffect(() => {
@@ -65,24 +72,30 @@ export function Composer({
         />
         <div className="composer-actions">
           {voice !== undefined && voice !== null && (
+            // Host and client agree on exactly three states (`unavailable`,
+            // `ready`, `speaking`); richer facts (consent, device) live on the
+            // management voice-preference route, not on the chat snapshot. The
+            // state is projected as a readable label, not only as a dot, so a
+            // player who does not hover still learns what the surface can do.
             <span
-              className={
-                voice.state === "speaking"
-                  ? "voice-status-dot voice-status-speaking"
-                  : voice.state === "ready"
-                    ? "voice-status-dot voice-status-ready"
-                    : "voice-status-dot voice-status-unavailable"
-              }
-              title={labels.voiceReady}
-              aria-label={
-                voice.state === "speaking"
-                  ? labels.voiceSpeaking
-                  : voice.state === "ready"
-                    ? labels.voiceReady
-                    : labels.voiceUnavailable
-              }
+              className="voice-status"
+              data-voice-state={voice.state}
+              role="status"
+              title={voiceLabel}
             >
-              {voice.state === "unavailable" ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+              <span
+                className={
+                  voice.state === "speaking"
+                    ? "voice-status-dot voice-status-speaking"
+                    : voice.state === "ready"
+                      ? "voice-status-dot voice-status-ready"
+                      : "voice-status-dot voice-status-unavailable"
+                }
+                aria-hidden="true"
+              >
+                {voice.state === "unavailable" ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+              </span>
+              <span className="voice-status-label">{voiceLabel}</span>
             </span>
           )}
           {isGenerating ? (
