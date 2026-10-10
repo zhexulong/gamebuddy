@@ -31,9 +31,7 @@
         "src/tavern/player-turn-acceptance.ts!",
         "src/tavern/provider-attempt-claim.ts!",
         "src/tavern/chat-provider-start.ts!",
-        "src/tavern/reference-pipeline-static-shell-composition.ts!",
         "src/tavern-management-dialogue-web.ts!",
-        "src/tavern/tavern-management-static-shell-composition.ts!",
         "src/tavern/static-artifact/index.ts!",
         "scripts/build-desktop-launcher-test-generation.mjs",
         "scripts/compiled-test-bootstrap.mjs",
@@ -61,9 +59,7 @@
     "dialogue-web": {
       "entry": [
         "src/main.tsx!",
-        "src/components/ReferenceApp.tsx!",
         "src/components/ComposedReferenceGameApp.tsx!",
-        "src/components/ManagementApp.tsx!",
         "src/components/Composer.tsx!",
         "src/components/drawers/ChatsDrawer.tsx!",
         "vite.config.ts"

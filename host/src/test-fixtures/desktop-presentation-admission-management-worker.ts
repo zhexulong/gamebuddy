@@ -14,20 +14,24 @@ import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/
 
 /**
  * Hermetic fixture for the composition-owned Tavern-management presentation
- * admission variant. It is spawned by desktop-presentation-admission-owner.test.ts
- * with `--experimental-test-module-mocks`: only the durable Chat-owned service
- * builders (state facade, management, Memory, World Info binding service, and
- * the managed repository) are mocked by URL, so the real management static
- * shell composition still verifies a real browser artifact and serves a real
- * loopback listener. No game projection is ever supplied to the variant. The
- * worker prints one JSON line of observations; the test owns every assertion.
+ * entry point. It is spawned by desktop-presentation-admission-owner.test.ts
+ * with `--experimental-test-module-mocks`: the mounted-Chat lane builders (the
+ * reference state facade and the Chat pipeline service) and the durable
+ * Chat-owned management service builders are mocked by URL, so the real
+ * composed static shell composition still verifies a real browser artifact and
+ * serves a real loopback listener. No game projection is ever supplied, so the
+ * entry point constructs no Game authority and the composed root's Game
+ * projection is the honest `null`. The worker prints one JSON line of
+ * observations; the test owns every assertion.
  */
 
 const scenario = process.argv[2] ?? "";
 const bootstrapToken = `${"A".repeat(42)}A`;
 const constructionFailure = new Error("management_lane_construction_failed");
 const counts = {
-  stateFacadeCreated: 0,
+  chatFacadeCreated: 0,
+  chatServiceCreated: 0,
+  chatServiceClosed: 0,
   managementCreated: 0,
   memoryCreated: 0,
   worldInfoCreated: 0,
@@ -39,12 +43,14 @@ const counts = {
   connectionClosed: 0,
 };
 const observedProfileIds: Record<string, string | null> = {
-  facade: null,
+  chatFacade: null,
+  chatService: null,
   management: null,
   memory: null,
   worldInfo: null,
 };
-let facadeSawWorldInfoService = false;
+let facadeSawSharedStream = false;
+let serviceSawSharedStream = false;
 let connectionAgentDir: string | null = null;
 let connectionSawTurnState = false;
 let repositoryRuntimeRoot: string | null = null;
@@ -52,9 +58,9 @@ let eventStream: ReturnType<typeof createChatEventStream> | undefined;
 
 const handle = `${"B".repeat(42)}A`;
 const base = TavernBrowserFixtureV1.snapshot();
-const fakeStateFacade = Object.freeze({
-  read: async () => {
-    return Object.freeze({
+const fakeChatFacade = Object.freeze({
+  read: async () =>
+    Object.freeze({
       selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
       companionDisplayName: "Mira",
       title: "Exact Chat",
@@ -62,12 +68,29 @@ const fakeStateFacade = Object.freeze({
       draft: Object.freeze({ revision: 1, text: null }),
       turn: null,
       operations: base.operations,
-      worldInfo: Object.freeze({ state: "none", revision: handle, items: [] }),
-    });
-  },
+      eventStream: null,
+      // The reference projection always carries the additive voice field; the
+      // composed Chat projection copies it, so the fixture must model it.
+      voice: null,
+    }),
+  readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: "Saved draft" }),
   // The real facade owns its store and releases it on close; the composition
   // owner's close chain calls this, so the fixture must model it.
   close: async () => undefined,
+});
+const fakeChatService = Object.freeze({
+  submitAfterResponseCommit: async () => {
+    throw new Error("unused_submit");
+  },
+  readSubmissionStatus: async () => {
+    throw new Error("unused_status");
+  },
+  cancel: async () => {
+    throw new Error("unused_cancel");
+  },
+  close: async () => {
+    counts.chatServiceClosed += 1;
+  },
 });
 const fakeManagementService = Object.freeze({
   listChats: async () => {
@@ -192,20 +215,36 @@ async function artifactFixture(withManifest = true): Promise<{ hostArtifactRoot:
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "tavern-management-state.js")).href,
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href,
     {
       namedExports: {
-        createTavernManagementStateFacade: async (
+        createReferencePipelineStateFacade: async (
           _manifest: unknown,
           _lease: unknown,
           profile: { readonly profileId?: string } | undefined,
-          worldInfoService: unknown,
+          stream: unknown,
         ) => {
           if (scenario === "facade-failure") throw constructionFailure;
-          counts.stateFacadeCreated += 1;
-          observedProfileIds.facade = profile?.profileId ?? null;
-          facadeSawWorldInfoService = worldInfoService === fakeWorldInfoService;
-          return fakeStateFacade;
+          counts.chatFacadeCreated += 1;
+          observedProfileIds.chatFacade = profile?.profileId ?? null;
+          facadeSawSharedStream = stream === eventStream;
+          return fakeChatFacade;
+        },
+      },
+    },
+  );
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href,
+    {
+      namedExports: {
+        createChatPipelineService: (options: {
+          readonly profile?: { readonly profileId?: string };
+          readonly eventStream?: unknown;
+        }) => {
+          counts.chatServiceCreated += 1;
+          observedProfileIds.chatService = options?.profile?.profileId ?? null;
+          serviceSawSharedStream = options?.eventStream === eventStream;
+          return fakeChatService;
         },
       },
     },
@@ -317,19 +356,26 @@ async function main(): Promise<void> {
     if (admission !== undefined) {
       const origin = new URL(admission.launchUrl).origin;
       observations.launchUrlMatchesToken =
-        admission.launchUrl === `${origin}/#profile=management&boot=${bootstrapToken}`;
+        admission.launchUrl === `${origin}/#profile=composed-reference-game&boot=${bootstrapToken}`;
       const shell = await fetch(`${origin}/`);
       observations.shellStatus = shell.status;
       observations.shellServesArtifact = (await shell.text()).includes("app-abcdef12.js");
-      const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      // The one app bootstraps through the composed broker: the nested Chat
+      // projection carries the reference Chat Core profile identity and no game
+      // projection was supplied, so the composed root's Game projection is null.
+      const bootstrap = await fetch(`${origin}/api/composed-reference-game/v1/bootstrap`, {
         method: "POST",
         headers: { Origin: origin, "Content-Type": "application/json" },
         body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
       });
       observations.bootstrapStatus = bootstrap.status;
       if (bootstrap.status === 200) {
-        const root = (await bootstrap.json()) as { build: { profileId: string } };
-        observations.profileId = root.build.profileId;
+        const root = (await bootstrap.json()) as {
+          chat: { build: { profileId: string } };
+          game: unknown;
+        };
+        observations.profileId = root.chat.build.profileId;
+        observations.gameIsNull = root.game === null;
       } else {
         observations.bootstrapBody = await bootstrap.text();
       }
@@ -354,7 +400,8 @@ async function main(): Promise<void> {
     `${JSON.stringify({
       ...counts,
       observedProfileIds,
-      facadeSawWorldInfoService,
+      facadeSawSharedStream,
+      serviceSawSharedStream,
       connectionAgentDir,
       connectionSawTurnState,
       repositoryRuntimeRoot,

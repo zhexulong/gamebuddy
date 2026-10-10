@@ -400,6 +400,11 @@ async function projectComposedChatSnapshot(
       },
       turn: state.turn,
       worldInfo: null,
+      // The additive v1 `voice` field the one app's composer reads for its mic
+      // status: the composed Chat projection carries it exactly as the reference
+      // projection does, so the single frontend keeps the voice surface rather
+      // than losing it with the reference shell.
+      voice: state.voice,
     },
     memory: {
       readAvailable: false,

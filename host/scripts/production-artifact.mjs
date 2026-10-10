@@ -46,10 +46,9 @@ const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
   "tavern/player-turn-acceptance.js",
   "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
-  "tavern/reference-pipeline-static-shell-composition.js",
+  "tavern/composed-reference-game-static-shell-composition.js",
   "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
-  "tavern/tavern-management-static-shell-composition.js",
   "tavern/static-artifact/index.js",
 ]);
 const allVerificationRoots = (config) => [...config.entryRoots, ...config.verificationRoots];

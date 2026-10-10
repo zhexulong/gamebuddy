@@ -13,14 +13,14 @@ import { createChatEventStream } from "../tavern/chat-event-stream.js";
 import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/index.test-support.js";
 
 /**
- * Hermetic fixture for the composition-owned chat-only presentation admission
- * variant. It is spawned by desktop-presentation-admission-owner.test.ts with
- * `--experimental-test-module-mocks`: only the two mounted-Chat lane builders
- * (the durable state facade and the Chat pipeline service) are mocked by URL,
- * so the real reference static shell composition still verifies a real browser
- * artifact and serves a real loopback listener. No game projection is ever
- * supplied to the variant. The worker prints one JSON line of observations;
- * the test owns every assertion.
+ * Hermetic fixture for the composition-owned Chat Core presentation entry
+ * point. It is spawned by desktop-presentation-admission-owner.test.ts with
+ * `--experimental-test-module-mocks`: only the mounted-Chat lane builders (the
+ * durable state facade and the Chat pipeline service) are mocked by URL, so the
+ * real composed static shell composition still verifies a real browser artifact
+ * and serves a real loopback listener. No game projection is ever supplied, so
+ * the variant constructs no Game authority. The worker prints one JSON line of
+ * observations; the test owns every assertion.
  */
 
 const scenario = process.argv[2] ?? "";
@@ -197,22 +197,26 @@ async function main(): Promise<void> {
     if (admission !== undefined) {
       const origin = new URL(admission.launchUrl).origin;
       observations.launchUrlMatchesToken =
-        admission.launchUrl === `${origin}/#profile=reference&boot=${bootstrapToken}`;
+        admission.launchUrl === `${origin}/#profile=composed-reference-game&boot=${bootstrapToken}`;
       const shell = await fetch(`${origin}/`);
       observations.shellStatus = shell.status;
       observations.shellServesArtifact = (await shell.text()).includes("app-abcdef12.js");
-      const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      // The one app bootstraps through the composed broker; the nested Chat
+      // projection still carries the reference Chat Core profile identity.
+      const bootstrap = await fetch(`${origin}/api/composed-reference-game/v1/bootstrap`, {
         method: "POST",
         headers: { Origin: origin, "Content-Type": "application/json" },
         body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
       });
       observations.bootstrapStatus = bootstrap.status;
       if (bootstrap.status === 200) {
-        const root = (await bootstrap.json()) as { build: { profileId: string }; voice?: { state: string } };
-        observations.profileId = root.build.profileId;
-        // The additive voice surface must project into the frozen snapshot
-        // through the real facade + real bootstrap route.
-        observations.voiceStateObserved = root.voice?.state ?? null;
+        const root = (await bootstrap.json()) as {
+          chat: { build: { profileId: string }; voice?: { state: string } | null };
+        };
+        observations.profileId = root.chat.build.profileId;
+        // The additive voice surface must project into the frozen Chat snapshot
+        // through the real facade + the composed bootstrap route.
+        observations.voiceStateObserved = root.chat.voice?.state ?? null;
       }
       await Promise.all([admission.close(), admission.close()]);
       observations.listenerClosedAfterClose = await fetch(`${origin}/`).then(

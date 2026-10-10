@@ -104,7 +104,9 @@ function runManagementPresentationAdmissionFixture(
 type ManagementPresentationAdmissionObservations = Readonly<{
   scenario: string;
   outcome: "resolved" | "rejected";
-  stateFacadeCreated: number;
+  chatFacadeCreated: number;
+  chatServiceCreated: number;
+  chatServiceClosed: number;
   managementCreated: number;
   memoryCreated: number;
   worldInfoCreated: number;
@@ -115,12 +117,14 @@ type ManagementPresentationAdmissionObservations = Readonly<{
   worldInfoClosed: number;
   connectionClosed: number;
   observedProfileIds: Readonly<{
-    facade: string | null;
+    chatFacade: string | null;
+    chatService: string | null;
     management: string | null;
     memory: string | null;
     worldInfo: string | null;
   }>;
-  facadeSawWorldInfoService: boolean;
+  facadeSawSharedStream: boolean;
+  serviceSawSharedStream: boolean;
   connectionAgentDir: string | null;
   connectionSawTurnState: boolean;
   repositoryRuntimeRoot: string | null;
@@ -132,6 +136,7 @@ type ManagementPresentationAdmissionObservations = Readonly<{
   shellServesArtifact?: boolean;
   bootstrapStatus?: number;
   profileId?: string;
+  gameIsNull?: boolean;
   listenerClosedAfterClose?: boolean;
 }>;
 
@@ -263,11 +268,11 @@ test("presentation admission owner drains the Chat pipeline service and propagat
   assert.ok((observed.errorMessage ?? "").length > 0);
 });
 
-test("chat-only presentation admission variant serves the reference Chat Core shell without any game surface", async () => {
+test("chat-only presentation entry point serves the one composed shell without any game surface", async () => {
   const observed = await runChatOnlyPresentationAdmissionFixture("start-close");
 
   assert.equal(observed.outcome, "resolved");
-  // The variant declares the one reference Chat surface; both the state facade
+  // The entry point declares the one reference Chat surface; both the state facade
   // and the pipeline service project that exact tavern profile over the one
   // shared event stream, and no game projection participates.
   assert.equal(observed.facadeCreated, 1);
@@ -276,27 +281,26 @@ test("chat-only presentation admission variant serves the reference Chat Core sh
   assert.equal(observed.tavernProfileIdObservedByService, "gamebuddy.chat-core.reference-pipeline");
   assert.equal(observed.facadeSawSharedStream, true);
   assert.equal(observed.serviceSawSharedStream, true);
-  // The verified browser artifact is served by the real listener under the
-  // reference profile marker, and the waiter carries the one-time token.
+  // The verified browser artifact is served by the real listener under the one
+  // product profile marker, and the waiter carries the one-time token.
   assert.equal(observed.launchUrlMatchesToken, true);
   assert.equal(observed.shellStatus, 200);
   assert.equal(observed.shellServesArtifact, true);
-  // The Chat Core bootstrap projection carries the reference profile identity;
-  // there is no composed or game profile anywhere in this surface, and the
-  // additive v1 voice surface projects through the real facade + bootstrap
-  // route (mic icon lights up in the browser).
+  // The composed bootstrap projection carries the reference profile identity in
+  // its nested Chat snapshot; there is no game profile anywhere in this surface,
+  // and the additive v1 voice surface projects through the real facade +
+  // composed bootstrap route (mic icon lights up in the browser).
   assert.equal(observed.bootstrapStatus, 200);
   assert.equal(observed.profileId, "gamebuddy.chat-core.reference-pipeline");
   assert.equal((observed as ChatOnlyPresentationAdmissionObservations & { voiceStateObserved?: string | null }).voiceStateObserved, "ready");
   // Closing once (twice requested) closes the one listener and drains the Chat
-  // pipeline service through its delegated handler exactly once. The chat-only
-  // variant never touches the mounted lease or any facade, and it created no
-  // Game owner.
+  // pipeline service through its delegated handler exactly once. The entry point
+  // never touches the mounted lease or any facade, and it created no Game owner.
   assert.equal(observed.listenerClosedAfterClose, true);
   assert.equal(observed.serviceClosedAfterClose, 1);
 });
 
-test("chat-only presentation admission variant drains the Chat pipeline service and propagates an unverified artifact failure", async () => {
+test("chat-only presentation entry point drains the Chat pipeline service and propagates an unverified artifact failure", async () => {
   const observed = await runChatOnlyPresentationAdmissionFixture("unverified-artifact");
 
   assert.equal(observed.outcome, "rejected");
@@ -309,7 +313,7 @@ test("chat-only presentation admission variant drains the Chat pipeline service 
   assert.ok((observed.errorMessage ?? "").length > 0);
 });
 
-test("chat-only presentation admission variant creates no Chat admission owner when the state facade does not construct", async () => {
+test("chat-only presentation entry point creates no Chat admission owner when the state facade does not construct", async () => {
   const observed = await runChatOnlyPresentationAdmissionFixture("facade-failure");
 
   assert.equal(observed.outcome, "rejected");
@@ -319,58 +323,72 @@ test("chat-only presentation admission variant creates no Chat admission owner w
   assert.equal(observed.serviceClosed, 0);
 });
 
-test("management presentation admission variant serves the tavern_management shell over its Chat-owned services without any game surface", async () => {
+test("management presentation entry point serves the one composed shell over its Chat-owned management services without any game surface", async () => {
   const observed = await runManagementPresentationAdmissionFixture("start-close");
 
   assert.equal(observed.outcome, "resolved");
-  // The variant assembles the state facade, management service, Memory service,
-  // World Info binding service, and the real durable managed repository, all
-  // over the one management profile; the facade receives the exact binding
-  // service and the repository is created from the manifest runtime root.
-  assert.equal(observed.stateFacadeCreated, 1);
+  // The entry point serves the same single app the composed reference-game
+  // surface serves: the reference Chat Core lane (state facade + pipeline
+  // service, both on the one shared event stream) plus the management domains
+  // the Chats/Characters/Settings/Memory surfaces read and write, over the one
+  // management profile and the real durable managed repository. No Game
+  // authority is constructed.
+  assert.equal(observed.chatFacadeCreated, 1);
+  assert.equal(observed.chatServiceCreated, 1);
+  assert.equal(observed.observedProfileIds.chatFacade, "gamebuddy.chat-core.reference-pipeline");
+  assert.equal(observed.observedProfileIds.chatService, "gamebuddy.chat-core.reference-pipeline");
+  assert.equal(observed.facadeSawSharedStream, true);
+  assert.equal(observed.serviceSawSharedStream, true);
   assert.equal(observed.managementCreated, 1);
   assert.equal(observed.memoryCreated, 1);
   assert.equal(observed.worldInfoCreated, 1);
   assert.equal(observed.repositoryCreated, 1);
-  assert.equal(observed.observedProfileIds.facade, "gamebuddy.tavern-management.chat-list-title");
-  assert.equal(observed.observedProfileIds.management, "gamebuddy.tavern-management.chat-list-title");
-  assert.equal(observed.observedProfileIds.memory, "gamebuddy.tavern-management.chat-list-title");
-  assert.equal(observed.observedProfileIds.worldInfo, "gamebuddy.tavern-management.chat-list-title");
-  assert.equal(observed.facadeSawWorldInfoService, true);
+  const managementProfileId = "gamebuddy.tavern-management.chat-list-title";
+  assert.equal(observed.observedProfileIds.management, managementProfileId);
+  assert.equal(observed.observedProfileIds.memory, managementProfileId);
+  assert.equal(observed.observedProfileIds.worldInfo, managementProfileId);
   assert.equal(observed.repositoryRuntimeRoot, observed.runtimeRoot);
   // The connection service receives the exact agent directory of the mounted
-  // Chat runtime — the identity's own context root, not a shared one — and a
-  // turn-state reader, so activation can refuse a running turn.
+  // Chat runtime - the identity's own context root, not a shared one - and a
+  // turn-state reader bound to this admission's own reference facade, so
+  // activation can refuse a running turn.
   assert.equal(observed.connectionCreated, 1);
   const agentDir = (observed.connectionAgentDir ?? "").replaceAll("\\", "/");
   const runtimeRoot = (observed.runtimeRoot ?? "").replaceAll("\\", "/");
   assert.match(agentDir, /\/contexts\/[a-f0-9]{64}\/pi-agent$/);
   assert.ok(agentDir.startsWith(`${runtimeRoot}/`), `expected ${agentDir} under ${runtimeRoot}`);
   assert.equal(observed.connectionSawTurnState, true);
-  // The verified browser artifact is served by the real listener under the
-  // management profile marker, and the waiter carries the one-time token.
+  // The verified browser artifact is served by the real listener under the one
+  // product profile marker, and the waiter carries the one-time token.
   assert.equal(observed.launchUrlMatchesToken, true);
   assert.equal(observed.shellStatus, 200);
   assert.equal(observed.shellServesArtifact, true);
+  // The composed bootstrap carries the reference Chat projection and the honest
+  // null Game projection: this entry point declares no game profile, so no Game
+  // route and no lifecycle admission exists for it.
   assert.equal(observed.bootstrapStatus, 200);
-  assert.equal(observed.profileId, "gamebuddy.tavern-management.chat-list-title");
-  // Closing once (twice requested) closes the one listener and drains the
-  // management, Memory, and World Info services behind it exactly once; the
-  // mounted lease and any facade stay their own owners'.
+  assert.equal(observed.profileId, "gamebuddy.chat-core.reference-pipeline");
+  assert.equal(observed.gameIsNull, true);
+  // Closing once (twice requested) closes the one listener and drains the Chat
+  // pipeline service and every management service behind it exactly once; the
+  // mounted lease and the reference facade stay their own owners'.
   assert.equal(observed.listenerClosedAfterClose, true);
+  assert.equal(observed.chatServiceClosed, 1);
   assert.equal(observed.managementClosed, 1);
   assert.equal(observed.memoryClosed, 1);
   assert.equal(observed.worldInfoClosed, 1);
   assert.equal(observed.connectionClosed, 1);
 });
 
-test("management presentation admission variant drains every created service and propagates an unverified artifact failure", async () => {
+test("management presentation entry point drains every created service and propagates an unverified artifact failure", async () => {
   const observed = await runManagementPresentationAdmissionFixture("unverified-artifact");
 
   assert.equal(observed.outcome, "rejected");
   // Every Chat-owned service was created before the listener verification
-  // failed; the variant drains them (management, Memory, World Info,
-  // connection) and propagates the original artifact failure unchanged.
+  // failed; the entry point drains them (Chat pipeline service, management,
+  // Memory, World Info, connection) and propagates the original artifact
+  // failure unchanged.
+  assert.equal(observed.chatServiceClosed, 1);
   assert.equal(observed.managementClosed, 1);
   assert.equal(observed.memoryClosed, 1);
   assert.equal(observed.worldInfoClosed, 1);
@@ -379,18 +397,20 @@ test("management presentation admission variant drains every created service and
   assert.ok((observed.errorMessage ?? "").length > 0);
 });
 
-test("management presentation admission variant drains only the services already created when the state facade fails", async () => {
+test("management presentation entry point propagates a reference-facade failure and creates no service behind it", async () => {
   const observed = await runManagementPresentationAdmissionFixture("facade-failure");
 
   assert.equal(observed.outcome, "rejected");
   assert.equal(observed.propagatedOriginalFailure, true);
-  assert.equal(observed.stateFacadeCreated, 0);
-  // The binding service was created before the facade; management and Memory
-  // never constructed, and only the created binding service drains.
-  assert.equal(observed.worldInfoCreated, 1);
+  // The reference Chat lane is the first thing the one assembly constructs, so a
+  // facade that does not construct leaves nothing created behind it: no Chat
+  // pipeline service and no management domain ever exists, and nothing needs
+  // draining.
+  assert.equal(observed.chatFacadeCreated, 0);
+  assert.equal(observed.chatServiceCreated, 0);
   assert.equal(observed.managementCreated, 0);
   assert.equal(observed.memoryCreated, 0);
-  assert.equal(observed.worldInfoClosed, 1);
-  assert.equal(observed.managementClosed, 0);
-  assert.equal(observed.memoryClosed, 0);
+  assert.equal(observed.worldInfoCreated, 0);
+  assert.equal(observed.connectionCreated, 0);
+  assert.equal(observed.chatServiceClosed, 0);
 });

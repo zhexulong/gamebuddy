@@ -33,9 +33,6 @@ import { createTavernConnectionService } from "../tavern/connection-service.js";
 import type { TavernManagementDialogueWebOptions } from "../tavern-management-dialogue-web.js";
 import type { TavernManagementDelegatedOptions } from "../tavern-management-dialogue-web.delegated.js";
 import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
-import { startReferencePipelineStaticShellComposition } from "../tavern/reference-pipeline-static-shell-composition.js";
-import { createTavernManagementStateFacade } from "../tavern/tavern-management-state.js";
-import { startTavernManagementStaticShellComposition } from "../tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import type { WorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -46,11 +43,18 @@ import {
 } from "../windows-reparse-inspector/index.js";
 
 /**
- * Host-owned assembly input for the one composed reference-game browser
- * presentation. The composed surface declaration is not selected here or by
- * bootstrap: the owner serves the one reference Chat profile plus the game
- * profile of the supplied projection, over the exact mounted Chat lane and the
- * verified browser artifact of the owning Host generation.
+ * Host-owned assembly input for the one browser presentation this product
+ * ships. The surface declaration is not selected here or by bootstrap: the
+ * owner serves the one reference Chat profile, the management domains' own
+ * profile, and - when a Game projection is supplied - that projection's game
+ * profile, over the exact mounted Chat lane and the verified browser artifact
+ * of the owning Host generation.
+ *
+ * `presentation` is optional because this product has one frontend but more
+ * than one presentation entry point: the composed reference-game surface
+ * supplies a Game projection, while the Chat-owned entry points (Chat Core and
+ * the Tavern-management surface) serve the same single app and construct no
+ * Game authority at all.
  */
 export type DesktopPresentationAdmissionInput = Readonly<{
   manifest: HostDeploymentManifest;
@@ -60,8 +64,12 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   /** The one mounted Chat event stream the state facade and the service share. */
   eventStream: ChatEventStream;
   lease: MountedChatRuntimeLease;
-  /** Game-owned projection of the lifecycle owner this presentation serves. */
-  presentation: GamePresentationProjection;
+  /**
+   * Game-owned projection of the lifecycle owner this presentation serves.
+   * Absent => the one app's Game surface renders the honest `game: null`
+   * projection and no Game route or lifecycle admission exists.
+   */
+  presentation?: GamePresentationProjection;
   /** Dev/QA artifact roots supply their own inspector; production uses the published helper. */
   inspector?: WindowsReparseInspectorCapability;
   /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
@@ -77,34 +85,12 @@ export type DesktopPresentationAdmissionInput = Readonly<{
 }>;
 
 /**
- * Host-owned assembly input for the Chat-only (Chat Core) and Tavern-management
- * presentation variants. These variants serve the Chat surface alone over the
- * exact mounted Chat lane; they never construct a Game coordinator or touch a
- * Game projection, and the mounted lease stays its own owner's.
+ * The Chat Core and Tavern-management presentation entry points serve this
+ * same input: one frontend means one assembly, and the two names remain only
+ * because the Host's surface selector still calls each of them.
  */
-export type ChatOnlyPresentationAdmissionInput = Readonly<{
-  manifest: HostDeploymentManifest;
-  /** Host generation root holding the browser artifact and native helpers. */
-  hostArtifactRoot: string;
-  bootstrapToken: string;
-  /** The one mounted Chat event stream the state facade and the service share. */
-  eventStream: ChatEventStream;
-  lease: MountedChatRuntimeLease;
-  /** Dev/QA artifact roots supply their own inspector; production uses the published helper. */
-  inspector?: WindowsReparseInspectorCapability;
-  /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
-  voiceSurface?: VoiceSurfaceReader;
-  /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
-  speechSink?: ChatVoiceSpeechPublisher;
-  /**
-   * Optional read-only Voice output endpoint enumeration (forwarded to the
-   * Voice Gateway). Absent => the settings surface offers the Windows default
-   * selection only, never a fabricated device list.
-   */
-  listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
-}>;
-
-export type TavernManagementPresentationAdmissionInput = ChatOnlyPresentationAdmissionInput;
+export type ChatOnlyPresentationAdmissionInput = DesktopPresentationAdmissionInput;
+export type TavernManagementPresentationAdmissionInput = DesktopPresentationAdmissionInput;
 
 /**
  * Composition-owned presentation admission child. Its one loopback listener and
@@ -118,83 +104,27 @@ export type DesktopPresentationAdmission = Readonly<{
 }>;
 
 /**
- * Starts the Chat-only presentation admission (Chat Core surface) over the
- * exact supplied Chat lease and verified browser artifact, with the one
- * reference Chat profile declared here. A construction failure drains the Chat
- * pipeline service it created and never touches the Chat lease or the facade,
- * so those exact owners stay live for their own recovery.
+ * The Chat Core presentation entry point: the one browser app over the exact
+ * supplied Chat lease and the verified browser artifact, with no Game
+ * projection - so no Game route, lifecycle admission or coordinator exists for
+ * this mount, and the app's Game surface renders the honest `game: null`
+ * projection.
  */
 export async function startChatOnlyPresentationAdmission(
   input: ChatOnlyPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
-  const tavernProfile = composeReferenceTavernProfile();
-  const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
-  // The chat-only surface composes the same reference-pipeline lane as the
-  // composed reference-game variant, without any game projection wiring.
-  const referenceStateFacade = await createReferencePipelineStateFacade(
-    input.manifest,
-    input.lease,
-    tavernProfile,
-    input.eventStream,
-    input.voiceSurface,
-  );
-  const pipelineService = createChatPipelineService({
-    manifest: input.manifest,
-    lease: input.lease,
-    profile: tavernProfile,
-    eventStream: input.eventStream,
-    ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
-  });
-  let server: Awaited<ReturnType<typeof startReferencePipelineStaticShellComposition>>;
-  try {
-    server = await startReferencePipelineStaticShellComposition({
-      referenceStateFacade,
-      pipelineService,
-      eventStream: input.eventStream,
-      profile: tavernProfile,
-      bootstrapToken: input.bootstrapToken,
-      inspector,
-      // The immutable browser artifact destination of one Host generation.
-      artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
-    });
-  } catch (error) {
-    // No listener exists yet; the Chat pipeline service is the only Chat-lane
-    // admission owner this construction created, so drain it and preserve the
-    // construction failure unchanged.
-    try {
-      await pipelineService.close();
-    } catch {
-      // Preserve the chat-only construction failure.
-    }
-    throw error;
-  }
-  let closePromise: Promise<void> | undefined;
-  return Object.freeze({
-    launchUrl: server.launchUrl,
-    // Closing the listener drains its delegated Chat admission and the Chat
-    // pipeline service behind it; the mounted lease stays its own owner's. The
-    // state facade holds its own store, so it is released here too.
-    close: () =>
-      (closePromise ??= (async () => {
-        try {
-          await server.close();
-        } finally {
-          await referenceStateFacade.close();
-        }
-      })()),
-  });
+  return await startDesktopPresentationAdmission(input);
 }
 
 /**
- * The management domains the Chats/Characters/Game/Settings/Memory World Info
- * panels read and write (design/104 §2, design/26 §4.2). Both presentation
- * mounts - the standalone tavern_management shell and the composed
- * reference-game shell - build them through this one assembly, over the same
- * durable stores and the same lease-bound services, so a panel and the
- * management surface are two views of one state rather than two owners of it.
+ * The management domains the one app's Chats/Characters/Settings/Memory
+ * surfaces read and write (design/104 §2, design/26 §4.2). There is one
+ * assembly for them, over the same durable stores and the same lease-bound
+ * services, so a panel and its surface are two views of one state rather than
+ * two owners of it.
  *
- * `owned` lists every created service in creation order: a mount that fails to
- * construct drains it in reverse order, and a mount that starts closes it once
+ * `owned` lists every created service in creation order: an assembly that fails
+ * to construct drains it in reverse order, and one that starts closes it once
  * its listener has drained.
  */
 type TavernManagementDomains = Readonly<
@@ -271,8 +201,8 @@ function mountedTurnActive(turn: BrowserTurnV1 | null): boolean {
  * player-preference and card-import services, and the Character library whose
  * companion handles are minted through the mounted lease projection so the
  * browser can never decode a durable companion identifier. `worldInfoService`
- * is supplied because a mount that needs its own state facade must create that
- * facade from the binding service before the rest of the domains exist.
+ * is supplied because the binding service must exist before the domains that
+ * share its profile do.
  */
 function createTavernManagementDomains(
   manifest: HostDeploymentManifest,
@@ -430,107 +360,32 @@ function createTavernManagementDomains(
   });
 }
 
-/**
- * Starts the Tavern-management presentation admission over the exact supplied
- * Chat lease and verified browser artifact, with the one tavern_management
- * profile declared here. No Game coordinator or projection participates: the
- * durable managed World Info repository, binding service, state facade,
- * management service, and Memory service are all Chat-owned. A construction
- * failure drains every created service in reverse order and never touches the
- * Chat lease or the facade, so those exact owners stay live for their own
- * recovery.
- */
 export async function startTavernManagementPresentationAdmission(
   input: TavernManagementPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
-  const tavernProfile = composeTavernManagementProfile();
-  const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
-  const createdServices: { close(): Promise<void> }[] = [];
-  let server: Awaited<ReturnType<typeof startTavernManagementStaticShellComposition>>;
-  try {
-    const worldInfoService = createTavernManagedWorldInfoService(
-      input.manifest,
-      input.lease,
-      tavernProfile,
-    );
-    createdServices.push(worldInfoService);
-    const managementStateFacade = await createTavernManagementStateFacade(
-      input.manifest,
-      input.lease,
-      tavernProfile,
-      worldInfoService,
-    );
-    createdServices.push(managementStateFacade);
-    // The management domains: the same durable stores and the same lease-bound
-    // services the composed reference-game shell mounts, so a panel and the
-    // management surface are two views of one state rather than two owners.
-    const { domains, owned } = createTavernManagementDomains(
-      input.manifest,
-      input.lease,
-      tavernProfile,
-      worldInfoService,
-    );
-    createdServices.push(...owned);
-    // The connection service owns the player's provider/model/credential
-    // selection. Its turn-state reader is this mount's own management facade, so
-    // an activation cannot switch a turn that is still in flight (design/28 §5.3).
-    const connectionService = createTavernConnectionService({
-      agentDir: managementAgentDir(input.manifest, input.lease),
-      readTurnState: async () => ({
-        turnActive: mountedTurnActive((await managementStateFacade.read()).turn),
-      }),
-    });
-    createdServices.push(connectionService);
-    server = await startTavernManagementStaticShellComposition({
-      managementStateFacade,
-      connectionService,
-      ...domains,
-      ...(input.listVoiceOutputDevices === undefined
-        ? {}
-        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
-      profile: tavernProfile,
-      bootstrapToken: input.bootstrapToken,
-      inspector,
-      // The immutable browser artifact destination of one Host generation.
-      artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
-    });
-  } catch (error) {
-    // No listener exists yet; drain the created Chat-owned services in reverse
-    // creation order and preserve the construction failure unchanged. The
-    // mounted lease and the facade are never touched.
-    for (let index = createdServices.length - 1; index >= 0; index -= 1) {
-      try {
-        await createdServices[index]!.close();
-      } catch {
-        // Preserve the management construction failure.
-      }
-    }
-    throw error;
-  }
-  let closePromise: Promise<void> | undefined;
-  return Object.freeze({
-    launchUrl: server.launchUrl,
-    // Closing the listener drains its delegated management, Memory, and World
-    // Info services behind it; the mounted lease stays its own owner's.
-    close: () => (closePromise ??= server.close()),
-  });
+  return await startDesktopPresentationAdmission(input);
 }
 
 /**
- * Starts the composed reference-game presentation admission over the exact
- * supplied Chat lease, game projection, and verified browser artifact. A
- * construction failure drains the Chat pipeline service it created and never
- * touches the Chat lease, the facade, or any Game authority, so those exact
- * owners stay live for their own recovery.
+ * The one presentation admission this product starts, over the exact supplied
+ * Chat lease and the verified browser artifact. It declares the one reference
+ * Chat profile and the management domains' own profile, and serves the single
+ * browser app on one loopback listener; when a Game projection was supplied it
+ * also composes that projection's game profile and lifecycle admission on top.
+ * A construction failure drains every service it created in reverse order and
+ * never touches the Chat lease, the facade, or any Game authority, so those
+ * exact owners stay live for their own recovery.
  */
 export async function startDesktopPresentationAdmission(
   input: DesktopPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
   const tavernProfile = composeReferenceTavernProfile();
-  const profile = composeReferenceGameBrowserProfile({
-    tavernProfile,
-    gameProfile: input.presentation.gameProfile,
-  });
+  const profile = input.presentation === undefined
+    ? composeReferenceGameBrowserProfile({ tavernProfile })
+    : composeReferenceGameBrowserProfile({
+        tavernProfile,
+        gameProfile: input.presentation.gameProfile,
+      });
   const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
   const referenceStateFacade = await createReferencePipelineStateFacade(
     input.manifest,
@@ -546,12 +401,11 @@ export async function startDesktopPresentationAdmission(
     eventStream: input.eventStream,
     ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
   });
-  // The management domains the shell's Chats/Characters/Game/Settings/Memory/
-  // World Info drawers read and write (design/104 §2, design/26 §4.2). They come
-  // from the one management-domain assembly, over the same durable stores and
-  // lease-bound services the standalone management surface mounts, so a panel and
-  // the management surface are two views of one state rather than two owners of
-  // it.
+  // The management domains the one app's Chats/Characters/Settings/Memory
+  // surfaces read and write (design/104 §2, design/26 §4.2). They come from the
+  // one management-domain assembly, over the same durable stores and
+  // lease-bound services, so a panel and its surface are two views of one state
+  // rather than two owners of it.
   //
   // They are built against the MANAGEMENT tavern profile, not the composed shell's
   // frozen reference profile: the composed browser contract pins that profile's
@@ -621,8 +475,16 @@ export async function startDesktopPresentationAdmission(
       referenceStateFacade,
       pipelineService,
       eventStream: input.eventStream,
-      readGame: input.presentation.readGame,
-      lifecycleActivationBindingSink: input.presentation.lifecycleActivationBindingSink,
+      // The Game projection's own routes and lifecycle admission exist exactly
+      // when a projection was supplied: the Chat-owned entry points construct no
+      // Game authority, so the one app's Game surface reads the honest
+      // `game: null` projection and offers no mutation control.
+      ...(input.presentation === undefined
+        ? {}
+        : {
+            readGame: input.presentation.readGame,
+            lifecycleActivationBindingSink: input.presentation.lifecycleActivationBindingSink,
+          }),
       inspector,
       // The immutable browser artifact destination of one Host generation.
       artifactRoot: resolve(input.hostArtifactRoot, "browser", "tavern", "v1"),
@@ -676,10 +538,9 @@ export async function startDesktopPresentationAdmission(
 }
 
 /**
- * The one Chat surface the chat-only and composed reference-game browser roots
- * serve. The composed surface contract fixes this exact identity, so the
- * declaration lives here rather than in an operator-, bootstrap-, or
- * browser-selected input.
+ * The one Chat surface the single browser presentation serves. The composed
+ * surface contract fixes this exact identity, so the declaration lives here
+ * rather than in an operator-, bootstrap-, or browser-selected input.
  */
 function composeReferenceTavernProfile(): ComposedTavernProfile {
   return composeTavernProfile({
