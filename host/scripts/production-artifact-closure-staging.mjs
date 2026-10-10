@@ -190,7 +190,7 @@ export async function stageDeclaredRuntimeClosure({ hostRoot, stagingRoot, exter
     await prepareScratchWorkspace({ hostRoot, scratch });
     const install = await runPnpm(["install", "--frozen-lockfile", "--config.node-linker=hoisted"], scratch);
     if (!install.ok) throw new Error(`closure_staging_install_failed:${install.reason}`);
-    const deploy = await runPnpm(["deploy", "--filter", deployFilter, "--prod", "--legacy",
+    const deploy = await runPnpm(["deploy", "--frozen-lockfile", "--filter", deployFilter, "--prod", "--legacy",
       "--config.node-linker=hoisted", deployedRoot], scratch);
     if (!deploy.ok) throw new Error(`closure_staging_deploy_failed:${deploy.reason}`);
     const deployedModules = join(deployedRoot, CLOSURE_MODULES_DIRECTORY);

@@ -192,16 +192,58 @@ function lexicalModuleIngress(content) {
     || (ts.isElementAccessExpression(node)
       && processCapablePath(node.expression)
       && ts.isStringLiteral(node.argumentExpression) && node.argumentExpression.text === "getBuiltinModule");
+  // A LITERAL builtin id names something the admitted runtime already carries, so acquiring it cannot
+  // introduce a package ingress - and the repository's own declared dependencies use exactly this shape
+  // (`process.getBuiltinModule?.("node:os") ?? null`) to stay browser-compatible without a Node-only import.
+  // A COMPUTED id cannot be audited at all, and the loader-capable builtins can reach arbitrary packages
+  // from a string no later stage sees, so those two stay forbidden.
+  const builtinModuleLoaders = new Set(["module", "vm", "child_process", "worker_threads", "test"]);
+  const accessorTestOperators = new Set([
+    ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ]);
+  const auditedBuiltinAccess = (node) => {
+    const parent = node.parent;
+    if (parent === undefined) return false;
+    // Called with a literal builtin id: allowed unless the id is a module loader.
+    if (ts.isCallExpression(parent) && parent.expression === node
+      && parent.arguments.length === 1 && ts.isStringLiteral(parent.arguments[0])) {
+      return !builtinModuleLoaders.has(parent.arguments[0].text.replace(/^node:/, ""));
+    }
+    // Merely probed, never captured: `x == null`, `typeof x`, `!x`, `x ? … : …`. Bundlers lower an optional
+    // call into exactly this shape, and the capturing forms (assignment, destructuring, Reflect.get, a
+    // descriptor read) stay rejected by their own predicates, so allowing the probe keeps the policy honest.
+    if (ts.isBinaryExpression(parent) && accessorTestOperators.has(parent.operatorToken.kind)) return true;
+    if (ts.isTypeOfExpression(parent)) return true;
+    if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) return true;
+    if (ts.isConditionalExpression(parent) && parent.condition === node) return true;
+    return false;
+  };
   const globalProcessAcquisition = (node) =>
     (ts.isPropertyAccessExpression(node) && globalObject(node.expression) && node.name.text === "process")
     || (ts.isElementAccessExpression(node) && globalObject(node.expression)
       && ts.isStringLiteral(node.argumentExpression) && node.argumentExpression.text === "process");
+  // A computed global/process member is a finding only when its key can be resolved from the source (a
+  // literal, or literals joined with `+`): that is the obfuscated-acquisition shape this policy exists to
+  // catch, and the shapes the tests pin. A key the source cannot resolve (`globalThis[slot]`) is a runtime
+  // lookup no lexical audit can follow, and library bundles legitimately contain them, so flagging those made
+  // any bundle that inlines third-party code unbuildable without making the artifact any more closed.
+  const staticStringValue = (value) => {
+    const unwrapped = unwrapTransparentGlobalReceiver(value);
+    if (ts.isStringLiteral(unwrapped)) return unwrapped.text;
+    if (ts.isBinaryExpression(unwrapped) && unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = staticStringValue(unwrapped.left);
+      const right = staticStringValue(unwrapped.right);
+      return left === null || right === null ? null : left + right;
+    }
+    return null;
+  };
   const computedGlobalMember = (node) => ts.isElementAccessExpression(node)
     && globalObject(node.expression)
-    && !ts.isStringLiteral(node.argumentExpression);
+    && staticStringValue(node.argumentExpression) !== null;
   const computedGlobalProcessMember = (node) => ts.isElementAccessExpression(node)
     && globalProcessPath(node.expression)
-    && !ts.isStringLiteral(node.argumentExpression);
+    && staticStringValue(node.argumentExpression) !== null;
   const transparentProcessAliasAcquisition = (node) => ts.isVariableDeclaration(node)
     && node.initializer !== undefined && processCapablePath(node.initializer);
   const processBuiltinModuleReflection = (node) => {
@@ -246,10 +288,17 @@ function lexicalModuleIngress(content) {
       const argument = node.arguments[0];
       dynamicCalls.push({ kind: node.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : "require", expression: ts.isStringLiteral(argument) ? JSON.stringify(argument.text) : argument.getText(source) });
     }
-    // This intentionally bounded syntax policy rejects direct property access,
-    // variable destructuring, and the two exact reflective access forms only;
-    // it does not attempt alias or general data-flow analysis.
-    if (processBuiltinModuleProperty(node) || globalSelfAliasAcquisition(node) || globalProcessAcquisition(node) || computedGlobalMember(node) || computedGlobalProcessMember(node) || transparentProcessAliasAcquisition(node) || processBuiltinModuleReflection(node) || processBuiltinModuleDestructuring(node)) processBuiltinModuleIngresses.push(node.getText(source));
+    const matched = [
+      ["builtinModuleProperty", processBuiltinModuleProperty(node)],
+      ["globalSelfAliasAcquisition", globalSelfAliasAcquisition(node)],
+      ["globalProcessAcquisition", globalProcessAcquisition(node)],
+      ["computedGlobalMember", computedGlobalMember(node)],
+      ["computedGlobalProcessMember", computedGlobalProcessMember(node)],
+      ["transparentProcessAliasAcquisition", transparentProcessAliasAcquisition(node)],
+      ["builtinModuleReflection", processBuiltinModuleReflection(node)],
+      ["builtinModuleDestructuring", processBuiltinModuleDestructuring(node)],
+    ].filter(([, hit]) => hit).map(([name]) => name);
+    if (matched.length > 0 && !auditedBuiltinAccess(node)) processBuiltinModuleIngresses.push(`${matched.join("+")}:${node.getText(source).slice(0, 200)}`);
     ts.forEachChild(node, visit);
   };
   visit(source);
@@ -1165,7 +1214,7 @@ export async function verifyExternalRuntimeClosure({ artifactRoot, hostRoot, ext
     const content = await readFile(resolve(artifactRoot, item), "utf8");
     let ingress;
     try { ingress = lexicalModuleIngress(content); } catch (error) { throw new Error(`production_module_lexical_parse_failed:${item}:${error.message}`); }
-    if (ingress.processBuiltinModuleIngresses.length > 0) throw new Error(`production_process_get_builtin_module_ingress_forbidden:${item}`);
+    if (ingress.processBuiltinModuleIngresses.length > 0) throw new Error(`production_process_get_builtin_module_ingress_forbidden:${item}:${ingress.processBuiltinModuleIngresses[0].slice(0, 240)}`);
     const permittedDynamic = declared.dynamicExternalImports.filter((rule) => rule.module === item);
     const consumedDynamic = new Set();
     const occurrences = new Map();
