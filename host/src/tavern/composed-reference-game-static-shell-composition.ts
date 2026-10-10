@@ -13,7 +13,7 @@ import {
   createTavernManagementDialogueWebDelegatedHandler,
   type TavernManagementDelegatedHandler,
 } from "../tavern-management-dialogue-web.delegated.js";
-import { TAVERN_BROWSER_API_V1, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
+import { TAVERN_BROWSER_API_V1, TavernBrowserValidatorsV1, type ComposedTavernProfile } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
@@ -69,6 +69,7 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
    * panels stay absent (design/26 §1), never a disabled lookalike.
    */
   management?: Readonly<{
+    profile: ComposedTavernProfile;
     managementService: ChatManagementService;
     memoryService: MemoryManagementService;
     worldInfoService: WorldInfoBindingManagementService;
@@ -222,7 +223,7 @@ export async function startComposedReferenceGameStaticShellComposition(
     options.management === undefined
       ? undefined
       : createTavernManagementDialogueWebDelegatedHandler({
-          profile: options.profile.tavernProfile,
+          profile: options.management.profile,
           managementService: options.management.managementService,
           memoryService: options.management.memoryService,
           worldInfoService: options.management.worldInfoService,

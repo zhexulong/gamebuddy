@@ -477,29 +477,40 @@ export async function startDesktopPresentationAdmission(
   // and write (design/104 §2, design/26 §4.2). They are the same lease-bound
   // services the management surface builds, over the same durable stores, so a
   // panel and the management surface are two views of one state rather than two
-  // owners of it. A construction failure drains what was created in reverse order
-  // and leaves the Chat lease and Game authority untouched.
+  // owners of it.
+  //
+  // They are built against the MANAGEMENT tavern profile, not the composed shell's
+  // frozen reference profile: the composed browser contract pins that profile's
+  // route list verbatim (it is what the browser validates), while these services
+  // require the routes they own - chat.list, chat.rename, draft.save, draft.discard,
+  // memory.read, world-info.read and their operations - to be declared. The shell
+  // mounts them under their own delegated dispatcher on the same loopback origin,
+  // so one frozen Chat contract and the management domains coexist instead of one
+  // masquerading as the other.
+  const managementProfile = composeTavernManagementProfile();
   const createdManagement: { close(): Promise<void> }[] = [];
   let management: Readonly<{
+    profile: ComposedTavernProfile;
     managementService: ChatManagementService;
     memoryService: MemoryManagementService;
     worldInfoService: WorldInfoBindingManagementService;
     playerPreferenceStore: PlayerPreferenceStore;
   }>;
   try {
-    const managementService = createChatManagementService({ manifest: input.manifest, lease: input.lease, profile: tavernProfile });
+    const managementService = createChatManagementService({ manifest: input.manifest, lease: input.lease, profile: managementProfile });
     createdManagement.push(managementService);
-    const memoryService = createMemoryManagementService({ manifest: input.manifest, lease: input.lease, profile: tavernProfile });
+    const memoryService = createMemoryManagementService({ manifest: input.manifest, lease: input.lease, profile: managementProfile });
     createdManagement.push(memoryService);
     const worldInfoService = createWorldInfoBindingManagementService({
       manifest: input.manifest,
       lease: input.lease,
-      profile: tavernProfile,
+      profile: managementProfile,
       repository: createWorldInfoManagementRepository(input.manifest.runtimeRoot),
       settleAuthoredContext: () => settleMountedAuthoredContext(input.manifest, input.lease),
     });
     createdManagement.push(worldInfoService);
     management = Object.freeze({
+      profile: managementProfile,
       managementService,
       memoryService,
       worldInfoService,
@@ -599,33 +610,8 @@ function composeReferenceTavernProfile(): ComposedTavernProfile {
       "chat.cancel",
       "chat.submission_status",
       "events",
-      // The composed shell is the product's only surface, and design/104 §2 puts
-      // Chats, Characters, Game and Settings in its AppBar with one contextual
-      // drawer each; design/26 §4.2 adds World Info and Import/Export. Those
-      // panels read and write the management domains, so this profile declares
-      // exactly the routes the mounted services below can serve - a route that is
-      // declared but unservable fails closed, and one that is missing makes its
-      // panel absent (design/26 §1) rather than a disabled lookalike.
-      "chat.list",
-      "chat.rename",
-      "memory.read",
-      "memory.mutate",
-      "world-info.read",
-      "world-info.bind",
-      "settings.language.read",
-      "settings.language.update",
-      "settings.voice.read",
-      "settings.voice.consent",
     ],
-    operationIds: [
-      "chat.submit",
-      "chat.cancel",
-      "chat.rename",
-      "memory.mutate",
-      "world-info.bind",
-      "settings.language.update",
-      "settings.voice.consent",
-    ],
+    operationIds: ["chat.submit", "chat.cancel"],
     navigationItemIds: ["chat"],
   });
 }
