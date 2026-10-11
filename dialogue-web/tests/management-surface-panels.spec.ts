@@ -228,7 +228,7 @@ test("the management surface mounts the shared panels: language seed, Chats rena
   // The Chats drawer is the same panel the composed shell's Chats surface mounts.
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "Chats" });
-  await expect(drawer.getByText("Untitled chat", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("New chat", { exact: true })).toBeVisible();
   await drawer.getByTitle("Rename Chat").click();
   await drawer.locator("input.form-input").fill("A probe title");
   await drawer.getByRole("button", { name: "Save" }).click();
@@ -333,7 +333,7 @@ test("the product Chats surface renames through chat/title and moves the convers
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  await expect(surface.getByText("Untitled chat", { exact: true })).toBeVisible();
+  await expect(surface.getByText("New chat", { exact: true })).toBeVisible();
   // The mount cannot see the management profile's operation projection, so the
   // served list is the capability: the rename and the selected chat's retention
   // controls are shown rather than silently hidden.

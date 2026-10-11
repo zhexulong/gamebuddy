@@ -474,7 +474,7 @@ test("management browser lists, saves and discards a durable draft, and renames 
     const drawer = page.getByRole("dialog", { name: "Chats" });
     await expect(drawer).toBeVisible();
     await expect(drawer.getByRole("listitem")).toHaveCount(1);
-    await expect(drawer.getByText("Untitled chat", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("New chat", { exact: true })).toBeVisible();
     await expect(drawer.getByRole("button", { name: /new chat/i })).toHaveCount(0);
     await expect(drawer.getByTitle("Rename Chat")).toHaveCount(1);
 
@@ -743,7 +743,7 @@ test("stale revision title and draft mutations receive the durable conflict and 
     await pageB.getByRole("button", { name: "Chats" }).click();
     const drawerB = pageB.getByRole("dialog", { name: "Chats" });
     await expect(drawerB).toBeVisible();
-    await expect(drawerB.getByText("Untitled chat", { exact: true })).toBeVisible();
+    await expect(drawerB.getByText("New chat", { exact: true })).toBeVisible();
     await drawerB.getByTitle("Rename Chat").click();
     await drawerB.locator("input.form-input").fill("Optimistic stale title");
     await drawerB.getByRole("button", { name: "Save" }).click();

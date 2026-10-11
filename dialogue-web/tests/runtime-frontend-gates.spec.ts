@@ -84,7 +84,8 @@ const submitOperation = {
 type FixtureOptions = Readonly<{
   transcript?: readonly Readonly<{ role: "player" | "companion"; text: string }>[];
   companionName?: string;
-  title?: string;
+  /** `null` is a chat the Host has published no title for at all. */
+  title?: string | null;
 }>;
 
 function handleFor(index: number): string {
@@ -109,7 +110,7 @@ function composedRoot(options: FixtureOptions = {}) {
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
       chat: {
         companion: { name: options.companionName ?? "Mira" },
-        title: options.title ?? "Gate Chat",
+        title: options.title === undefined ? "Gate Chat" : options.title,
         transcript: transcript.map((message, index) => ({
           handle: handleFor(index),
           role: message.role,
@@ -784,4 +785,56 @@ test("gate 6c: a slow surface read shows a loading affordance, not a blank regio
   observed.push(`Game="${gameLoading}"`);
 
   record("gate-6c", `loading affordances: ${observed.join("; ")}`);
+});
+
+/**
+ * Gate 7: a conversation that has just been opened names itself and says
+ * something.
+ *
+ * The failures this catches: a zero-message transcript that paints a bare
+ * region - no companion, no line - and a conversation whose own heading reads as
+ * the untitled placeholder, so the player cannot tell what they are looking at.
+ * The zero state is the first screen a new player sees; "it is technically not
+ * blank" is the bar it has to clear, not the target.
+ */
+test("gate 7: a new conversation is titled for real and opens on a real empty state", async ({ page }) => {
+  await mountShell(page, { root: composedRoot({ transcript: [], title: null }) });
+
+  const measured = await page.evaluate(() => {
+    const anchor = document.querySelector<HTMLElement>("[data-empty-anchor]");
+    const heading = document.querySelector<HTMLElement>(".timeline-heading h1");
+    const timeline = document.querySelector<HTMLElement>(".timeline");
+    const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]');
+    return {
+      heading: (heading?.textContent ?? "").trim(),
+      anchorText: (anchor?.innerText ?? "").trim(),
+      anchorHeight: anchor === null ? 0 : anchor.getBoundingClientRect().height,
+      timelineHeight: timeline === null ? 0 : timeline.getBoundingClientRect().height,
+      surfaceText: (surface?.innerText ?? "").trim(),
+    };
+  });
+
+  const name = "Mira";
+  const failures: string[] = [];
+  if (measured.anchorText.length === 0) failures.push("the empty conversation renders no zero state at all");
+  if (!measured.anchorText.includes(name))
+    failures.push(`the empty conversation does not name the companion (text="${measured.anchorText}")`);
+  if (measured.anchorText.replace(name, "").trim().length === 0)
+    failures.push(`the empty conversation is only the name, with no line saying where the player is (text="${measured.anchorText}")`);
+  if (!measured.surfaceText.includes(name))
+    failures.push(`the conversation surface never names the companion (text="${measured.surfaceText}")`);
+  // The zero state lives inside the transcript, so it has to fill the transcript
+  // rather than leave most of the window bare.
+  if (measured.timelineHeight > 0 && measured.anchorHeight < measured.timelineHeight * 0.5)
+    failures.push(
+      `the zero state fills ${Math.round(measured.anchorHeight)}px of a ${Math.round(measured.timelineHeight)}px transcript`,
+    );
+  if (["", "Untitled chat", "未命名聊天"].includes(measured.heading))
+    failures.push(`the conversation title is the untitled placeholder "${measured.heading}"`);
+
+  record(
+    "gate-7",
+    `heading="${measured.heading}"; zero state ${Math.round(measured.anchorHeight)}/${Math.round(measured.timelineHeight)}px; ${failures.length} failure(s)`,
+  );
+  expect(failures, "a new conversation is titled for real and opens on a real zero state").toEqual([]);
 });
