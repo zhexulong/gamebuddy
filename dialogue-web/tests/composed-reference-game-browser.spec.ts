@@ -3052,3 +3052,207 @@ test("the AppBar degrades to named icon entries in a 400px window without sidewa
   expect(measured.companion?.scrollWidth).toBeLessThanOrEqual((measured.companion?.clientWidth ?? 0) + 1);
   expect(measured.statusDotVisible).toBeGreaterThan(0);
 });
+
+/**
+ * Regeneration's own polling fallback, with the event stream genuinely absent.
+ *
+ * `regenerate` starts a real turn, so it is the same kind of mutation as
+ * `submit` and must take the same path: publish the pending submission record
+ * before the wire call. `startPolling`'s first tick returns for a session with
+ * nothing pending - the guard that keeps every idle session from polling - so
+ * without that record the fallback poll is dead on its first tick. With a
+ * healthy event stream nobody notices; with no stream at all the transcript
+ * never leaves the pre-regenerate variant and the turn never settles.
+ *
+ * The route-mocked setup is the spec's own, with one fact made explicit:
+ * `eventStream: null` opens no stream, so the authoritative rereads the poll
+ * makes are the only reader of the turn's terminal state. The `/state` route
+ * keeps returning the turn-running projection until the poll's second read, so
+ * the settled variant exists only after polling has advanced.
+ */
+const regenerationPlayerHandle = `${"P".repeat(42)}A`;
+const regenerationCompanionHandle = `${"D".repeat(42)}A`;
+const regenerationTurnHandle = `${"T".repeat(42)}A`;
+const regenerationOldVariant = "The game projection is read-only.";
+const regenerationNewVariant = "The projection is a reading, not the valley itself.";
+
+function regenerationProjections(): {
+  idleRoot: typeof root;
+  runningRoot: typeof root;
+  settledRoot: typeof root;
+} {
+  const idleOperations = [
+    { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+  ];
+  const idleChat = {
+    ...chat,
+    operations: idleOperations,
+    chat: {
+      ...chat.chat,
+      transcript: [
+        { handle: regenerationPlayerHandle, role: "player", text: "Where are we?", locale: "und", order: 0, revision: 1 },
+        { handle: regenerationCompanionHandle, role: "companion", text: regenerationOldVariant, locale: "und", order: 1, revision: 1 },
+      ],
+      turn: null,
+    },
+  };
+  return {
+    idleRoot: { ...root, chat: idleChat },
+    // The accepted, still-running projection: the transcript is unchanged and
+    // `chat.submit` is busy, exactly as the Host projects a live turn.
+    runningRoot: {
+      ...root,
+      chat: {
+        ...idleChat,
+        operations: [{ ...idleOperations[0], availability: "busy" }],
+        chat: {
+          ...idleChat.chat,
+          turn: { handle: regenerationTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
+        },
+      },
+    },
+    // The terminal projection: the same companion message now carries the
+    // regenerated variant, and the turn has settled.
+    settledRoot: {
+      ...root,
+      chat: {
+        ...idleChat,
+        chat: {
+          ...idleChat.chat,
+          transcript: [
+            idleChat.chat.transcript[0],
+            { ...idleChat.chat.transcript[1], text: regenerationNewVariant },
+          ],
+          turn: { handle: regenerationTurnHandle, state: "completed", projectionRevision: 2, canCancel: false },
+        },
+      },
+    },
+  };
+}
+
+test("regeneration settles through the polling fallback with no event stream", async ({ page }) => {
+  const { idleRoot, runningRoot, settledRoot } = regenerationProjections();
+  let stateReads = 0;
+  let statusReads = 0;
+  let regenerateRequests = 0;
+  const statusKeys: string[] = [];
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/messages/regenerate", async (route) => {
+    regenerateRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().headers()["idempotency-key"]).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      selectionGeneration: 1,
+      messageHandle: regenerationCompanionHandle,
+    });
+    // A real acceptance takes a moment; the busy presentation must be visible
+    // across it, exactly as it is for a real round trip.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: runningRoot.chat.chat.transcript[1],
+        turn: runningRoot.chat.chat.turn,
+      }),
+    });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    // The reread that immediately follows acceptance still sees the running
+    // turn and the old variant; only the poll's later read sees the settled one.
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(stateReads >= 2 ? settledRoot : runningRoot),
+    });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", async (route) => {
+    statusReads += 1;
+    const query = route.request().postDataJSON() as { idempotencyKey: string; selectionGeneration: number };
+    statusKeys.push(query.idempotencyKey);
+    expect(query.selectionGeneration).toBe(1);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, disposition: "terminal" }),
+    });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
+  await expect(bubble).toContainText(regenerationOldVariant);
+  const composer = chatSurface.locator(".composer-textarea");
+  await expect(composer).toBeEnabled();
+
+  await bubble.getByRole("button", { name: "Regenerate" }).click();
+  // The mutation's own busy presentation lands on the exact bubble...
+  await expect(bubble).toHaveAttribute("data-pending", "regenerate");
+  await expect(bubble).not.toHaveAttribute("data-pending", "regenerate");
+  // ...and the regenerated variant reaches the transcript on the polling
+  // fallback alone: no stream is open, and the projection only carries it once
+  // the poll has advanced past the accepted, still-running read.
+  await expect(bubble).toContainText(regenerationNewVariant);
+  // The turn-level busy presentation resolves with the same poll: `chat.submit`
+  // comes back available and the composer re-enables.
+  await expect(composer).toBeEnabled();
+  expect(regenerateRequests).toBe(1);
+  expect(stateReads).toBeGreaterThanOrEqual(2);
+  expect(statusReads).toBeGreaterThanOrEqual(1);
+  // Every status read is correlated by the one key the regenerate was sent
+  // under - the pending record, not a second identity.
+  expect(new Set(statusKeys).size).toBe(1);
+});
+
+/**
+ * The invariant the fix must not weaken: a session with nothing pending does
+ * not poll. That guard lives in `startPolling`'s first tick, and it is what
+ * keeps an idle conversation - the overwhelmingly common state - from issuing a
+ * status read and a full authoritative reread every second forever. This
+ * journey sits on the idle conversation for longer than the poll's first delay
+ * plus one interval and asserts that neither route was touched at all.
+ */
+test("an idle conversation with nothing pending never starts polling", async ({ page }) => {
+  const { idleRoot } = regenerationProjections();
+  let stateReads = 0;
+  let statusReads = 0;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot) });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) => {
+    statusReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, disposition: "unknown" }) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await page.waitForTimeout(1_500);
+  expect(stateReads).toBe(0);
+  expect(statusReads).toBe(0);
+});

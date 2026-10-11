@@ -540,21 +540,45 @@ export function ComposedReferenceGameApp() {
     schedule(POLL_FIRST_MS);
   };
 
+  /**
+   * Begin the durable half of a turn-starting Chat mutation: the profile must
+   * offer `chat.submit` as `available` (the store admits exactly one turn at a
+   * time, so that availability *is* "no turn is in flight"), and the mutation's
+   * own pending record - correlated by the idempotency key it sends - must be
+   * published before its wire call.
+   *
+   * The record is not bookkeeping. `startPolling`'s first tick returns for a
+   * session with nothing pending, which is what keeps every idle session from
+   * polling, and that fallback poll is the only thing that settles a turn when
+   * no event stream is delivering it. Publishing in this one place is what keeps
+   * the next turn-starting mutation (send and regenerate are the two) from
+   * starting a poll that is dead on its first tick; a mutation that starts no
+   * turn (swipe) publishes nothing and polls nothing.
+   *
+   * Returns null - having committed the rejected projection, or having found no
+   * available `chat.submit` - and the caller must then send nothing.
+   */
+  const beginTurnMutation = (idempotencyKey: string, current: ReadyView): PendingSubmission | null => {
+    const operation = current.session.snapshot.operations.find((op) => op.operationId === "chat.submit");
+    if (operation?.availability !== "available") return null;
+    try {
+      const pending = pendingSubmission(idempotencyKey, current.session.snapshot);
+      commit({ ...current, session: current.session.withPending(pending) });
+      return pending;
+    } catch (error) {
+      commit(problemView(error, messages(current.locale)));
+      return null;
+    }
+  };
+
   const handleSend = async (): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready" || current.session.pending !== null) return;
-    const operation = current.session.snapshot.operations.find((op) => op.operationId === "chat.submit");
-    if (operation?.availability !== "available") return;
     const text = inputTextRef.current.trim();
     if (text.length === 0) return;
     const idempotencyKey = newIdempotencyKey();
-    let pending: PendingSubmission;
-    try {
-      pending = pendingSubmission(idempotencyKey, current.session.snapshot);
-    } catch (error) {
-      commit(problemView(error, messages(current.locale)));
-      return;
-    }
+    const pending = beginTurnMutation(idempotencyKey, current);
+    if (pending === null) return;
     setInputText("");
     inputTextRef.current = "";
     // Sending clears the field, and the empty field is the new seed: the
@@ -562,7 +586,6 @@ export function ComposedReferenceGameApp() {
     // while the text just sent is not re-offered as a draft.
     seededDraftRef.current = Object.freeze({ revision: current.draft.revision, text: "" });
     setPreview(null);
-    commit({ ...current, session: current.session.withPending(pending) });
     try {
       await tavernApiRef.current.submit(
         {
@@ -740,12 +763,20 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
+    // Regeneration starts a real turn, so it begins the way a send does: only
+    // while the profile offers an available `chat.submit` (one turn at a time)
+    // and under a published pending record. That record is what makes the
+    // fallback poll live; without it the poll this handler starts dies on its
+    // first tick (nothing is pending), and on a dropped event stream the
+    // transcript never leaves the pre-regenerate variant.
+    const idempotencyKey = newIdempotencyKey();
+    if (beginTurnMutation(idempotencyKey, current) === null) return;
     chatMutationRef.current = true;
     setChatMutation(Object.freeze({ kind: "regenerate" as const, handle: messageHandle }));
     try {
       await tavernApiRef.current.regenerate(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
-        { csrfToken: current.session.snapshot.csrfToken, idempotencyKey: newIdempotencyKey() },
+        { csrfToken: current.session.snapshot.csrfToken, idempotencyKey },
       );
       await rereadChat();
       startPolling();
