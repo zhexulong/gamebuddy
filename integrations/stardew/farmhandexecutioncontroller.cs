@@ -617,6 +617,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
+    /// The reason code a MODEL-initiated stop carries. It exists so the Mod can tell a stop it may REFUSE from the
+    /// two cancellations it must not: the player's STOP and the worker's own teardown. Those two keep their existing
+    /// semantics deliberately - an interruption after a native side effect is `Uncertain`, never a refusal, because
+    /// the world may already have moved.
+    /// </summary>
+    internal const string ModelStopReasonCode = "model_stop_requested";
+
+    /// <summary>
+    /// The named refusal when a stop arrives past the point of no return. `phase=committed` is the diagnosis: the
+    /// native call has taken over, so the only exit is the terminal receipt.
+    /// </summary>
+    internal const string ActionPastCancelPoint = "action_past_cancel_point";
+
+    /// <summary>
     /// The occupant kind, interruptibility and PHASE of the current holder, plus the evidence string a refusal
     /// carries. The phase belongs to the owner, not to an action id: an approach leg is motion - the body is held
     /// in the same KIND as <c>move_to_tile</c> and can be stopped and braked - while everything from the native
@@ -1029,10 +1043,26 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
 
+        // A MODEL-initiated stop is a REQUEST, and it is refused BY NAME when the holder is past its cancel point -
+        // no vague failure, and the evidence says which phase made it unsafe. The player's STOP and the worker's own
+        // teardown do NOT come through here as this reason code; their semantics are untouched on purpose, because an
+        // interruption after a native side effect has to stay `Uncertain` rather than become a refusal.
+        if (string.Equals(reasonCode, ModelStopReasonCode, StringComparison.Ordinal))
+        {
+            BodyOwner holder = this.DescribeBodyOwner();
+            if (!holder.CancelSafe)
+                return new(
+                    executionId,
+                    requestId,
+                    ExecutionState.Rejected,
+                    ActionPastCancelPoint,
+                    this.revision,
+                    $"phase={holder.Phase};cancel_safe=false;owner={holder.ReasonCode}");
+        }
+
         if (this.activeNavigate is not null)
         {
-            LocalNavigateSpec navigateSpec = this.activeNavigate;
-            if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
+            LocalNavigateSpec navigateSpec = this.activeNavigate;            if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
             {
                 this.navigationWarpReplanDeferred = false;
                 // A cancellation/deadline/unexpected lifecycle after the native warp

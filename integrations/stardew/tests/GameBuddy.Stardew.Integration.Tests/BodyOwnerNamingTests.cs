@@ -195,6 +195,58 @@ public sealed class BodyOwnerNamingTests
         return BalancedBody(source, opening);
     }
 
+    /// <summary>
+    /// Seeds the navigation slot at a chosen phase and cancels with a chosen reason code, so a test can tell a
+    /// MODEL stop (refusable) from the player STOP and the worker teardown (not).
+    /// </summary>
+    private static LocalExecutionReceipt CancelSeededSlot(LocalNavigatePhase phase, string reasonCode)
+    {
+        LocalExecutionReceipt? receipt = null;
+        RunWithGameState(() =>
+        {
+            ExecutionManager manager = CreateManager();
+            var spec = new LocalNavigateSpec(
+                "exec_nav", "req_nav", default!, "Farm:64,15", "Farm", default!, new Vector2(64f, 15f), DeadlineMs, phase);
+            OccupySlot(manager, "activeNavigate", spec);
+            receipt = manager.Cancel("req_nav", "exec_nav", reasonCode);
+        });
+        receipt.Should().NotBeNull("a cancel always produces a receipt");
+        return receipt!;
+    }
+
+    [Fact]
+    public void ModelStop_PastTheCancelPoint_IsRefusedByName()
+    {
+        // Step 2 of the ruling. A stop is a REQUEST, so it fails closed by NAME when the holder is committed,
+        // and the evidence says which phase made it unsafe - no vague failure, and nothing to undo.
+        LocalExecutionReceipt receipt = CancelSeededSlot(
+            LocalNavigatePhase.ApproachReleased,
+            ExecutionManager.ModelStopReasonCode);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(ExecutionManager.ActionPastCancelPoint);
+        receipt.Evidence.Should().Be("phase=committed;cancel_safe=false;owner=body_owned_by_navigation");
+    }
+
+    [Fact]
+    public void ModelStop_DuringTheApproach_StillCancels()
+    {
+        // The other side of the boundary: while the actor is walking, a stop is honoured.
+        LocalExecutionReceipt receipt = CancelSeededSlot(LocalNavigatePhase.Approaching, ExecutionManager.ModelStopReasonCode);
+
+        receipt.State.Should().Be(ExecutionState.Cancelled);
+    }
+
+    [Fact]
+    public void PlayerStop_IsNotGatedByTheCancelPoint()
+    {
+        // THE DELIBERATE ASYMMETRY, recorded as a test because it would otherwise look like an oversight: the
+        // PLAYER's STOP keeps its own semantics. The phase gate exists for a stop the Agent REQUESTED; the
+        // player's authority, and the worker's teardown, are not requests and must not be refused by a phase.
+        LocalExecutionReceipt receipt = CancelSeededSlot(LocalNavigatePhase.ApproachReleased, "player_stop_all");
+
+        receipt.State.Should().NotBe(ExecutionState.Rejected, "the player STOP must still stop");
+    }
     private static LocalExecutionReceipt Refuse(params (string Field, object? Owner)[] slots)
     {
         LocalExecutionReceipt? receipt = null;
