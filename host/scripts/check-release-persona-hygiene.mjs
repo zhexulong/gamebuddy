@@ -78,9 +78,13 @@ const PNG_CARD_KEYWORDS = new Set(["chara", "ccv3", "character"]);
 /**
  * A card's own name, as a JSON member whose value is a name and not an example.
  * The placeholder this gate once refused carries `"name":"…"`: one ellipsis
- * character, no letters.
+ * character, no letters. This gate reads bytes as latin1, where U+2026 is the
+ * three bytes `â`, U+0080 and `¦`, so the class carries both spellings and the
+ * guard fires whichever decoding found it. It is the weaker of the two halves:
+ * on the bundled placeholder it is the prose field that does the rejecting.
  */
 const CARD_NAME_MEMBER = /"name"\s*:\s*"([^"\\]{1,256})"/u;
+const NAME_THAT_IS_ONLY_PUNCTUATION = /^[\s.…·．。\-_â\u0080¦]+$/u;
 /** The fields a card's payload keeps its authored prose in. */
 const CARD_CONTENT_FIELDS = Object.freeze([
   "description",
@@ -153,7 +157,7 @@ function hasSubstantiveContentField(text) {
 function carriesCardPayload(text) {
   if (!CARD_SPEC_MEMBER.test(text)) return false;
   const name = CARD_NAME_MEMBER.exec(text);
-  if (name === null || /^[\s.…·．。\-_]+$/u.test(name[1])) return false;
+  if (name === null || NAME_THAT_IS_ONLY_PUNCTUATION.test(name[1])) return false;
   return hasSubstantiveContentField(text);
 }
 
