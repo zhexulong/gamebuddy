@@ -202,7 +202,7 @@ export function ModelProfileEditor({
           <button
             key={model.modelId}
             type="button"
-            className="small-button"
+            className="model-profile-chip"
             disabled={busy}
             onClick={() => setModelId(model.modelId)}
           >

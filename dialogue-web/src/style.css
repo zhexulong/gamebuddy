@@ -1,64 +1,176 @@
 /* ==========================================================================
    Three-Tier Design Token System (conforming to design/26 Section 6)
+
+   All pre-existing rules in this stylesheet are wrapped in a `theme` cascade
+   layer, so the authored rules below (tokens, glass borders, motion and the UX
+   refinements) sit on top and win without needing higher specificity or
+   declining the cascade layer pattern. The `theme` layer carries an explicit
+   chained name (design/26 §6.1: tokenised, layered) and everything that is not
+   layered - the reset, focus, tokens and the new surface work - stays in the
+   implicit outer layer that beats every @layer.
+   ========================================================================== */
+
+@layer theme.reset, theme.surfaces, theme.interactions, theme.layout;
+
+/* ==========================================================================
+   阶段三:现代酒馆暗色系令牌 (Modern Tavern Dark Tokens)
+
+   The four-layer background system the visual plan mandates, over the same
+   three-tier semantic structure design/26 §6.2 already establishes:
+
+     Canvas   #0c0b0b - the page behind everything
+     Panel    #161414 - app bar, drawer body, composer band
+     Card     #201d1d - a card/row inside a panel
+     Elevated #282525 - hover, popovers, the raised layer above a card
+
+   The warm brand accents (Stardew + GameBuddy identification) stay exactly as
+   the plan names them: Burgundy #c8787d, Gold #d6a85b. The funnel primitives
+   keep their names so established components (bubbles, dots, badges) keep
+   reading semantic tokens and simply follow the new lows. A fine translucent
+   hairline border (`--border-glass`) and a full-glass token finish the layer,
+   and the 4/8 px cadence + 44 px touch floor are written down here as the
+   tokens every new spacing rule consumes.
    ========================================================================== */
 
 /* Layer 1: Primitive Tokens */
 :root {
-  --palette-gray-950: #121212;
-  --palette-gray-900: #1b1a1a;
-  --palette-gray-800: #252323;
-  --palette-gray-700: #383331;
-  --palette-gray-600: #655b55;
-  --palette-gray-400: #90877e;
-  --palette-gray-200: #c8c0b6;
-  --palette-gray-100: #f5f0e8;
-
-  --palette-burgundy-base: #c8787d;
-  --palette-burgundy-hover: #d07a7f;
-  --palette-burgundy-dark: #3d272b;
-  --palette-burgundy-selection: #533137;
-  --palette-burgundy-border: #71454b;
-
-  --palette-gold-base: #d6a85b;
-  --palette-teal-base: #4fae9a;
-  --palette-crimson-base: #d96565;
-
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* The plan's own motion: 150-200 ms, one spring-like ease, native CSS only. */
+  --motion-ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-duration-fast: 150ms;
   --motion-duration-normal: 220ms;
 
-  /* Layer 2: Semantic Tokens */
-  --surface-canvas: var(--palette-gray-950);
-  --surface-panel: var(--palette-gray-900);
-  --surface-raised: var(--palette-gray-800);
+  /* Layer 2: Semantic Tokens - the four-layer dark background system. */
+  --surface-canvas: #0c0b0b;
+  --surface-panel: #161414;
+  --surface-card: #201d1d;
+  --surface-elevated: #282525;
+
+  /* The pre-existing darker funnel, remapped onto the new lows. Panels that
+     used `--surface-raised` (a card's resting colour) now read `--surface-card`;
+     hover/popover colour is `--surface-elevated`; the dashed background shades
+     keep their old funnel members so a hover never collapses a control. */
+  --palette-gray-950: var(--surface-canvas);
+  --palette-gray-900: var(--surface-panel);
+  --palette-gray-800: var(--surface-card);
+  --palette-gray-700: #383331;
+  --palette-gray-600: #655b55;
+  --palette-gray-500: #7d736a;
+  --palette-gray-400: #90877e;
+  --palette-gray-200: #c8c0b6;
+  --palette-gray-100: #f5f0e8;
+  --surface-raised: var(--surface-card);
+  --surface-hover: var(--surface-elevated);
 
   --text-primary: var(--palette-gray-100);
   --text-secondary: var(--palette-gray-200);
   --text-disabled: var(--palette-gray-400);
 
-  --border-subtle: var(--palette-gray-700);
-  --border-strong: var(--palette-gray-600);
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  /* The translucent glass hairline that names the accent of every card. */
+  --border-glass: rgba(200, 120, 125, 0.16);
 
-  --accent: var(--palette-burgundy-base);
-  --accent-hover: var(--palette-burgundy-hover);
-  --selection: var(--palette-burgundy-selection);
-  --focus-ring: var(--palette-gold-base);
+  --accent: #c8787d;
+  --accent-hover: #d07a7f;
+  --selection: #533137;
+  --focus-ring: #d6a85b;
 
-  --success: var(--palette-teal-base);
-  --warning: var(--palette-gold-base);
-  --danger: var(--palette-crimson-base);
+  --success: #4fae9a;
+  --warning: #d6a85b;
+  --danger: #d96565;
 
-  /* Layer 3: Component & Layout Tokens */
+  /* Layer 3: Component & Layout Tokens (kept, plus the cadence + floor). */
   --appbar-height: 56px;
+  --composer-min-height: 48px;
+  --composer-max-height: 176px;
   --timeline-reading-measure: 800px;
   --drawer-max-width: 420px;
   --touch-target-min: 44px;
+  --row-min-height: 52px;
+  /* The 4/8 px spacing system the plan and design/26 §6.4 mandate. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
 
   --radius-xs: 3px;
   --radius-sm: 6px;
   --radius-md: 12px;
+  --radius-lg: 14px;
 }
+
+/* ==========================================================================
+   Shared panel/chrome surface layer
+   ========================================================================== */
+
+@layer theme.surfaces {
+  /* The main conversation chrome: the reading column is the canvas, while
+     app-bar and composer band stay exactly the same panel tone so the timeline
+     feels like one continuous surface. */
+  .tavern-app-shell,
+  .app-shell,
+  .app-main-content,
+  .main-content,
+  .chat-view {
+    background-color: var(--surface-canvas);
+    color: var(--text-primary);
+  }
+
+  .context-panel,
+  .drawer-header,
+  .drawer-footer {
+    background-color: var(--surface-panel);
+  }
+}
+
+@layer theme.interactions {
+  /* Focus is never colour-only: the plan's gold ring, on every control. */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* One entrance for all fixed drawers: 150 ms, the plan's spring-like ease,
+     native CSS transform only (design/26 §6.4; prefers-reduced-motion disables
+     it below). */
+  .context-panel {
+    animation: drawer-in var(--motion-duration-normal) var(--motion-ease-smooth);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms;
+      animation-iteration-count: 1;
+      transition-duration: 0.01ms;
+    }
+  }
+}
+
+@layer theme.layout {
+  /* The composed shell's peer surfaces (design/104 §2) keep the canvas tone. */
+  .surface-view,
+  .surface-content {
+    background-color: var(--surface-canvas);
+  }
+
+  .surface-content {
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+/* Everything below this comment predates阶段三 and is now a named layer that
+   cannot outrank the authored rules above; it remains exactly as designed and
+   is extended by the new surface work inside the same layer, near the end of
+   this file. */
+@layer theme {
+
 
 /* ==========================================================================
    CSS Reset & Base Geometry
@@ -2283,6 +2395,419 @@ body {
   }
 }
 
+/* ==========================================================================
+   阶段三 surface/glass polish (authored on top of the preserved layer)
+
+   Shared chrome follows the new surface ladder; cards keep a translucent glass
+   hairline that carries the brand accent without making tone the only signal;
+   rows, chips and muted badges fill the 44/52 px floors. Written against the
+   tokens at the top of the file so a later lane can re-tune the whole product
+   by touching the root variables alone.
+   ========================================================================== */
+
+/* Cards and rows live one step above a panel; their border is the glass
+   hairline, and the resting surface is the card tone (not the darker raised
+   one the old funnel left behind). */
+.chat-item-card,
+.world-info-card,
+.memory-item-card,
+.connection-row,
+.companion-list-item,
+.characters-row,
+[data-companion-entry],
+.opening-variant-row,
+.model-profile-editor,
+.game-choice,
+.installation-candidate,
+.game-create-form,
+.composed-game-panel .game-facts {
+  background-color: var(--surface-card);
+  border-color: var(--border-glass);
+}
+
+/* The shared drawer's body scrolls above a panel band; the drawer header stays
+   the same panel so the panel reads as one unit. */
+.drawer-content {
+  background-color: var(--surface-canvas);
+}
+
+/* Selection is a card that also reads as selected: glass accent border plus
+   the burgundy wash, never colour alone. */
+.chat-item-card.selected,
+.companion-list-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(200, 120, 125, 0.35);
+}
+
+/* The active-companion summary keeps its warm tint but settles on the card
+   tone with a translucent burgundy edge. */
+.active-companion-card {
+  background: linear-gradient(135deg, var(--surface-card) 0%, color-mix(in srgb, var(--surface-card) 78%, var(--palette-burgundy-dark)) 100%);
+  border-color: var(--palette-burgundy-border);
+}
+
+/* Muted chips that used the raw dashed backgrounds now read against the card
+   tone with the same quiet text. */
+.status-tag.active,
+.badge-active,
+.online-badge,
+.read-only-badge {
+  background-color: var(--surface-card);
+  border-color: var(--border-subtle);
+}
+
+/* One consistent hover everywhere a row lifts: the Elevated tone. */
+.chat-item-card:hover,
+.world-info-card:hover,
+.memory-item-card:hover,
+.companion-list-item:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+/* Message bubbles: the companion bubble is a card (Card tone, glass hairline),
+   the player bubble is the burgundy wash the product already identifies with
+   (design/26 §6.1) but on the new lows. */
+.message.companion .message-bubble {
+  background-color: var(--surface-card);
+  border-color: var(--border-glass);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* The avatar monogram: renders, never decorative; a stable neutral plate with
+   a fine border, and the player-side one carries the card tone. */
+.avatar,
+.avatar-small {
+  letter-spacing: 0.04em;
+  border-color: var(--border-subtle);
+}
+
+.avatar-large {
+  background-color: var(--surface-card);
+  color: var(--accent);
+}
+
+/* The large companion monogram (Characters/active-companion card) gets the
+   same fine border and warm plate. */
+.companion-avatar-large {
+  background-color: var(--palette-burgundy-dark);
+  color: var(--palette-burgundy-base);
+  border: 1px solid var(--palette-burgundy-border);
+}
+/* Composer: the band is panel, the field itself a raised card. */
+.composer-container {
+  background-color: var(--surface-card);
+  border-color: var(--border-glass);
+}
+
+/* Forms: one input treatment on the card tone, gold focus, no layout shift on
+   hover or focus. */
+.composer-textarea,
+.form-input,
+.form-textarea,
+.form-select,
+.surface-model-field input,
+.surface-model-field select,
+.game-create-form input {
+  background-color: var(--surface-card);
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus,
+.composer-textarea:focus,
+.surface-model-field input:focus,
+.surface-model-field select:focus,
+.game-create-form input:focus {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+}
+
+/* The model switcher/surface-model editor: the card presentation that answers
+   the owner's example. Borderless in the middle so the two fields read as one
+   grouped control, glass hairline around, and each row keeps a 44 px floor. */
+.surface-model-settings {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+}
+
+.surface-model-settings-title {
+  grid-column: 1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.surface-model-settings-hint {
+  grid-column: 1;
+  margin: 0 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.surface-model-field {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target-min);
+  margin: 0;
+  padding: 0 4px;
+}
+
+.surface-model-field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.surface-model-field input,
+.surface-model-field select {
+  min-height: var(--touch-target-min);
+  width: 100%;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-card);
+  outline: none;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-out),
+    background-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.surface-model-field input + datalist {
+  display: none;
+}
+
+.surface-model-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-disabled) 50%),
+    linear-gradient(135deg, var(--text-disabled) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-repeat: no-repeat;
+  background-size:
+    5px 5px,
+    5px 5px;
+  padding-right: 30px;
+}
+
+/* The chat/game recommended chips: a 44 px chip, gold text on the card tone. */
+.surface-model-recommended {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.surface-model-recommended > span {
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+.surface-model-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-card);
+  color: var(--palette-gold-base);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.surface-model-chip:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.surface-model-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The management model-profile editor uses the identical chip (management-panels.tsx). */
+.model-profile-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-card);
+  color: var(--palette-gold-base);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.model-profile-chip:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.model-profile-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.surface-model-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: 4px;
+}
+
+.surface-model-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.surface-model-notice[role="status"] {
+  color: var(--text-secondary);
+}
+
+/* The advanced Pi document editor (capability-gated) reuses the input
+   treatment; its textarea takes the full width. */
+.surface-advanced-settings {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.surface-advanced-settings h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.surface-advanced-editor {
+  width: 100%;
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.surface-advanced-editor:focus {
+  border-color: var(--focus-ring);
+}
+
+/* Connection rows: the same card treatment the model editor gets, plus the
+   ready/failed readiness borders that stay a second carrier to the status word. */
+.connection-row {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+}
+
+.connection-row[data-readiness="ready"] {
+  border-color: rgba(79, 174, 154, 0.5);
+}
+
+.connection-row[data-readiness="failed"] {
+  border-color: rgba(217, 101, 101, 0.5);
+}
+
+.connection-row .composer-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The manage model-profile editor (Settings surface, shared by both shells)
+   gets the same card presentation as the surface-model editor. */
+.model-profile-editor {
+  padding: var(--space-3);
+  background-color: var(--surface-card);
+  border-color: var(--border-glass);
+}
+
+.model-profile-editor h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.model-profile-editor label {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.model-profile-editor .form-input {
+  width: 100%;
+  min-height: var(--touch-target-min);
+}
+
+.model-profile-editor .small-button {
+  margin-top: var(--space-2);
+}
+
+.model-profile-suggestions {
+  margin-top: var(--space-1);
+}
+
+/* The connection form's own select/input treatment follows the same theme. */
+.connection-form .form-select {
+  min-height: var(--touch-target-min);
+}
+
+.management-settings-details dd {
+  color: var(--text-primary);
+}
+
+/* Game facts keep the card tone under the four-layer ladder. */
+.composed-game-panel .game-facts {
+  background-color: var(--surface-card);
+  border-color: var(--border-glass);
+}
+
+.composed-game-panel .game-group {
+  scroll-margin-top: 8px;
+}
+
+/* Status lines: the dot that leads each sentence is now the card tone, so it
+   never punches above the text. */
+.game-status::before {
+  background-color: var(--text-disabled);
+}
+
 /* The composed shell's surfaces (design/104 §2; design/26 §4).
 
    Chat, Chats, Characters, Game, Settings, Memory and World Info are peers: each
@@ -2347,4 +2872,8 @@ body {
   overflow: hidden;
   gap: 0;
   padding-bottom: 0;
+}
+
+/* The closing brace of the `@layer theme {` block opened at the top of the
+   preserved legacy stylesheet. */
 }

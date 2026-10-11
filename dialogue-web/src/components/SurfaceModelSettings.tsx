@@ -151,22 +151,37 @@ export function SurfaceModelSettings({
         </select>
       </label>
 
+      <div className="surface-model-recommended" data-surface-model-recommended>
+        <span>{labels.modelProfilesRecommended}</span>
+        {recommendedFor(profiles, surface).map((entry) => (
+          <button
+            key={`${entry.providerId}/${entry.modelId}`}
+            type="button"
+            className="surface-model-chip"
+            disabled={saving}
+            onClick={() => setModelId(entry.modelId)}
+          >
+            {entry.modelId}
+          </button>
+        ))}
+      </div>
+
       <div className="surface-model-actions">
         <button type="button" className="small-button" disabled={saving} onClick={() => void apply()}>
           {labels.modelProfilesApply}
         </button>
+        {notice !== null && (
+          <span className="surface-model-notice" role="status" data-model-notice={notice}>
+            {notice === "saved"
+              ? labels.modelProfilesApplied
+              : notice === "conflict"
+                ? labels.modelProfilesRevisionConflict
+                : notice === "model_required"
+                  ? labels.modelProfilesModelRequired
+                  : labels.failure}
+          </span>
+        )}
       </div>
-      {notice !== null && (
-        <p className="surface-model-notice" role="status" data-model-notice={notice}>
-          {notice === "saved"
-            ? labels.modelProfilesApplied
-            : notice === "conflict"
-              ? labels.modelProfilesRevisionConflict
-              : notice === "model_required"
-                ? labels.modelProfilesModelRequired
-                : labels.failure}
-        </p>
-      )}
 
       <section className="surface-advanced-settings" data-advanced-settings={writeAdvancedSettings === undefined ? "unavailable" : "available"}>
         <h4>{advanced.title}</h4>
