@@ -135,3 +135,45 @@ test("public ST import confirmation denies runtime-identity inputs without a per
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("ST card import carries alternate_greetings as reviewed variant fields, exactly once per entry", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-alternates-");
+  try {
+    const paths = resolveTavernPaths({ root } as never, identity);
+    const service = new StCardImportService(new TavernArtifactStore(root), paths);
+    const card = JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "Multi", first_mes: "Default hello.", alternate_greetings: ["Alt one.", "Alt two."] },
+    });
+    const alternateFields = (fields: readonly { field: string; text: string; eligibility: string }[]) =>
+      fields
+        .filter((entry) => entry.field.startsWith("alternate_greeting_"))
+        .map((entry) => [entry.field, entry.text, entry.eligibility]);
+    const first = await service.import("alt_once_a", card);
+    assert.deepEqual(alternateFields(first.candidate.artifact.fields), [
+      ["alternate_greeting_1", "Alt one.", "profile_eligible_after_explicit_review"],
+      ["alternate_greeting_2", "Alt two.", "profile_eligible_after_explicit_review"],
+    ]);
+    // Re-importing the same card yields the same two fields, never four.
+    const second = await service.import("alt_once_b", card);
+    assert.deepEqual(
+      alternateFields(second.candidate.artifact.fields),
+      alternateFields(first.candidate.artifact.fields),
+    );
+    // A card without alternates carries no alternate fields at all.
+    const plain = await service.import(
+      "alt_none",
+      JSON.stringify({ spec: "chara_card_v3", data: { name: "Plain", first_mes: "Hi." } }),
+    );
+    assert.deepEqual(alternateFields(plain.candidate.artifact.fields), []);
+    // The alternates pass the same explicit-review gate as first_greeting.
+    const review = await service.recordReview("alt_once_a", {
+      reviewedFields: ["first_greeting", "alternate_greeting_1", "alternate_greeting_2"],
+      approvedAtMs: 5,
+    });
+    assert.deepEqual((await service.readReview("alt_once_a")).canonicalHash, review.canonicalHash);
+    // Fails if alternates are dropped, duplicated on re-import, or carried outside the review gate.
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

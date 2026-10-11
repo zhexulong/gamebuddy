@@ -143,6 +143,12 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...(profile.firstGreeting === undefined
       ? []
       : [field("first_greeting", profile.firstGreeting, "profile_eligible_after_explicit_review")]),
+    // Alternate openings ride the same reviewed-field gate as the default. They
+    // are labelled by their stable 1-based index (the ST v2/v3 spec attaches no
+    // per-entry label) and become greeting-record variants at provision time.
+    ...(profile.alternateGreetings ?? []).map((greeting, index) =>
+      field(`alternate_greeting_${index + 1}`, greeting, "profile_eligible_after_explicit_review"),
+    ),
     ...value.worldBookCandidates.map((entry) => field(`worldbook_${entry.entryId}`, entry.content, "candidate_only")),
   ];
   return Object.freeze({
