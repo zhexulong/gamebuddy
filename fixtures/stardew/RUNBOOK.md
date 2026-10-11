@@ -2529,3 +2529,53 @@ bridge-driven smoke runners which bypass the launcher path):
 
 What this does NOT establish: that the Agent recovers on EVERY run (this is one run; the interruption is
 conditional on the Agent starting a walk), nor that it re-aims at the exact interrupted target.
+
+---
+
+### Ladder-6 / dialogue_stream: the Mod pages a NATIVE multi-page dialogue (PASS, 2026-10-11)
+
+```
+pwsh -NoProfile -File scratch/live-batch-dialogue.ps1 -Actions dialogue_stream
+15:36:03 PASS dialogue_stream (attempt 1)
+```
+
+Fixture `native_talk_to_npc_multi_page_v1`; the pair is chosen BY CONTENT, not hard-coded: the fixture walks the
+loaded villagers x the location keys their dialogue assets define, and accepts a pair only when
+`TryGetDialogue(location)` - the call the runner itself makes - resolves a line the native constructor SPLIT
+(`dialogues.Count > 1`). It landed on **Lewis@Saloon**.
+
+Evidence (result JSON, not stdout):
+
+```
+state=passed  reasonCode=dialogue_stream_paged_and_reported
+observed={"facts":1,"parsedPayloads":1,"maxPages":2,"speakers":["Lewis"],
+          "pagedAs":"multi_page_single_box","pageBreakToken":"#$b#"}
+payload={"speaker":"Lewis",
+         "pages":["你在那个破屋子里过的第一晚怎么样？",
+                  "你爷爷以前总是抱怨那张晃晃悠悠的旧床。但我觉得，他心里其实是爱着那间房子的。"],
+         "isQuestion":false,"choices":[]}
+```
+
+Cross-gate check after the pager change (the pager now CLICKS, where before it never did): `talk_to_npc` PASS
+(15:37:07) and `wia_modal_dismiss_chain` PASS (15:38:12), so paging does not disturb the gates that rely on a
+dialogue holding the actor.
+
+**Three defects, and the first two were the harness's:**
+
+1. The fixture asked a PAGE whether it contained the break. A page never does - the break is consumed when the
+   native constructor splits the line - so the assertion was false by construction, the fixture refused the world,
+   and every run died at the fixture with the pager never involved. `dialogues.Count > 1` is the observable shape
+   of a split.
+2. The pair search accepted a candidate whose NATIVE selection resolved a different row (`Lewis@Saloon:native_mismatch`).
+   It must ask `TryGetDialogue(key)`, not the raw table row.
+3. The pager's own `CanAdvance` required `characterIndexInDialogue` to reach the end of the page. A per-tick log
+   showed that index staying **0** for a whole dialogue while the text was fully readable and `safetyTimer` drained
+   normally - so it never clicked, ever. The native click fast-forwards the typewriter itself
+   (`DialogueBox.cs:361-364`); the predicate is now the safety window plus "not a transition, not a question".
+   Related: `IsOutro` (`transitioning && !transitioningBigger`) was WRONG - the page advance produces the very same
+   pair - so the pager now recognises the closing transition by observing that a transition presents nothing new,
+   and captures pages BEFORE any transition guard (reading is safe at any time; clicking is not).
+
+Debugging note worth keeping: the per-tick diagnostic is what settled this. Two rounds of reasoning produced two
+wrong "the page cannot be read" hypotheses; one tick log (`transitioning/bigger/safety/idx/text/canAdvance` per
+frame) gave the answer immediately. Instrument the decision path, then reason.
