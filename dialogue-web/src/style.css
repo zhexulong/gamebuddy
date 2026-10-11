@@ -3325,4 +3325,41 @@ body {
   color: var(--palette-gray-400);
 }
 
+/* ==========================================================================
+   The app bar in a mini-window strip
+
+   GameBuddy usually floats beside Stardew Valley in a 400-500 px strip, and the
+   composed bar carries six peer entries there. Below 860 px those entries are
+   already icon-only, each keeping its 44 px target and its accessible name; the
+   rail is six times that floor and cannot shrink, so what the bar gives up
+   instead is its own air - the side padding and the space between the entries -
+   because a bar that keeps neither pushes its own companion block to nothing.
+
+   The status word is the widest thing left beside the monogram, so at this
+   width the dot carries the tone on its own. That is not colour alone: the dot
+   pulses while a turn is in flight, and the word stays in the live region for a
+   screen reader - it is out of flow, not hidden.
+   ========================================================================== */
+
+@media (max-width: 480px) {
+  .app-bar {
+    padding: 0 var(--space-2);
+  }
+
+  .app-bar-actions {
+    gap: var(--space-1);
+  }
+
+  .app-bar-status-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 } /* end @layer theme.polish */

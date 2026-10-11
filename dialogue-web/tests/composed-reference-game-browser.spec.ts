@@ -2963,3 +2963,92 @@ test("the Memory surface narrows to one origin and back", async ({ page }) => {
   // projection the Host already sent.
   expect(memoryWrites).toEqual([]);
 });
+
+/**
+ * The mini-window floor (owner's item 3).
+ *
+ * GameBuddy is usually a 400-500 px strip floating beside Stardew Valley, and
+ * the composed shell's AppBar carries six peer entries there. At 400 px that is
+ * more control than bar, so the entries degrade to icons - while staying
+ * *named* (an icon-only button whose only name is a hover tooltip has no name)
+ * and while keeping the 44 px targets. The failures this catches, in the order
+ * they would bite:
+ *
+ * 1. a bar that overflows its own window - the floating strip grows a sideways
+ *    scrollbar and the conversation column is laid out against a width it does
+ *    not have;
+ * 2. a bar that "fits" by squeezing the entries under the touch floor or by
+ *    pushing the last ones past the right edge, where the shell's own
+ *    `overflow: hidden` makes them invisible *and* unreachable (each entry's
+ *    rect is asserted against the window, because a bar can leak out of its
+ *    window without the document ever scrolling);
+ * 3. a bar that fits by clipping its own companion block to nothing, which is
+ *    the layout misalignment the same item names - the monogram and the status
+ *    dot have to fit, and the status word may only be retired deliberately (it
+ *    is out of flow, so `role="status"` still announces it) rather than cut in
+ *    half.
+ */
+test("the AppBar degrades to named icon entries in a 400px window without sideways scroll", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.setViewportSize({ width: 400, height: 720 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+  // The conversation surface is the one shown, so the strip is measured in the
+  // state a player actually works in.
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
+
+  const measured = await page.evaluate(() => {
+    const entries = [...document.querySelectorAll<HTMLElement>(".app-bar-actions .nav-button")];
+    const companion = document.querySelector<HTMLElement>(".app-bar-companion");
+    const status = document.querySelector<HTMLElement>(".app-bar-status");
+    return {
+      viewport: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      companion: companion === null ? null : { clientWidth: companion.clientWidth, scrollWidth: companion.scrollWidth },
+      statusDotVisible: status?.querySelector(".status-dot")?.getBoundingClientRect().width ?? 0,
+      entries: entries.map((entry) => {
+        const rect = entry.getBoundingClientRect();
+        const label = entry.querySelector<HTMLElement>(".nav-label");
+        return {
+          name: entry.getAttribute("aria-label"),
+          title: entry.getAttribute("title"),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          labelDisplay: label === null ? null : getComputedStyle(label).display,
+        };
+      }),
+    };
+  });
+
+  // The document itself never scrolls sideways at 400 px (owner's assertion).
+  expect(measured.documentScrollWidth).toBeLessThanOrEqual(measured.viewport);
+  // Six peers are published for this profile: a bar that silently dropped one
+  // would pass every check below while losing a whole surface.
+  expect(measured.entries).toHaveLength(6);
+  for (const entry of measured.entries) {
+    expect(entry.name, "every icon-only entry keeps its accessible name").toBeTruthy();
+    expect(entry.title).toBe(entry.name);
+    expect(entry.labelDisplay, "the visible label is retired, the name is not").toBe("none");
+    expect(entry.width).toBeGreaterThanOrEqual(44);
+    expect(entry.height).toBeGreaterThanOrEqual(44);
+    expect(entry.left).toBeGreaterThanOrEqual(0);
+    expect(entry.right).toBeLessThanOrEqual(measured.viewport);
+  }
+  // The bar still says who is in it and what it is doing: the monogram and the
+  // status dot are rendered, not clipped away.
+  expect(measured.companion).not.toBeNull();
+  expect(measured.companion?.scrollWidth).toBeLessThanOrEqual((measured.companion?.clientWidth ?? 0) + 1);
+  expect(measured.statusDotVisible).toBeGreaterThan(0);
+});
