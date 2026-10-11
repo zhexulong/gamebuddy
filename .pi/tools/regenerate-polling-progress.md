@@ -48,3 +48,23 @@ In the shared tree the same two-spec command is currently red on two *other*
 lanes' assertions (`the conversation column is the transcript and the composer`
 and their new `a chat with no durable draft lets the player save the first one`);
 both mine pass there too (48 passed / 2 failed / 1 skipped, the 2 being theirs).
+
+## Shared-tree result (after the lanes settled)
+
+`./node_modules/.bin/playwright.cmd test tests/composed-reference-game-browser.spec.ts tests/stardew-installation-discovery.spec.ts --project=chromium --workers=1`
+on the shared working tree — **50 passed, 1 skipped (44.4s), exit 0**, both of my
+journeys included. (An earlier concurrent invocation of the same command, run at
+the same time as this one and as another lane's edits, produced a 24-failure
+run: two Playwright runs on one `reuseExistingServer` port, with source files
+changing under the dev server. That run is not a signal and was superseded by the
+green one; the third invocation was killed because it was stuck behind the same
+port collision.)
+
+Two commits carry this lane: `a5816280` (the fix + two journeys + this log) and
+`1b32c824` (this log only, but see the note below). `1b32c824` was created with a
+bare `git commit` and therefore also swept two files another lane had already
+staged - the deletions of `handoff.md` and `handoff-action-nav.md`. No content was
+lost (that lane had deleted them from the tree and staged the deletions; the
+blobs remain at `0228dc13`), but the attribution of those deletions belongs to
+that lane, not to this one. The commit that follows this line uses an explicit
+pathspec.
