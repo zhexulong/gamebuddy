@@ -95,7 +95,18 @@ tmp_*
 /subagent-artifacts/
 /subagent-reports/
 /plans/
+/handoff*.md
 /naming-refactor-review*.md
+/.knip.probe*.json
+/.lane-*.md
+/design-doc-msg.tmp
+/$null
+/decide.txt
+/stdout
+*out*.txt
+/_*.json
+/_*.patch
+/tmp-*.mjs
 /.cortexkit/
 **/scratch/**
 **/scripts/scratch/**
@@ -120,6 +131,11 @@ tmp_*
 /windows-capture-cleanup-*/
 *.stackdump
 /tools/.tmp-*
+
+# Third-party/community character cards and legacy presets (strictly excluded from repository)
+/assets/tavern/presets/deepseek-chan/
+/assets/tavern/presets/local-*/
+/assets/tavern/presets/*.private/
 
 # Disposable Host generation built for local iteration by
 # host/scripts/build-desktop-launcher-test-generation.mjs (test-only runtime
@@ -196,11 +212,12 @@ voice-gateway/scripts/player-turn-*.wav
 # tools/fixtures/ when a run deserves evidence).
 /_*.result.json
 /_*.log
-/tools/_*.result.json
+/tools/_*
+!/tools/_ladder-live-orchestrator.mjs
 
 # Any stray live-run evidence directory (the capture root must be the repo
 # root; this also catches a mis-resolved root so evidence can never be staged).
 .live-runs/
 
 # The reconciliation tests write these beside themselves and do not always clean up.
-integrations/stardew/action-development/tests/.tmp-recon-*
+integrations/stardew/action-development/tests/.tmp-*

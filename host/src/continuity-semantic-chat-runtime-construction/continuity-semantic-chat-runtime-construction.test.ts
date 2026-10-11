@@ -380,13 +380,13 @@ test("Chat construction materializes the companion's own world book (always-on c
   const { readWorldBook } = await import("../worldbook.js");
   let repoRoot: string | undefined;
   for (const candidate of [process.cwd(), resolvePath(process.cwd(), ".."), resolvePath(process.cwd(), "..", "..")]) {
-    if (existsSync(resolvePath(candidate, "assets/tavern/presets/deepseek-chan/worldbook.json"))) {
+    if (existsSync(resolvePath(candidate, "assets/tavern/presets/default-companion/worldbook.json"))) {
       repoRoot = candidate;
       break;
     }
   }
   assert.ok(repoRoot !== undefined, "the reviewed card must be findable from the test cwd");
-  const bookPath = resolvePath(repoRoot, "assets/tavern/presets/deepseek-chan/worldbook.json");
+  const bookPath = resolvePath(repoRoot, "assets/tavern/presets/default-companion/worldbook.json");
   const book = await readWorldBook(bookPath);
   const constantEntry = book.entries.find((entry) => entry.constant === true);
   const keywordEntry = book.entries.find((entry) => entry.constant !== true);

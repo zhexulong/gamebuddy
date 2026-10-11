@@ -328,7 +328,7 @@ async function readMemory(origin, client) {
  * path as run-live-chat-card-e2e.mjs (host/dist-test, built by the host
  * pipeline): preview -> candidate -> IdentityProfile, then writes the
  * canonical identity-profile.json the runtime reads at construction. A
- * worldbook.json next to the card (deepseek-chan preset) becomes the reviewed
+ * worldbook.json next to the card (default-companion preset) becomes the reviewed
  * world book whose constant entries earn the m[0] lorebook_constant seat (S3).
  *
  * The card's profile deliberately does NOT carry the reviewed-import
@@ -1072,8 +1072,8 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // child stderr narration, the runtime root's own evidence, and the report
     // travel together so a reviewer can see what actually reached the model.
     const capture = await openLiveRunCapture({ kind: "memory-loop", label: scenario.probeId, root: LIVE_RUN_ROOT });
-    // Optional character-card install (S1/S2/S3 effects): the deepseek-chan
-    // whale preset is the reference card; installing it BEFORE any surface
+    // Optional character-card install (S1/S2/S3 effects): the default-companion
+    // preset is the reference card; installing it BEFORE any surface
     // launch means the runtime constructs with the reviewed persona, the
     // voice-anchor examples and the always-on world book (lorebook_constant).
     // The companion language the player asked for, recorded before the first mount

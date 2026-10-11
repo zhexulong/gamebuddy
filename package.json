@@ -127,6 +127,7 @@
     "test:stardew-gameplay-surface-rules": "node --test tools/stardew-gameplay-surface-rules.test.mjs",
     "test:tavern-references": "node --test tools/verify-tavern-semantic-references.test.mjs",
     "check:tavern-references": "node tools/verify-tavern-semantic-references.mjs",
+    "test:tavern-presets": "node tools/validate-tavern-card.mjs",
     "test:tavern-release-prerequisites": "node --test tools/check-tavern-release-prerequisites.test.mjs",
     "check:tavern-release-prerequisites": "node tools/check-tavern-release-prerequisites.mjs",
     "test:chat-conversational-quality-gate": "node --test tools/check-chat-conversational-quality-gate.test.mjs",

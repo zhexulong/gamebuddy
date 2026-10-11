@@ -13,7 +13,7 @@ import {
 
 test("the canonical live-run card is present and identified", async () => {
   const identity = await readLiveRunPersonaIdentity();
-  assert.equal(identity.dir, "deepseek-chan");
+  assert.equal(identity.dir, "default-companion");
   assert.equal(typeof identity.name, "string");
   assert.ok(identity.name.length > 0, "the card must carry a display name");
   assert.ok(identity.worldBookEntries > 0, "the card must ship its world book");
@@ -21,7 +21,7 @@ test("the canonical live-run card is present and identified", async () => {
   assert.equal(canonical.ok, true, JSON.stringify(canonical.problems));
   assert.ok(canonical.macroTokens > 0, "the reviewed card carries authored templating; that is recorded, not refused");
   // The card is the live-run persona by decision; a silently different directory is a change of subject.
-  assert.ok(LIVE_RUN_PERSONA_DIR.endsWith(path.join("assets", "tavern", "presets", "deepseek-chan")));
+  assert.ok(LIVE_RUN_PERSONA_DIR.endsWith(path.join("assets", "tavern", "presets", "default-companion")));
 });
 
 test("provisioning copies both files byte for byte, with no preprocessing", async () => {

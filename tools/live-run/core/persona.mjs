@@ -15,7 +15,7 @@
  * conversation read as flat and generic.
  *
  * This module is the one place that knows:
- *   - WHICH card (the reviewed live-run card, `assets/tavern/presets/deepseek-chan`),
+ *   - WHICH card (the reviewed live-run card, `assets/tavern/presets/default-companion`),
  *   - that it is copied **byte for byte, with no modification or preprocessing** (the operator's rule:
  *     load it directly; if that fails, the failure is a system problem, not a reason to rewrite the card),
  *   - and how to ASSERT that a run really mounted it, so an absent persona is a failure instead of a
@@ -27,9 +27,9 @@ import { copyFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** `<repo>/assets/tavern/presets/deepseek-chan` — resolved from this module, never from a caller's cwd. */
+/** `<repo>/assets/tavern/presets/default-companion` — resolved from this module, never from a caller's cwd. */
 export const LIVE_RUN_PERSONA_DIR = path.resolve(
-  fileURLToPath(new URL("../../../assets/tavern/presets/deepseek-chan", import.meta.url)),
+  fileURLToPath(new URL("../../../assets/tavern/presets/default-companion", import.meta.url)),
 );
 
 /** The card and its world book travel together; naming them here keeps every loop identical. */

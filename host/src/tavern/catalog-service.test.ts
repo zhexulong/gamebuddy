@@ -208,23 +208,23 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
 test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBook as a lorebook_constant m[0] source", async () => {
   const worldBook = validateWorldBook({
     schemaVersion: 1,
-    worldBookId: "deepseek-chan",
+    worldBookId: "default-companion",
     revision: 3,
     alwaysOnPremise: "This is the player-reviewed companion backdrop.",
     entries: [
       {
-        entryId: "deepseek-entry-10",
-        title: "不懂艺术的肥鱼",
-        content: "鲸鱼娘自己没有任何艺术特长。",
+        entryId: "kohaku-entry-10",
+        title: "开拓同盟与农场誓约",
+        content: "琥珀与玩家是共同开拓农场的青梅竹马合伙人。",
         scope: "setting",
         provenance: "st-card-import",
         tokenBudget: "small",
         constant: true,
       },
       {
-        entryId: "deepseek-entry-1",
-        title: "喜欢帅哥",
-        content: "鲸鱼娘其实喜欢帅气男生。",
+        entryId: "kohaku-entry-1",
+        title: "雨天安排",
+        content: "雨天喜欢在门廊煮热茶看雨。",
         scope: "setting",
         provenance: "st-card-import",
         tokenBudget: "small",
@@ -244,7 +244,7 @@ test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBo
   );
   assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
   const source = catalog.stableSources[0];
-  assert.equal(source?.sourceId, "deepseek-chan");
+  assert.equal(source?.sourceId, "default-companion");
   assert.equal(source?.revision, "3");
   // always-on premise renders, the constant entry renders, keyword-gated entry does not.
   assert.match(source?.content ?? "", /player-reviewed companion backdrop/);
@@ -302,18 +302,18 @@ test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
     alwaysOnPremise: "The valley breathes with the seasons.",
     entries: [
       {
-        entryId: "deepseek-entry-10",
-        title: "不懂艺术的肥鱼",
-        content: "鲸鱼娘自己没有任何艺术特长。",
+        entryId: "companion-entry-10",
+        title: "勤劳的伴侣",
+        content: "见习农夫专注耕耘，没有多余的艺术特长。",
         scope: "setting",
         provenance: "reviewed-import",
         tokenBudget: "small",
         constant: true,
       },
       {
-        entryId: "deepseek-entry-1",
-        title: "喜欢帅哥",
-        content: "鲸鱼娘其实喜欢帅气男生。",
+        entryId: "companion-entry-1",
+        title: "喜欢晴天",
+        content: "伴侣其实格外喜欢晴朗天气。",
         scope: "setting",
         provenance: "reviewed-import",
         tokenBudget: "small",
@@ -359,15 +359,15 @@ test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
     assert.equal(stable.sourceId, book.worldBookId);
     // The constant entry AND the premise ride the stable m[0] source.
     assert.match(stable.content, /The valley breathes/);
-    assert.match(stable.content, /不懂艺术的肥鱼/);
-    assert.match(stable.content, /没有.{0,4}艺术特长/);
+    assert.match(stable.content, /勤劳的伴侣/);
+    assert.match(stable.content, /专注耕耘/);
     // Keyword-gated entry stays OUT of the stable prefix...
-    assert.doesNotMatch(stable.content, /喜欢帅哥/);
+    assert.doesNotMatch(stable.content, /喜欢晴天/);
     // ...and becomes a volatile selection candidate instead.
     assert.equal(catalog.volatileSources.length, 1);
     assert.equal(catalog.volatileSources[0]?.kind, "lorebook_entry");
-    assert.equal(catalog.volatileSources[0]?.content, "鲸鱼娘其实喜欢帅气男生。");
-    assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["喜欢帅哥"]);
+    assert.equal(catalog.volatileSources[0]?.content, "伴侣其实格外喜欢晴朗天气。");
+    assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["喜欢晴天"]);
   } finally {
     threads.close?.();
   }
