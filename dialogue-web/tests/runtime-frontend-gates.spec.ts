@@ -86,6 +86,8 @@ type FixtureOptions = Readonly<{
   companionName?: string;
   /** `null` is a chat the Host has published no title for at all. */
   title?: string | null;
+  /** Marks the first companion message as the committed variant of a swipe set. */
+  swipe?: boolean;
 }>;
 
 function handleFor(index: number): string {
@@ -118,6 +120,9 @@ function composedRoot(options: FixtureOptions = {}) {
           locale: "en",
           order: index,
           revision: 1,
+          ...(options.swipe === true && message.role === "companion" && index === 0
+            ? { swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "1/2", hasPrevious: true, hasNext: true } }
+            : {}),
         })),
         draft: { revision: 0, present: false },
         turn: null,
@@ -837,4 +842,66 @@ test("gate 7: a new conversation is titled for real and opens on a real empty st
     `heading="${measured.heading}"; zero state ${Math.round(measured.anchorHeight)}/${Math.round(measured.timelineHeight)}px; ${failures.length} failure(s)`,
   );
   expect(failures, "a new conversation is titled for real and opens on a real zero state").toEqual([]);
+});
+
+/**
+ * Gate 8: the regenerate control is a control, and the swipe pair reads with it.
+ *
+ * The capture run measured it at 75x21 px, an 11 px label, a transparent
+ * background and no border - the smallest interactive target and the smallest
+ * type anywhere in the product, on the one control that repeats a companion's
+ * answer. The failure this catches: a control that is only a caption-sized muted
+ * text row, invisible as an affordance and unusable as a target, beside a swipe
+ * pair that is not the same kind of thing.
+ */
+test("gate 8: the regenerate control clears the touch floor with a visible affordance", async ({ page }) => {
+  await mountShell(page, { root: composedRoot({ swipe: true }) });
+
+  const measured = await page.evaluate(() => {
+    const read = (selector: string) => {
+      const node = document.querySelector<HTMLElement>(selector);
+      if (node === null) return null;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return {
+        height: Math.round(rect.height),
+        width: Math.round(rect.width),
+        fontSize: Number.parseFloat(style.fontSize),
+        backgroundColor: style.backgroundColor,
+        text: (node.textContent ?? "").trim(),
+      };
+    };
+    return { regenerate: read(".regenerate-btn"), group: read(".swipe-controls"), button: read(".swipe-btn") };
+  });
+
+  const transparent = ["transparent", "rgba(0, 0, 0, 0)"];
+  const failures: string[] = [];
+  if (measured.regenerate === null) failures.push("the regenerate control is not rendered");
+  else {
+    if (measured.regenerate.height < 44)
+      failures.push(`the regenerate control is ${measured.regenerate.height}px tall, under the 44px floor`);
+    if (transparent.includes(measured.regenerate.backgroundColor))
+      failures.push(`the regenerate control computes to a transparent background (${measured.regenerate.backgroundColor})`);
+    if (measured.regenerate.fontSize < 12) failures.push(`the regenerate control's label is ${measured.regenerate.fontSize}px`);
+  }
+  // The swiped variant's pair sits in the same message, so it keeps the same
+  // floor and the same visible affordance - one control group, not two species.
+  for (const [what, node] of [
+    ["the swipe group", measured.group],
+    ["a swipe button", measured.button],
+  ] as const) {
+    if (node === null) {
+      failures.push(`${what} is not rendered for a swiped message`);
+      continue;
+    }
+    if (node.height < 44) failures.push(`${what} is ${node.height}px tall, under the 44px floor the regenerate control keeps`);
+  }
+  if (measured.group !== null && transparent.includes(measured.group.backgroundColor))
+    failures.push(`the swipe group computes to a transparent background (${measured.group.backgroundColor})`);
+
+  record(
+    "gate-8",
+    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor}; swipe group ${measured.group?.height}px / button ${measured.button?.height}px; ${failures.length} failure(s)`,
+  );
+  expect(failures, "the regenerate control is a real target and the swipe pair matches it").toEqual([]);
 });
