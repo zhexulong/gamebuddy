@@ -176,6 +176,15 @@ export function Composer({
                 aria-hidden="true"
               >
                 {voice.state === "unavailable" ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+                {/* The only active-audio state this wire carries is `speaking`,
+                    so the pulse ring is keyed to exactly that Host reading and
+                    to nothing else. There is no recording/capturing state on
+                    `tavern_browser_api/v1` to animate, and the browser's own
+                    MediaRecorder is not a Host fact. Decorative: the state's
+                    readable label above is the carrier (style.css). */}
+                {voice.state === "speaking" && (
+                  <span className="voice-pulse-ring" data-voice-pulse="" />
+                )}
               </span>
               <span className="voice-status-label">{voiceLabel}</span>
             </span>

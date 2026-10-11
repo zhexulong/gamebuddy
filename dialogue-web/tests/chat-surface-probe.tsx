@@ -142,6 +142,21 @@ const chatProbe = {
   voiceLabel(): string | null {
     return document.querySelector(".voice-status-label")?.textContent ?? null;
   },
+  /**
+   * The computed motion of the mic's halo. The element being present proves
+   * nothing about what the player sees, so this reads the resolved animation
+   * the stylesheet actually applies to it.
+   */
+  voicePulse(): { animationName: string; animationDuration: string; transform: string } | null {
+    const ring = document.querySelector(".voice-pulse-ring");
+    if (ring === null) return null;
+    const style = getComputedStyle(ring);
+    return {
+      animationName: style.animationName,
+      animationDuration: style.animationDuration,
+      transform: style.transform,
+    };
+  },
   bubbleHtml(handle: string): string | null {
     return (
       document.querySelector(`li[data-handle="${handle}"] .message-bubble`)?.innerHTML ?? null
