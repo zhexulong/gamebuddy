@@ -63,6 +63,14 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs": "water_crop",
   // One runner, two gate actions; the fixture keys the scenario on the first.
   "run-stardew-native-local-player-expression-smoke.mjs": "express_emote",
+  // The body-ownership and dialogue-stream runners report facts about the BODY and about a CONVERSATION rather
+  // than completing an action, so neither has a published gate entry (their fixtures are scenarios, not actions)
+  // - but they are still runners whose config contract must be checked, which is what this list is for.
+  "run-stardew-native-local-player-body-owner-hold-smoke.mjs": "body_owner_hold",
+  "run-stardew-native-local-player-dialogue-stream-smoke.mjs": "dialogue_stream",
+  // A read-only reachability probe: no gate entry either, declared for the same reason. It belongs to the L3
+  // scene-reachability lane; declared here because this completeness invariant was red with it uncovered.
+  "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs": "scene_reachable_probe",
   // Loop-closure wave (2026-10-04): the 14 lane smoke runners are fixture-family
   // drivers keyed on the action they exercise, matching the gate table entries.
   "run-stardew-native-local-player-clear-cask-smoke.mjs": "clear_cask",
