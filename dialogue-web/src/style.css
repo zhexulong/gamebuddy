@@ -3290,4 +3290,39 @@ body {
   white-space: nowrap;
 }
 
+/* ==========================================================================
+   The zero-message anchor
+
+   A conversation with no messages is the first screen a player sees, and one
+   dry "no messages" line reads as a surface that never finished loading. The
+   transcript's zero state is a light name plate plus one warm line instead, in
+   the secondary warm grey (`--palette-gray-400`) so it invites rather than
+   reports. It lives in the transcript itself, so the first message replaces it
+   with no separate state to keep in sync.
+   ========================================================================== */
+
+.empty-state-nameplate {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+/* Stated on the anchor's own line rather than inherited from `.empty-state p`,
+   so a later re-tune of `--text-disabled` cannot move the invite away from the
+   secondary grey it is drawn in. */
+.empty-state-anchor .empty-state-opening {
+  margin: var(--space-3) 0 0;
+  max-width: 46ch;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--palette-gray-400);
+}
+
 } /* end @layer theme.polish */

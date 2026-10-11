@@ -18,7 +18,10 @@ export function Timeline({
   chatTitle: string | null;
   labels: {
     chatTranscript: string;
-    emptyChat: string;
+    /** The zero-message anchor's one line; `{{name}}` is the companion. */
+    emptyChatOpening: string;
+    /** The catalog's own word for an unnamed companion, used on the plate. */
+    companion: string;
     untitledChat: string;
     you: string;
     swipeNavigation: string;
@@ -36,6 +39,10 @@ export function Timeline({
   pending?: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
 }) {
   const displayTitle = chatTitle ?? labels.untitledChat;
+  // The anchor names the companion the way the transcript will: the profile's
+  // own name, or the catalog's word for an unnamed one, so the plate and the
+  // line under it are never blank and never a half-sentence.
+  const anchorName = companionName.trim() || labels.companion;
   const sectionRef = useRef<HTMLElement>(null);
   const onSwipeRef = useRef(onSwipe);
   const onRegenerateRef = useRef(onRegenerate);
@@ -85,8 +92,16 @@ export function Timeline({
         <h1>{displayTitle}</h1>
       </div>
       {transcript.length === 0 && preview === null ? (
-        <div className="empty-state">
-          <p>{labels.emptyChat}</p>
+        // A conversation that has not started yet is the first thing a player
+        // sees. The dry "no messages" line it used to carry reads as a surface
+        // that failed to load; the companion's name plate and one warm line in
+        // the secondary grey say the same fact as an invitation instead. It is
+        // the transcript's own zero state, so the first message replaces it.
+        <div className="empty-state empty-state-anchor" data-empty-anchor="">
+          <span className="empty-state-nameplate">{anchorName}</span>
+          <p className="empty-state-opening">
+            {labels.emptyChatOpening.replace("{{name}}", anchorName)}
+          </p>
         </div>
       ) : (
         <ol className="message-list">

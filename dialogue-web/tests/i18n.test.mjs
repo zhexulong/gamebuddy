@@ -65,3 +65,14 @@ test("messages returns complete dictionary with identical keys for en and zh-CN"
     assert.ok(typeof zhMessages[key] === "string" && zhMessages[key].length > 0, `zh.${key} is empty`);
   }
 });
+
+test("the zero-message anchor keeps its companion placeholder in both locales", () => {
+  // The component substitutes `{{name}}` itself, so a translation that dropped
+  // the placeholder would render a line about nobody while looking translated.
+  for (const locale of ["en", "zh-CN"]) {
+    assert.ok(
+      messages(locale).emptyChatOpening.includes("{{name}}"),
+      `${locale}.emptyChatOpening lost its {{name}} placeholder`,
+    );
+  }
+});

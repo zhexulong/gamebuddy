@@ -37,6 +37,13 @@ import { expect, test, type Page } from "@playwright/test";
  *    second paragraph impossible. The assertion reads the field *and* the send
  *    log, because a composer that fired the send and left the text behind would
  *    look correct in the DOM alone.
+ * 7. `the zero-message anchor appears only while the transcript is empty` - a
+ *    brand-new conversation renders no bubbles, and a first screen that says
+ *    nothing at all is indistinguishable from a surface that failed to load.
+ *    The assertion pins the anchor to exactly the zero-message case (it has to
+ *    be gone again the moment one message exists, or it would sit above every
+ *    conversation) and resolves its colour against `--palette-gray-400`, so a
+ *    drifted or missing rule fails here instead of in a screenshot.
  */
 
 type ChatProbe = {
@@ -213,4 +220,37 @@ test("Enter sends and Shift+Enter writes a newline", async ({ page }) => {
   // The same message, newline and all, went out; Enter did not stay in the field.
   expect(await page.evaluate(() => window.chatProbe.sends())).toEqual(["First line\nSecond line"]);
   await expect(composer).toHaveValue("");
+});
+
+/**
+ * The zero-message state, and the two things about it that a screenshot cannot
+ * tell apart: that it is present *only* with zero messages, and that its line is
+ * drawn in the secondary warm grey the token layer names.
+ */
+test("the zero-message anchor appears only while the transcript is empty", async ({ page }) => {
+  await openProbe(page);
+  await setTranscript(page, []);
+
+  const anchor = page.locator("[data-empty-anchor]");
+  await expect(anchor).toHaveCount(1);
+  // The companion's own name is on the plate and in the line: a generic
+  // "no messages" line is exactly the first screen this replaces.
+  await expect(anchor.locator(".empty-state-nameplate")).toHaveText("Mira");
+  await expect(anchor.locator(".empty-state-opening")).toContainText("Mira");
+
+  const drawn = await page.evaluate(() => {
+    const line = document.querySelector("[data-empty-anchor] .empty-state-opening");
+    const probe = document.createElement("span");
+    probe.style.color = "var(--palette-gray-400)";
+    document.body.appendChild(probe);
+    const expected = getComputedStyle(probe).color;
+    probe.remove();
+    return { color: line === null ? null : getComputedStyle(line).color, expected };
+  });
+  expect(drawn.color).toBe(drawn.expected);
+
+  // One message, and the anchor is gone - it never sits above a live transcript.
+  await setTranscript(page, ["The first thing the companion says."]);
+  await expect(anchor).toHaveCount(0);
+  await expect(page.locator("li[data-handle='h0'] .message-bubble")).toBeVisible();
 });
