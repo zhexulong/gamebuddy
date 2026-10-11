@@ -8,6 +8,8 @@ const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
 const MAX_PNG_CHUNKS = ST_CARD_DECODER_LIMITS_V1.pngChunks;
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+/** Bounded rejection code for a malformed `alternate_greetings` entry. */
+const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
 
 type StCardImportClassification =
   | "accepted_typed"
@@ -42,6 +44,9 @@ export type StCardImportPreview = Readonly<{
     persona?: IdentityProfile["persona"];
     examples: readonly Readonly<{ user: string; companion: string }>[];
     firstGreeting?: string;
+    /** The card's other openings, beside the default. These are Thread History
+     *  (a new chat's first assistant message), never Stable Prefix Context. */
+    alternateGreetings?: readonly string[];
   }>;
   /** Candidate-only scenario is deliberately outside the profile candidate. */
   scenario?: string;
@@ -133,7 +138,16 @@ export function candidateToIdentityProfile(
 }
 
 function reportFromValue(value: Record<string, unknown>, source: "json" | "png"): StCardImportReport {
-  const preview = previewFromValue(value, "gamebuddy.companion.imported");
+  let preview: StCardImportPreview;
+  try {
+    preview = previewFromValue(value, "gamebuddy.companion.imported");
+  } catch (error) {
+    // A malformed alternates entry rejects the whole decode with one bounded
+    // code: a partial variant list would be a half-written greeting record.
+    if (error instanceof Error && error.message === INVALID_ALTERNATE_GREETINGS)
+      return rejected(source, "alternate_greetings", INVALID_ALTERNATE_GREETINGS);
+    throw error;
+  }
   const data = isRecord(value.data) ? value.data : value;
   const accepted = [
     "name",
@@ -143,6 +157,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
     "first_mes",
     "first_message",
     "mes_example",
+    "alternate_greetings",
     "character_book",
   ].filter((field) => data[field] !== undefined);
   const dispositions: StCardImportDisposition[] = accepted.map((field) =>
@@ -178,6 +193,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const greeting =
     boundedMultilineText(data.first_mes, ST_CARD_DECODER_LIMITS_V1.textBytes) ??
     boundedMultilineText(data.first_message, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const alternateGreetings = readAlternateGreetings(data.alternate_greetings);
   const parsedExamples = parseExamples(
     boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes),
   );
@@ -230,12 +246,33 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       ...(persona === undefined ? {} : { persona }),
       examples: Object.freeze(examples),
       ...(greeting === undefined ? {} : { firstGreeting: greeting }),
+      ...(alternateGreetings === undefined ? {} : { alternateGreetings }),
     }),
     softHints: Object.freeze(longPersonaFields),
     ...(scenario === undefined ? {} : { scenario }),
     worldBookCandidates: Object.freeze(worldBookCandidates),
     unsupportedFields: Object.freeze(unsupportedFields),
   });
+}
+
+/**
+ * Decodes a card's alternate openings (ST v2/v3 `data.alternate_greetings`, a
+ * `string[]`; neither spec attaches a per-entry label). These belong to Thread
+ * History - the first assistant message of a new chat - and never to the Stable
+ * Prefix Context, so they leave the decoder beside the default opening and no
+ * further. An absent or empty list carries no field (a card without alternates
+ * decodes byte-identically to before); any malformed entry fails closed with a
+ * single bounded code so no half-written variant list can be produced.
+ */
+function readAlternateGreetings(value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(INVALID_ALTERNATE_GREETINGS);
+  const greetings = value.map((entry) => {
+    const text = boundedMultilineText(entry, ST_CARD_DECODER_LIMITS_V1.textBytes);
+    if (text === undefined) throw new Error(INVALID_ALTERNATE_GREETINGS);
+    return text;
+  });
+  return greetings.length === 0 ? undefined : Object.freeze(greetings);
 }
 
 function extractPngCardJson(bytes: Uint8Array): string | undefined {
@@ -425,7 +462,7 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
   );
 }
 function isUnsupported(key: string): boolean {
-  return /^(?:system_prompt|post_history(?:_instructions)?|regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|extensions?|prompt_?order|creator_notes|alternate_greetings|presets?|remote(?:_resources?)?)$/iu.test(
+  return /^(?:system_prompt|post_history(?:_instructions)?|regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|extensions?|prompt_?order|creator_notes|presets?|remote(?:_resources?)?)$/iu.test(
     key,
   );
 }

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-focus-greeting-variants"
+  },
+  "include": [],
+  "files": [
+    "src/st-card-import.test.ts",
+    "src/tavern/st-card-import-service.test.ts",
+    "src/tavern/new-companion-service.test.ts"
+  ]
+}

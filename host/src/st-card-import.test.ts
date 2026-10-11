@@ -556,3 +556,82 @@ test("preview folds first_mes into a reviewed example row when mes_example is mi
   const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: { name: "Long Tail", description: "d".repeat(4_002) } }));
   assert.equal(report.softHints[0]?.chars, 4_002);
 });
+// ---------------------------------------------------------------------------
+// alternate_greetings: alternate openings belong to Thread History, not to the
+// Stable Prefix Context. They leave the decoder beside the default opening.
+// ---------------------------------------------------------------------------
+
+test("decoder carries alternate_greetings beside the default opening for v2, v3 and PNG cards", () => {
+  const data = {
+    name: "Multi Widow",
+    first_mes: "Default hello.",
+    alternate_greetings: ["Alt one.", "Alt two."],
+  };
+  // v2 shape (no spec marker) and v3 shape both use the same `data.alternate_greetings: string[]`.
+  const v2 = previewStCard({ data: { ...data } });
+  assert.equal(v2.format, "st-v2");
+  assert.equal(v2.profileCandidate.firstGreeting, "Default hello.");
+  assert.deepEqual(v2.profileCandidate.alternateGreetings, ["Alt one.", "Alt two."]);
+  const v3 = previewStCard({ spec: "chara_card_v3", data: { ...data } });
+  assert.equal(v3.format, "st-v3");
+  assert.deepEqual(v3.profileCandidate.alternateGreetings, ["Alt one.", "Alt two."]);
+  // PNG-embedded cards reach the same path: an embedded card with alternates is not special.
+  const png = decodeStCard(pngWithChara(JSON.stringify({ spec: "chara_card_v3", data: { ...data } })));
+  assert.equal(png.source, "png");
+  assert.deepEqual(png.candidate?.profileCandidate.alternateGreetings, ["Alt one.", "Alt two."]);
+  // The field is accepted typed (not dropped) and never listed as unsupported.
+  assert.ok(
+    png.dispositions.some(
+      (entry) => entry.field === "alternate_greetings" && entry.classification === "accepted_typed",
+    ),
+  );
+  assert.equal(png.dispositions.some((entry) => entry.field === "alternate_greetings" && entry.classification === "dropped_unsupported"), false);
+  // Fails if the decoder still treats alternate openings as an executable/prompt-control field.
+});
+
+test("a card with no alternate_greetings decodes exactly as before, and an empty list adds no variants", () => {
+  const base = { spec: "chara_card_v3", data: { name: "Single Widow", first_mes: "Only hello." } };
+  const absent = decodeStCard(JSON.stringify(base));
+  // A card that never declared the field gains no key and no disposition row.
+  assert.equal("alternateGreetings" in (absent.candidate?.profileCandidate ?? {}), false);
+  assert.equal(absent.dispositions.some((entry) => entry.field === "alternate_greetings"), false);
+  // An explicit empty list is recognized as typed but still carries no variants,
+  // so the candidate is byte-identical to the absent case.
+  const empty = decodeStCard(
+    JSON.stringify({ spec: "chara_card_v3", data: { ...base.data, alternate_greetings: [] } }),
+  );
+  assert.deepEqual(empty.candidate, absent.candidate);
+  assert.equal("alternateGreetings" in (empty.candidate?.profileCandidate ?? {}), false);
+  assert.deepEqual(
+    empty.dispositions.filter((entry) => entry.field !== "alternate_greetings"),
+    absent.dispositions,
+  );
+  assert.deepEqual(empty.dispositions.find((entry) => entry.field === "alternate_greetings"), {
+    field: "alternate_greetings",
+    classification: "accepted_typed",
+    reason: "bounded_inert_candidate",
+  });
+  // Fails if an empty list starts emitting a variants field or a greeting record.
+});
+
+test("a malformed alternate_greetings entry fails closed with a bounded code", () => {
+  const card = (value: unknown) =>
+    JSON.stringify({ spec: "chara_card_v3", data: { name: "Broken", first_mes: "Hi.", alternate_greetings: value } });
+  for (const malformed of ["not-an-array", 42, [7], [""], ["ok", "\u0000"]]) {
+    const report = decodeStCard(card(malformed));
+    // No partial candidate is produced; the whole decode rejects with one bounded reason.
+    assert.equal(report.candidate, undefined);
+    assert.equal(report.dispositions.length, 1);
+    assert.deepEqual(report.dispositions[0], {
+      field: "alternate_greetings",
+      classification: "rejected_invalid",
+      reason: "invalid_alternate_greetings",
+    });
+    // The direct preview helper fails closed the same way instead of half-reading.
+    assert.throws(
+      () => previewStCard(JSON.parse(card(malformed)) as Record<string, unknown>),
+      /invalid_alternate_greetings/,
+    );
+  }
+  // Fails if a partially valid list is accepted (which would half-write a greeting record).
+});
