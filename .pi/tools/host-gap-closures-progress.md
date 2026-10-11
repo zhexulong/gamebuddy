@@ -36,8 +36,31 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
   produce — exactly the lookalike the brief forbids.
 - Change made: none.
 
-## Item 3 — game diagnostics/instances result protocol
-- [ ] adjudicate + report
+## Item 3 — game diagnostics/instances result protocol: REPORTED AS GAP, no code
+- `game.instances.read` / `game.diagnostics.read` are declared as operation ids
+  (`host/src/game-browser-contract/index.ts:465,476`), have command bodies (`:225,:233`) exported in the
+  contract schemas (`:588,:604`), but have **no result schema**, no route in
+  `host/src/composed-reference-game-browser.ts` (its route table at `:858-890` mounts only discovery /
+  lifecycle / cabins), no client method, and neither id is listed in the Stardew profile
+  (`host/src/games/stardew/provider.ts:96-114`).
+- `game.instances.read`: the only instance producer is
+  `createGameBrowserStateProvider.readState` (`host/src/game-browser/game-browser-state-provider.ts:47-55`),
+  which projects exactly **one** `GameInstanceV1` (`host/src/game-browser-contract/index.ts:167-172`) from the
+  coordinator's lifecycle / attachment / launch-readiness readers. A list would be a list of one and would
+  duplicate `game.state.read`'s `game.instance` — no new reachable data. The composed shell already publishes
+  that single instance in `GET …/game` and `…/state`.
+- `game.diagnostics.read`: **no producer**. The only `diagnostics` in the contract is the
+  installation-discovery code list (`GameDiscoveryReadResultV1Schema.diagnostics`,
+  `host/src/game-browser-contract/index.ts:246-250`), produced by
+  `windows-stardew-installation-discovery/provider.ts` and served by `game.installation.discovery.read`.
+  There is no operational/health/log/counter source exposed to the browser; the Host's redacted bridge
+  diagnostics (`LocalStardewBridgeDiagnostic`, `boundedSidecarDiagnostic`) are internal tokens never surfaced
+  to the browser and would need a new coordinator-owned projection.
+- Producer `game.diagnostics.read` would need: a coordinator-owned bounded operational diagnostics
+  projection (e.g. attachment/launch/bridge terminal codes with a fixed vocabulary) behind an
+  `operationId` the Stardew profile declares. Producer `game.instances.read` would need a genuine
+  multi-instance owner (there is only ever one owned Player Host instance today).
+- Change made: none (a schema with nothing behind it is worse than a missing one).
 
 ## Command log
 | command | result |
