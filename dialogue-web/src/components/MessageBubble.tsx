@@ -16,6 +16,7 @@ export const MessageBubble = memo(function MessageBubble({
   playerLabel,
   onSwipe,
   onRegenerate,
+  onOpeningVariant,
   pending = null,
   streaming = false,
   labels,
@@ -26,12 +27,17 @@ export const MessageBubble = memo(function MessageBubble({
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
   /**
+   * The new-chat opening choice: it is offered only where the Host published an unlocked
+   * `openingVariant`, and it calls the Host's own route rather than holding the choice here.
+   */
+  onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
+  /**
    * The mutation this exact message is waiting on, if any. While it is set the
    * message's own controls are disabled: the shell already guards against a second
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | null;
+  pending?: "swipe" | "regenerate" | "opening" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. It is a sibling of the bubble, never inside it, so the
@@ -49,7 +55,14 @@ export const MessageBubble = memo(function MessageBubble({
   const authorName = isPlayer ? playerLabel : companionName;
   const initial = authorName.slice(0, 1).toUpperCase();
   const swipeInfo = message.swipeInfo;
+  const openingVariant = message.openingVariant;
   const busy = pending !== null;
+  // The Host published this only while the opening is still unlocked and the greeting set still
+  // resolves; when it is sealed the control is absent rather than offered and refused.
+  const openingChoice =
+    !isPlayer && openingVariant !== undefined && !openingVariant.locked && openingVariant.count > 1
+      ? openingVariant
+      : undefined;
 
   return (
     <li
@@ -66,6 +79,31 @@ export const MessageBubble = memo(function MessageBubble({
       <div className="message-body">
         <div className="message-header">
           <span className="message-author">{authorName}</span>
+          {openingChoice && (
+            <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+              <button
+                type="button"
+                className="swipe-btn"
+                disabled={busy || openingChoice.index <= 0}
+                onClick={() => onOpeningVariant?.(message.handle, "prev")}
+                aria-label={labels.swipePrevious}
+                title={labels.swipePrevious}
+              >
+                <ChevronLeft size={14} aria-hidden="true" />
+              </button>
+              <span className="swipe-indicator">{`${openingChoice.index + 1}/${openingChoice.count}`}</span>
+              <button
+                type="button"
+                className="swipe-btn"
+                disabled={busy || openingChoice.index >= openingChoice.count - 1}
+                onClick={() => onOpeningVariant?.(message.handle, "next")}
+                aria-label={labels.swipeNext}
+                title={labels.swipeNext}
+              >
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+          )}
           {!isPlayer && swipeInfo && swipeInfo.totalSwipes > 1 && (
             <div className="swipe-controls" aria-label={labels.swipeNavigation}>
               <button

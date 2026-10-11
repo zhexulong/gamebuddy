@@ -10,6 +10,7 @@ export function Timeline({
   preview = null,
   onSwipe,
   onRegenerate,
+  onOpeningVariant,
   pending = null,
 }: {
   transcript: readonly BrowserMessageV1[];
@@ -31,12 +32,14 @@ export function Timeline({
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
+  /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
+  onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
    * The chat mutation in flight and the message it belongs to, if any. Only that
    * message's own controls go busy, so a swipe on one variant never disables the
    * regenerate affordance of another.
    */
-  pending?: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
+  pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
 }) {
   const displayTitle = chatTitle ?? labels.untitledChat;
   // The anchor names the companion the way the transcript will: the profile's
@@ -46,6 +49,7 @@ export function Timeline({
   const sectionRef = useRef<HTMLElement>(null);
   const onSwipeRef = useRef(onSwipe);
   const onRegenerateRef = useRef(onRegenerate);
+  const onOpeningVariantRef = useRef(onOpeningVariant);
 
   // The handler props are re-created by the shell on every render - including
   // every streaming delta - so they are re-read through refs and the callbacks
@@ -55,6 +59,7 @@ export function Timeline({
   useLayoutEffect(() => {
     onSwipeRef.current = onSwipe;
     onRegenerateRef.current = onRegenerate;
+    onOpeningVariantRef.current = onOpeningVariant;
   });
 
   const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
@@ -63,10 +68,14 @@ export function Timeline({
   const handleRegenerate = useCallback((messageHandle: string) => {
     onRegenerateRef.current?.(messageHandle);
   }, []);
+  const handleOpeningVariant = useCallback((messageHandle: string, direction: "prev" | "next") => {
+    onOpeningVariantRef.current?.(messageHandle, direction);
+  }, []);
   // A caller that passed no handler keeps no control: the bubble gates its
   // swipe/regenerate affordances on the handler being present.
   const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
+  const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
 
   // Keep the newest message in view: the effect re-runs when the visible
   // content changes (message count or the streaming preview text) and also on
@@ -115,6 +124,7 @@ export function Timeline({
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
               onSwipe={swipeHandler}
               onRegenerate={regenerateHandler}
+              onOpeningVariant={openingVariantHandler}
             />
           ))}
           {preview !== null && (

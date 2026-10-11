@@ -43,6 +43,19 @@ type BrowserSwipeInfoV1 = Readonly<{
   hasNext: boolean;
 }>;
 
+/**
+ * Additive v1 field for the one opening message whose opening is a reviewed greeting set: the
+ * committed variant and its position in the set the Host drew it from. `locked` is the durable
+ * opening seal - once set, no choice can be recorded and the browser must not offer the control.
+ */
+type BrowserOpeningVariantV1 = Readonly<{
+  variantId: string;
+  index: number;
+  count: number;
+  label: string | null;
+  locked: boolean;
+}>;
+
 export type BrowserMessageV1 = Readonly<{
   handle: string;
   role: "player" | "companion";
@@ -51,6 +64,7 @@ export type BrowserMessageV1 = Readonly<{
   order: number;
   revision: number;
   swipeInfo?: BrowserSwipeInfoV1;
+  openingVariant?: BrowserOpeningVariantV1;
 }>;
 
 export type BrowserTurnV1 = Readonly<{
@@ -419,6 +433,8 @@ function isNfcUtf8Text(value: unknown): value is string {
 }
 
 const SWIPE_INFO_KEYS = ["currentIndex", "totalSwipes", "label", "hasPrevious", "hasNext"] as const;
+const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] as const;
+const OPENING_VARIANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
 function isBrowserSwipeInfo(value: unknown): value is BrowserSwipeInfoV1 {
   return (
@@ -434,18 +450,32 @@ function isBrowserSwipeInfo(value: unknown): value is BrowserSwipeInfoV1 {
   );
 }
 
+function isBrowserOpeningVariant(value: unknown): value is BrowserOpeningVariantV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, OPENING_VARIANT_KEYS) &&
+    typeof value.variantId === "string" &&
+    OPENING_VARIANT_ID_PATTERN.test(value.variantId) &&
+    isNonNegativeSafeInteger(value.index) &&
+    isPositiveSafeInteger(value.count) &&
+    value.index < value.count &&
+    (value.label === null || (typeof value.label === "string" && value.label.length >= 1 && value.label.length <= 128)) &&
+    typeof value.locked === "boolean"
+  );
+}
+
 // --- DTO validators (strict closed shapes; every invalid value throws TavernProtocolError). ---
 
 function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value);
-  const hasBaseKeys = MESSAGE_KEYS.every((k) => keys.includes(k));
-  if (!hasBaseKeys) return false;
-  if (keys.length === MESSAGE_KEYS.length + 1) {
-    if (!("swipeInfo" in value) || !isBrowserSwipeInfo(value.swipeInfo)) return false;
-  } else if (keys.length !== MESSAGE_KEYS.length) {
-    return false;
-  }
+  if (!MESSAGE_KEYS.every((k) => keys.includes(k))) return false;
+  // The two additive optional facts a message may carry; any subset is legal.
+  const optionalKeys = ["swipeInfo", "openingVariant"] as const;
+  const expectedKeys = MESSAGE_KEYS.length + optionalKeys.filter((k) => k in value).length;
+  if (keys.length !== expectedKeys) return false;
+  if ("swipeInfo" in value && !isBrowserSwipeInfo(value.swipeInfo)) return false;
+  if ("openingVariant" in value && !isBrowserOpeningVariant(value.openingVariant)) return false;
   return (
     isOpaqueHandle(value.handle) &&
     isOneOf(value.role, MESSAGE_ROLES) &&

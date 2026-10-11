@@ -25,8 +25,21 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
 - [x] Bounded refusals wired into `problemFor` (`chat_thread_opening_locked` → `chat_opening_locked`, etc.)
 - [x] Host tests: variant choice durable + read back on the opening message; locked refusal; not-greeting
       refusal; out-of-range refusal (`library-service.test.ts`, 2 new tests)
-- [ ] Client `< 1/N >` control (absent when locked) + typecheck + playwright
+- [x] Client `< 1/N >` control: `<`/`>` buttons on the opening message, calling
+      `PUT /api/tavern/v1/chat/opening` through the management client and then rereading the composed
+      root snapshot. Rendered only when the Host published an unlocked `openingVariant`
+      (`openingVariant.count > 1 && !openingVariant.locked`), so it is ABSENT once sealed. Reuses the
+      existing swipe labels (no new `i18n.ts` keys) so it does not touch another lane's file.
 - [ ] Report: `requestChatSelection` having no caller is a separate gap (no browser-reachable create op)
+
+### Concurrent-writer note (dialogue-web)
+While this lane worked, another lane held uncommitted WIP in `Composer.tsx`,
+`CharacterCardImport.tsx`, `GameDiagnosticsDisclosure.tsx`, `management-panels.tsx`,
+`i18n.ts` and `ComposedReferenceGameApp.tsx`. My shell hunks were staged WITHOUT their
+WIP by reconstructing `HEAD + my edits` into a blob
+(`git hash-object -w` + `git update-index --cacheinfo`), verified by
+git diff --cached` showing only my hunks and `git diff` showing only theirs. Their WIP
+stayed uncommitted and untouched. Their other files were never staged.
 
 ## Item 2 — voice recording state: REPORTED AS GAP, no code
 - `TavernVoiceSurfaceStateV1Schema` is closed to `unavailable | ready | speaking`
@@ -82,3 +95,6 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
 | `node --import ./scripts/compiled-test-bootstrap.mjs --test --test-concurrency=1 dist-test/tavern/{browser-contract/index,library-service,greeting-management/greeting-management}.test.js` | **42 pass / 0 fail** (bank) then **44 pass / 0 fail** after the route/downlink tests |
 | `node node_modules/typescript/lib/tsc.js -p tsconfig.json` (after route+downlink) | 0 errors |
 | `node node_modules/typescript/lib/tsc.js -p tsconfig.focus-chat-opening.json` (adding chat-management-service.test.ts) | TS2532 at `chat-management-service.test.ts:212` - a PRE-EXISTING red-at-HEAD test file, unrelated to this change; dropped from the focused gate |
+| `cd dialogue-web; node node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit` | 0 errors (with the other lane's WIP present) |
+| `cd dialogue-web; ./node_modules/.bin/playwright.cmd test tests/composed-reference-game-browser.spec.ts tests/stardew-installation-discovery.spec.ts --project=chromium --workers=1` | **50 passed / 1 skipped / 0 failed** (baseline today 46 passed + 1 skipped; the other lane's WIP added 4 cases) |
+| `git diff --cached -- dialogue-web/src | marker scan (unsavedDraft/durable/custom-disclosure)` | 0 matches - my staged client diff carries no other lane's changes |

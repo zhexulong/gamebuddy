@@ -51,6 +51,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "draft.save"
     | "draft.discard"
     | "chat.rename"
+    | "chat.opening"
     | "memory.mutate"
     | "world-info.bind"
     | "settings.voice.read"
@@ -91,6 +92,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.draft.save"
     | "tavern.operation.draft.discard"
     | "tavern.operation.rename"
+    | "tavern.operation.chat.opening"
     | "tavern.operation.memory.mutate"
     | "tavern.operation.world-info.bind"
     | "tavern.operation.settings.voice.read"
@@ -346,6 +348,28 @@ export type ChatTitleV1 = Readonly<{
   managementRevision: number;
 }>;
 
+/** The committed opening variant: the variant id and its position in the greeting set it came from. */
+type BrowserOpeningVariantV1 = Readonly<{
+  variantId: string;
+  index: number;
+  count: number;
+  label: string | null;
+  locked: boolean;
+}>;
+
+/** New-chat opening choice: the browser names no durable greeting or Chat id, only the step. */
+type ChatOpeningCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  direction?: "prev" | "next";
+  targetIndex?: number;
+}>;
+
+export type ChatOpeningResultV1 = Readonly<{
+  apiVersion: 1;
+  openingVariant: BrowserOpeningVariantV1;
+}>;
+
 export type MemoryItemV1 = Readonly<{
   handle: string;
   title: string;
@@ -589,6 +613,7 @@ const OPERATION_IDS = [
   "draft.save",
   "draft.discard",
   "chat.rename",
+  "chat.opening",
   "memory.mutate",
   "world-info.bind",
   "settings.voice.read",
@@ -632,6 +657,7 @@ const LABEL_KEYS = [
   "tavern.operation.draft.save",
   "tavern.operation.draft.discard",
   "tavern.operation.rename",
+  "tavern.operation.chat.opening",
   "tavern.operation.memory.mutate",
   "tavern.operation.world-info.bind",
   "tavern.operation.settings.voice.read",
@@ -712,6 +738,10 @@ const PROBLEM_CODES = [
   "scenario_conflict",
   "greeting_conflict",
   "authored_content_invalid",
+  // The new-chat opening choice's bounded refusals (sealed opening / not a greeting / unknown variant).
+  "chat_opening_locked",
+  "chat_opening_not_greeting",
+  "chat_opening_variant_not_found",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
@@ -795,6 +825,12 @@ const RENAME_COMMAND_KEYS = [
   "title",
 ] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
+const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] as const;
+const CHAT_OPENING_RESULT_KEYS = ["apiVersion", "openingVariant"] as const;
+const OPENING_COMMAND_REQUIRED_KEYS = ["apiVersion", "selectionGeneration"] as const;
+const OPENING_COMMAND_ALLOWED_KEYS = ["apiVersion", "selectionGeneration", "direction", "targetIndex"] as const;
+const OPENING_VARIANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const OPENING_DIRECTIONS = ["prev", "next"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
 const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
 const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
@@ -1442,6 +1478,51 @@ function isChatTitle(value: unknown): value is ChatTitleV1 {
   );
 }
 
+function isBrowserOpeningVariant(value: unknown): value is BrowserOpeningVariantV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, OPENING_VARIANT_KEYS) &&
+    typeof value.variantId === "string" &&
+    OPENING_VARIANT_ID_PATTERN.test(value.variantId) &&
+    isNonNegativeSafeInteger(value.index) &&
+    isPositiveSafeInteger(value.count) &&
+    value.index < value.count &&
+    (value.label === null ||
+      (typeof value.label === "string" && value.label.length >= 1 && value.label.length <= 128)) &&
+    typeof value.locked === "boolean"
+  );
+}
+
+function isChatOpeningResult(value: unknown): value is ChatOpeningResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CHAT_OPENING_RESULT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isBrowserOpeningVariant(value.openingVariant)
+  );
+}
+
+function validateChatOpeningResult(value: unknown): ChatOpeningResultV1 {
+  if (!isChatOpeningResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
+function isChatOpeningCommand(value: unknown): value is ChatOpeningCommandV1 {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (!OPENING_COMMAND_REQUIRED_KEYS.every((key) => keys.includes(key))) return false;
+  if (!keys.every((key) => (OPENING_COMMAND_ALLOWED_KEYS as readonly string[]).includes(key))) return false;
+  if (value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isPositiveSafeInteger(value.selectionGeneration))
+    return false;
+  const hasDirection = "direction" in value;
+  const hasTargetIndex = "targetIndex" in value;
+  // Exactly one step form: the Host refuses a request that names both or neither.
+  if (hasDirection === hasTargetIndex) return false;
+  if (hasDirection && !isOneOf(value.direction, OPENING_DIRECTIONS)) return false;
+  if (hasTargetIndex && !isNonNegativeSafeInteger(value.targetIndex)) return false;
+  return true;
+}
+
 function isProblem(value: unknown): value is TavernProblemV1 {
   return (
     isRecord(value) &&
@@ -1929,6 +2010,11 @@ export type ManagementPipelineApi = Readonly<{
   discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1>;
   /** PUT /api/tavern/v1/chat/title with Content-Type and x-csrf-token. */
   renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1>;
+  /**
+   * PUT /api/tavern/v1/chat/opening: chooses the greeting variant the mounted, not-yet-locked
+   * Chat opens with. A sealed opening answers with the bounded `chat_opening_locked`.
+   */
+  selectOpeningVariant(command: ChatOpeningCommandV1, csrfToken: string): Promise<ChatOpeningResultV1>;
   /** GET /api/tavern/v1/memory (browser session; no CSRF header). */
   readMemory(): Promise<MemoryReadV1>;
   /** PUT /api/tavern/v1/memory with ordinary projection-revision CAS. */
@@ -2142,6 +2228,20 @@ export function createManagementPipelineApi(
         command,
       );
       observe("chat.rename", "passed", String(result.managementRevision));
+      return result;
+    },
+    async selectOpeningVariant(command: ChatOpeningCommandV1, csrfToken: string): Promise<ChatOpeningResultV1> {
+      if (!isChatOpeningCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/chat/opening",
+        200,
+        validateChatOpeningResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("chat.opening", "passed", String(result.openingVariant.index));
       return result;
     },
     async readMemory(): Promise<MemoryReadV1> {
