@@ -230,6 +230,11 @@ const GameStateReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
+/**
+ * Reserved: the reference shell publishes no route for this read, so no handler
+ * produces it. It stays declared for a profile that does serve diagnostics; the
+ * composed state route's own data disclosure is what the shell shows today.
+ */
 const GameDiagnosticsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });

@@ -795,6 +795,11 @@ export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle
  * device-free Voice Gateway state for the input-adjacent status icon.
  * `unavailable` = no usable audio surface; `ready` = PTT available;
  * `speaking` = companion utterance is playing (barge-in possible).
+ *
+ * Reserved: `unavailable` has no producer on this wire. The one production reader
+ * (`voice-gateway-client.ts`, `createVoiceSurfaceReader`) emits only `ready` and
+ * `speaking`; an absent or null `voice` field is how "no usable audio surface" is
+ * published today. The member stays declared for a producer that can say it.
  */
 export const TavernVoiceSurfaceStateV1Schema = strictObject({
   state: Type.Union([Type.Literal("unavailable"), Type.Literal("ready"), Type.Literal("speaking")]),
