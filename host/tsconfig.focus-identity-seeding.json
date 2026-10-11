@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/st-card-import.test.ts",
+    "src/identity-profile.test.ts",
+    "src/runtime.test.ts",
+    "src/tavern/greeting-management/greeting-management.test.ts",
+    "src/tavern/initial-chat-exact-content-port.test.ts",
+    "src/tavern/new-companion-service.test.ts",
+    "src/tavern/library-service.test.ts",
+    "src/tavern/catalog-service.test.ts",
+    "src/tavern/reference-pipeline-state.test.ts",
+    "src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.test.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.test.ts",
+    "src/continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.test.ts",
+    "src/continuity-semantic-composition/continuity-semantic-composition.test.ts"
+  ]
+}

@@ -7,7 +7,7 @@ import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import { resolveCompanionLocale } from "../settings/player-preference-store.js";
 import { TavernConnectionStore } from "../tavern/connection-store.js";
-import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import {
   materializeTavernAuthoredStableCatalog,
@@ -108,7 +108,7 @@ async function buildExactChatRuntimeConstruction(
   const selectedThread = state.thread;
   let profileMetadata;
   try {
-    profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
+    profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE));
   } catch {
     throw new Error("chat_runtime_exact_content_unavailable");
   }
@@ -133,7 +133,7 @@ async function buildExactChatRuntimeConstruction(
         freshState.thread.lifecycleStatus !== "active"
       )
         throw new Error("chat_runtime_exact_content_unavailable");
-      const freshProfileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath));
+      const freshProfileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE));
       if (
         freshState.thread.profileId !== freshProfileMetadata.profileId ||
         freshState.thread.profileRevision !== freshProfileMetadata.revision ||

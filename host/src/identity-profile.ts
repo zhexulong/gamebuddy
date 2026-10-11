@@ -355,13 +355,23 @@ export function assertProfileMatchesBinding(
   }
 }
 
-export async function readOrCreateIdentityProfile(path: string): Promise<IdentityProfile> {
+/**
+ * Reads the one Host-owned profile, seeding it exactly once when absent.
+ *
+ * The seed is a PARAMETER, never a hidden constant: this used to write the
+ * placeholder `DEFAULT_IDENTITY_PROFILE` on its own, so an unseeded runtime root
+ * silently locked the companion into a placeholder identity and no call site
+ * said so. A caller that wants a specific identity (a reviewed card compile, a
+ * direct-new-companion name, the placeholder) now names it here, and a caller
+ * with nothing to seed has no seed to pass.
+ */
+export async function readOrCreateIdentityProfile(path: string, seed: IdentityProfile): Promise<IdentityProfile> {
   try {
     return await readIdentityProfile(path);
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
-      await writeIdentityProfile(path, DEFAULT_IDENTITY_PROFILE);
-      return DEFAULT_IDENTITY_PROFILE;
+      await writeIdentityProfile(path, seed);
+      return seed;
     }
     throw error;
   }

@@ -27,6 +27,7 @@ import {
   buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
   createIdentityProfileBinding,
+  DEFAULT_IDENTITY_PROFILE,
   type IdentityProfile,
   type IdentityProfileMetadata,
   identityProfileMetadata,
@@ -712,7 +713,7 @@ export async function createRuntimeWithFixedToolsCore(
     initialProfile !== undefined && !identityProfileAlreadyExists
       ? (await writeIdentityProfile(paths.identityProfilePath, initialProfile),
         initialProfile)
-      : await readOrCreateIdentityProfile(paths.identityProfilePath);
+      : await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
   const profileMetadata = identityProfileMetadata(profile);
   const existingBinding = await readIdentityProfileBinding(
     paths.identityProfileBindingPath,

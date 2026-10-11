@@ -1,10 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
+import {
+  DEFAULT_IDENTITY_PROFILE,
+  identityProfileMetadata,
+  readOrCreateIdentityProfile,
+} from "../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { readWorldBook, worldBookMetadata } from "../worldbook.js";
+import { TavernArtifactStore } from "./artifact-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { resolveTavernPaths } from "./tavern-paths.js";
 import {
   type ChatThreadState,
   type CreateChatThreadRequest,
@@ -53,8 +60,21 @@ export type InitialChatExactContentPort = Readonly<{
     chatSurfaceSessionId: string,
   ): Promise<TavernExactContentReceipt>;
   /** Explicit initial-thread creation, distinct from exact resume. */
-  createExplicit(request: CreateChatThreadRequest): Promise<TavernExactContentReceipt>;
+  createExplicit(request: InitialChatCreateRequest): Promise<TavernExactContentReceipt>;
 }>;
+
+/**
+ * A create request whose `opening` may be left to the port.
+ *
+ * The companion's opening is a fact about the companion - the default variant of
+ * the greeting set its reviewed card was provisioned with - not about whichever
+ * caller happens to create the thread: both the initial-chat saga and the
+ * player-created-Chat settlement go through this port, and both used to hardcode
+ * `opening: "blank"`. A caller that genuinely means an empty opening still says
+ * `"blank"`; a caller with nothing to say about the opening says nothing.
+ */
+export type InitialChatCreateRequest = Omit<CreateChatThreadRequest, "opening"> &
+  Readonly<{ opening?: CreateChatThreadRequest["opening"] }>;
 
 /**
  * A manifest-derived port plus the release for the store the factory opened.
@@ -113,6 +133,54 @@ export function isTrustedTavernExactContentReceipt(value: unknown): value is Tav
   return !!value && typeof value === "object" && trustedReceipts.has(value);
 }
 
+/**
+ * The companion's own opening, for a thread creation that names none.
+ *
+ * The reviewed card's `first_mes` becomes the greeting record's default variant
+ * at provisioning (`new-companion-service.ts`), so a card-provisioned companion
+ * HAS an opening; the saga used to hardcode `opening: "blank"` and the player's
+ * first screen stayed empty while the card's own opening sat unread on disk.
+ *
+ * The opening is drawn from the same durable record the new-chat variant choice
+ * later pages through (`library-service.ts`), and the `sourceRevision` +
+ * `canonicalHash` it commits are that record's, so the browser's `< 1/N >`
+ * projection resolves against the set the opening actually came from.
+ *
+ * A missing greeting set is ordinary - a directly-named companion has no card -
+ * and yields nothing, which leaves the genuinely empty opening in place. A
+ * present but unreadable set fails closed rather than silently blanking the
+ * first screen, because a corrupt record must be reported, not hidden.
+ */
+async function companionOwnOpening(
+  manifest: HostDeploymentManifest,
+): Promise<CreateChatThreadRequest["opening"] | undefined> {
+  const paths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot);
+  const tavernPaths = resolveTavernPaths(paths, manifest.principal);
+  const greetings = createGreetingManagementService(
+    new TavernArtifactStore(paths.root),
+    tavernPaths.companionRoot,
+  );
+  const record = await greetings.readExact();
+  if (record === null || record.variants.length === 0) return undefined;
+  const variant = record.variants[0]!;
+  // The same seeding helper the creation capability's own metadata reader uses:
+  // the source's `profileRevision` and the thread's `profileRevision` are then
+  // two reads of one file, never two different values.
+  const profile = await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+  return Object.freeze({
+    messageId: `opening-${randomUUID()}`,
+    text: variant.text,
+    source: Object.freeze({
+      greetingSetId: record.greetingSetId,
+      sourceRevision: record.revision,
+      canonicalHash: record.canonicalHash,
+      variantId: variant.variantId,
+      profileRevision: profile.revision,
+      scenarioRevision: null,
+    }),
+  });
+}
+
 /** Accepts only an identity-branded capability minted by ChatThreadStore. */
 /**
  * Constructs the unmounted Tavern content port from the canonical deployment
@@ -124,7 +192,10 @@ export function createManifestDerivedInitialChatExactContentPort(
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   const profileMetadataReader: IdentityProfileMetadataReader = Object.freeze({
     async readExact() {
-      const profile = await readOrCreateIdentityProfile(resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath);
+      const profile = await readOrCreateIdentityProfile(
+        resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath,
+        DEFAULT_IDENTITY_PROFILE,
+      );
       return identityProfileMetadata(profile);
     },
   });
@@ -135,10 +206,14 @@ export function createManifestDerivedInitialChatExactContentPort(
   return Object.freeze({
     port: Object.freeze({
       resumeExact: inner.resumeExact,
-      createExplicit: async (request: CreateChatThreadRequest) => {
-        if (request.worldBookBinding !== undefined) return inner.createExplicit(request);
-        const binding = await companionOwnWorldBookBinding(manifest);
-        return inner.createExplicit(binding === undefined ? request : { ...request, worldBookBinding: binding });
+      createExplicit: async (request: InitialChatCreateRequest) => {
+        const binding = request.worldBookBinding ?? (await companionOwnWorldBookBinding(manifest));
+        const opening = request.opening ?? (await companionOwnOpening(manifest));
+        return inner.createExplicit({
+          ...request,
+          ...(binding === undefined ? {} : { worldBookBinding: binding }),
+          opening: opening ?? "blank",
+        });
       },
     }),
     close: () => {
@@ -164,10 +239,16 @@ export function createInitialChatExactContentPort(
       }
     },
     createExplicit: async (request) => {
-      validateExplicitRequest(request);
-      const binding = exactBindingFromRequest(request);
+      // This port is pinned to one already-resolved request: it has no runtime
+      // root, reviewed card or greeting record of its own, so an omitted opening
+      // can only mean the genuinely empty one. `createManifestDerivedInitialChatExactContentPort`
+      // is the port that can resolve the companion's own opening, and it does so
+      // before delegating here.
+      const exact: CreateChatThreadRequest = { ...request, opening: request.opening ?? "blank" };
+      validateExplicitRequest(exact);
+      const binding = exactBindingFromRequest(exact);
       try {
-        return receiptFromState(await capability.createExplicit(request), binding);
+        return receiptFromState(await capability.createExplicit(exact), binding);
       } catch (error) {
         throw mapStoreFailure(error);
       }

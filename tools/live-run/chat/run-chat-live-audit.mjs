@@ -1166,8 +1166,8 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const personaCwd = join(root, "contexts", identityKey(AUDIT_IDENTITY));
   await mkdir(personaCwd, { recursive: true });
   environment.personaCwd = personaCwd;
-  environment.persona = await provisionLiveRunPersona(personaCwd);
-  environment.personaMounted = await assertLiveRunPersonaMounted(personaCwd);
+  environment.persona = await provisionLiveRunPersona(personaCwd, { identity: AUDIT_IDENTITY, root });
+  environment.personaMounted = await assertLiveRunPersonaMounted(personaCwd, { identity: AUDIT_IDENTITY, root });
   if (!environment.personaMounted.ok)
     throw new Error(`live_run_persona_not_mounted:${environment.personaMounted.problems.join(",")}`);
   const configPath = join(root, "chat-audit.json");

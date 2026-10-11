@@ -50,7 +50,6 @@ import type {
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
-import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
   acknowledgeMountedWorldInfoBinding,
   createChatThreadStore,
@@ -1341,10 +1340,7 @@ export type SemanticProductionAuthority = Readonly<{
   verifyInitialChat(receipt: TavernExactContentReceipt): Promise<ProductionSagaReadback>;
   selectInitialChat(): Promise<ProductionSagaReadback>;
   /** The only content-aware path: SQLite steps are locked; Tavern I/O is intentionally unlocked. */
-  initializeInitialChat(
-    content: InitialChatExactContentPort,
-    request?: CreateChatThreadRequest,
-  ): Promise<ProductionSagaReadback>;
+  initializeInitialChat(content: InitialChatExactContentPort): Promise<ProductionSagaReadback>;
   /** Reads the durable saga only; the composition's explicit resume path re-reads Tavern separately. */
   resumeInitialChat(): Promise<ProductionSagaReadback | null>;
   resumeInitialChatWithContent(content: InitialChatExactContentPort): Promise<ProductionSagaReadback | null>;
@@ -2156,7 +2152,6 @@ async function createFreshChatRuntimeAuthority(
             companionId: provision.principal.companionId,
             continuityId: provision.principal.continuityId,
             chatSurfaceSessionId: target.chatSurfaceSessionId,
-            opening: "blank" as const,
           }),
         );
         if (!isTrustedTavernExactContentReceipt(created))
@@ -2902,11 +2897,11 @@ function create(
         });
       }),
     selectInitialChat: () => step(3),
-    initializeInitialChat: (content, request) =>
+    initializeInitialChat: (content) =>
       begin(async () => {
         await stepUnchecked(0);
         const registered = await stepUnchecked(1);
-        const receipt = await createRegisteredContent(content, registered, request);
+        const receipt = await createRegisteredContent(content, registered);
         const verified = await verifyUnchecked(receipt);
         if (!verified.receipt || !sameTavernExactContentReceipt(receipt, verified.receipt))
           throw new SemanticProductionCoordinatorError("tavern_exact_content_receipt_mismatch");
@@ -2974,24 +2969,23 @@ function create(
   async function createRegisteredContent(
     content: InitialChatExactContentPort,
     registered: ProductionSagaReadback,
-    request?: CreateChatThreadRequest,
   ): Promise<TavernExactContentReceipt> {
     if (!registered.chatThreadId || !registered.chatSurfaceSessionId)
       throw new SemanticProductionCoordinatorError("initial_chat_binding_missing");
-    // The initializer owns the exact request. Callers may not supply a different
-    // thread, surface, principal, or opening through this production seam.
-    const exactRequest =
-      request ??
+    // The initializer owns the exact request: the thread, surface and principal
+    // are the saga's own registered facts, and the opening is the companion's
+    // (the manifest-derived port derives it from the reviewed greeting record).
+    // No caller can supply any of the four through this production seam.
+    // No lease spans this await. Creation is an initializer-only operation;
+    // every production reopen uses resumeExact above and fails closed if absent.
+    const receipt = await content.createExplicit(
       Object.freeze({
         chatThreadId: registered.chatThreadId,
         companionId: provision.principal.companionId,
         continuityId: provision.principal.continuityId,
         chatSurfaceSessionId: registered.chatSurfaceSessionId,
-        opening: "blank" as const,
-      });
-    // No lease spans this await. Creation is an initializer-only operation;
-    // every production reopen uses resumeExact above and fails closed if absent.
-    const receipt = await content.createExplicit(exactRequest);
+      }),
+    );
     if (!isTrustedTavernExactContentReceipt(receipt))
       throw new SemanticProductionCoordinatorError("untrusted_tavern_exact_content_receipt");
     return receipt;

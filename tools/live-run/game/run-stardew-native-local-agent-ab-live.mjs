@@ -1061,12 +1061,12 @@ await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // passed, because it checked the file WE wrote rather than the path the runtime reads. Same directory now.
 const personaCwd = join(runtimeRoot, "contexts", identityKey(identity));
 await mkdir(personaCwd, { recursive: true });
-const provisionedPersona = await provisionLiveRunPersona(personaCwd);
-const personaMounted = await assertLiveRunPersonaMounted(personaCwd);
+const provisionedPersona = await provisionLiveRunPersona(personaCwd, { identity, root: runtimeRoot });
+const personaMounted = await assertLiveRunPersonaMounted(personaCwd, { identity, root: runtimeRoot });
 if (!personaMounted.ok)
   throw new Error(`live_run_persona_not_mounted:${personaMounted.problems.join(",")}`);
 process.stderr.write(
-  `[ladder] persona mounted: ${String(personaMounted.name)} (${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens) from ${provisionedPersona.identity.dir}\n`,
+  `[ladder] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
 );
 // The model profile is configuration, not a script constant: an existing
 // product profile is reused as-is; only a disposable root gets the local
