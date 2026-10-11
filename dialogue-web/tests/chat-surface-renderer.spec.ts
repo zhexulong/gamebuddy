@@ -44,6 +44,11 @@ import { expect, test, type Page } from "@playwright/test";
  *    be gone again the moment one message exists, or it would sit above every
  *    conversation) and resolves its colour against `--palette-gray-400`, so a
  *    drifted or missing rule fails here instead of in a screenshot.
+ * 8. `a code block and a quote carry the card tone and the glass hairline` - a
+ *    companion that formats its reply (a quoted line, a fenced block) is paying
+ *    for that shape to read as hierarchy; a block left on the prose treatment,
+ *    or on a colour written by hand, is a shape the player has to guess at. The
+ *    assertion resolves both blocks against the tokens themselves.
  */
 
 type ChatProbe = {
@@ -253,4 +258,61 @@ test("the zero-message anchor appears only while the transcript is empty", async
   await setTranscript(page, ["The first thing the companion says."]);
   await expect(anchor).toHaveCount(0);
   await expect(page.locator("li[data-handle='h0'] .message-bubble")).toBeVisible();
+});
+
+/**
+ * Item 4: the two Markdown blocks that carry a shape of their own inside a
+ * companion's prose - a fenced code block and a quote.
+ *
+ * The failure it catches: either block left on the previous tone (or on a colour
+ * written by hand) is indistinguishable from the paragraphs around it, so a
+ * companion that emits formatted text loses exactly the hierarchy the shape was
+ * for. Both are resolved against the tokens themselves, so a drifted or missing
+ * rule fails here rather than looking acceptable in a screenshot.
+ */
+test("a code block and a quote carry the card tone and the glass hairline", async ({ page }) => {
+  await openProbe(page);
+  await setTranscript(page, ["A paragraph of prose.\n\n> a quoted line\n\n```\nconst answer = 42;\n```"]);
+
+  const blocks = await page.evaluate(() => {
+    const token = (name: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    const read = (selector: string) => {
+      const element = document.querySelector(`li[data-handle='h0'] ${selector}`);
+      if (element === null) return null;
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        borderTopWidth: style.borderTopWidth,
+        borderTopColor: style.borderTopColor,
+      };
+    };
+    return {
+      card: token("--surface-card"),
+      glass: token("--border-glass"),
+      prose: read("p"),
+      quote: read("blockquote"),
+      code: read("pre"),
+    };
+  });
+
+  expect(blocks.quote, "the quote is rendered").not.toBeNull();
+  expect(blocks.code, "the code block is rendered").not.toBeNull();
+  for (const [what, block] of [
+    ["the quote", blocks.quote],
+    ["the code block", blocks.code],
+  ] as const) {
+    expect(block?.background, `${what} carries the card tone`).toBe(blocks.card);
+    expect(block?.borderTopWidth, `${what} draws the hairline`).toBe("1px");
+    expect(block?.borderTopColor, `${what} carries the glass border`).toBe(blocks.glass);
+  }
+  // The prose beside them is the bubble itself, not a card: the two blocks are
+  // told apart from the paragraph, not painted the same as everything.
+  expect(blocks.prose?.background).toBe("rgba(0, 0, 0, 0)");
 });

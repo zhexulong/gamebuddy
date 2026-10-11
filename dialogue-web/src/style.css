@@ -3110,11 +3110,18 @@ body {
   margin: 0;
 }
 
+/* The two blocks that carry a shape of their own inside a companion's prose.
+   Both are cards on the token ladder - the card tone with the glass hairline
+   every card in the product carries - so formatting a reply (a quoted line, a
+   fenced block) reads as hierarchy instead of as more of the same paragraph.
+   The quote keeps its left rule as the quote's own marker, which is also what
+   tells a quote and a code block apart at a glance when both are cards. */
 .message-bubble blockquote {
   padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-glass);
   border-left: 2px solid var(--border-strong);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-  background-color: var(--surface-elevated);
+  border-radius: var(--radius-xs);
+  background-color: var(--surface-card);
   color: var(--text-secondary);
 }
 
@@ -3137,8 +3144,8 @@ body {
 
 .message-bubble pre {
   padding: var(--space-3);
-  background-color: var(--surface-elevated);
-  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-glass);
   border-radius: var(--radius-sm);
   /* Code lines scroll inside their own block instead of widening the column. */
   overflow-x: auto;
