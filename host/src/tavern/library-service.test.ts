@@ -416,3 +416,101 @@ test("createNewChat consumes provisioned scenario and first greeting opening wit
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test("New Chat opening variants are recorded on the unlocked chat, read back durably, and refused once sealed", async () => {
+  const { root, paths, artifacts, service, threads } = await setup();
+  try {
+    await service.createNewCompanion({
+      companionId: "companion",
+      continuityId: "continuity",
+      name: "Buddy",
+      profileId: "profile",
+      profileRevision: 1,
+      profileHash: hash,
+    });
+    await artifacts.write(
+      tavernRevisionPath(join(paths.companionRoot, "greetings", "openings"), 1),
+      {
+        schemaVersion: 1,
+        revision: 1,
+        greetingSetId: "openings",
+        label: "Openings",
+        variants: [
+          { variantId: "greeting-1", label: "Default", text: "Hello there." },
+          { variantId: "greeting-2", label: "Warm", text: "Good to see you again." },
+          { variantId: "greeting-3", label: "Brief", text: "Hey." },
+        ],
+      },
+      validateTavernArtifact,
+    );
+    const created = await service.createNewChat({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      opening: { kind: "greeting", greetingSetId: "openings", variantId: "greeting-1", messageId: "opening" },
+    });
+    assert.equal(created.messages[0]?.greetingSource?.variantId, "greeting-1");
+
+    // The choice is RECORDED, not merely accepted: a fresh durable read (not the
+    // returned object) must observe the chosen variant on the opening message.
+    await service.commitOpeningVariant({ chatThreadId: "thread", chatSurfaceSessionId: "surface", direction: "next" });
+    const reread = await threads.resumeThread("thread", "surface");
+    assert.equal(reread.messages[0]?.greetingSource?.variantId, "greeting-2");
+    assert.equal(reread.messages[0]?.text, "Good to see you again.");
+    assert.equal(
+      reread.thread.openingSelection.kind === "greeting"
+        ? reread.thread.openingSelection.source.variantId
+        : null,
+      "greeting-2",
+    );
+
+    // A targeted index is exact, and an out-of-range one is a bounded refusal rather
+    // than a silent no-op.
+    await service.commitOpeningVariant({ chatThreadId: "thread", chatSurfaceSessionId: "surface", targetIndex: 2 });
+    const targeted = await threads.resumeThread("thread", "surface");
+    assert.equal(targeted.messages[0]?.greetingSource?.variantId, "greeting-3");
+    await assert.rejects(
+      service.commitOpeningVariant({ chatThreadId: "thread", chatSurfaceSessionId: "surface", targetIndex: 9 }),
+      /chat_opening_variant_not_found/,
+    );
+
+    // The first player message seals the opening; the choice is then refused with its
+    // bounded code and the durable variant is untouched.
+    await threads.appendPlayer("thread", { messageId: "player_1", text: "Hi", occurredAtMs: 11 });
+    await assert.rejects(
+      service.commitOpeningVariant({ chatThreadId: "thread", chatSurfaceSessionId: "surface", direction: "prev" }),
+      /chat_opening_locked/,
+    );
+    const sealed = await threads.resumeThread("thread", "surface");
+    assert.equal(sealed.messages[0]?.greetingSource?.variantId, "greeting-3");
+  } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a Chat whose opening is not a greeting refuses the opening choice with a bounded code", async () => {
+  const { root, service, threads } = await setup();
+  try {
+    await service.createNewCompanion({
+      companionId: "companion",
+      continuityId: "continuity",
+      name: "Buddy",
+      profileId: "profile",
+      profileRevision: 1,
+      profileHash: hash,
+    });
+    await service.createNewChat({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      opening: { kind: "blank" },
+    });
+    await assert.rejects(
+      service.commitOpeningVariant({ chatThreadId: "thread", chatSurfaceSessionId: "surface", direction: "next" }),
+      /chat_opening_not_greeting/,
+    );
+  } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -999,7 +999,7 @@ export const ChatOpeningCommandV1Schema = strictObject({
 });
 export const ChatOpeningResultV1Schema = strictObject({
   apiVersion: ApiVersion,
-  message: BrowserMessageV1Schema,
+  openingVariant: BrowserOpeningVariantV1Schema,
 });
 export const SubmitResultV1Schema = strictObject({
   apiVersion: ApiVersion,

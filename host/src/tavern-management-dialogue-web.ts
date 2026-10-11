@@ -5,6 +5,7 @@ import { Compile } from "typebox/compile";
 import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import {
   type ChatListQueryV1,
+  type ChatOpeningCommandV1,
   type ChatRetentionCommandV1,
   type CompanionDetailV1,
   type CompanionListV1,
@@ -188,6 +189,7 @@ const listQueryValidator = Compile(TavernBrowserContractV1.schemas.ChatListQuery
 const draftSaveValidator = Compile(TavernBrowserContractV1.schemas.SaveDraftCommandV1Schema);
 const draftDiscardValidator = Compile(TavernBrowserContractV1.schemas.DiscardDraftCommandV1Schema);
 const renameRequestValidator = Compile(TavernBrowserContractV1.schemas.RenameChatTitleCommandV1Schema);
+const chatOpeningValidator = Compile(TavernBrowserContractV1.schemas.ChatOpeningCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
 const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
@@ -865,6 +867,25 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!renameRequestValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const result = await managementService.renameChatTitle(body as RenameChatTitleCommandV1);
         if (!TavernBrowserValidatorsV1.ChatTitleV1Schema.Check(result))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/opening") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
+        if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
+        if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("chat.opening") ||
+          !profile.operationIds.includes("chat.opening")
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!chatOpeningValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const result = await managementService.commitOpeningVariant(body as ChatOpeningCommandV1);
+        if (!TavernBrowserValidatorsV1.ChatOpeningResultV1Schema.Check(result))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, result);
       }
@@ -1849,6 +1870,13 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (message === "chat_management_selection_conflict") return { status: 409, code: "selection_conflict" };
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
+  // The new-chat opening choice: a sealed opening, a Chat whose opening is not a greeting, and a
+  // variant that no longer resolves are each a distinct, bounded, player-actionable refusal.
+  if (message === "chat_opening_locked" || message === "chat_thread_opening_locked")
+    return { status: 409, code: "chat_opening_locked" };
+  if (message === "chat_opening_not_greeting") return { status: 409, code: "chat_opening_not_greeting" };
+  if (message === "chat_opening_variant_not_found")
+    return { status: 404, code: "chat_opening_variant_not_found" };
   if (message === "chat_management_lifecycle_invalid") return { status: 409, code: "state_reconciliation_required" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };

@@ -18,12 +18,13 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
 - [x] `TavernLibraryService.commitOpeningVariant()` — reuses `ChatThreadStore.commitOpening`, legal only
       while `opening_locked_at_event_id === null`; bounded errors `chat_opening_locked`,
       `chat_opening_not_greeting`, `chat_opening_variant_not_found`, `invalid_chat_opening_request`. (banked)
-- [ ] Route in `tavern-management-dialogue-web.ts` + composition wiring (`chat.opening` into the
-      management profile and the dispatcher options)
-- [ ] Downlink `openingVariant` in `reference-pipeline-state.ts` (position/count from the greeting set)
-- [ ] Bounded refusals wired into `problemFor` (`chat_thread_opening_locked` → `chat_opening_locked`)
-- [ ] Host test: variant choice is durable and read back on the opening message
-- [ ] Host test: committing on a locked chat is refused with its bounded code
+- [x] Route in `tavern-management-dialogue-web.ts` + composition wiring (`chat.opening` into the
+      management profile and `ChatManagementService.commitOpeningVariant`)
+- [x] Downlink `openingVariant` in `reference-pipeline-state.ts` (position/count from the greeting set;
+      omitted unless the committed `sourceRevision` still matches the durable set)
+- [x] Bounded refusals wired into `problemFor` (`chat_thread_opening_locked` → `chat_opening_locked`, etc.)
+- [x] Host tests: variant choice durable + read back on the opening message; locked refusal; not-greeting
+      refusal; out-of-range refusal (`library-service.test.ts`, 2 new tests)
 - [ ] Client `< 1/N >` control (absent when locked) + typecheck + playwright
 - [ ] Report: `requestChatSelection` having no caller is a separate gap (no browser-reachable create op)
 
@@ -78,4 +79,6 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
 | `git status --short -- <3 in-flight paths>` | 3 M files; all-additions diff (+158). Not half-built → banking
 | `cd host; node node_modules/typescript/lib/tsc.js -p tsconfig.json` | 2 errors then 0 after fixing the missing request type |
 | `node node_modules/typescript/lib/tsc.js -p tsconfig.focus-chat-opening.json` | 0 (outDir `dist-test` so `compiled-test-bootstrap.mjs` binds the same `path-lock.js`) |
-| `node --import ./scripts/compiled-test-bootstrap.mjs --test --test-concurrency=1 dist-test/tavern/{browser-contract/index,library-service,greeting-management/greeting-management}.test.js` | **42 pass / 0 fail** |
+| `node --import ./scripts/compiled-test-bootstrap.mjs --test --test-concurrency=1 dist-test/tavern/{browser-contract/index,library-service,greeting-management/greeting-management}.test.js` | **42 pass / 0 fail** (bank) then **44 pass / 0 fail** after the route/downlink tests |
+| `node node_modules/typescript/lib/tsc.js -p tsconfig.json` (after route+downlink) | 0 errors |
+| `node node_modules/typescript/lib/tsc.js -p tsconfig.focus-chat-opening.json` (adding chat-management-service.test.ts) | TS2532 at `chat-management-service.test.ts:212` - a PRE-EXISTING red-at-HEAD test file, unrelated to this change; dropped from the focused gate |

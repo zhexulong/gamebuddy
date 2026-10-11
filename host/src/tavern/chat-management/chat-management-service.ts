@@ -3,12 +3,14 @@ import {
   type MountedChatRuntimeLease,
 } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
-import { identityKey } from "../../runtime.js";
+import { identityKey, resolveRuntimePaths } from "../../runtime.js";
 import {
   type BrowserDraftV1,
   type ChatListEntryV1,
   type ChatListQueryV1,
   type ChatListV1,
+  type ChatOpeningCommandV1,
+  type ChatOpeningResultV1,
   type ChatRetentionResultV1,
   type ChatTitleV1,
   type ComposedTavernProfile,
@@ -34,6 +36,9 @@ export type ChatRetentionServiceCommand = Readonly<{
 }>;
 import { type ChatThread, createChatThreadStore } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
+import { TavernArtifactStore } from "../artifact-store.js";
+import { commitGreetingOpeningVariant } from "../library-service.js";
+import { resolveTavernPaths } from "../tavern-paths.js";
 
 /**
  * Host-owned management boundary for the mounted tavern_management profile
@@ -56,6 +61,12 @@ export type ChatManagementService = Readonly<{
    * never changed. Archived/trashed Chats leave the active list.
    */
   transitionLifecycle(command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1>;
+  /**
+   * Chooses the greeting variant the exact mounted, not-yet-locked Chat opens with. It reuses
+   * `ChatThreadStore.commitOpening` and the existing `greeting_variant_id`; a sealed opening is
+   * refused with `chat_opening_locked` rather than silently no-opped.
+   */
+  commitOpeningVariant(command: ChatOpeningCommandV1): Promise<ChatOpeningResultV1>;
   /** Reads the exact mounted Chat draft after validating the selection generation. */
   readDraft(): Promise<BrowserDraftV1>;
   /** Saves the exact mounted Chat draft through durable revision CAS. */
@@ -92,6 +103,11 @@ export function createChatManagementService(options: ChatManagementServiceOption
   if (!identifier(lease.chatThreadId) || !identifier(lease.chatSurfaceSessionId)) throw unavailable();
 
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+  const artifactStore = new TavernArtifactStore(manifest.runtimeRoot);
+  const tavernPaths = resolveTavernPaths(
+    resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId),
+    manifest.principal,
+  );
   const renameThreadTitle = store.renameThreadTitle;
   const listThreads = store.listThreads;
   const saveDraftMutation = store.saveDraft;
@@ -256,10 +272,49 @@ export function createChatManagementService(options: ChatManagementServiceOption
     }
   };
 
+  const commitOpeningVariant = async (command: ChatOpeningCommandV1): Promise<ChatOpeningResultV1> => {
+    assertOpen();
+    if (command === null || typeof command !== "object" || Array.isArray(command)) throw invalidRequest();
+    if (command.apiVersion !== TAVERN_BROWSER_API_VERSION) throw unavailable();
+    if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+    if ((command.direction === undefined) === (command.targetIndex === undefined)) throw invalidRequest();
+    if (command.direction !== undefined && command.direction !== "prev" && command.direction !== "next")
+      throw invalidRequest();
+    if (
+      command.targetIndex !== undefined &&
+      (!Number.isSafeInteger(command.targetIndex) || command.targetIndex < 0)
+    )
+      throw invalidRequest();
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    try {
+      const { variant } = await commitGreetingOpeningVariant({
+        store: artifactStore,
+        threads: store,
+        paths: tavernPaths,
+        chatThreadId: lease.chatThreadId,
+        chatSurfaceSessionId: lease.chatSurfaceSessionId,
+        ...(command.direction === undefined ? {} : { direction: command.direction }),
+        ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
+      });
+      assertLeaseAfterDurableRead();
+      // The commit only succeeds while the opening is unlocked, so the freshly-committed fact is
+      // never `locked`; the durable lock is re-read from the thread on the next state projection.
+      const result: ChatOpeningResultV1 = Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        openingVariant: Object.freeze({ ...variant, locked: false }),
+      });
+      if (!TavernBrowserValidatorsV1.ChatOpeningResultV1Schema.Check(result)) throw unavailable();
+      return result;
+    } catch (error) {
+      throw rethrowOpeningError(error);
+    }
+  };
+
   return Object.freeze({
     listChats,
     renameChatTitle,
     transitionLifecycle,
+    commitOpeningVariant,
     readDraft,
     saveDraft,
     discardDraft,
@@ -282,6 +337,21 @@ export function createChatManagementService(options: ChatManagementServiceOption
     if (!TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check(entry)) throw unavailable();
     return entry;
   }
+}
+
+function rethrowOpeningError(error: unknown): Error {
+  if (!(error instanceof Error)) return unavailable();
+  if (
+    error.message === "chat_opening_locked" ||
+    error.message === "chat_thread_opening_locked" ||
+    error.message === "chat_opening_not_greeting" ||
+    error.message === "chat_opening_variant_not_found"
+  )
+    return error;
+  if (error.message === "invalid_chat_opening_request") return new Error("invalid_request");
+  if (error.message === "tavern_chat_scope_mismatch") return selectionConflict();
+  if (isStorageError(error)) return storageUnavailable();
+  return unavailable();
 }
 
 function validateListQuery(query: ChatListQueryV1): void {
@@ -410,6 +480,9 @@ function identifier(value: unknown): value is string {
 }
 function unavailable(): Error {
   return new Error("chat_management_service_unavailable");
+}
+function invalidRequest(): Error {
+  return new Error("invalid_request");
 }
 function closedError(): Error {
   return new Error("chat_management_service_closed");

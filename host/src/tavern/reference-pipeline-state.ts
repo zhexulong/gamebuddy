@@ -18,6 +18,20 @@ import {
 import type { ChatEventStream } from "./chat-event-stream.js";
 import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
 import { formatSwipeLabel } from "./message-tree.js";
+import { TavernArtifactStore } from "./artifact-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { resolveTavernPaths } from "./tavern-paths.js";
+
+/**
+ * The greeting set an opening message came from, as the durable record holds it. The projection
+ * compares its revision to the committed `GreetingSource.sourceRevision` before it names a
+ * position, so an opening whose greeting has since been edited is never paged against a set it
+ * did not come from.
+ */
+type OpeningGreetingVariants = Readonly<{
+  revision: number;
+  variants: readonly Readonly<{ variantId: string; label?: string; text: string }>[];
+}>;
 
 type BrowserDraftV1 = Static<typeof BrowserDraftV1Schema>;
 type ReferencePipelineBinding = Readonly<{
@@ -100,6 +114,11 @@ export async function createReferencePipelineStateFacade(
   }
 
   const threads = createChatThreadStore(manifest.runtimeRoot, expectedIdentityKey);
+  const tavernPaths = resolveTavernPaths(paths, manifest.principal);
+  const greetingService = createGreetingManagementService(
+    new TavernArtifactStore(manifest.runtimeRoot),
+    tavernPaths.companionRoot,
+  );
   const companionDisplayName = identityProfile.identity.name;
   if (companionDisplayName.length === 0) throw unavailable();
 
@@ -110,10 +129,19 @@ export async function createReferencePipelineStateFacade(
       try {
         const state = await threads.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
         validateStateBinding(state, binding);
+        const openingGreeting = await readOpeningGreeting(greetingService);
         // Durable reads do not hold the mount capability. A concurrent close
         // revokes the lease before projection, so never project stale data.
         assertReferencePipelineLeaseAfterDurableRead(lease);
-        return project(lease, companionDisplayName, profile, state, eventStream, voiceSurface);
+        return project(
+          lease,
+          companionDisplayName,
+          profile,
+          state,
+          eventStream,
+          voiceSurface,
+          openingGreeting,
+        );
       } catch {
         throw unavailable();
       }
@@ -184,9 +212,15 @@ function project(
   state: ChatThreadState,
   eventStream?: ChatEventStream,
   voiceSurface?: VoiceSurfaceReader,
+  openingGreeting?: OpeningGreetingVariants | null,
 ): ReferencePipelineState {
   const projection = lease.browserProjection;
-  const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
+  const openingLocked = state.thread.openingLockedAtEventId !== null;
+  const transcript = Object.freeze(
+    state.messages.map((message, order) =>
+      projectMessage(lease, message, order, openingGreeting ?? null, openingLocked),
+    ),
+  );
   const turn = projectTurn(lease, profile, state.turnLedger);
   const operations = projectOperations(profile, state.turnLedger);
   const value = Object.freeze({
@@ -232,6 +266,8 @@ function projectMessage(
   lease: MountedChatRuntimeLease,
   message: ChatThreadState["messages"][number],
   order: number,
+  openingGreeting: OpeningGreetingVariants | null,
+  openingLocked: boolean,
 ): BrowserMessageV1 {
   if (message.role !== "player" && message.role !== "companion") throw unavailable();
   if (!safeBrowserRevision(order) || !safeBrowserRevision(1)) throw unavailable();
@@ -248,6 +284,7 @@ function projectMessage(
           hasNext: currentIndex < totalSwipes - 1,
         })
       : undefined;
+  const openingVariant = projectOpeningVariant(message, openingGreeting, openingLocked);
 
   return Object.freeze({
     handle: lease.browserProjection.projectMessageHandle(message.messageId),
@@ -260,7 +297,54 @@ function projectMessage(
     // The reference pipeline has no message mutation, so durable records are immutable.
     revision: 1,
     ...(swipeInfo !== undefined ? { swipeInfo } : {}),
+    ...(openingVariant !== undefined ? { openingVariant } : {}),
   });
+}
+
+/**
+ * The additive opening-variant downlink: the committed variant and its position in the exact
+ * greeting set the opening came from. It is present only for a greeting opening whose committed
+ * `sourceRevision` still equals the durable greeting set's revision and whose variant still
+ * resolves - otherwise the position is unknowable and the field is omitted rather than guessed,
+ * which is also what makes the browser's control absent. `locked` is the durable opening seal: once
+ * set, no choice can be recorded and the control must not be offered.
+ */
+function projectOpeningVariant(
+  message: ChatThreadState["messages"][number],
+  openingGreeting: OpeningGreetingVariants | null,
+  openingLocked: boolean,
+): BrowserMessageV1["openingVariant"] | undefined {
+  const source = message.greetingSource;
+  if (message.kind !== "opening" || source === null || openingGreeting === null) return undefined;
+  if (openingGreeting.revision !== source.sourceRevision) return undefined;
+  const index = openingGreeting.variants.findIndex((variant) => variant.variantId === source.variantId);
+  if (index < 0) return undefined;
+  const variant = openingGreeting.variants[index]!;
+  return Object.freeze({
+    variantId: variant.variantId,
+    index,
+    count: openingGreeting.variants.length,
+    label: variant.label ?? null,
+    locked: openingLocked,
+  });
+}
+
+/**
+ * Reads the companion's own greeting set for the opening projection. An absent set is ordinary
+ * (the companion need not have a greeting), and an unreadable one is not this surface's failure to
+ * report: the field is simply omitted, so the browser offers no control it could not have the Host
+ * record. The greeting's own management routes remain the surface that reports its corruption.
+ */
+async function readOpeningGreeting(
+  greetingService: ReturnType<typeof createGreetingManagementService>,
+): Promise<OpeningGreetingVariants | null> {
+  try {
+    const exact = await greetingService.readExact();
+    if (exact === null) return null;
+    return Object.freeze({ revision: exact.revision, variants: exact.variants });
+  } catch {
+    return null;
+  }
 }
 
 /**

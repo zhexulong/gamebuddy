@@ -201,60 +201,7 @@ export function createTavernLibraryService(
     },
 
     async commitOpeningVariant(input: CommitOpeningVariantRequest): Promise<ChatThreadState> {
-      if ((input.direction === undefined) === (input.targetIndex === undefined))
-        throw new Error("invalid_chat_opening_request");
-      const state = await threads.resumeThread(input.chatThreadId, input.chatSurfaceSessionId);
-      const companion = await currentCompanion(store, companionPath);
-      if (
-        companion.companionId !== paths.companionId ||
-        companion.continuityId !== paths.continuityId ||
-        state.thread.companionId !== companion.companionId ||
-        state.thread.continuityId !== companion.continuityId
-      )
-        throw new Error("tavern_chat_scope_mismatch");
-      // The durable lock is the whole legality of this operation: once the opening has been sealed
-      // by a player/companion message it can no longer change, and that is a bounded refusal rather
-      // than a silent no-op. `commitOpening` re-checks it under its own transaction.
-      if (state.thread.openingLockedAtEventId !== null) throw new Error("chat_opening_locked");
-      const opening = state.thread.openingSelection;
-      if (opening.kind !== "greeting") throw new Error("chat_opening_not_greeting");
-      const source = opening.source;
-      let greetingEnvelope: Readonly<{ artifact: GreetingSet; canonicalHash: string }>;
-      try {
-        greetingEnvelope = await latestGreeting(
-          store,
-          source.greetingSetId,
-          join(paths.companionRoot, "greetings", source.greetingSetId),
-        );
-      } catch {
-        throw new Error("chat_opening_variant_not_found");
-      }
-      const greeting = greetingEnvelope.artifact;
-      const currentIndex = greeting.variants.findIndex((variant) => variant.variantId === source.variantId);
-      if (currentIndex < 0) throw new Error("chat_opening_variant_not_found");
-      const count = greeting.variants.length;
-      let targetIndex: number;
-      if (input.targetIndex !== undefined) {
-        if (!Number.isSafeInteger(input.targetIndex) || input.targetIndex < 0 || input.targetIndex >= count)
-          throw new Error("chat_opening_variant_not_found");
-        targetIndex = input.targetIndex;
-      } else if (input.direction === "prev") targetIndex = Math.max(0, currentIndex - 1);
-      else if (input.direction === "next") targetIndex = Math.min(count - 1, currentIndex + 1);
-      else throw new Error("invalid_chat_opening_request");
-      const variant = greeting.variants[targetIndex]!;
-      const nextSource: GreetingSource = Object.freeze({
-        greetingSetId: greeting.greetingSetId,
-        sourceRevision: greetingEnvelope.artifact.revision,
-        canonicalHash: greetingEnvelope.canonicalHash,
-        variantId: variant.variantId,
-        profileRevision: source.profileRevision,
-        scenarioRevision: source.scenarioRevision,
-      });
-      // The same messageId keeps the browser's opaque opening handle stable across a choice.
-      return threads.commitOpening(
-        input.chatThreadId,
-        Object.freeze({ messageId: opening.messageId, text: variant.text, source: nextSource }),
-      );
+      return (await commitGreetingOpeningVariant({ store, threads, paths, ...input })).state;
     },
 
     async openChat(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {
@@ -273,6 +220,96 @@ export function createTavernLibraryService(
     activeChatSelection(): ReturnType<ChatThreadStore["readActiveThreadSelection"]> {
       return threads.readActiveThreadSelection();
     },
+  });
+}
+
+/** The exact variant position a committed opening names, for the browser's `< 1/N >` reading. */
+export type TavernOpeningVariantProjection = Readonly<{
+  variantId: string;
+  /** 0-based position in the greeting set the opening was drawn from. */
+  index: number;
+  count: number;
+  label: string | null;
+}>;
+
+/**
+ * The one implementation of the new-chat opening choice, shared by the Library service and the
+ * mounted management service. It is legal exactly while `opening_locked_at_event_id === null` - the
+ * window in which design/28 lets a new Chat's opening be chosen; a sealed opening is refused with
+ * the bounded `chat_opening_locked` rather than silently no-opped. It reuses
+ * `ChatThreadStore.commitOpening` and the existing `greeting_variant_id` record, and returns the
+ * committed variant's position so every caller projects the same fact.
+ */
+export async function commitGreetingOpeningVariant(input: Readonly<{
+  store: TavernArtifactStore;
+  threads: ChatThreadStore;
+  paths: TavernPaths;
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  direction?: "prev" | "next";
+  targetIndex?: number;
+}>): Promise<Readonly<{ state: ChatThreadState; variant: TavernOpeningVariantProjection }>> {
+  if ((input.direction === undefined) === (input.targetIndex === undefined))
+    throw new Error("invalid_chat_opening_request");
+  const state = await input.threads.resumeThread(input.chatThreadId, input.chatSurfaceSessionId);
+  const companion = await currentCompanion(input.store, join(input.paths.companionRoot, "companion.json"));
+  if (
+    companion.companionId !== input.paths.companionId ||
+    companion.continuityId !== input.paths.continuityId ||
+    state.thread.companionId !== companion.companionId ||
+    state.thread.continuityId !== companion.continuityId
+  )
+    throw new Error("tavern_chat_scope_mismatch");
+  // The durable lock is the whole legality of this operation; `commitOpening` re-checks it under
+  // its own transaction, so a concurrent seal still fails closed instead of overwriting.
+  if (state.thread.openingLockedAtEventId !== null) throw new Error("chat_opening_locked");
+  const opening = state.thread.openingSelection;
+  if (opening.kind !== "greeting") throw new Error("chat_opening_not_greeting");
+  const source = opening.source;
+  let greetingEnvelope: Readonly<{ artifact: GreetingSet; canonicalHash: string }>;
+  try {
+    greetingEnvelope = await latestGreeting(
+      input.store,
+      source.greetingSetId,
+      join(input.paths.companionRoot, "greetings", source.greetingSetId),
+    );
+  } catch {
+    throw new Error("chat_opening_variant_not_found");
+  }
+  const greeting = greetingEnvelope.artifact;
+  const currentIndex = greeting.variants.findIndex((variant) => variant.variantId === source.variantId);
+  if (currentIndex < 0) throw new Error("chat_opening_variant_not_found");
+  const count = greeting.variants.length;
+  let targetIndex: number;
+  if (input.targetIndex !== undefined) {
+    if (!Number.isSafeInteger(input.targetIndex) || input.targetIndex < 0 || input.targetIndex >= count)
+      throw new Error("chat_opening_variant_not_found");
+    targetIndex = input.targetIndex;
+  } else if (input.direction === "prev") targetIndex = Math.max(0, currentIndex - 1);
+  else if (input.direction === "next") targetIndex = Math.min(count - 1, currentIndex + 1);
+  else throw new Error("invalid_chat_opening_request");
+  const variant = greeting.variants[targetIndex]!;
+  const nextSource: GreetingSource = Object.freeze({
+    greetingSetId: greeting.greetingSetId,
+    sourceRevision: greetingEnvelope.artifact.revision,
+    canonicalHash: greetingEnvelope.canonicalHash,
+    variantId: variant.variantId,
+    profileRevision: source.profileRevision,
+    scenarioRevision: source.scenarioRevision,
+  });
+  // The same messageId keeps the browser's opaque opening handle stable across a choice.
+  const committed = await input.threads.commitOpening(
+    input.chatThreadId,
+    Object.freeze({ messageId: opening.messageId, text: variant.text, source: nextSource }),
+  );
+  return Object.freeze({
+    state: committed,
+    variant: Object.freeze({
+      variantId: variant.variantId,
+      index: targetIndex,
+      count,
+      label: variant.label ?? null,
+    }),
   });
 }
 
