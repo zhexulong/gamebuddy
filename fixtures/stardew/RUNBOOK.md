@@ -2579,3 +2579,62 @@ dialogue holding the actor.
 Debugging note worth keeping: the per-tick diagnostic is what settled this. Two rounds of reasoning produced two
 wrong "the page cannot be read" hypotheses; one tick log (`transitioning/bigger/safety/idx/text/canAdvance` per
 frame) gave the answer immediately. Instrument the decision path, then reason.
+
+---
+
+### Ladder-6 deadline: the Agent decides to talk, and it READS what the villager said (PASS, 2026-10-11)
+
+```
+pwsh -NoProfile -File scratch/launch-dialogue-autonomy.ps1
+```
+
+The only thing the harness supplies is a player-level goal; `GAMEBUDDY_AGENT_SESSION_GOALS` is deliberately UNSET,
+because a second player message is itself a steer and could be the nudge that produces the talk.
+
+```
+GAMEBUDDY_AGENT_PROMPT=去镇上的酒馆找个人聊聊天，然后回来告诉我你们都聊了些什么。
+sha256=86b585617ceeb9bdfc68a70919901ba7a673be61d0d01278a5cb437e997d0f37
+--action dialogue_stream   (fixture: native_talk_to_npc_multi_page_v1, chosen by content - Lewis@Saloon)
+```
+
+Judged by an INDEPENDENT checker, not by the harness verdict (`state:blocked` is the harness's own coarse criteria):
+
+```
+node tools/check-stardew-dialogue-autonomy.mjs tools/_ladder6-dialogue-autonomy.result.json \
+  --session <the run's sessions/*.jsonl>      ->  passed / dialogue_autonomy_observed   (a1..a5 all true)
+```
+
+What it establishes, from the run's own artifacts:
+
+```
+attemptedActionIds = ["talk_to_npc","dismiss_modal"]      succeededActionIds = ["talk_to_npc"]
+talk receipt evidence: location=Saloon;npc=Lewis;dialogue_up_after=true;dialogue_box_after=true;menu_open_after=DialogueBox
+world_fact: kind=npc_dialogue_presented, pages = BOTH pages of Lewis's native multi-page line
+```
+
+and, decisively, the Agent's own thinking after the fact batch arrived (`disposition: follow_up`):
+
+> "Now the dialogue content came through in a world_fact event. Lewis said: 「你在那个破屋里过的第一晚怎么样？」
+> 「你爷爷以前总是抱怨那张晃晃悠悠的旧床。但我觉得，他心里其实是爱着那间房子的。」 So now I can report it!"
+
+So the loop is closed end to end: the Agent CHOSE to talk, the Mod paged a native multi-page conversation, the fact
+reached the Agent's CONTEXT with every page, and the Agent used it.
+
+**Two things a careless reading would get wrong, and both are recorded rather than smoothed over:**
+
+1. **The harness's captured `presentedSummary` says the opposite** - 「招呼是打上了，可他的原话没传到我这边来……
+   复述不出来」. That summary belongs to the turn that ENDED BEFORE the fact batch arrived; the fact arrives as a
+   `follow_up` batch and the Agent then says it can report it. The captured line is a turn-boundary artifact, not a
+   delivery failure - which is exactly why the judge reads the SESSION, not the summary.
+2. **A5 must look for the TEXT, not the speaker.** As first written it searched the transcript for `Lewis` - which
+   the talk RECEIPT already contains (`npc=Lewis`) - so it would have passed a run whose dialogue text never reached
+   the model, and would also have passed a TRUNCATING delivery on whichever page it managed to carry. A5 now
+   requires EVERY page, in either literal or JSON-escaped form.
+
+Also observed and worth knowing: the Agent tried `dismiss_modal` twice and got `no_modal_present` both times, because
+the pager's last-page click had already closed the box. The Agent recovering from "there is nothing to dismiss" is
+correct behaviour, not a defect.
+
+Environment: the Windows owner-identity query is `Get-CimInstance Win32_Process` under a 5 s bound; measured 700-800 ms
+here, but one run died with `windows_runtime_owner_identity_query_failed:timeout` when the machine was also running
+several agent lanes. The run script now PRE-WARMS that query. No product bound was changed.
