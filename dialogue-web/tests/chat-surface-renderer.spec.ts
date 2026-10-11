@@ -14,6 +14,12 @@ import { expect, test, type Page } from "@playwright/test";
  * 2. `gives an italic beat its own class` - `*nods*` is a stage direction and
  *    must be distinguishable from speech so narration can read as narration;
  *    a reply that renders every emphasis identically loses that.
+ * 2b. `renders a narration beat with the reading treatment` - the class being
+ *    mounted is not the treatment: with no rule for `.message-action` a stage
+ *    direction is drawn in the browser's default italic *and* in the same
+ *    colour as speech. This resolves the computed colour against the token, so
+ *    a missing or drifted rule fails here instead of looking acceptable in a
+ *    screenshot.
  * 3. `renders the model-written class inert` - an explicit allowlist with no
  *    attributes must strip a `class=`/`data-` the model wrote, so model text
  *    can never fabricate the narration class or any other surface hook.
@@ -30,6 +36,7 @@ type ChatProbe = {
   setTranscript(texts: readonly string[]): void;
   setPreview(text: string | null): void;
   bubbleHtml(handle: string): string | null;
+  narrationStyle(handle: string): { color: string; expectedColor: string; fontStyle: string } | null;
   textReads(handle: string): number;
   totalTextReads(): number;
   resetTextReads(): void;
@@ -90,6 +97,22 @@ test("gives an italic beat its own class", async ({ page }) => {
   expect(html).toContain('<em class="message-action">nods slowly</em>');
   await expect(page.locator("li[data-handle='h0'] em.message-action")).toHaveCount(1);
   await expect(page.locator("li[data-handle='h0'] em.message-action")).toHaveText("nods slowly");
+});
+
+test("renders a narration beat with the reading treatment", async ({ page }) => {
+  await openProbe(page);
+  await setTranscript(page, ["*nods slowly*\nShe looks up."]);
+
+  const style = await page.evaluate(() => window.chatProbe.narrationStyle("h0"));
+  expect(style).not.toBeNull();
+  // The computed colour IS the narration token, and it is not the colour of the
+  // speech beside it - the de-emphasis is rendered, not merely named.
+  expect(style?.color).toBe(style?.expectedColor);
+  expect(style?.fontStyle).toBe("italic");
+  const speech = await page.evaluate(
+    () => getComputedStyle(document.querySelector("li[data-handle='h0'] p") as Element).color,
+  );
+  expect(style?.color).not.toBe(speech);
 });
 
 test("renders the model-written class inert", async ({ page }) => {

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -17,6 +17,7 @@ export const MessageBubble = memo(function MessageBubble({
   onSwipe,
   onRegenerate,
   pending = null,
+  streaming = false,
   labels,
 }: {
   message: BrowserMessageV1;
@@ -31,6 +32,12 @@ export const MessageBubble = memo(function MessageBubble({
    * double click from looking like it did nothing.
    */
   pending?: "swipe" | "regenerate" | null;
+  /**
+   * True only for the live streaming preview: the bubble then carries the
+   * reading caret. It is a sibling of the bubble, never inside it, so the
+   * bytes of the preview and of the committed message stay identical.
+   */
+  streaming?: boolean;
   labels: Readonly<{
     swipeNavigation: string;
     swipePrevious: string;
@@ -49,6 +56,7 @@ export const MessageBubble = memo(function MessageBubble({
       className={`message ${isPlayer ? "player" : "companion"}`}
       data-handle={message.handle}
       {...(busy ? { "aria-busy": "true" as const, "data-pending": pending } : {})}
+      {...(streaming ? { "data-streaming": "true" as const } : {})}
     >
       {!isPlayer && (
         <div className="avatar avatar-small" aria-hidden="true">
@@ -91,17 +99,23 @@ export const MessageBubble = memo(function MessageBubble({
         ) : (
           <MarkdownMessage className="message-bubble" text={message.text} />
         )}
+        {streaming && <span className="message-caret" aria-hidden="true" />}
         {!isPlayer && onRegenerate && (
           <div className="message-actions">
             <button
               type="button"
               className="action-btn regenerate-btn"
               disabled={busy}
+              {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
               onClick={() => onRegenerate(message.handle)}
               title={labels.regenerateVariant}
               aria-label={labels.regenerateVariant}
             >
-              <RefreshCw size={14} aria-hidden="true" />
+              {pending === "regenerate" ? (
+                <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+              ) : (
+                <RefreshCw size={14} aria-hidden="true" />
+              )}
               {labels.regenerateVariant}
             </button>
           </div>

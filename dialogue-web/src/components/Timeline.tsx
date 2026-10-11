@@ -117,6 +117,7 @@ export function Timeline({
               companionName={companionName}
               playerLabel={labels.you}
               labels={labels}
+              streaming
             />
           )}
         </ol>

@@ -147,6 +147,39 @@ const chatProbe = {
       document.querySelector(`li[data-handle="${handle}"] .message-bubble`)?.innerHTML ?? null
     );
   },
+  /**
+   * The computed reading treatment of a narration beat, next to the value the
+   * token it must resolve to actually has. A class name in the markup proves
+   * nothing: this proves the style applied.
+   */
+  narrationStyle(handle: string): { color: string; expectedColor: string; fontStyle: string } | null {
+    const em = document.querySelector(`li[data-handle="${handle}"] em.message-action`);
+    if (em === null) return null;
+    const probe = document.createElement("span");
+    probe.style.color = "var(--palette-gray-400)";
+    document.body.appendChild(probe);
+    const expectedColor = getComputedStyle(probe).color;
+    probe.remove();
+    const style = getComputedStyle(em);
+    return { color: style.color, expectedColor, fontStyle: style.fontStyle };
+  },
+  /**
+   * The computed busy treatment of a bubble. The `data-pending` attribute is
+   * the shell's label; this is the rendering the label is supposed to produce,
+   * so a pending row that animates nothing is caught.
+   */
+  pendingAnimation(
+    handle: string,
+  ): { animationName: string; animationDuration: string; transitionDuration: string } | null {
+    const bubble = document.querySelector(`li[data-handle="${handle}"] .message-bubble`);
+    if (bubble === null) return null;
+    const style = getComputedStyle(bubble);
+    return {
+      animationName: style.animationName,
+      animationDuration: style.animationDuration,
+      transitionDuration: style.transitionDuration,
+    };
+  },
   textReads(handle: string): number {
     return reads.get(handle) ?? 0;
   },

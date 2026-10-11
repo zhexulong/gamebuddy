@@ -2956,4 +2956,181 @@ body {
   font-size: 12px;
 }
 
+/* ==========================================================================
+   Narration and Markdown rhythm
+
+   `*beat*` is the companion's stage direction, so it reads as narration rather
+   than as emphasised speech: warm grey, italic, on its own line rhythm. The
+   colour is a de-emphasis, never the only carrier - the text and its `<em>`
+   are.
+
+   The bubble's `pre-wrap` is neutralised for rendered Markdown: with `pre-wrap`
+   the newlines between `<p>`/`<blockquote>`/`<li>` are preserved *as well as*
+   the block margins, which is what doubled the spacing. The bubble is a
+   vertical stack whose rhythm is one 8 px gap, so no margin can collapse or
+   double.
+   ========================================================================== */
+
+.message.companion .message-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  white-space: normal;
+}
+
+.message-bubble em.message-action {
+  color: var(--palette-gray-400);
+  letter-spacing: 0.01em;
+}
+
+.message-bubble :is(p, blockquote, pre, ul, ol, hr) {
+  margin: 0;
+}
+
+.message-bubble blockquote {
+  padding: var(--space-1) var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background-color: var(--surface-elevated);
+  color: var(--text-secondary);
+}
+
+.message-bubble ul,
+.message-bubble ol {
+  padding-left: var(--space-5);
+}
+
+.message-bubble li + li {
+  margin-top: var(--space-1);
+}
+
+.message-bubble code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background-color: var(--surface-elevated);
+  border-radius: var(--radius-xs);
+  padding: 1px var(--space-1);
+}
+
+.message-bubble pre {
+  padding: var(--space-3);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  /* Code lines scroll inside their own block instead of widening the column. */
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.message-bubble pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.message-bubble hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ==========================================================================
+   Busy feedback for a message's own mutation
+
+   The row already carries `aria-busy` and `data-pending`; without a visible
+   treatment a swipe or a regenerate reads as a dead click. Three carriers, none
+   of them colour alone: the bubble breathes, a shimmer sweeps it, and the
+   control that was clicked swaps its glyph for a spinner. The entrance/transition
+   is the 150 ms token; the loop is long enough to read as breathing rather than
+   as a strobe, and prefers-reduced-motion removes the motion entirely (see the
+   reduce block below) - where the disabled controls are the carrier.
+   ========================================================================== */
+
+.message[data-pending] .message-bubble {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--border-strong);
+  animation: message-pending-breathe 1.4s var(--motion-ease-smooth) infinite;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.message[data-pending] .message-bubble::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    100deg,
+    transparent 25%,
+    rgba(255, 255, 255, 0.07) 50%,
+    transparent 75%
+  );
+  background-size: 220% 100%;
+  animation: message-pending-shimmer 1.4s linear infinite;
+}
+
+@keyframes message-pending-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes message-pending-shimmer {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+
+.message-spinner {
+  animation: message-spinner-spin 900ms linear infinite;
+}
+
+@keyframes message-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The live turn's caret: streaming is shown by a moving cursor at the end of the
+   reply, not only by a disabled control. It is a sibling of the bubble, so the
+   preview's and the committed message's bytes stay identical. */
+.message[data-streaming] .message-caret {
+  align-self: flex-start;
+  width: 2px;
+  height: 1em;
+  margin-top: calc(var(--space-1) + 2px);
+  background-color: var(--text-secondary);
+  animation: message-caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes message-caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+/* Motion off is not state off: the busy row keeps its stronger border and its
+   disabled controls, and the caret disappears with the streaming preview. */
+@media (prefers-reduced-motion: reduce) {
+  .message[data-pending] .message-bubble,
+  .message[data-pending] .message-bubble::after,
+  .message[data-streaming] .message-caret,
+  .message-spinner {
+    animation: none;
+  }
+
+  .message[data-pending] .message-bubble {
+    opacity: 1;
+  }
+}
+
 } /* end @layer theme.polish */
