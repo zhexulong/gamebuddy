@@ -194,7 +194,7 @@ export const MAGIC_CONTEXT_HISTORIAN_ENABLED = true;
 // simultaneous Chat/Game runtimes cannot inherit one another's cwd/data root.
 let magicContextReloadTail: Promise<void> = Promise.resolve();
 
-async function reloadMagicContextInRuntimeRoot(
+export async function reloadMagicContextInRuntimeRoot(
   loader: DefaultResourceLoader,
   runtimeCwd: string,
 ): Promise<void> {
@@ -208,6 +208,7 @@ async function reloadMagicContextInRuntimeRoot(
     const previousCwd = process.cwd();
     const previousDataDir = process.env.XDG_DATA_HOME;
     const previousConfigDir = process.env.XDG_CONFIG_HOME;
+    const previousStorageDir = process.env.MAGIC_CONTEXT_STORAGE_DIR;
     try {
       process.env.XDG_DATA_HOME = join(runtimeCwd, "data");
       // The extension resolves its USER-scope config through XDG_CONFIG_HOME and falls back to
@@ -215,6 +216,16 @@ async function reloadMagicContextInRuntimeRoot(
       // runtime would read a file from the player's home. Point it at the runtime's own config,
       // alongside the data root, so the runtime touches nothing outside its root.
       process.env.XDG_CONFIG_HOME = join(runtimeCwd, "config");
+      // Magic Context's own documentation gives MAGIC_CONTEXT_STORAGE_DIR precedence over the
+      // XDG-derived root, so an inherited value decides this runtime's SQLite root *instead of*
+      // the root above: the extension then opens a store this runtime does not own. Measured on a
+      // live composed turn, that is not merely a misplacement - a store whose migration lane is
+      // ahead of this build's schema fence leaves the extension fail-closed, and its guarded
+      // context hook aborts the operation (`ctx.abort()`), so the provider request dies in-process
+      // with `AbortError: This operation was aborted` and the turn terminalizes `failed` with
+      // `runtime_unavailable`. Pin the same runtime-owned root the XDG path derives, so the store
+      // is the runtime's whatever the surrounding process carries.
+      process.env.MAGIC_CONTEXT_STORAGE_DIR = join(runtimeCwd, "data", "cortexkit", "magic-context");
       process.chdir(runtimeCwd);
       await loader.reload();
     } finally {
@@ -223,6 +234,8 @@ async function reloadMagicContextInRuntimeRoot(
       else process.env.XDG_DATA_HOME = previousDataDir;
       if (previousConfigDir === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousConfigDir;
+      if (previousStorageDir === undefined) delete process.env.MAGIC_CONTEXT_STORAGE_DIR;
+      else process.env.MAGIC_CONTEXT_STORAGE_DIR = previousStorageDir;
     }
   } finally {
     release();
