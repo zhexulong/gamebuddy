@@ -2901,4 +2901,59 @@ body {
   padding-bottom: 0;
 }
 
+/* ==========================================================================
+   The conversation's reading flow
+
+   The conversation column is the transcript and the composer band, and nothing
+   else. Two things used to sit between them and were removed: a resident draft
+   editor, and this surface's whole model form. The draft is now the composer's
+   own field (the shell seeds it from the durable revision), and the model
+   settings open as a popout from the composer's action row.
+
+   That rail is the vendor pattern, not an invention: SillyTavern keeps the
+   send form's icon buttons in `#leftSendForm`/`#rightSendForm` beside
+   `#send_textarea`, and opens its panels as popouts over the chat rather than
+   as blocks inside the message list. The reference column itself is the same
+   shape we already had - one centred column with a bounded width
+   (`--sheldWidth`, `#sheld { margin: 0 auto }`), the message list scrolling
+   above a composer pinned to the bottom of that column (`#chat`,
+   `#form_sheld`).
+   ========================================================================== */
+
+.composer-settings-button {
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
+}
+
+/* The durable draft's own row: inside the composer band, above the field, and
+   present only while a durable draft exists. It is the draft's verbs, never a
+   second editor in the reading flow. */
+.composer-draft {
+  width: 100%;
+  max-width: var(--timeline-reading-measure);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.composer-draft-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-right: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.composer-draft .success-banner,
+.composer-draft .error-banner {
+  flex: 1 1 100%;
+  padding: var(--space-1) var(--space-2);
+  font-size: 12px;
+}
+
 } /* end @layer theme.polish */

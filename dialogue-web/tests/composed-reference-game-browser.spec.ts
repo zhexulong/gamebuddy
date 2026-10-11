@@ -148,7 +148,10 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
 
   await expect(page.getByRole("heading", { name: "Reference Game Chat" })).toBeVisible();
   await expect(page.getByText("The game projection is read-only.")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Saved draft" })).toContainText(draft.text);
+  // The durable draft is not a resident block between the transcript and the
+  // input: it prefills the composer's own field, and its verbs live in the
+  // composer band (Composer.tsx).
+  await expect(page.getByTestId("chat-surface").locator(".composer-textarea")).toHaveValue(draft.text);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await expect(panel).toContainText("ConnectionNo game connection");
@@ -494,6 +497,67 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await page.goBack();
   await expect(page.getByTestId("chat-surface")).toBeVisible();
   await expect(page.getByText("A durable delegated draft.")).toBeVisible();
+});
+
+/**
+ * The surfaces are peers (design/architecture/product-surfaces.md): neither owns
+ * or interrupts the other. A Game operation's authoritative reread must depend
+ * only on the Game projection, so a Chat draft revision that moves underneath it
+ * - the player typing in the conversation, another tab, a background poll - can
+ * never turn into a Game failure. Here the ONLY thing that moves between the
+ * composed root and draft reads is Chat's draft: the Game projection is
+ * unchanged and the setup command succeeds, so the operation must complete.
+ */
+test("Game setup ignores a Chat draft that moves between the composed state and draft reads", async ({ page }) => {
+  const keys: string[] = [];
+  let stateReads = 0;
+  let draftReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string };
+    keys.push(command.idempotencyKey);
+    await route.fulfill({ status: 204, body: "" });
+  });
+  // The Game projection never moves: only the composed root's Game half is
+  // served, exactly as it was, so any Game failure here can only come from Chat.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+  });
+  // The first read is the mount bootstrap, which legitimately reconciles the
+  // nested Chat projection (revision 4). Every later read reports the Chat draft
+  // the player moved to while the Game operation was in flight (revision 5).
+  await page.route("**/api/tavern/v1/draft", (route) => {
+    draftReads += 1;
+    const body = draftReads === 1 ? draft : { ...draft, revision: 5, text: "The player kept typing." };
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
+  await setup.click();
+  // The command was admitted and its authoritative Game reread converged.
+  await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => stateReads).toBe(1);
+  // A Game reread never reads the Chat draft at all: the moved revision cannot
+  // be observed by the Game path, so it cannot fail the Game operation.
+  expect(draftReads).toBe(1);
+  // The Game operation completed: no reconciliation problem was surfaced, and
+  // the unchanged authoritative projection was applied (the control stays
+  // offered and a later attempt is a fresh-key attempt, not a stuck replay).
+  await expect(panel).not.toContainText("Game setup could not be verified");
+  await expect(setup).toBeVisible();
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  expect(draftReads).toBe(1);
 });
 
 test("Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop", async ({ page }) => {
@@ -2556,4 +2620,146 @@ test("a refused import is reported as a failure and never as a created companion
     "The card could not be imported.",
   );
   await expect(surface.locator("[data-card-import-result=created]")).toHaveCount(0);
+});
+
+/**
+ * The conversation column's composition, which is the whole of reviewer point 1.
+ *
+ * The failures this catches, in order:
+ *
+ * 1. A resident form coming back into the reading flow. The conversation column
+ *    must be the transcript and the composer band and nothing else, so the
+ *    direct children of the surface's content are asserted by class: a
+ *    `reference-draft-section` or a `surface-model-settings` inserted between
+ *    them fails here, which is exactly the measured "首屏被挤压" regression.
+ * 2. The durable draft silently stopping at the boundary. It must reach the
+ *    composer's own field, so a draft that is read but never prefilled fails -
+ *    and the same command (`PUT /api/tavern/v1/draft` under the mounted
+ *    revision CAS) must still be what saving sends.
+ * 3. The model settings becoming unreachable when they left the column. The
+ *    popout must open the same controls and the column must still hold no form
+ *    while it is open; closing must return focus to the control that opened it.
+ */
+test("the conversation column is the transcript and the composer, with the model settings as a popout", async ({ page }) => {
+  const draftWrites: unknown[] = [];
+  let draftState = { apiVersion: 1, revision: draft.revision, text: draft.text };
+  // The composer's own enablement is a projection of the nested Chat snapshot:
+  // `submitAvailable` needs the published `chat.submit` operation, exactly as a
+  // real profile declares it (the reference profile composition publishes the
+  // same record). The base `chat` fixture lists no operations, so the composer
+  // renders disabled and a journey that must *type* has to publish the
+  // operation rather than work around it.
+  const submittable = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+    },
+  };
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(submittable) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(submittable) }),
+  );
+  await page.route("**/api/tavern/v1/draft", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draftState) });
+      return;
+    }
+    draftWrites.push(route.request().postDataJSON());
+    draftState =
+      route.request().method() === "DELETE"
+        ? { apiVersion: 1, revision: 6, text: null }
+        : { apiVersion: 1, revision: 5, text: draft.text };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draftState) });
+  });
+  await page.route("**/api/tavern/v1/settings/profiles", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
+        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
+        recommendedModels: [
+          {
+            providerId: "cpa-oai",
+            providerLabel: "CPA OAI",
+            modelId: "deepseek-v4",
+            modelLabel: "DeepSeek V4",
+            allowedThinkingLevels: ["off", "medium", "high"],
+            defaultThinkingLevel: "medium",
+          },
+        ],
+      }),
+    }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+
+  // The reading flow is the transcript and the composer band, in that order.
+  const content = chatSurface.locator(".surface-content > *");
+  await expect(content).toHaveCount(2);
+  await expect(content.nth(0)).toHaveClass(/timeline/);
+  await expect(content.nth(1)).toHaveClass(/composer-section/);
+  // Nothing in the conversation column is a form, and the only field in it is
+  // the composer's own.
+  await expect(chatSurface.locator("form")).toHaveCount(0);
+  await expect(chatSurface.locator(".surface-model-settings")).toHaveCount(0);
+  await expect(chatSurface.locator("input, select, textarea")).toHaveCount(1);
+
+  // The draft reached the composer, and its verbs are in the composer band.
+  const composer = chatSurface.locator(".composer-textarea");
+  await expect(composer).toHaveValue(draft.text);
+  const draftRow = chatSurface.locator(".composer-draft");
+  await expect(draftRow).toBeVisible();
+  await expect(draftRow).toContainText("Saved draft");
+
+  // Saving sends the same command it always did: the composed field's text under
+  // the mounted draft's revision CAS.
+  await composer.fill("Edited in the composer.");
+  await draftRow.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => draftWrites.length).toBe(1);
+  expect(draftWrites[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: 4,
+    text: "Edited in the composer.",
+  });
+
+  // Discarding clears the field and takes its own row with it.
+  await draftRow.getByRole("button", { name: "Discard", exact: true }).click();
+  await expect.poll(() => draftWrites.length).toBe(2);
+  expect(draftWrites[1]).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedRevision: 5 });
+  await expect(chatSurface.locator(".composer-draft")).toHaveCount(0);
+  await expect(composer).toHaveValue("");
+
+  // The model settings are one click away, over the conversation.
+  const trigger = chatSurface.getByTestId("chat-model-trigger");
+  await expect(chatSurface.locator(".surface-model-settings")).toHaveCount(0);
+  await trigger.click();
+  const popout = page.getByRole("dialog", { name: "Chat model settings" });
+  await expect(popout).toBeVisible();
+  await expect(popout.locator(".surface-model-settings")).toBeVisible();
+  await expect(popout.getByLabel("Model ID")).toHaveValue("deepseek-v4");
+  await expect(popout.getByLabel("Thinking level")).toHaveValue("medium");
+  await expect(popout.getByRole("button", { name: "deepseek-v4" })).toBeVisible();
+  // ...and the conversation column still carries no form while it is open.
+  await expect(chatSurface.locator("input, select, textarea")).toHaveCount(1);
+
+  await page.keyboard.press("Escape");
+  await expect(popout).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 });

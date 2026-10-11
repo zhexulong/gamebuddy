@@ -17,7 +17,6 @@ const en = {
   emptyChat: "No messages in this chat.",
   untitledChat: "Untitled chat",
   savedDraft: "Saved draft",
-  noSavedDraft: "No saved draft.",
   openingChat: "Opening chat…",
   gameState: "Game state",
   gameSetup: "Set up Stardew Valley",
@@ -242,6 +241,7 @@ const en = {
   modelProfilesRevisionConflict: "This profile changed elsewhere. Reopen the panel and try again.",
   modelProfilesUnavailable: "Model profiles are unavailable.",
   modelProfilesModelRequired: "Enter a model ID.",
+  chatModelSettings: "Chat model settings",
   // The companion's message affordances (design/26 §6.3: one declared icon family,
   // never an emoji standing in for a structural control).
   swipeNavigation: "Message variants",
@@ -429,7 +429,6 @@ const zh: Messages = {
   emptyChat: "当前聊天暂无消息。",
   untitledChat: "未命名聊天",
   savedDraft: "已保存草稿",
-  noSavedDraft: "无本地草稿。",
   openingChat: "正在读取聊天…",
   gameState: "游戏状态",
   gameSetup: "设置《星露谷物语》",
@@ -650,6 +649,7 @@ const zh: Messages = {
   modelProfilesRevisionConflict: "该配置已在其它地方被修改，请重新打开面板后再试。",
   modelProfilesUnavailable: "模型配置不可用。",
   modelProfilesModelRequired: "请填写模型 ID。",
+  chatModelSettings: "聊天模型配置",
   // 伴侣消息上的控件(design/26 §6.3:只用一套已声明的图标族,不用 emoji 冒充结构控件)。
   swipeNavigation: "消息变体",
   swipePrevious: "上一个变体",

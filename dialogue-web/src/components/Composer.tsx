@@ -1,9 +1,40 @@
-import { Mic, MicOff, SendHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, useLayoutEffect, useRef } from "react";
+import { FileText, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
+import { type ChangeEvent, type KeyboardEvent, type Ref, useLayoutEffect, useRef } from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
 export type VoiceSurfaceStateV1 = Readonly<{ state: "unavailable" | "ready" | "speaking" }>;
+
+/**
+ * The durable draft's authoring controls, folded into the composer (design/26
+ * §4.2 writes the draft on the conversation, and the composer band is where the
+ * conversation's writing happens).
+ *
+ * The draft is not a second editor: when a durable draft exists the composer's
+ * own field is prefilled with it, so the player edits the draft *in the input
+ * they would otherwise send* - and a resident block in the reading flow (the
+ * failure this replaces) is exactly what an instant-messaging surface must not
+ * have between the transcript and the input.
+ */
+export type ComposerDraftActions = Readonly<{
+  onSave: () => void;
+  onDiscard: () => void;
+  /** The closed outcome line the last save/discard reported, if any. */
+  notice: Readonly<{ kind: "success" | "failure"; text: string }> | null;
+}>;
+
+/**
+ * The one control that opens this surface's model settings, as a popout
+ * (design/104 §3: the model a surface uses belongs on that surface). It sits in
+ * the send-form action row - the same place the vendor's own front ends keep
+ * their icon-button rail - so the reading column pays no height for it.
+ */
+export type ComposerSettingsAction = Readonly<{
+  label: string;
+  expanded: boolean;
+  onClick: () => void;
+  ref?: Ref<HTMLButtonElement>;
+}>;
 
 export function Composer({
   value,
@@ -14,6 +45,8 @@ export function Composer({
   disabled,
   labels,
   voice,
+  draftActions,
+  settingsAction,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -24,6 +57,10 @@ export function Composer({
   labels: Messages;
   /** Additive optional voice surface; absent null renders no mic icon. */
   voice?: VoiceSurfaceStateV1 | null;
+  /** Present only while a durable draft exists; absent renders no draft row. */
+  draftActions?: ComposerDraftActions;
+  /** Present when this surface has model settings to open. */
+  settingsAction?: ComposerSettingsAction;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,6 +95,36 @@ export function Composer({
 
   return (
     <section className="composer-section" aria-label={labels.typeMessagePlaceholder}>
+      {draftActions !== undefined && (
+        // A durable draft exists, so the row appears: it is the only place the
+        // draft's own verbs live, and it disappears with the draft instead of
+        // occupying the reading flow while there is nothing to save or discard.
+        <div className="composer-draft" data-draft-actions>
+          <span className="composer-draft-label">
+            <FileText size={14} aria-hidden="true" />
+            {labels.savedDraft}
+          </span>
+          <button
+            type="button"
+            className="small-button"
+            disabled={value.trim().length === 0}
+            onClick={draftActions.onSave}
+          >
+            {labels.save}
+          </button>
+          <button type="button" className="small-button" onClick={draftActions.onDiscard}>
+            {labels.discard}
+          </button>
+          {draftActions.notice !== null && (
+            <span
+              role="status"
+              className={draftActions.notice.kind === "success" ? "success-banner" : "error-banner"}
+            >
+              {draftActions.notice.text}
+            </span>
+          )}
+        </div>
+      )}
       <div className="composer-container">
         <textarea
           ref={textareaRef}
@@ -71,6 +138,21 @@ export function Composer({
           aria-label={labels.typeMessagePlaceholder}
         />
         <div className="composer-actions">
+          {settingsAction !== undefined && (
+            <button
+              ref={settingsAction.ref}
+              type="button"
+              className="icon-button composer-settings-button"
+              aria-haspopup="dialog"
+              aria-expanded={settingsAction.expanded}
+              data-testid="chat-model-trigger"
+              title={settingsAction.label}
+              aria-label={settingsAction.label}
+              onClick={settingsAction.onClick}
+            >
+              <SlidersHorizontal size={18} aria-hidden="true" />
+            </button>
+          )}
           {voice !== undefined && voice !== null && (
             // Host and client agree on exactly three states (`unavailable`,
             // `ready`, `speaking`); richer facts (consent, device) live on the

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Gamepad2, MessagesSquare, Settings, Users } from "lucide-react";
+import { Brain, Gamepad2, MessagesSquare, Settings, SlidersHorizontal, Users } from "lucide-react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import {
@@ -32,6 +32,7 @@ import { composedProblemView as problemView, type ProblemViewState } from "../co
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
+import { ContextDrawer } from "./ContextDrawer";
 import { SurfaceView } from "./SurfaceView";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { ProblemView } from "./ProblemView";
@@ -132,11 +133,24 @@ export function ComposedReferenceGameApp() {
   const [view, setView] = useState<ViewState>({ kind: "loading" });
   const viewRef = useRef<ViewState>({ kind: "loading" });
   const [inputText, setInputText] = useState("");
+  // The composer's own field is the single authoring buffer for both the next
+  // message and the durable draft (see the seeding effect below); the ref is
+  // what the async draft mutation reads, so it can never act on a stale render.
+  const inputTextRef = useRef("");
+  const writeInput = (text: string): void => {
+    inputTextRef.current = text;
+    setInputText(text);
+  };
   const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
-  // The durable draft's own authoring state (the removed management surface's
-  // textarea), plus the closed outcome line its Save/Discard report through.
-  const [draftText, setDraftText] = useState("");
-  const draftTextRef = useRef("");
+  // The chat mutation currently in flight. The submit button already has its own
+  // gate; swipe and regenerate had none, so a double click issued two admitted
+  // commands (regenerate mints a fresh idempotency key per click). The ref is the
+  // synchronous single-flight guard, the state is the projection the surface shows.
+  const [chatMutation, setChatMutation] = useState<Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null>(null);
+  const chatMutationRef = useRef(false);
+  // The durable draft's authoring state is the composer's own field (see the
+  // seeding effect below); what stays here is the closed outcome line its
+  // Save/Discard report through.
   const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
   // The durable revision the editor was last seeded from: what lets a later
   // authoritative revision replace the editor without ever discarding text the
@@ -194,6 +208,12 @@ export function ComposedReferenceGameApp() {
   // The open contextual panel, as the URL states it. A refresh with
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
+  // This surface's model settings are a popout, not a block inside the reading
+  // flow (design/104 §3 keeps the model on the surface it belongs to; the
+  // conversation keeps its reading column). It is never the URL's `panel` fact,
+  // because the popout replaces no surface: it opens over the conversation and
+  // closes back to it.
+  const [modelPopoutOpen, setModelPopoutOpen] = useState(false);
   // The surface occupying the main region. Chat is the default surface, not a
   // privileged one: every surface takes the same region, and the URL names the
   // selected one so Back returns to the previous surface.
@@ -204,6 +224,7 @@ export function ComposedReferenceGameApp() {
   const charactersEntryRef = useRef<HTMLButtonElement>(null);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
+  const modelPopoutEntryRef = useRef<HTMLButtonElement>(null);
   // Every management surface - Characters, Chats, Settings and Memory - runs on
   // the one management pipeline client the management shell uses, on this
   // shell's own origin: the composed root serves those routes through the one
@@ -523,7 +544,7 @@ export function ComposedReferenceGameApp() {
     if (current.kind !== "ready" || current.session.pending !== null) return;
     const operation = current.session.snapshot.operations.find((op) => op.operationId === "chat.submit");
     if (operation?.availability !== "available") return;
-    const text = inputText.trim();
+    const text = inputTextRef.current.trim();
     if (text.length === 0) return;
     const idempotencyKey = newIdempotencyKey();
     let pending: PendingSubmission;
@@ -534,6 +555,11 @@ export function ComposedReferenceGameApp() {
       return;
     }
     setInputText("");
+    inputTextRef.current = "";
+    // Sending clears the field, and the empty field is the new seed: the
+    // durable draft that arrives next is a new delegation and prefills again,
+    // while the text just sent is not re-offered as a draft.
+    seededDraftRef.current = Object.freeze({ revision: current.draft.revision, text: "" });
     setPreview(null);
     commit({ ...current, session: current.session.withPending(pending) });
     try {
@@ -557,7 +583,14 @@ export function ComposedReferenceGameApp() {
     startPolling();
   };
 
-  const reread = async (): Promise<void> => {
+  /**
+   * Authoritative reread for a Chat-owned operation. The Chat draft is this
+   * surface's own subject, so the durable draft is read alongside the composed
+   * root and its revision must still reconcile with that root's Chat
+   * projection: a revision that moved under a Chat mutation is a real conflict
+   * and fails closed.
+   */
+  const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
     const root = await composedApiRef.current.readState();
@@ -570,31 +603,48 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The editor follows the durable draft: the first authoritative revision seeds
-   * it, and a later revision the player has not typed past replaces it. An
-   * unsaved local value is never silently discarded by a background reread -
-   * the mutation that owns it resolves it.
+   * Authoritative reread for a Game-owned operation. A Game operation's subject
+   * is the composed root's game/lifecycle projection, never the Chat draft, so
+   * this reads only that projection and applies it: a Chat draft revision that
+   * moves between the reads (the player typing in the conversation, another
+   * tab, a background poll) must never fail a Game operation. A Game operation
+   * that needs a "did the thing I acted on change" check uses the Game
+   * projection's own attachment generation, which its handler compares against
+   * the generation it acted on.
+   */
+  const rereadGame = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const root = await composedApiRef.current.readState();
+    setPreview(null);
+    commit({ ...current, root, session: current.session.applySnapshot(root.chat) });
+  };
+
+  /**
+   * The composer's field follows the durable draft: the first authoritative
+   * revision seeds it, and a later revision the player has not typed past
+   * replaces it. An unsaved local value - whether the player is writing the
+   * draft or a different message - is never silently discarded by a background
+   * reread; the mutation that owns it resolves it.
    */
   useEffect(() => {
     if (view.kind !== "ready") return;
     const seeded = seededDraftRef.current;
     if (seeded !== null && seeded.revision === view.draft.revision) return;
     const durable = view.draft.text ?? "";
-    if (seeded !== null && draftTextRef.current !== seeded.text) {
-      seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: draftTextRef.current });
+    if (seeded !== null && inputTextRef.current !== seeded.text) {
+      seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: inputTextRef.current });
       return;
     }
     seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: durable });
-    draftTextRef.current = durable;
-    setDraftText(durable);
+    writeInput(durable);
   }, [view]);
 
-  /** Takes a validated durable draft read-back as the editor's new truth. */
+  /** Takes a validated durable draft read-back as the composer field's new truth. */
   const seedDraft = (draft: BrowserDraftV1): void => {
     const text = draft.text ?? "";
     seededDraftRef.current = Object.freeze({ revision: draft.revision, text });
-    draftTextRef.current = text;
-    setDraftText(text);
+    writeInput(text);
   };
 
   /**
@@ -610,9 +660,9 @@ export function ComposedReferenceGameApp() {
    *
    * Any rejection first re-reads the authoritative durable draft: a rejected
    * write means the durable draft may no longer match this mount's revision (a
-   * stale tab's 409 draft/selection conflict), so the editor and the mounted
-   * draft both take the server read-back and the stale local value can never
-   * survive the conflict.
+   * stale tab's 409 draft/selection conflict), so the composer field and the
+   * mounted draft both take the server read-back and the stale local value can
+   * never survive the conflict.
    */
   const handleDraftMutation = async (kind: "save" | "discard"): Promise<void> => {
     const current = viewRef.current;
@@ -622,7 +672,7 @@ export function ComposedReferenceGameApp() {
         apiVersion: 1 as const,
         selectionGeneration: current.session.snapshot.selection.generation,
         expectedRevision: current.draft.revision,
-        ...(kind === "save" ? { text: draftTextRef.current.trim() } : {}),
+        ...(kind === "save" ? { text: inputTextRef.current.trim() } : {}),
       };
       const result =
         kind === "save"
@@ -658,37 +708,53 @@ export function ComposedReferenceGameApp() {
   const handleSwipe = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
+    // Single-flight: a second click while the first is in flight is dropped, not
+    // sent. Only this attempt's own resolution clears the latch.
+    if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "swipe" as const, handle: messageHandle }));
     try {
       await tavernApiRef.current.selectSwipe(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
         { csrfToken: current.session.snapshot.csrfToken },
       );
-      await reread();
+      await rereadChat();
     } catch (error) {
-      await reread().catch(() => {
+      await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
     }
   };
 
   const handleRegenerate = async (messageHandle: string): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
+    // Single-flight, exactly as swipe: without it a double click mints two fresh
+    // idempotency keys and the Host admits two regenerations.
+    if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "regenerate" as const, handle: messageHandle }));
     try {
       await tavernApiRef.current.regenerate(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
         { csrfToken: current.session.snapshot.csrfToken, idempotencyKey: newIdempotencyKey() },
       );
-      await reread();
+      await rereadChat();
       startPolling();
     } catch (error) {
-      await reread().catch(() => {
+      await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
     }
   };
 
@@ -700,7 +766,7 @@ export function ComposedReferenceGameApp() {
    * this shell's projection as it was instead of adopting a mismatched one.
    */
   const handleRenamedTitle = (): void => {
-    void reread().catch(() => undefined);
+    void rereadChat().catch(() => undefined);
   };
 
   /**
@@ -802,11 +868,11 @@ export function ComposedReferenceGameApp() {
     setGameActivationUnavailable(false);
     try {
       await composedApiRef.current.activateLifecycle();
-      await reread();
+      await rereadGame();
     } catch (error) {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -840,14 +906,14 @@ export function ComposedReferenceGameApp() {
     setGameSetupNotStaged(false);
     try {
       await composedApiRef.current.setupGame({ apiVersion: 1, idempotencyKey });
-      await reread();
+      await rereadGame();
       if (viewRef.current.kind === "ready" && viewRef.current.root.game?.game.prerequisites.status === "unknown")
         gameSetupKeyRef.current = undefined;
     } catch (error) {
       const notStaged = isNotStagedRefusal(error);
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch {
         // Preserve the original key while the command outcome is uncertain.
@@ -894,11 +960,11 @@ export function ComposedReferenceGameApp() {
         idempotencyKey,
         expectedAttachmentGeneration: generation,
       });
-      await reread();
+      await rereadGame();
     } catch (error) {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -934,12 +1000,12 @@ export function ComposedReferenceGameApp() {
         idempotencyKey,
         expectedInstanceGeneration: generation,
       });
-      await reread();
+      await rereadGame();
     } catch (error) {
       const notStaged = isNotStagedRefusal(error);
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -988,11 +1054,11 @@ export function ComposedReferenceGameApp() {
         idempotencyKey,
         expectedAttachmentGeneration: generation,
       });
-      await reread();
+      await rereadGame();
     } catch {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -1024,7 +1090,7 @@ export function ComposedReferenceGameApp() {
   ): Promise<"connected" | "superseded" | "unavailable"> => {
     if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
     try {
-      await reread();
+      await rereadGame();
     } catch {
       if (cancelledRef.current) return "unavailable";
       // An inconclusive authoritative read never completes the resume; keep
@@ -1073,7 +1139,7 @@ export function ComposedReferenceGameApp() {
     } catch (error) {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -1098,7 +1164,7 @@ export function ComposedReferenceGameApp() {
       // reread cannot confirm completion. The exact generation key stays so a
       // player retry replays the same idempotent command.
       try {
-        await reread();
+        await rereadGame();
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
       if (
@@ -1142,7 +1208,7 @@ export function ComposedReferenceGameApp() {
   ): Promise<"active" | "superseded" | "unavailable"> => {
     if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
     try {
-      await reread();
+      await rereadGame();
     } catch {
       if (cancelledRef.current) return "unavailable";
       // An inconclusive authoritative read never completes the reopen; keep
@@ -1195,7 +1261,7 @@ export function ComposedReferenceGameApp() {
     } catch (error) {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -1262,14 +1328,14 @@ export function ComposedReferenceGameApp() {
         expectedAttachmentGeneration: generation,
       });
       try {
-        await reread();
+        await rereadGame();
       } catch { /* retain the current authoritative projection */ }
       setGameResumeFailed(false);
       setGameResumeUnavailable(false);
     } catch (error) {
       let rereadSucceeded = false;
       try {
-        await reread();
+        await rereadGame();
         rereadSucceeded = true;
       } catch { /* retain the current authoritative projection */ }
       const fresh = viewRef.current;
@@ -1307,7 +1373,7 @@ export function ComposedReferenceGameApp() {
   ): Promise<"converged" | "unavailable"> => {
     if (cancelledRef.current || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
     try {
-      await reread();
+      await rereadGame();
     } catch {
       if (cancelledRef.current) return "unavailable";
       // An inconclusive authoritative read never completes the create; keep
@@ -1361,7 +1427,7 @@ export function ComposedReferenceGameApp() {
       outcome = await composedApiRef.current.createGameSession(request);
     } catch {
       try {
-        await reread();
+        await rereadGame();
       } catch { /* retain the current authoritative projection */ }
       setGameCreateFailed(true);
       gameCreateActiveRef.current = false;
@@ -1377,7 +1443,7 @@ export function ComposedReferenceGameApp() {
       // The create failed closed with no resumable half-record; never project
       // a session or a ready surface from the null handle.
       try {
-        await reread();
+        await rereadGame();
       } catch { /* retain the current authoritative projection */ }
       setGameCreateUnavailable(true);
       gameCreateActiveRef.current = false;
@@ -1422,10 +1488,10 @@ export function ComposedReferenceGameApp() {
         { apiVersion: 1, selectionGeneration: selection.generation },
         current.session.snapshot.csrfToken,
       );
-      await reread();
+      await rereadChat();
     } catch (error) {
       try {
-        await reread();
+        await rereadChat();
       } catch {
         commit(problemView(error, messages(current.locale)));
       }
@@ -1568,65 +1634,41 @@ export function ComposedReferenceGameApp() {
                   companionName={view.session.snapshot.chat.companion.name}
                   chatTitle={view.session.snapshot.chat.title}
                   labels={labels()}
+                  pending={chatMutation}
                   onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                   onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 />
                 {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
-                <section className="reference-draft-section" aria-label={labels().savedDraft}>
-                  <h2>{labels().savedDraft}</h2>
-                  <textarea
-                    aria-label={labels().savedDraft}
-                    className="form-textarea"
-                    value={draftText}
-                    onChange={(event) => {
-                      draftTextRef.current = event.target.value;
-                      setDraftText(event.target.value);
-                    }}
-                    placeholder={labels().noSavedDraft}
-                    rows={3}
-                  />
-                  <div className="composer-actions">
-                    <button
-                      type="button"
-                      className="small-button"
-                      disabled={draftText.trim().length === 0}
-                      onClick={() => void handleDraftMutation("save")}
-                    >
-                      {labels().save}
-                    </button>
-                    <button
-                      type="button"
-                      className="small-button"
-                      disabled={view.draft.text === null}
-                      onClick={() => void handleDraftMutation("discard")}
-                    >
-                      {labels().discard}
-                    </button>
-                  </div>
-                  {draftNotice !== null && (
-                    <p role="status" className={draftNotice.kind === "success" ? "success-banner" : "error-banner"}>
-                      {draftNotice.text}
-                    </p>
-                  )}
-                </section>
-                {/* The conversation's own model settings, on the surface the model belongs
-                    to (design/architecture/product-surfaces.md): Chat owns its model choice
-                    and the Host stores it under the chat half of settings/profiles. */}
-                <SurfaceModelSettings
-                  surface="chat"
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                />
+                {/* The conversation is the reading flow and the writing flow, and
+                    nothing else: the transcript scrolls above a composer band.
+                    This surface's model settings are a popout opened from the
+                    composer's action row (`modelPopoutOpen` below), and the
+                    durable draft is the composer's own field (the seeding effect
+                    fills it), so neither is a resident block between the two. */}
                 <Composer
                   value={inputText}
-                  onChange={setInputText}
+                  onChange={writeInput}
                   onSend={() => void handleSend()}
                   onStop={() => void handleStop()}
                   isGenerating={stopAvailable}
                   disabled={!submitAvailable}
                   labels={labels()}
                   voice={view.session.snapshot.voice}
+                  settingsAction={{
+                    label: labels().chatModelSettings,
+                    expanded: modelPopoutOpen,
+                    onClick: () => setModelPopoutOpen(true),
+                    ref: modelPopoutEntryRef,
+                  }}
+                  draftActions={
+                    view.draft.text === null
+                      ? undefined
+                      : {
+                          onSave: () => void handleDraftMutation("save"),
+                          onDiscard: () => void handleDraftMutation("discard"),
+                          notice: draftNotice,
+                        }
+                  }
                 />
               </SurfaceView>
             )}
@@ -1788,6 +1830,28 @@ export function ComposedReferenceGameApp() {
               </SurfaceView>
             )}
           </main>
+          {/* This surface's own model settings, over the conversation rather than
+              in it (design/104 §3: Chat owns its model choice and the Host stores
+              it under the chat half of settings/profiles). The popout is not a
+              peer surface: it replaces no region, Escape or the backdrop closes
+              it, and focus returns to the composer's own button. */}
+          {modelPopoutOpen && (
+            <ContextDrawer
+              title={labels().chatModelSettings}
+              closeLabel={labels().close}
+              onClose={() => setModelPopoutOpen(false)}
+              restoreFocusTo={modelPopoutEntryRef}
+              testId="chat-model-drawer"
+              icon={SlidersHorizontal}
+            >
+              <SurfaceModelSettings
+                surface="chat"
+                api={managementPipelineApiRef.current}
+                csrfToken={view.session.snapshot.csrfToken}
+                labels={labels()}
+              />
+            </ContextDrawer>
+          )}
         </>
       )}
     </div>
