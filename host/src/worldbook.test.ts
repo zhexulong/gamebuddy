@@ -118,18 +118,18 @@ test("WorldBook tools never echo always-on content back (S3: it already rides Ti
     alwaysOnPremise: "The valley premise that lives in the m[0] lorebook_constant source.",
     entries: [
       {
-        entryId: "deepseek-entry-10",
-        title: "不懂艺术的肥鱼",
-        content: "鲸鱼娘自己没有任何艺术特长。",
+        entryId: "kohaku-entry-10",
+        title: "开拓同盟与农场誓约",
+        content: "琥珀与玩家是共同开拓农场的青梅竹马合伙人。",
         scope: "setting",
         provenance: "reviewed-import",
         tokenBudget: "small",
         constant: true,
       },
       {
-        entryId: "deepseek-entry-1",
-        title: "喜欢帅哥",
-        content: "鲸鱼娘其实喜欢帅气男生。",
+        entryId: "kohaku-entry-1",
+        title: "雨天安排",
+        content: "雨天喜欢在门廊煮热茶看雨。",
         scope: "setting",
         provenance: "reviewed-import",
         tokenBudget: "small",
@@ -147,18 +147,18 @@ test("WorldBook tools never echo always-on content back (S3: it already rides Ti
   const catalogBody = JSON.parse((catalogResult.content[0]! as { text: string }).text);
   assert.deepEqual(
     catalogBody.entries.map((entry: { entryId: string }) => entry.entryId),
-    ["deepseek-entry-1"],
+    ["kohaku-entry-1"],
   );
   assert.equal(Object.hasOwn(catalogBody, "alwaysOnPremise"), false);
   // Query still serves full text on demand, including the constant entry.
-  const viaTopic = await execute(query, { topic: "肥鱼" });
+  const viaTopic = await execute(query, { topic: "农场" });
   assert.equal(
     JSON.parse((viaTopic.content[0]! as { text: string }).text).entries[0].content,
-    "鲸鱼娘自己没有任何艺术特长。",
+    "琥珀与玩家是共同开拓农场的青梅竹马合伙人。",
   );
-  const viaId = await execute(query, { entryId: "deepseek-entry-1" });
+  const viaId = await execute(query, { entryId: "kohaku-entry-1" });
   assert.equal(
     JSON.parse((viaId.content[0]! as { text: string }).text).entries[0].entryId,
-    "deepseek-entry-1",
+    "kohaku-entry-1",
   );
 });

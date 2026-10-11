@@ -218,16 +218,16 @@ test("importTavernLorebook accepts GameBuddy-authored entries carrying their own
     entries: [
       {
         entryId: "sample-entry-1",
-        title: "喜欢帅哥",
-        content: "鲸鱼娘其实喜欢帅气男生——打死不承认。",
+        title: "雨天安排",
+        content: "雨天喜欢在木屋门廊下煮野莓茶整理账本。",
         scope: "companion",
         provenance: "authored",
         tokenBudget: 500,
       },
       {
         entryId: "sample-entry-2",
-        title: "大肥鱼家族",
-        content: "家族成员都是鲸鱼娘。",
+        title: "防风草开拓记忆",
+        content: "首批防风草的破土与收获是心中最珍贵的开拓记忆。",
         scope: "setting",
         provenance: "authored",
         tokenBudget: 500,
@@ -236,8 +236,8 @@ test("importTavernLorebook accepts GameBuddy-authored entries carrying their own
   });
   assert.equal(request.publicTitle, "Tavern World Info");
   assert.equal(request.entries.length, 2, "every authored entry must import, not collapse to the Overview fallback");
-  assert.equal(request.entries[0]?.publicTitle, "喜欢帅哥");
-  assert.equal(request.entries[1]?.publicTitle, "大肥鱼家族");
+  assert.equal(request.entries[0]?.publicTitle, "雨天安排");
+  assert.equal(request.entries[1]?.publicTitle, "防风草开拓记忆");
   assert.equal(request.entries[0]?.scope, "companion");
   assert.equal(request.entries[1]?.scope, "setting");
 });

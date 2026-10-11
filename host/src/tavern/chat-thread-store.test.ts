@@ -699,9 +699,9 @@ test("a durable turn plan with volatile world-book sources round-trips through S
       chatSurfaceSessionId: "surface_01",
       selectionGeneration: 1,
     };
-    const volatileContent = "鲸鱼娘其实喜欢帅气男生。";
+    const volatileContent = "雨天喜欢在门廊煮热茶看雨。";
     const accepted = await (await import("./chat-thread-store.js")).acceptMountedPlayerMessage(binding, {
-      text: "我很喜欢帅哥",
+      text: "今天下雨了",
       locale: "zh-CN",
       idempotencyKey: "abcdefghijklmnopqrstuv",
       expectedDraftRevision: 0,
