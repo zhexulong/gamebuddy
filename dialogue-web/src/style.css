@@ -3540,3 +3540,44 @@ body {
   border-radius: var(--radius-xs);
   white-space: nowrap;
 }
+
+/* ==========================================================================
+   The voice surface's status
+
+   The composer's action rail is a flex row: the settings button, this status,
+   and the send/stop button. The status is the only item whose width is not
+   fixed - its label is a sentence ("Voice ready — press to talk") - so without a
+   rule of its own it either bursts the rail or overlaps the field beside it.
+   The dot is the tone and the label is the fact: the dot never shrinks, the
+   label yields (it wraps to two lines and then truncates), and the whole label
+   stays the status region's content and its title, so the text a screen reader
+   announces is never the truncated painting.
+   ========================================================================== */
+
+.voice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.voice-status > .voice-status-dot {
+  flex: 0 0 auto;
+}
+
+.voice-status-label {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  /* Two lines, then the box's own ellipsis: enough for "Voice ready — press to
+     talk" at the mini-window width, never enough to grow the band. The clamp
+     draws that ellipsis itself, which is why no `text-overflow` is stated here. */
+  -webkit-line-clamp: 2;
+}

@@ -395,3 +395,59 @@ test("the world book and import history read as card rows, not native bullets", 
   // through its row: the card starts where the list starts.
   expect(measured.worldBookRow?.height ?? 0).toBeGreaterThan(0);
 });
+
+/**
+ * Item 4: the voice status.
+ *
+ * The failure it catches: `.voice-status` and `.voice-status-label` had no rules
+ * at all, so the label was an unconstrained flex item in the composer's action
+ * rail - at the mini-window width the sentence either bursts the rail or
+ * overlaps the field, and nothing in the markup says which. The assertion is the
+ * contract that prevents it, as computed style: the status is a shrinking flex
+ * row, the label clips and ellipsizes after two lines, the dot keeps its whole
+ * box, and the full sentence is still what the region carries (truncation is a
+ * painting, not a deletion).
+ */
+test("the voice status yields without bursting the composer rail", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 720 });
+  await mountChat(page, "ready");
+
+  const measured = await page.getByTestId("chat-surface").evaluate((node) => {
+    const status = node.querySelector(".voice-status");
+    const label = node.querySelector(".voice-status-label");
+    const dot = node.querySelector(".voice-status-dot");
+    if (status === null || label === null || dot === null) return null;
+    const statusStyle = getComputedStyle(status);
+    const labelStyle = getComputedStyle(label);
+    return {
+      statusDisplay: statusStyle.display,
+      statusMinWidth: statusStyle.minWidth,
+      statusOverflow: statusStyle.overflow,
+      statusText: (status.textContent ?? "").trim(),
+      labelOverflow: labelStyle.overflow,
+      labelClamp: labelStyle.getPropertyValue("-webkit-line-clamp"),
+      labelText: (label.textContent ?? "").trim(),
+      dotWidth: Math.round(dot.getBoundingClientRect().width),
+      dotHeight: Math.round(dot.getBoundingClientRect().height),
+    };
+  });
+
+  expect(measured, "the voice status is rendered in the composer").not.toBeNull();
+  // The row can shrink: without this the label is an unconstrained flex item.
+  // (`inline-flex` is blockified to `flex` because the rail is a flex row, so
+  // both readings are the same rule - a span with no rule computes `inline`.)
+  expect(["flex", "inline-flex"]).toContain(measured?.statusDisplay);
+  expect(measured?.statusMinWidth).toBe("0px");
+  expect(measured?.statusOverflow).toBe("hidden");
+  // The label yields by wrapping to two lines and then truncating, rather than
+  // by growing the rail: the clamp is the truncation.
+  expect(measured?.labelOverflow).toBe("hidden");
+  expect(measured?.labelClamp).toBe("2");
+  // The tone keeps its whole box - it is the state a player reads at a glance.
+  expect(measured?.dotWidth).toBe(22);
+  expect(measured?.dotHeight).toBe(22);
+  // And the fact itself is intact, for the live region and for anyone reading
+  // the surface without the stylesheet.
+  expect(measured?.labelText).toContain("Voice ready");
+  expect(measured?.statusText).toContain(measured?.labelText ?? "");
+});
