@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway, VOICE_GATEWAY_ADMISSION } from "./voice-artifact-fixture-publisher.mjs";
 import { closureOriginsFromInventory, stageDeclaredRuntimeClosure } from "./production-artifact-closure-staging.mjs";
+import { assertReleasePersonaHygiene } from "./check-release-persona-hygiene.mjs";
 
 const TEST_ARTIFACT = /(?:^|\/)(?:[^/]*\.(?:test|test-support)(?:\.[^/]+)?|test-fixtures|[^/]*(?:physical-)?fixture-worker[^/]*)(?:\/|$)|legacy-writer-fixture/i;
 // Production is a fresh semantic-continuity authority. Reject legacy module
@@ -1433,6 +1434,10 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
     // pre-publish mutation window as far as this pathname-based architecture permits.
     const browserArtifactSnapshot = config.browserArtifact === undefined ? undefined
       : (await createBrowserArtifactSnapshot({ artifactRoot: stagingRoot, descriptor: config.browserArtifact })).snapshot;
+    // Third-party / fan-made character content is refused before the tree can become a generation: a
+    // card-shaped file or a card payload inside an otherwise admitted asset fails the build by name,
+    // rather than shipping under the artifact allowlist (which admits any reachable module).
+    await assertReleasePersonaHygiene({ artifactRoot: stagingRoot });
     const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
     await writeFile(resolve(stagingRoot, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
     await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
@@ -1525,6 +1530,7 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
   const runtimeDescriptor = runtimeDescriptorForArtifact(artifactRoot, config);
   const manifest = JSON.parse(await readFile(resolve(artifactRoot, "production-inventory.json"), "utf8"));
+  await assertReleasePersonaHygiene({ artifactRoot });
   const origins = new Map(config.resources.map((resource) => [slash(resource.destination), { kind: "allowlisted_resource", source: slash(resource.source), destination: slash(resource.destination), config: "production-artifact.config.json" }]));
   await verifyBundledRuntimeInArtifact({ artifactRoot, descriptor: runtimeDescriptor });
   for (const [path, origin] of runtimeOriginsFromInventory(manifest.entries, runtimeDescriptor)) origins.set(path, origin);

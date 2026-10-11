@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  assertReleasePersonaHygiene,
+  scanReleasePersonaHygiene,
+} from "./check-release-persona-hygiene.mjs";
+
+/**
+ * The release persona-hygiene gate.
+ *
+ * What each test catches, and why the fixture is that shape:
+ *
+ * 1. `a packaged generation with no character content passes` - a gate that
+ *    fails everything would be removed within a week, so the clean case is a
+ *    first-class assertion. The fixture is deliberately artifact-shaped
+ *    (`index.html`, hashed browser assets, a multi-megabyte binary) because the
+ *    real generation contains exactly those.
+ * 2. `the committed development seed is outside the artifact and stays legal` -
+ *    this is the honest boundary: `assets/tavern/presets/default-companion` IS a
+ *    character card in the repository, and it must not make the gate fail. The
+ *    test proves the seed exists (so the clean pass is not vacuous) and that a
+ *    generation root does not contain it.
+ * 3. `a planted card file fails the build by path` - copying `card.json` into a
+ *    generation is the plainest way third-party content ships.
+ * 4. `a card payload inlined in an admitted asset fails` - the artifact
+ *    allowlist admits any reachable `.js`; only a byte-level gate sees a card
+ *    that was renamed or embedded. This is the case that a name-based check
+ *    would miss, so it is the reason the gate reads bytes.
+ * 5. `an embedded card PNG fails` - the ST ecosystem's other carrier is a PNG
+ *    with a `chara` text chunk.
+ * 6. `an untyped v1 card under an arbitrary name fails` - a card without a
+ *    `spec` member is still a card; the CCv2 core fields identify it.
+ * 7. `the failure names the nested asset path` - a bounded message is only
+ *    actionable if it says WHICH asset would ship.
+ * 8. `a missing artifact root is refused` - the gate never silently passes for
+ *    want of a root.
+ */
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const REPOSITORY_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)), "..");
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  return Buffer.concat([length, Buffer.from(type, "ascii"), data, Buffer.alloc(4)]);
+}
+
+async function generationRoot(t) {
+  const root = await mkdtemp(path.join(tmpdir(), "release-hygiene-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "assets"), { recursive: true });
+  await mkdir(path.join(root, "browser", "tavern", "v1", "assets"), { recursive: true });
+  await writeFile(path.join(root, "index.html"), "<!doctype html><div id=app></div>\n", "utf8");
+  await writeFile(path.join(root, "assets", "app-0123abcd.js"), "export const boot = 1;\n", "utf8");
+  await writeFile(
+    path.join(root, "production-inventory.json"),
+    JSON.stringify({ schemaVersion: 1, generation: "g-fixture", entries: [] }),
+    "utf8",
+  );
+  // A stand-in for the bundled runtime / native helpers: larger than the scan
+  // ceiling, and legitimate.
+  await writeFile(path.join(root, "assets", "large-binary-9999beef.js"), Buffer.alloc(9 * 1024 * 1024, 0x41));
+  return root;
+}
+
+test("a packaged generation with no character content passes", async (t) => {
+  const root = await generationRoot(t);
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
+  const result = await assertReleasePersonaHygiene({ artifactRoot: root });
+  assert.deepEqual(result.findings, []);
+});
+
+test("the committed development seed is outside the artifact and stays legal", async (t) => {
+  const root = await generationRoot(t);
+  // The seed really is a card on disk: the boundary being asserted is location,
+  // not content. A gate that also refused the repository seed would forbid the
+  // reviewed live-run card the product ships its own persona from.
+  const seed = path.join(REPOSITORY_ROOT, "assets", "tavern", "presets", "default-companion", "card.json");
+  assert.equal(existsSync(seed), true, "the reviewed dev seed must exist for this boundary to mean anything");
+  const seedBytes = await import("node:fs/promises").then(({ readFile }) => readFile(seed, "utf8"));
+  assert.match(seedBytes, /"spec"\s*:\s*"chara_card_v2"/u, "the dev seed IS a card, by bytes");
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
+});
+
+test("a planted card file fails the build by path", async (t) => {
+  const root = await generationRoot(t);
+  await writeFile(path.join(root, "card.json"), JSON.stringify({ spec: "chara_card_v2", data: { name: "x" } }), "utf8");
+  await assert.rejects(assertReleasePersonaHygiene({ artifactRoot: root }), /release_persona_hygiene_violation:card\.json/);
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "card.json", kind: "companion_card_file" },
+  ]);
+});
+
+test("a card payload inlined in an admitted asset fails", async (t) => {
+  const root = await generationRoot(t);
+  // Exactly the shape the artifact allowlist admits: a reachable `.js` module.
+  await writeFile(
+    path.join(root, "browser", "tavern", "v1", "assets", "preset-abcdef12.js"),
+    'export const bundled = {"spec": "chara_card_v2", "data": {"name": "someone else"}};\n',
+    "utf8",
+  );
+  await assert.rejects(
+    assertReleasePersonaHygiene({ artifactRoot: root }),
+    /release_persona_hygiene_violation:browser\/tavern\/v1\/assets\/preset-abcdef12\.js:card_payload/,
+  );
+});
+
+test("an embedded card PNG fails", async (t) => {
+  const root = await generationRoot(t);
+  await writeFile(
+    path.join(root, "assets", "portrait-1111aaaa.png"),
+    Buffer.concat([
+      PNG_SIGNATURE,
+      pngChunk("tEXt", Buffer.from("chara\0eyJzcGVjIjoiY2hhcmFfY2FyZF92MiJ9", "utf8")),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]),
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "assets/portrait-1111aaaa.png", kind: "embedded_card_png" },
+  ]);
+});
+
+test("an untyped v1 card under an arbitrary name fails", async (t) => {
+  const root = await generationRoot(t);
+  await writeFile(
+    path.join(root, "kohaku-backup.json"),
+    JSON.stringify({
+      name: "Kohaku",
+      description: "d",
+      personality: "p",
+      scenario: "s",
+      first_mes: "hi",
+      mes_example: "e",
+    }),
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "kohaku-backup.json", kind: "untyped_card_payload" },
+  ]);
+});
+
+test("the failure names the nested asset path", async (t) => {
+  const root = await generationRoot(t);
+  await mkdir(path.join(root, "native", "stardew-mod", "GameBuddy"), { recursive: true });
+  await writeFile(
+    path.join(root, "native", "stardew-mod", "GameBuddy", "worldbook.json"),
+    JSON.stringify({ schemaVersion: 1, entries: [] }),
+    "utf8",
+  );
+  await assert.rejects(
+    assertReleasePersonaHygiene({ artifactRoot: root }),
+    /release_persona_hygiene_violation:native\/stardew-mod\/GameBuddy\/worldbook\.json:companion_card_file/,
+  );
+});
+
+test("a missing artifact root is refused", async () => {
+  await assert.rejects(assertReleasePersonaHygiene({ artifactRoot: undefined }), /release_persona_hygiene_root_required/);
+});
