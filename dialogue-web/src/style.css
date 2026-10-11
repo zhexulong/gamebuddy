@@ -233,9 +233,28 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-#root {
+/* The mount frame, and the first link of the height chain.
+
+   `html` and `body` are the viewport (`100dvh`) and the document never scrolls;
+   the mount root is where that definite height has to be handed to the layout.
+   The shell supplies its own `100dvh`, but everything below it - the main
+   region and the surfaces under it - is written as a flex column whose children
+   carry `flex: 1 1 0%` and `min-height: 0`, and those two only mean anything
+   under a definite-height flex ancestor. That is why the mount root is a frame
+   and not a plain block: a page that mounts this frontend's surface without the
+   shell (the chat surface probe, `tests/chat-surface-probe.html`, mounts the
+   real Timeline and Composer into its own root) otherwise gets a content-driven
+   box - the transcript grows to its content height, the composer band is pushed
+   past the window, and the frame is sometimes shorter than the window and
+   sometimes taller. One frame, declared once, for every mount root this
+   stylesheet serves. */
+#root,
+#probe-root {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
