@@ -27,8 +27,18 @@
  *     product's own import/provisioning writes into a runtime root, never into
  *     an immutable generation;
  *   - `card_payload`: bytes carrying a SillyTavern card spec value
- *     (`"spec": "chara_card_v2" | "chara_card_v3" | "ccv3"`), which is what a
- *     card looks like inside a `.js`/`.json` asset that was renamed or inlined;
+ *     (`"spec": "chara_card_v2" | "chara_card_v3" | "ccv3"`) AND the payload
+ *     that value describes - a real `name` beside at least one prose field
+ *     holding `MIN_CARD_CONTENT_CHARS` or more of authored text. That is what a
+ *     card looks like inside a `.js`/`.json` asset that was renamed or inlined.
+ *     The marker ALONE is not a card, and this is a fixed false positive rather
+ *     than a theory: the import box's own placeholder is
+ *     `{"spec":"chara_card_v3","data":{"name":"…"}}`
+ *     (`dialogue-web/src/components/CharacterCardImport.tsx`), Vite bundles it
+ *     verbatim, and a marker-only rule refused every generation built after that
+ *     rule landed - including the generation the running product was installed
+ *     from - over the product's own help text. A placeholder has no card and no
+ *     data; a shipped card has a payload;
  *   - `untyped_card_payload`: a whole-file JSON object carrying the CCv2 core
  *     card fields (`name`, `description`, `personality`, `scenario`,
  *     `first_mes`, `mes_example`, all strings) without a `spec` member — a v1
@@ -41,6 +51,11 @@
  * are multi-megabyte binaries whose exact bytes the generation inventory pins
  * by digest anyway, so a card cannot be smuggled through them without changing
  * a fact the release already verifies.
+ *
+ * Honest limits: a card whose every prose field is shorter than
+ * `MIN_CARD_CONTENT_CHARS` is not read as a payload by bytes and is refused only
+ * if it lands under a card-shaped file name; and the prose threshold is a
+ * length, so it says nothing about what the prose is.
  *
  * Wiring: `production-artifact.mjs` runs `assertReleasePersonaHygiene` over the
  * staging tree before that tree can become a generation, and over the selected
@@ -60,6 +75,33 @@ const CARD_SPEC_MEMBER = /"spec"\s*:\s*"(?:chara_card_v2|chara_card_v3|ccv3)"/u;
 const UNTYPED_CARD_FIELDS = ["name", "description", "personality", "scenario", "first_mes", "mes_example"];
 const PNG_SIGNATURE = Object.freeze([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_CARD_KEYWORDS = new Set(["chara", "ccv3", "character"]);
+/**
+ * A card's own name, as a JSON member whose value is a name and not an example.
+ * The placeholder this gate once refused carries `"name":"…"`: one ellipsis
+ * character, no letters.
+ */
+const CARD_NAME_MEMBER = /"name"\s*:\s*"([^"\\]{1,256})"/u;
+/** The fields a card's payload keeps its authored prose in. */
+const CARD_CONTENT_FIELDS = Object.freeze([
+  "description",
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "system_prompt",
+  "post_history_instructions",
+]);
+/**
+ * How much authored prose one field must hold before it is content rather than
+ * an example. Chosen from the repository's own reviewed card
+ * (`assets/tavern/presets/default-companion/card.json`, a real card the tests
+ * prove by bytes): its shortest prose field is `personality` at 65 characters,
+ * so 64 clears every field of every card this repository actually carries and is
+ * still a sentence of prose no help text writes. Production is the exact bytes
+ * of a generation, so the constant is quoted in the docstring above rather than
+ * tuned per release.
+ */
+const MIN_CARD_CONTENT_CHARS = 64;
 const MAX_SCANNED_BYTES = 8 * 1024 * 1024;
 const MAX_JSON_PARSE_BYTES = 1024 * 1024;
 
@@ -96,6 +138,25 @@ function hasEmbeddedCardChunk(bytes) {
   return false;
 }
 
+/** `"description": "<64+ characters of prose>"`, escapes included. */
+function hasSubstantiveContentField(text) {
+  return CARD_CONTENT_FIELDS.some((field) =>
+    new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.){${MIN_CARD_CONTENT_CHARS},})"`, "u").test(text),
+  );
+}
+
+/**
+ * A spec marker WITH the prose it describes: a card payload, not a UI example.
+ * Both halves are required - the marker alone matched the product's own import
+ * placeholder, and prose alone is not identified as a card by anything.
+ */
+function carriesCardPayload(text) {
+  if (!CARD_SPEC_MEMBER.test(text)) return false;
+  const name = CARD_NAME_MEMBER.exec(text);
+  if (name === null || /^[\s.…·．。\-_]+$/u.test(name[1])) return false;
+  return hasSubstantiveContentField(text);
+}
+
 /** The CCv2 core card fields, present together as non-empty strings. */
 function isUntypedCard(value) {
   const data = isRecord(value.data) ? value.data : value;
@@ -119,7 +180,7 @@ async function inspectFile(absolutePath, name, findings, prefix) {
     return;
   }
   const text = bytes.toString("latin1");
-  if (CARD_SPEC_MEMBER.test(text)) {
+  if (carriesCardPayload(text)) {
     findings.push(Object.freeze({ path, kind: "card_payload" }));
     return;
   }

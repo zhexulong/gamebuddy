@@ -31,7 +31,9 @@ import {
  * 4. `a card payload inlined in an admitted asset fails` - the artifact
  *    allowlist admits any reachable `.js`; only a byte-level gate sees a card
  *    that was renamed or embedded. This is the case that a name-based check
- *    would miss, so it is the reason the gate reads bytes.
+ *    would miss, so it is the reason the gate reads bytes. The fixture is a card
+ *    with its own name and authored prose, because that is what a card is; a
+ *    bare spec marker is not (see 9).
  * 5. `an embedded card PNG fails` - the ST ecosystem's other carrier is a PNG
  *    with a `chara` text chunk.
  * 6. `an untyped v1 card under an arbitrary name fails` - a card without a
@@ -40,6 +42,11 @@ import {
  *    actionable if it says WHICH asset would ship.
  * 8. `a missing artifact root is refused` - the gate never silently passes for
  *    want of a root.
+ * 9. `the product's own import-box placeholder is not a card payload` - the
+ *    regression this gate shipped with. The bytes below are the ones Vite
+ *    bundles out of `CharacterCardImport.tsx`; the marker-only rule refused
+ *    every generation built after it landed over this string, so a test keeps
+ *    the help text and the gate compatible.
  */
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -100,15 +107,28 @@ test("a planted card file fails the build by path", async (t) => {
 test("a card payload inlined in an admitted asset fails", async (t) => {
   const root = await generationRoot(t);
   // Exactly the shape the artifact allowlist admits: a reachable `.js` module.
+  // The payload is a card - a name of its own and authored prose in a card's
+  // prose field - not a marker on its own.
   await writeFile(
     path.join(root, "browser", "tavern", "v1", "assets", "preset-abcdef12.js"),
-    'export const bundled = {"spec": "chara_card_v2", "data": {"name": "someone else"}};\n',
+    `export const bundled = ${JSON.stringify({
+      spec: "chara_card_v2",
+      data: {
+        name: "Kohaku",
+        description:
+          "A rival farmhand from another valley who talks about the weather and never about herself, and who is not the companion this product reviewed.",
+        personality: "warm, guarded",
+      },
+    })};\n`,
     "utf8",
   );
   await assert.rejects(
     assertReleasePersonaHygiene({ artifactRoot: root }),
     /release_persona_hygiene_violation:browser\/tavern\/v1\/assets\/preset-abcdef12\.js:card_payload/,
   );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "browser/tavern/v1/assets/preset-abcdef12.js", kind: "card_payload" },
+  ]);
 });
 
 test("an embedded card PNG fails", async (t) => {
@@ -143,6 +163,21 @@ test("an untyped v1 card under an arbitrary name fails", async (t) => {
   assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
     { path: "kohaku-backup.json", kind: "untyped_card_payload" },
   ]);
+});
+
+test("the product's own import-box placeholder is not a card payload", async (t) => {
+  const root = await generationRoot(t);
+  // The exact bytes Vite bundles out of `CharacterCardImport.tsx`: the example
+  // the import box shows the player. It carries the spec marker - and no prose
+  // field, and a name that is one ellipsis - because it is help text, not a card.
+  await writeFile(
+    path.join(root, "browser", "tavern", "v1", "assets", "import-abcdef12.js"),
+    ',{className:`form-textarea`,"aria-label":i.importPasteLabel,rows:4,placeholder:`{"spec":"chara_card_v3","data":{"name":"…"}}`,value:l,onChange:e=>u(e.target.value)},',
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
+  const result = await assertReleasePersonaHygiene({ artifactRoot: root });
+  assert.deepEqual(result.findings, []);
 });
 
 test("the failure names the nested asset path", async (t) => {
