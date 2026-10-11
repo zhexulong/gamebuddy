@@ -2651,7 +2651,13 @@ body {
 }
 
 /* Forms: one input treatment on the card tone, gold focus, no layout shift on
-   hover or focus. */
+   hover or focus. The 44 px floor is declared here, once, for the whole family:
+   a padded field with a 14 px font computes to 36 px on its own, which is how
+   five controls on the Characters surface were under the floor the same
+   stylesheet declares (WCAG 2.5.5's target size, and the token layer's own
+   `--touch-target-min`). The floor comes from the token now, not from padding
+   arithmetic, so a later change to the padding can never quietly shrink a
+   control again. */
 .composer-textarea,
 .form-input,
 .form-textarea,
@@ -2659,7 +2665,47 @@ body {
 .surface-model-field input,
 .surface-model-field select,
 .game-create-form input {
+  min-height: var(--touch-target-min);
   background-color: var(--surface-card);
+}
+
+/* The composer's own field keeps its taller floor: the band is sized by the
+   composer token, and the textarea is the one field whose height is also
+   managed per keystroke. */
+.composer-textarea {
+  min-height: var(--composer-min-height);
+}
+
+/* The select is the one control the platform will not let a dark theme have for
+   free: on Windows `<select>` renders as a white box with the system's black
+   arrow in the middle of the dark surface. This is the treatment the chat model
+   drawer's own select already carried; every other select in the product was
+   still native, so it is the shared class that carries it now and the drawer's
+   select joins that class. `appearance: none` retires the chrome, the arrow is
+   drawn from the two 45-degree gradients in `--text-disabled` - the same
+   drawing and the same token the drawer had - and `color-scheme: dark` is what
+   makes the *popup* dark as well (the option list is the platform's own widget
+   and no rule of ours reaches it). */
+.form-select {
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  cursor: pointer;
+  padding-right: 30px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-disabled) 50%),
+    linear-gradient(135deg, var(--text-disabled) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-repeat: no-repeat;
+  background-size:
+    5px 5px,
+    5px 5px;
+}
+
+.form-select:hover {
+  border-color: var(--border-strong);
 }
 
 .form-input:focus,
@@ -2720,7 +2766,6 @@ body {
 .surface-model-field select {
   min-height: var(--touch-target-min);
   width: 100%;
-  padding: 0 12px;
   font-family: inherit;
   font-size: 14px;
   color: var(--text-primary);
@@ -2734,24 +2779,14 @@ body {
     background-color var(--motion-duration-fast) var(--motion-ease-out);
 }
 
-.surface-model-field input + datalist {
-  display: none;
+/* The text field's own padding; the select's right side belongs to the arrow the
+   shared `.form-select` treatment draws. */
+.surface-model-field input {
+  padding: 0 var(--space-3);
 }
 
-.surface-model-field select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-disabled) 50%),
-    linear-gradient(135deg, var(--text-disabled) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) 50%,
-    calc(100% - 13px) 50%;
-  background-repeat: no-repeat;
-  background-size:
-    5px 5px,
-    5px 5px;
-  padding-right: 30px;
+.surface-model-field input + datalist {
+  display: none;
 }
 
 /* The chat/game recommended chips: a 44 px chip, gold text on the card tone. */

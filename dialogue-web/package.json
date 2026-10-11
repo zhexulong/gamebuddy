@@ -14,6 +14,7 @@
     "test:mounted-management": "playwright test tests/management-pipeline-browser.spec.ts --project=chromium --workers=1",
     "typecheck": "tsc --project tsconfig.json",
     "test:mounted-composed": "playwright test tests/composed-reference-game-browser.spec.ts tests/stardew-installation-discovery.spec.ts tests/ui-hygiene-runtime.spec.ts --project=chromium --workers=1",
+    "test:ui-chrome": "playwright test tests/ui-chrome.spec.ts --project=chromium --workers=1",
     "clean": "node -e \"const{rmSync}=require('node:fs');['.build-staging','test-results','playwright-report'].forEach(p=>rmSync(p,{recursive:true,force:true}))\""
   },
   "dependencies": {

@@ -139,6 +139,7 @@ export function SurfaceModelSettings({
       <label className="surface-model-field">
         <span>{labels.modelProfilesThinkingLevel}</span>
         <select
+          className="form-select"
           value={thinkingLevel}
           onChange={(event) => setThinkingLevel(event.target.value as TavernConnectionThinkingLevelV1)}
           aria-label={labels.modelProfilesThinkingLevel}
