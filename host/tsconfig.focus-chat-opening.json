@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/tavern/browser-contract/index.test.ts",
+    "src/tavern/library-service.test.ts",
+    "src/tavern/greeting-management/greeting-management.test.ts"
+  ]
+}

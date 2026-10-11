@@ -34,9 +34,26 @@ export type TavernLibraryService = Readonly<{
   createNewCompanion(input: NewCompanionRequest): Promise<TavernCompanion>;
   listChats(): Promise<readonly ChatThread[]>;
   createNewChat(input: NewChatRequest): Promise<ChatThreadState>;
+  /**
+   * Commits variant N of the exact greeting set this Chat's opening already came from as the
+   * Chat's message zero. It is legal exactly while the opening is not yet locked
+   * (`opening_locked_at_event_id === null`) - the new-chat window design/28 describes - and is
+   * refused with a bounded error otherwise. It reuses `ChatThreadStore.commitOpening` and the
+   * existing `greeting_variant_id` record; it never creates a parallel opening record.
+   */
+  commitOpeningVariant(input: CommitOpeningVariantRequest): Promise<ChatThreadState>;
   /** Reads and validates one exact thread/surface route; runtime owner pins it only after activation. */
   openChat(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
   activeChatSelection(): ReturnType<ChatThreadStore["readActiveThreadSelection"]>;
+}>;
+
+type CommitOpeningVariantRequest = Readonly<{
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  /** Step from the committed variant; exactly one of `direction`/`targetIndex` is required. */
+  direction?: "prev" | "next";
+  /** 0-based position in the greeting set the opening came from. */
+  targetIndex?: number;
 }>;
 
 type NewCompanionRequest = Readonly<{
@@ -181,6 +198,63 @@ export function createTavernLibraryService(
         opening,
       };
       return threadCreation.createExplicit(request);
+    },
+
+    async commitOpeningVariant(input: CommitOpeningVariantRequest): Promise<ChatThreadState> {
+      if ((input.direction === undefined) === (input.targetIndex === undefined))
+        throw new Error("invalid_chat_opening_request");
+      const state = await threads.resumeThread(input.chatThreadId, input.chatSurfaceSessionId);
+      const companion = await currentCompanion(store, companionPath);
+      if (
+        companion.companionId !== paths.companionId ||
+        companion.continuityId !== paths.continuityId ||
+        state.thread.companionId !== companion.companionId ||
+        state.thread.continuityId !== companion.continuityId
+      )
+        throw new Error("tavern_chat_scope_mismatch");
+      // The durable lock is the whole legality of this operation: once the opening has been sealed
+      // by a player/companion message it can no longer change, and that is a bounded refusal rather
+      // than a silent no-op. `commitOpening` re-checks it under its own transaction.
+      if (state.thread.openingLockedAtEventId !== null) throw new Error("chat_opening_locked");
+      const opening = state.thread.openingSelection;
+      if (opening.kind !== "greeting") throw new Error("chat_opening_not_greeting");
+      const source = opening.source;
+      let greetingEnvelope: Readonly<{ artifact: GreetingSet; canonicalHash: string }>;
+      try {
+        greetingEnvelope = await latestGreeting(
+          store,
+          source.greetingSetId,
+          join(paths.companionRoot, "greetings", source.greetingSetId),
+        );
+      } catch {
+        throw new Error("chat_opening_variant_not_found");
+      }
+      const greeting = greetingEnvelope.artifact;
+      const currentIndex = greeting.variants.findIndex((variant) => variant.variantId === source.variantId);
+      if (currentIndex < 0) throw new Error("chat_opening_variant_not_found");
+      const count = greeting.variants.length;
+      let targetIndex: number;
+      if (input.targetIndex !== undefined) {
+        if (!Number.isSafeInteger(input.targetIndex) || input.targetIndex < 0 || input.targetIndex >= count)
+          throw new Error("chat_opening_variant_not_found");
+        targetIndex = input.targetIndex;
+      } else if (input.direction === "prev") targetIndex = Math.max(0, currentIndex - 1);
+      else if (input.direction === "next") targetIndex = Math.min(count - 1, currentIndex + 1);
+      else throw new Error("invalid_chat_opening_request");
+      const variant = greeting.variants[targetIndex]!;
+      const nextSource: GreetingSource = Object.freeze({
+        greetingSetId: greeting.greetingSetId,
+        sourceRevision: greetingEnvelope.artifact.revision,
+        canonicalHash: greetingEnvelope.canonicalHash,
+        variantId: variant.variantId,
+        profileRevision: source.profileRevision,
+        scenarioRevision: source.scenarioRevision,
+      });
+      // The same messageId keeps the browser's opaque opening handle stable across a choice.
+      return threads.commitOpening(
+        input.chatThreadId,
+        Object.freeze({ messageId: opening.messageId, text: variant.text, source: nextSource }),
+      );
     },
 
     async openChat(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {

@@ -112,6 +112,12 @@ const ProblemCode = Type.Union([
   Type.Literal("scenario_conflict"),
   Type.Literal("greeting_conflict"),
   Type.Literal("authored_content_invalid"),
+  // The new-chat opening variant choice (`chat.opening`): the mounted chat's opening may be
+  // changed only while `opening_locked_at_event_id` is null, so each way it can be refused is a
+  // distinct, bounded fact the player can act on.
+  Type.Literal("chat_opening_locked"),
+  Type.Literal("chat_opening_not_greeting"),
+  Type.Literal("chat_opening_variant_not_found"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({
@@ -122,6 +128,22 @@ export const BrowserSwipeInfoV1Schema = strictObject({
   hasNext: Type.Boolean(),
 });
 
+/**
+ * Additive v1 field for the one message whose opening is a reviewed greeting set
+ * (message zero with `kind === "opening"`). It names the committed variant and its position in
+ * the greeting set the Host drew it from, so the browser can show `< 1/N >` on the first message
+ * without guessing. `index` is 0-based; `label` is the greeting's own authored label, null when
+ * the greeting has none. `locked` is the durable `opening_locked_at_event_id` fact: once the
+ * opening has been sealed by a player/companion message the choice can no longer change, and the
+ * control must then be absent rather than offered and refused.
+ */
+export const BrowserOpeningVariantV1Schema = strictObject({
+  variantId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._-]{1,128}$" }),
+  index: Revision,
+  count: PositiveGeneration,
+  label: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+  locked: Type.Boolean(),
+});
 export const BrowserMessageV1Schema = strictObject({
   handle: OpaqueHandle,
   role: Type.Union([Type.Literal("player"), Type.Literal("companion")]),
@@ -130,6 +152,7 @@ export const BrowserMessageV1Schema = strictObject({
   order: Revision,
   revision: Revision,
   swipeInfo: Type.Optional(BrowserSwipeInfoV1Schema),
+  openingVariant: Type.Optional(BrowserOpeningVariantV1Schema),
 });
 export const BrowserTurnV1Schema = strictObject({
   handle: OpaqueHandle,
@@ -539,6 +562,9 @@ export const TavernModelProfileUpdateCommandV1Schema = strictObject({
 const OperationId = Type.Union([
   Type.Literal("chat.submit"),
   Type.Literal("chat.cancel"),
+  // The new-chat opening variant choice: commits variant N of the mounted companion's greeting
+  // set as the empty Chat's message zero, reusing `ChatThreadStore.commitOpening`.
+  Type.Literal("chat.opening"),
   Type.Literal("chat.archive"),
   Type.Literal("chat.restore"),
   Type.Literal("chat.trash"),
@@ -581,6 +607,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.nav.characters"),
   Type.Literal("tavern.operation.submit"),
   Type.Literal("tavern.operation.cancel"),
+  Type.Literal("tavern.operation.chat.opening"),
   Type.Literal("tavern.operation.draft.save"),
   Type.Literal("tavern.operation.draft.discard"),
   Type.Literal("tavern.operation.rename"),
@@ -958,6 +985,22 @@ export const RegenerateMessageCommandV1Schema = strictObject({
   selectionGeneration: PositiveGeneration,
   messageHandle: OpaqueHandle,
 });
+/**
+ * New-chat opening variant choice. The browser names no durable greeting id and no chat id: the
+ * mounted companion's own greeting set is resolved by the Host, and the mounted Chat is the one
+ * the admission already bound. `targetIndex` is 0-based; `direction` steps from the committed
+ * variant. At least one of the two must be present.
+ */
+export const ChatOpeningCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  direction: Type.Optional(Type.Union([Type.Literal("prev"), Type.Literal("next")])),
+  targetIndex: Type.Optional(Revision),
+});
+export const ChatOpeningResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  message: BrowserMessageV1Schema,
+});
 export const SubmitResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   disposition: Type.Union([Type.Literal("accepted"), Type.Literal("duplicate")]),
@@ -1048,6 +1091,9 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",
+  "chat_opening_locked",
+  "chat_opening_not_greeting",
+  "chat_opening_variant_not_found",
   "dialogue_busy",
   "connection_not_found",
   "connection_not_ready",
@@ -1210,6 +1256,21 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: RenameChatTitleCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: ChatTitleV1Schema },
+  }),
+  route({
+    routeId: "chat.opening",
+    method: "PUT",
+    path: "/api/tavern/v1/chat/opening",
+    operationId: "chat.opening",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: ChatOpeningCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatOpeningResultV1Schema },
   }),
   route({
     routeId: "chat.cancel",
@@ -1823,6 +1884,9 @@ export const TavernBrowserContractV1 = Object.freeze({
     SwipeSelectCommandV1Schema,
     SwipeSelectResultV1Schema,
     RegenerateMessageCommandV1Schema,
+    BrowserOpeningVariantV1Schema,
+    ChatOpeningCommandV1Schema,
+    ChatOpeningResultV1Schema,
     TavernProblemV1Schema,
     BrowserEventV1Schema,
   }),
@@ -1860,6 +1924,9 @@ export type SubmitMessageCommandV1 = Static<typeof SubmitMessageCommandV1Schema>
 export type SwipeSelectCommandV1 = Static<typeof SwipeSelectCommandV1Schema>;
 export type SwipeSelectResultV1 = Static<typeof SwipeSelectResultV1Schema>;
 export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV1Schema>;
+export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
+export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
+export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
 export type MessageSubmissionStatusQueryV1 = Static<typeof MessageSubmissionStatusQueryV1Schema>;
 export type MessageSubmissionStatusV1 = Static<typeof MessageSubmissionStatusV1Schema>;
 export type CancelTurnCommandV1 = Static<typeof CancelTurnCommandV1Schema>;

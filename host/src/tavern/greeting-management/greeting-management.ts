@@ -18,6 +18,21 @@ export type GreetingManagementService = Readonly<{
   create(request: CreateGreetingSetRequest): Promise<GreetingSetProjection>;
   read(): Promise<GreetingSetProjection | null>;
   update(request: UpdateGreetingSetRequest): Promise<GreetingSetProjection>;
+  /**
+   * The exact durable greeting record behind the player projection: variant ids, the set revision
+   * and its canonical hash. It exists for the new-chat opening projection, which must name which
+   * variant an opening committed (`GreetingSource.variantId`) and where that variant sits in the
+   * set the Host drew it from. It is a read of the same record `read()` projects - never a second
+   * store, and never player-authored text beyond the verbatim greeting itself.
+   */
+  readExact(): Promise<
+    | Readonly<{
+        revision: number;
+        canonicalHash: string;
+        variants: readonly Readonly<{ variantId: string; label?: string; text: string }>[];
+      }>
+    | null
+  >;
 }>;
 
 /** Player-scoped durable greeting data. Authored text is stored and projected verbatim. */
@@ -50,6 +65,25 @@ export function createGreetingManagementService(
     },
     async read() {
       return (await repository.readLatest()) ?? null;
+    },
+    async readExact() {
+      const envelope = await repository.readLatestArtifact();
+      if (envelope === undefined) return null;
+      const artifact = envelope.artifact as unknown;
+      if (!isGreetingSet(artifact)) throw new Error("invalid_greeting_artifact");
+      return Object.freeze({
+        revision: envelope.revision,
+        canonicalHash: envelope.canonicalHash,
+        variants: Object.freeze(
+          artifact.variants.map((variant) =>
+            Object.freeze({
+              variantId: variant.variantId,
+              ...(variant.label === undefined ? {} : { label: variant.label }),
+              text: variant.text,
+            }),
+          ),
+        ),
+      });
     },
     async update(request) {
       validateUpdateRequest(request);
