@@ -1,16 +1,30 @@
 /* ==========================================================================
    Three-Tier Design Token System (conforming to design/26 Section 6)
 
-   All pre-existing rules in this stylesheet are wrapped in a `theme` cascade
-   layer, so the authored rules below (tokens, glass borders, motion and the UX
-   refinements) sit on top and win without needing higher specificity or
-   declining the cascade layer pattern. The `theme` layer carries an explicit
-   chained name (design/26 §6.1: tokenised, layered) and everything that is not
-   layered - the reset, focus, tokens and the new surface work - stays in the
-   implicit outer layer that beats every @layer.
+   The cascade is split into explicit, named layers whose order is declared
+   here, once, before any rule is written into any of them - so no rule ever
+   depends on which block happened to come first, and a new surface rule wins
+   by the layer it is written into rather than by being wrapped in a block that
+   swallows everything else.
+
+   `theme.reset`  element-level geometry only (box model, document, focus).
+   `theme.surfaces` / `theme.interactions` / `theme.layout`
+                  the early surface chrome: tones, focus, the drawer entrance,
+                  the peer-surface canvases. They encode intent that predates
+                  the preserved stylesheet below, so the preserved stylesheet
+                  still wins for the few declarations it states itself.
+   `theme.legacy` the preserved pre-阶段三 component stylesheet: tokenised and
+                  bounded by a name instead of an anonymous block.
+   `theme.polish` the extended 阶段三 surface work (glass, motion, rows, chips,
+                  bubbles) and everything authored after it: the highest of
+                  the theme layers, so it never has to out-specify the layers
+                  under it.
+
+   Tokens (`:root`) stay unlayered on purpose: they are not cascade
+   competitors, they only have to be read.
    ========================================================================== */
 
-@layer theme.reset, theme.surfaces, theme.interactions, theme.layout;
+@layer theme.reset, theme.surfaces, theme.interactions, theme.layout, theme.legacy, theme.polish;
 
 /* ==========================================================================
    阶段三:现代酒馆暗色系令牌 (Modern Tavern Dark Tokens)
@@ -165,12 +179,9 @@
   }
 }
 
-/* Everything below this comment predates阶段三 and is now a named layer that
-   cannot outrank the authored rules above; it remains exactly as designed and
-   is extended by the new surface work inside the same layer, near the end of
-   this file. */
-@layer theme {
-
+/* Element-level geometry, not component styling: it belongs under every other
+   layer, so it is written into the lowest declared one. */
+@layer theme.reset {
 
 /* ==========================================================================
    CSS Reset & Base Geometry
@@ -214,6 +225,14 @@ body {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+
+} /* end @layer theme.reset */
+
+/* Everything below this comment is the preserved pre-阶段三 stylesheet, named
+   and bounded: nothing outside `theme.legacy` shares its precedence by
+   accident, and the authored 阶段三 work that follows it is its own layer
+   (`theme.polish`) rather than the tail of this one. */
+@layer theme.legacy {
 
 /* Skip Link for Keyboard Accessibility */
 .skip-link {
@@ -2395,6 +2414,10 @@ body {
   }
 }
 
+} /* end @layer theme.legacy */
+
+@layer theme.polish {
+
 /* ==========================================================================
    阶段三 surface/glass polish (authored on top of the preserved layer)
 
@@ -2403,6 +2426,10 @@ body {
    rows, chips and muted badges fill the 44/52 px floors. Written against the
    tokens at the top of the file so a later lane can re-tune the whole product
    by touching the root variables alone.
+
+   This is `theme.polish`: the highest of the theme layers, so it sits above
+   `theme.legacy` by the layer order declared at the top of the file rather
+   than by being the tail of one block that wraps everything.
    ========================================================================== */
 
 /* Cards and rows live one step above a panel; their border is the glass
@@ -2874,6 +2901,4 @@ body {
   padding-bottom: 0;
 }
 
-/* The closing brace of the `@layer theme {` block opened at the top of the
-   preserved legacy stylesheet. */
-}
+} /* end @layer theme.polish */
