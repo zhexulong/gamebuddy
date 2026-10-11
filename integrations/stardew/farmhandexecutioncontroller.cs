@@ -617,9 +617,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
-    /// The occupant kind and interruptibility of the current holder, plus the evidence string a refusal carries.
+    /// The occupant kind, interruptibility and PHASE of the current holder, plus the evidence string a refusal
+    /// carries. The phase belongs to the owner, not to an action id: an approach leg is motion - the body is held
+    /// in the same KIND as <c>move_to_tile</c> and can be stopped and braked - while everything from the native
+    /// release onwards is a committed step whose only exit is its terminal receipt. Declaring cancel safety per
+    /// ACTION would be too coarse and would be wrong about the entity involved.
     /// </summary>
-    private readonly record struct BodyOwner(string ReasonCode, string Evidence, bool Interruptible);
+    private readonly record struct BodyOwner(
+        string ReasonCode,
+        string Evidence,
+        bool Interruptible,
+        string Phase,
+        bool CancelSafe);
 
     /// <summary>
     /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
@@ -632,48 +641,71 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// local move (the manager's <c>active</c> or the body controller's own lease) is interruptible — a newer
     /// movement directive supersedes it; every other owner ends on its own.
     /// </para>
+    ///
+    /// <para>
+    /// The two trailing columns are the PHASE and the cancel safety derived from it, read off the same slot state
+    /// that names the owner, so a projection and a refusal can never disagree about whether the hold is still
+    /// releasable. Only slots with a provable walking phase are marked <c>approaching</c>; the rest are declared
+    /// <c>committed</c>, which is the conservative reading rather than a claim that nothing can happen to them.
+    /// </para>
     /// </summary>
     private BodyOwner DescribeBodyOwner()
     {
-        var owners = new List<(string ReasonCode, string ExecutionId, string Action, bool Interruptible)>();
+        var owners = new List<(string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe)>();
         if (this.activeNavigate is not null || this.activeNavigationCoordinator is not null)
-            owners.Add((BodyOwnedByNavigation, this.activeNavigate?.ExecutionId ?? "unknown", "navigate_to_destination", false));
+        {
+            // Navigation names its own phase (`LocalNavigatePhase`, ExecutionModels.cs:309); only the walking part
+            // is releasable.
+            bool navigating = this.activeNavigate is { Phase: LocalNavigatePhase.Approaching };
+            owners.Add((
+                BodyOwnedByNavigation,
+                this.activeNavigate?.ExecutionId ?? "unknown",
+                "navigate_to_destination",
+                false,
+                navigating ? "approaching" : "committed",
+                navigating));
+        }
         if (this.activeTravel is not null)
-            owners.Add((BodyOwnedByTravel, this.activeTravel.ExecutionId, this.activeTravel.Action, false));
+            owners.Add((BodyOwnedByTravel, this.activeTravel.ExecutionId, this.activeTravel.Action, false, "committed", false));
         if (this.active is not null || this.controller.HasActiveExecution)
-            owners.Add((BodyOwnedByMovement, this.active?.ExecutionId ?? this.controller.ActiveExecutionId ?? "unknown", "move_to_tile", true));
+            // Movement is motion for its whole life: a newer directive may supersede it and a stop may brake it.
+            owners.Add((BodyOwnedByMovement, this.active?.ExecutionId ?? this.controller.ActiveExecutionId ?? "unknown", "move_to_tile", true, "approaching", true));
         if (this.activeToolApproach is not null)
-            owners.Add((BodyOwnedByApproach, this.activeToolApproach.ExecutionId, this.activeToolApproach.ActionId, false));
+            // A tool approach is a MOTION STATE for as long as the slot exists: the slot IS the walk, and
+            // `CompleteToolApproach` (resourcetoolactions.cs:928) is what clears it and hands over to the native
+            // call. So an occupied approach slot is approaching, and the body is held in the same KIND as
+            // `move_to_tile` - which is precisely the owner's point: this hold can be braked, that one cannot.
+            owners.Add((BodyOwnedByApproach, this.activeToolApproach.ExecutionId, this.activeToolApproach.ActionId, false, "approaching", true));
         if (this.activeMountTransport is not null)
-            owners.Add((BodyOwnedByRide, this.activeMountTransport.ExecutionId, "mount_transport", false));
+            owners.Add((BodyOwnedByRide, this.activeMountTransport.ExecutionId, "mount_transport", false, "committed", false));
         if (this.activeBusRide is not null)
-            owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false));
+            owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false, "committed", false));
         if (this.activeDayAdvance is not null)
-            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "advance_day", false));
+            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "advance_day", false, "committed", false));
         if (this.activePet is not null)
-            owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false));
+            owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false, "committed", false));
         if (this.activeAnimalProduct is not null)
-            owners.Add((BodyOwnedByActivity, this.activeAnimalProduct.ExecutionId, "collect_animal_product", false));
+            owners.Add((BodyOwnedByActivity, this.activeAnimalProduct.ExecutionId, "collect_animal_product", false, "committed", false));
         if (this.activeItemUse is not null)
-            owners.Add((BodyOwnedByActivity, this.activeItemUse.ExecutionId, "use_item", false));
+            owners.Add((BodyOwnedByActivity, this.activeItemUse.ExecutionId, "use_item", false, "committed", false));
         if (this.activeItemPickup is not null)
-            owners.Add((BodyOwnedByActivity, this.activeItemPickup.ExecutionId, "pickup_item", false));
+            owners.Add((BodyOwnedByActivity, this.activeItemPickup.ExecutionId, "pickup_item", false, "committed", false));
         if (this.activePedestalTaking is not null)
-            owners.Add((BodyOwnedByActivity, this.activePedestalTaking.ExecutionId, "take_pedestal_item", false));
+            owners.Add((BodyOwnedByActivity, this.activePedestalTaking.ExecutionId, "take_pedestal_item", false, "committed", false));
 
         // The guards make this unreachable; keeping the bare code honest rather than inventing an owner.
         if (owners.Count == 0)
-            return new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false", false);
+            return new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
 
-        (string ReasonCode, string ExecutionId, string Action, bool Interruptible) owner = owners[0];
-        string evidence = $"owner_execution_id={OwnerToken(owner.ExecutionId)};owner_action={OwnerToken(owner.Action)};interruptible={(owner.Interruptible ? "true" : "false")}";
+        (string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe) owner = owners[0];
+        string evidence = $"owner_execution_id={OwnerToken(owner.ExecutionId)};owner_action={OwnerToken(owner.Action)};interruptible={(owner.Interruptible ? "true" : "false")};phase={owner.Phase};cancel_safe={(owner.CancelSafe ? "true" : "false")}";
         var alsoOwned = new List<string>();
         for (int index = 1; index < owners.Count; index++)
             if (!alsoOwned.Contains(owners[index].ReasonCode))
                 alsoOwned.Add(owners[index].ReasonCode);
         if (alsoOwned.Count > 0)
             evidence += $";also_owned={string.Join(",", alsoOwned)}";
-        return new BodyOwner(owner.ReasonCode, evidence, owner.Interruptible);
+        return new BodyOwner(owner.ReasonCode, evidence, owner.Interruptible, owner.Phase, owner.CancelSafe);
     }
 
     private static string OwnerToken(string? value) => string.IsNullOrEmpty(value) ? "unknown" : value;

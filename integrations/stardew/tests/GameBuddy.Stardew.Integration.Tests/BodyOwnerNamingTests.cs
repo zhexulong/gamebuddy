@@ -34,10 +34,26 @@ public sealed class BodyOwnerNamingTests
     [Fact]
     public void NavigationOwner_IsNamed()
     {
+        // The slot is seeded with an UNINITIALIZED spec, and an uninitialized enum field is its first member -
+        // `LocalNavigatePhase.Approaching` (ExecutionModels.cs:309) - so this is the WALKING phase: releasable.
         LocalExecutionReceipt receipt = Refuse(("activeNavigate", null));
 
         receipt.ReasonCode.Should().Be("body_owned_by_navigation");
-        receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=navigate_to_destination;interruptible=false");
+        receipt.Evidence.Should().Be(
+            "owner_execution_id=unknown;owner_action=navigate_to_destination;interruptible=false;phase=approaching;cancel_safe=true");
+    }
+
+    [Fact]
+    public void NavigationOwner_PastItsApproach_IsNotCancellable()
+    {
+        // THE BOUNDARY, and the reason cancel safety is a PHASE rather than an action property: once the walk is
+        // released the action is committed, so its only exit is the terminal receipt.
+        LocalExecutionReceipt receipt = Refuse(("activeNavigate", new LocalNavigateSpec(
+            "exec_nav", "req_nav", default!, "Farm:64,15", "Farm", default!, new Vector2(64f, 15f), DeadlineMs, LocalNavigatePhase.ApproachReleased)));
+
+        receipt.ReasonCode.Should().Be("body_owned_by_navigation");
+        receipt.Evidence.Should().Be(
+            "owner_execution_id=exec_nav;owner_action=navigate_to_destination;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]
@@ -47,7 +63,7 @@ public sealed class BodyOwnerNamingTests
             "exec_travel", "req_travel", "enter_exit", "Farm", 3, 9, "FarmHouse", 5, 5, 1, DeadlineMs)));
 
         receipt.ReasonCode.Should().Be("body_owned_by_travel");
-        receipt.Evidence.Should().Be("owner_execution_id=exec_travel;owner_action=enter_exit;interruptible=false");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_travel;owner_action=enter_exit;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]
@@ -58,7 +74,7 @@ public sealed class BodyOwnerNamingTests
 
         receipt.ReasonCode.Should().Be("body_owned_by_movement");
         // The local move is the one owner a newer directive supersedes, so the Agent is told it may re-issue.
-        receipt.Evidence.Should().Be("owner_execution_id=exec_move;owner_action=move_to_tile;interruptible=true");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_move;owner_action=move_to_tile;interruptible=true;phase=approaching;cancel_safe=true");
     }
 
     [Fact]
@@ -68,7 +84,7 @@ public sealed class BodyOwnerNamingTests
             "exec_approach", "req_approach", "water_crop", "Farm", 3, 9, "target_1", (_, _) => null!, RouteRevision: 1, DeadlineMs: DeadlineMs)));
 
         receipt.ReasonCode.Should().Be("body_owned_by_approach");
-        receipt.Evidence.Should().Be("owner_execution_id=exec_approach;owner_action=water_crop;interruptible=false");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_approach;owner_action=water_crop;interruptible=false;phase=approaching;cancel_safe=true");
     }
 
     [Fact]
@@ -78,7 +94,7 @@ public sealed class BodyOwnerNamingTests
             "exec_ride", "req_ride", "Farm", 3, 9, "horse_1", Guid.NewGuid(), DeadlineMs)));
 
         receipt.ReasonCode.Should().Be("body_owned_by_ride");
-        receipt.Evidence.Should().Be("owner_execution_id=exec_ride;owner_action=mount_transport;interruptible=false");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_ride;owner_action=mount_transport;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]
@@ -88,7 +104,7 @@ public sealed class BodyOwnerNamingTests
         LocalExecutionReceipt receipt = Refuse(("activeDayAdvance", null));
 
         receipt.ReasonCode.Should().Be("body_owned_by_day_advance");
-        receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=advance_day;interruptible=false");
+        receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=advance_day;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]
@@ -98,7 +114,7 @@ public sealed class BodyOwnerNamingTests
             "exec_pet", "req_pet", "Farm", 3, 9, "pet_1", "pet_identity", 0, 1, 1, 1, DeadlineMs)));
 
         receipt.ReasonCode.Should().Be("body_owned_by_activity");
-        receipt.Evidence.Should().Be("owner_execution_id=exec_pet;owner_action=pet_animal;interruptible=false");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_pet;owner_action=pet_animal;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]
@@ -111,7 +127,7 @@ public sealed class BodyOwnerNamingTests
             ("activePet", new LocalPettingSpec("exec_pet", "req_pet", "Farm", 3, 9, "pet_1", "pet_identity", 0, 1, 1, 1, DeadlineMs)));
 
         receipt.ReasonCode.Should().Be("body_owned_by_travel");
-        receipt.Evidence.Should().Be("owner_execution_id=exec_travel;owner_action=enter_exit;interruptible=false;also_owned=body_owned_by_activity");
+        receipt.Evidence.Should().Be("owner_execution_id=exec_travel;owner_action=enter_exit;interruptible=false;phase=committed;cancel_safe=false;also_owned=body_owned_by_activity");
     }
 
     [Fact]
