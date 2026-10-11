@@ -217,12 +217,9 @@ async function provisionNewCompanionNamespace(
       if (scenario !== undefined && scenario.trim() !== "") {
         await scenarioService.create({ name: "Default Scenario", description: scenario });
       }
-      const firstGreeting = approved?.get("first_greeting");
-      if (firstGreeting !== undefined && firstGreeting.trim() !== "") {
-        await greetingService.create({
-          label: "Initial Greeting",
-          variants: [{ label: "Default", text: firstGreeting }],
-        });
+      const greetingVariants = buildGreetingVariants(approved);
+      if (greetingVariants.length > 0) {
+        await greetingService.create({ label: "Initial Greeting", variants: greetingVariants });
       }
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
       try {
@@ -253,6 +250,34 @@ async function provisionNewCompanionNamespace(
     },
     { containmentRoot: paths.root },
   );
+}
+
+/**
+ * The default opening keeps its existing identity; each approved alternate
+ * opening (candidate field `alternate_greeting_<n>`, decoded from the card's
+ * `alternate_greetings`) becomes a labelled variant. Labels are the card's own
+ * stable 1-based order - the ST v2/v3 spec attaches no per-entry label - so the
+ * same card always produces the same labels. These are Thread History openings
+ * (a new chat's first assistant message), never Stable Prefix Context, so they
+ * are persisted on the greeting record and never published as a context source.
+ */
+function buildGreetingVariants(
+  approved: ReadonlyMap<string, string> | undefined,
+): readonly Readonly<{ label: string; text: string }>[] {
+  if (approved === undefined) return Object.freeze([]);
+  const variants: Readonly<{ label: string; text: string }>[] = [];
+  const firstGreeting = approved.get("first_greeting");
+  if (firstGreeting !== undefined && firstGreeting.trim() !== "")
+    variants.push(Object.freeze({ label: "Default", text: firstGreeting }));
+  const alternates = [...approved.entries()]
+    .filter(([field]) => /^alternate_greeting_\d+$/u.test(field))
+    .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
+  for (const [field, text] of alternates) {
+    if (text.trim() === "") continue;
+    const order = Number(field.slice("alternate_greeting_".length));
+    variants.push(Object.freeze({ label: `Alternate ${order}`, text }));
+  }
+  return Object.freeze(variants);
 }
 
 function directProfile(name: string, companionId: string, continuityId: string): IdentityProfile {

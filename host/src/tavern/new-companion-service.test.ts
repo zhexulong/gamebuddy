@@ -490,3 +490,142 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
     await cleanupTestRoot(root);
   }
 });
+async function readGreetingVariants(
+  root: string,
+  provision: Awaited<ReturnType<typeof provisionNewCompanion>>,
+): Promise<readonly { label: string | null; text: string }[]> {
+  const runtimePaths = resolveRuntimePaths(provision.identity, root);
+  const tavernPaths = resolveTavernPaths(runtimePaths, provision.identity);
+  const greeting = await createGreetingManagementService(
+    new TavernArtifactStore(root),
+    tavernPaths.companionRoot,
+  ).read();
+  return greeting?.variants.map((variant) => ({ label: variant.label ?? null, text: variant.text })) ?? [];
+}
+
+test("reviewed alternate openings land as labelled variants beside the default opening", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-alternate-openings-");
+  let threadStore: ReturnType<typeof createChatThreadStore> | undefined;
+  const openingsCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "first_greeting",
+        text: "Default opening.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "alternate_greeting_1",
+        text: "First alternate.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "alternate_greeting_2",
+        text: "Second alternate.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(openingsCandidate, {
+      reviewedFields: ["first_greeting", "alternate_greeting_1", "alternate_greeting_2"],
+      approvedAtMs: 21,
+    });
+    threadStore = createChatThreadStore(root, "a".repeat(64));
+    const created = await provisionNewCompanion(root, "player", openingsCandidate, review, threadStore);
+    // The default opening keeps its identity; each alternate becomes one labelled
+    // variant. The card's own 1-based order is the stable, honest label.
+    assert.deepEqual(await readGreetingVariants(root, created), [
+      { label: "Default", text: "Default opening." },
+      { label: "Alternate 1", text: "First alternate." },
+      { label: "Alternate 2", text: "Second alternate." },
+    ]);
+    // Fails if alternates are dropped, merged into the default, or mislabelled.
+  } finally {
+    threadStore?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+test("a reviewed default opening with no alternates produces exactly today's greeting record", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-no-alternates-");
+  let threadStore: ReturnType<typeof createChatThreadStore> | undefined;
+  const singleOpeningCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "first_greeting",
+        text: "Solo opening.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(singleOpeningCandidate, { reviewedFields: ["first_greeting"], approvedAtMs: 22 });
+    threadStore = createChatThreadStore(root, "b".repeat(64));
+    const created = await provisionNewCompanion(root, "player", singleOpeningCandidate, review, threadStore);
+    assert.deepEqual(await readGreetingVariants(root, created), [{ label: "Default", text: "Solo opening." }]);
+    // Fails if decoding alternate openings changes the record for a card without them.
+  } finally {
+    threadStore?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+test("provisioning the same reviewed card twice does not multiply greeting variants", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-idempotent-openings-");
+  let threadStore: ReturnType<typeof createChatThreadStore> | undefined;
+  const openingsCandidate = {
+    ...candidate,
+    fields: [
+      {
+        field: "first_greeting",
+        text: "Default opening.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "alternate_greeting_1",
+        text: "First alternate.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+      {
+        field: "alternate_greeting_2",
+        text: "Second alternate.",
+        eligibility: "profile_eligible_after_explicit_review" as const,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(openingsCandidate, {
+      reviewedFields: ["first_greeting", "alternate_greeting_1", "alternate_greeting_2"],
+      approvedAtMs: 23,
+    });
+    threadStore = createChatThreadStore(root, "c".repeat(64));
+    const first = await readGreetingVariants(
+      root,
+      await provisionNewCompanion(root, "player", openingsCandidate, review, threadStore),
+    );
+    const second = await readGreetingVariants(
+      root,
+      await provisionNewCompanion(root, "player", openingsCandidate, review, threadStore),
+    );
+    assert.equal(first.length, 3);
+    assert.deepEqual(second, first);
+    // Fails if a second import appends to the same variant list instead of rebuilding it.
+  } finally {
+    threadStore?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
