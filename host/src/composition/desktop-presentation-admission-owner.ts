@@ -564,9 +564,10 @@ function composeReferenceTavernProfile(): ComposedTavernProfile {
  * The one Tavern-management surface the management browser root serves. The
  * composed surface contract fixes this exact identity, so the declaration
  * lives here rather than in an operator-, bootstrap-, or browser-selected
- * input.
+ * input. Exported so a gate can hold this exact declaration against the
+ * dispatcher's canonical groups without mounting the surface.
  */
-function composeTavernManagementProfile(): ComposedTavernProfile {
+export function composeTavernManagementProfile(): ComposedTavernProfile {
   return composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
@@ -578,7 +579,6 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "draft.discard",
       "chat.list",
       "chat.rename",
-      "chat.opening",
       "memory.read",
       "memory.mutate",
       "world-info.read",
@@ -613,12 +613,14 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.review",
       "character.import.confirm",
       "character.import.history",
+      // The optional new-chat opening variant is declared after every other
+      // group, in the dispatcher's own canonical group order.
+      "chat.opening",
     ],
     operationIds: [
       "draft.save",
       "draft.discard",
       "chat.rename",
-      "chat.opening",
       "memory.mutate",
       "world-info.bind",
       "settings.voice.read",
@@ -651,6 +653,7 @@ function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.review",
       "character.import.confirm",
       "character.import.history",
+      "chat.opening",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

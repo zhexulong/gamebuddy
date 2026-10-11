@@ -175,6 +175,12 @@ const MANAGEMENT_IMPORT_ROUTES = [
   "character.import.confirm",
   "character.import.history",
 ] as const;
+/** Optional new-chat opening-variant extension: only a profile that declares this
+ * route mounts `PUT /api/tavern/v1/chat/opening`; every other profile keeps the
+ * exact legacy surface. Like the other options it is declared after the core and
+ * in the frozen group order, so a profile that advertises it without the bound
+ * Chat service fails closed at composition. */
+const MANAGEMENT_CHAT_OPENING_ROUTES = ["chat.opening"] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
  * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
@@ -1632,15 +1638,21 @@ function navigationItem(itemId: TavernBrowserNavigationItemIdV1, memoryReadAvail
   };
 }
 
-function assertManagementProfile(profile: ComposedTavernProfile): void {
+/**
+ * The canonical-group verdict for one management profile declaration: the exact
+ * brand and identity, the navigation projection, and the route/operation slices
+ * this dispatcher can serve. It is exported so a gate can hold the production
+ * declaration against the canonical groups without mounting them; the mount is
+ * its only production caller.
+ */
+export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProfile): boolean {
   // Canonical WeakSet identity gate (same authority as the binding service
   // and state facade): an Object.freeze structural clone of a composed
   // profile has the exact management shape but is never branded by
   // composeTavernProfile, so this HTTP ingress rejects it before any dispatch
   // or injected-service use. The exact shape checks below still apply.
-  if (!isComposedTavernProfile(profile)) throw new Error("tavern_management_profile_operation_unavailable");
-  if (profile.profileId !== MANAGEMENT_PROFILE_ID || profile.releaseTier !== MANAGEMENT_RELEASE_TIER)
-    throw new Error("tavern_management_profile_operation_unavailable");
+  if (!isComposedTavernProfile(profile)) return false;
+  if (profile.profileId !== MANAGEMENT_PROFILE_ID || profile.releaseTier !== MANAGEMENT_RELEASE_TIER) return false;
   // A memory-capable profile must declare the Memory navigation item and the
   // inverse (Memory route but no Memory navigation) fails closed. The
   // Characters item is present on the current-facing profile; legacy profiles
@@ -1649,12 +1661,14 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   const navigationMatches =
     sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY) ||
     sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY);
-  if (!navigationMatches) throw new Error("tavern_management_profile_operation_unavailable");
-  // The core surface and the three extension groups are declared per profile
+  if (!navigationMatches) return false;
+  // The core surface and the extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
-  // connections. A partially applied group, an undeclared route or a reordered
-  // list fails closed, so no route is mounted that this dispatcher cannot serve.
+  // connections, model profiles, companions/personas/retention, card import,
+  // new-chat opening. A partially applied group, an undeclared route or a
+  // reordered list fails closed, so no route is mounted that this dispatcher
+  // cannot serve.
   const coreRoutes = withMemory
     ? profile.operationIds.includes("memory.mutate")
       ? MANAGEMENT_ROUTE_IDS
@@ -1663,41 +1677,35 @@ function assertManagementProfile(profile: ComposedTavernProfile): void {
   const coreOperations = profile.operationIds.includes("memory.mutate")
     ? MANAGEMENT_OPERATION_IDS_WITH_MEMORY
     : MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY;
-  if (
-    !isCanonicalGroupSelection(
-      profile.routeIds,
-      [
-        coreRoutes,
-        MANAGEMENT_VOICE_DEVICES,
-        MANAGEMENT_LANGUAGE_ROUTES,
-        MANAGEMENT_CONNECTION_ROUTES,
-        MANAGEMENT_MODEL_PROFILE_ROUTES,
-        MANAGEMENT_P9_ROUTES,
-        MANAGEMENT_IMPORT_ROUTES,
-      ],
-      coreRoutes,
-    ) ||
-    !isCanonicalGroupSelection(
-      profile.operationIds,
-      [
-        coreOperations,
-        MANAGEMENT_VOICE_DEVICES,
-        MANAGEMENT_LANGUAGE_ROUTES,
-        MANAGEMENT_CONNECTION_ROUTES,
-        MANAGEMENT_MODEL_PROFILE_ROUTES,
-        MANAGEMENT_P9_ROUTES,
-        MANAGEMENT_IMPORT_ROUTES,
-      ],
-      coreOperations,
-    )
-  )
-    throw new Error("tavern_management_profile_operation_unavailable");
+  const routeGroups = [
+    coreRoutes,
+    MANAGEMENT_VOICE_DEVICES,
+    MANAGEMENT_LANGUAGE_ROUTES,
+    MANAGEMENT_CONNECTION_ROUTES,
+    MANAGEMENT_MODEL_PROFILE_ROUTES,
+    MANAGEMENT_P9_ROUTES,
+    MANAGEMENT_IMPORT_ROUTES,
+    MANAGEMENT_CHAT_OPENING_ROUTES,
+  ] as const;
+  const operationGroups = [
+    coreOperations,
+    MANAGEMENT_VOICE_DEVICES,
+    MANAGEMENT_LANGUAGE_ROUTES,
+    MANAGEMENT_CONNECTION_ROUTES,
+    MANAGEMENT_MODEL_PROFILE_ROUTES,
+    MANAGEMENT_P9_ROUTES,
+    MANAGEMENT_IMPORT_ROUTES,
+    MANAGEMENT_CHAT_OPENING_ROUTES,
+  ] as const;
+  if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
+  if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
   // Every operation must be backed by its own route: a profile cannot advertise
   // an operation the mounted dispatcher would refuse to serve.
-  for (const operationId of profile.operationIds) {
-    if (!profile.routeIds.includes(operationId))
-      throw new Error("tavern_management_profile_operation_unavailable");
-  }
+  return profile.operationIds.every((operationId) => profile.routeIds.includes(operationId));
+}
+
+function assertManagementProfile(profile: ComposedTavernProfile): void {
+  if (!managementProfileFitsCanonicalGroups(profile)) throw new Error("tavern_management_profile_operation_unavailable");
 }
 
 /**

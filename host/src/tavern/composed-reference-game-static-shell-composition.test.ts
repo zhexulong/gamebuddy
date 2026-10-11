@@ -1007,6 +1007,9 @@ function managementBundle(): ManagementBundle {
           ],
         }),
       renameChatTitle: async () => Object.freeze({ apiVersion: 1 as const, title: "Renamed", managementRevision: 2 }),
+      commitOpeningVariant: async () => {
+        throw new Error("unused_opening_variant");
+      },
       transitionLifecycle: async () => {
         throw new Error("unused_lifecycle");
       },

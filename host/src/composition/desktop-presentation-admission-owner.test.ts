@@ -414,3 +414,23 @@ test("management presentation entry point propagates a reference-facade failure 
   assert.equal(observed.connectionCreated, 0);
   assert.equal(observed.chatServiceClosed, 0);
 });
+
+/**
+ * The class gate the mount-level test cannot be for a lane that never runs it: a
+ * route declared in the production management profile that no canonical group
+ * accepts is green in tsc and in every focused suite that never mounts the
+ * surface, and it is fatal to a real launch - the mount throws
+ * `tavern_management_profile_operation_unavailable` during provisioning and the
+ * product never starts. `composeTavernManagementProfile` is the one declaration
+ * the mounted surface uses, so holding it against the dispatcher's own canonical
+ * groups here fails at the change instead of in the launcher.
+ */
+test("the production management profile declaration fits the dispatcher's canonical groups", async () => {
+  const { composeTavernManagementProfile } = await import("./desktop-presentation-admission-owner.js");
+  const { managementProfileFitsCanonicalGroups } = await import("../tavern-management-dialogue-web.js");
+  assert.equal(
+    managementProfileFitsCanonicalGroups(composeTavernManagementProfile()),
+    true,
+    "the production management profile must declare exactly the canonical groups the dispatcher serves: a route outside every group throws at provisioning",
+  );
+});
