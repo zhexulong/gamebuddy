@@ -19,6 +19,7 @@ import {
   executeFresh,
   observeFresh,
   readNativeClientConfig,
+  waitForActionable,
   summarizeReceipt,
   summarizeSnapshot,
   waitForFreshSnapshot,
@@ -42,11 +43,17 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
   try {
     validateNativeLocalFixtureConfig(config);
 
-    const before = await observeFresh(client, { actionable: true });
+    // The fixture warps the actor next to the counter, and the warp is ASYNC: observing immediately can catch
+    // `player_cannot_move` and end the run with `native_snapshot_not_actionable`. Wait for the ability to act
+    // rather than treating a warp in flight as a shop that cannot be opened.
+    const before = await waitForActionable(client, await observeFresh(client), 30_000).catch(() =>
+      observeFresh(client, { actionable: true }),
+    );
     // Record what was actually observed before any assertion can throw: an empty trace
     // with a bare reasonCode cannot distinguish a missing capability from a dead pipe.
     trace.push({
       phase: "observed",
+      actionableAfterWait: before.actionable,
       revision: before.revision,
       location: before.location,
       tile: before.tile ?? null,

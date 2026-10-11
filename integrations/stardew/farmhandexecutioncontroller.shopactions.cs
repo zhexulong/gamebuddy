@@ -644,14 +644,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 }
                 string heldAfterDrop = menu.heldItem?.QualifiedItemId ?? "none";
                 dropDiagnostics.Add(
-                    $"drop{bought}:empty_slot={emptySlotIndex};at={dropAt};held={heldBeforeDrop}->{heldAfterDrop}");
+                    $"drop{bought}:empty_slot={emptySlotIndex}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
 
                 long moneyAfterClick = actor.Money;
                 int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
                 clickDiagnostics.Add(
-                    $"click{bought}:button={index};at={clickX},{clickY};addressed={addressedToButton};"
-                    + $"safety_before={safetyBefore};held_null={heldNull};"
-                    + $"money={moneyBeforeClick}->{moneyAfterClick};stock={stockBeforeClick}->{stockAfterClick};"
+                    $"click{bought}:button={index}|at={clickX},{clickY}|addressed={addressedToButton}|"
+                    + $"safety_before={safetyBefore}|held_null={heldNull}|"
+                    + $"money={moneyBeforeClick}->{moneyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
                     + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
             }
         }
@@ -687,15 +687,23 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         bool menuClosed = Game1.activeClickableMenu is not ShopMenu;
 
         string entryKind = tileOpened ? "tile_action" : "npc_owner";
+        // The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail
+        // on `;` and requires every field to be a non-empty `key=value`:
+        //   * a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects -
+        //     so an absent owner is spelled `none`, the same way other optional values are spelled here;
+        //   * the two diagnostics below are lists, and their entries used to embed `;`, which split each entry into
+        //     fields the Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and
+        //     entries with `||`, so the whole diagnostic stays ONE field.
+        string ownerName = target.OwnerName.Length == 0 ? "none" : target.OwnerName;
         string evidence =
-            $"shop={target.ShopId};owner={target.OwnerName};entry={entryKind};item={expectedItemId};"
+            $"shop={target.ShopId};owner={ownerName};entry={entryKind};item={expectedItemId};"
             + $"requested={quantity};purchased={purchasable};unit_price={unitPrice};"
             + $"money_before={moneyBefore};money_after={moneyAfter};"
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
             + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
-            + $"clicks={clickDiagnostics.Count}[{string.Join("|", clickDiagnostics)}];"
-            + $"drops={dropDiagnostics.Count}[{string.Join("|", dropDiagnostics)}]";
+            + $"clicks={clickDiagnostics.Count}[{string.Join("||", clickDiagnostics)}];"
+            + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]";
 
         // Success is the world fact: money left the purse AND the item entered the inventory.
         // A receipt that spent nothing and gained nothing is not a purchase.

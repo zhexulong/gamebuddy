@@ -2638,3 +2638,45 @@ correct behaviour, not a defect.
 Environment: the Windows owner-identity query is `Get-CimInstance Win32_Process` under a 5 s bound; measured 700-800 ms
 here, but one run died with `windows_runtime_owner_identity_query_failed:timeout` when the machine was also running
 several agent lanes. The run script now PRE-WARMS that query. No product bound was changed.
+
+---
+
+### The completion-evidence coverage defect, and the two shapes that hid it (2026-10-11)
+
+The Host decides whether a receipt proves an action finished via
+`STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence`, built in
+`host/src/stardew-game-integration-adapter.ts` from one switch. Measured before the fix: the switch covered **36** of
+the **83** registered actions, so the other **47** fell to `default: return false` - a REAL success was recorded as
+zero typed transitions, and nothing failed because no test asserted the coverage. (`host/src/gameplay-task-subagent.ts`
+`hasActionPostconditionEvidence` is the consumer that carries that verdict into the task loop.)
+
+Rules now exist for all 83, and the invariant is enforced by
+`host/src/stardew-completion-evidence-coverage.test.ts`, which reads the adapter's own switch and requires its arm set
+to EQUAL the registered set. Mutations were run to prove it has teeth: removing one arm turns the coverage test red;
+renaming one rule's required key turns that action's positive case red.
+
+**The two shapes that made `shop_purchase` UNFIXABLE from the Host side** (this is the transferable part):
+
+```
+evidence written by farmhandexecutioncontroller.shopactions.cs
+  clicks=2[click0:button=0;at=412,544;held_after=(O)472|click1:...];drops=1[drop0:empty_slot=0;at=412,544]
+                ^ each diagnostic entry is itself key=value;key=value
+  owner=;owner_tile=1,6
+        ^ a tile-opened shop has no owner
+```
+
+`parseSemicolonEvidence` splits the WHOLE detail on `;` and requires every field to be a non-empty `key=value`, so
+both shapes make the detail unparseable - no rule could match a real purchase, however carefully written. The
+producer now separates diagnostic parts with `|` (entries with `||`) and writes `owner=none`. The A/B is pinned in the
+suite: the old forms are refused, the new forms complete, and a receipt that spent nothing and gained nothing is still
+not a purchase.
+
+**One pre-existing test caught a permissive rule**, which is what it was for: `equip_tool`'s first version accepted
+`tool_equipped` with `before == expected` - a receipt claiming an equip while nothing changed. The rule now requires
+the terminal code and the observed change to AGREE (`tool_equipped` needs a change, `already_equipped` needs none,
+both need `after == expected`). A permissive rule is the worse half of this trade: it turns a silent drop into a wrong
+success.
+
+Two gate flakes were also fixed while re-verifying, both the same warp transient: the shop runner observed
+immediately after the fixture warped the actor, so `player_cannot_move` ended a run as
+`native_snapshot_not_actionable`. It now waits for the ability to act, like the talk runner.

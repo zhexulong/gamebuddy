@@ -317,8 +317,11 @@ function hasStardewCompletionEvidence(
       // why every test stayed green. equip_tool/v2 deliberately made slot Mod-private
       // and reports the resolved tool instead.
       //
-      // "already_equipped" is a deterministic success with before == expected == after,
-      // so the shared clauses below cover both.
+      // "already_equipped" is the code for the no-change case, and "tool_equipped" is the code for a real switch -
+      // so the terminal code and the observed change must AGREE. Accepting `tool_equipped` with `before == expected`
+      // (which the first version of this rule did, via the shared clauses) turned "nothing happened" into a
+      // completion, which is the worse half of the trade the coverage work was fixing: a permissive rule is worse
+      // than a missing one, because a silent drop becomes a wrong success.
       return (
         (receipt.reasonCode === "tool_equipped" ||
           receipt.reasonCode === "already_equipped") &&
@@ -329,7 +332,10 @@ function hasStardewCompletionEvidence(
             hasOpaqueEvidenceValue(e.tool) &&
             isToolSelectionBeforeValue(e.before) &&
             hasOpaqueEvidenceValue(e.expected) &&
-            e.after === e.expected,
+            e.after === e.expected &&
+            (receipt.reasonCode === "tool_equipped"
+              ? e.before !== e.expected
+              : e.before === e.expected),
         )
       );
     case "toggle_animal_door":
@@ -726,9 +732,1503 @@ function hasStardewCompletionEvidence(
         receipt.reasonCode === "crop_harvested" &&
         hasHarvestCropCompletionEvidence(detail)
       );
+    // ── The rest of the registered action surface (card CARD-P4-9-COMPLETION-EVIDENCE).
+    // Every rule below is transcribed from the Mod site named in its comment: the terminal
+    // reasonCode that handler mints and the evidence fields it writes on that exact terminal.
+    // Where a handler mints the same completion in more than one place, the sites are listed
+    // here and the rule admits exactly those shapes. No key, code or relation is invented.
+    case "select_mine_elevator_floor":
+      // farmhandexecutioncontroller.movementactions.cs:611-617 CompleteTravelAfterWarp:
+      //   expected=<location>:<x>,<y>;actual=<location>:<x>,<y>[;level=<mineLevel>]
+      // Floor 0 targets the mine-entrance MAP, so `level` is absent there; a generated
+      // floor lands in a MineShaft and appends it. The landing TILE is native-chosen.
+      return (
+        receipt.reasonCode === "mine_elevator_floor_selected" &&
+        hasMineElevatorFloorCompletionEvidence(detail)
+      );
+    case "ride_bus":
+      // farmhandexecutioncontroller.busactions.cs:200-210 UpdateBusRide. The world owns the
+      // departure; this terminal is the arrival it produced, so the two location facts and
+      // the fare are the whole contract. `money_after` is read from the actor afterwards and
+      // is reported, never asserted (a fare refund/reward may move it either way).
+      return (
+        receipt.reasonCode === "bus_arrived" &&
+        exactEvidence(
+          detail,
+          ["origin", "destination", "fare", "money_before", "money_after"],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.origin) &&
+            hasBoundedNonemptyEvidenceValue(e.destination) &&
+            e.origin !== e.destination &&
+            integerEvidenceValue(e.fare) !== null &&
+            integerEvidenceValue(e.money_before) !== null &&
+            integerEvidenceValue(e.money_after) !== null,
+        )
+      );
+    case "use_raft":
+      // farmhandexecutioncontroller.transportactions.cs:267-269: the native Raft.DoFunction
+      // returns void, so the only proof the launch started is the rafting flag flipping.
+      return (
+        receipt.reasonCode === "raft_launched" &&
+        exactEvidence(
+          detail,
+          ["tile", "is_rafting", "stamina_before", "stamina_after"],
+          (e) =>
+            hasTileEvidenceValue(e.tile) &&
+            e.is_rafting === "true" &&
+            finiteEvidenceValue(e.stamina_before) !== null &&
+            finiteEvidenceValue(e.stamina_after) !== null,
+        )
+      );
+    case "mount_transport":
+      // farmhandexecutioncontroller.cs:1498-1502 UpdateActiveMountTransport. The settle reads
+      // the rider's own mount (the native mount removes the horse from the location's
+      // characters), so `mounted=true;mounting=false` is the producer's own success state.
+      return (
+        receipt.reasonCode === "horse_mounted" &&
+        exactEvidence(detail, ["target", "horse_id", "mounted", "mounting"], (e) =>
+          hasOpaqueIdEvidenceValue(e.target) &&
+          hasOpaqueIdEvidenceValue(e.horse_id) &&
+          e.mounted === "true" &&
+          e.mounting === "false",
+        )
+      );
+    case "enter_mine":
+      // Three producers, one meaning (`mine_entered`, the declared/reached level):
+      //   farmhandexecutioncontroller.transportactions.cs:194 — ladder descent, synchronous:
+      //     level=<level>;tile=<x>,<y>;from_level=<level>
+      //   farmhandexecutioncontroller.transportactions.cs:232 — entrance, synchronous:
+      //     level=<level>;tile=<x>,<y>
+      //   farmhandexecutioncontroller.movementactions.cs:611-617 — the asynchronous Warped
+      //     arrival, where the native layout owns the tile: expected=<loc>:<x>,<y>;
+      //     actual=<loc>:<x>,<y>;level=<level>
+      return (
+        receipt.reasonCode === "mine_entered" &&
+        hasMineEntryCompletionEvidence(detail)
+      );
+    case "express_emote":
+      // farmhandexecutioncontroller.expressionactions.cs:82-90: Farmer.doEmote arms the
+      // animation synchronously, so `native_dispatched=true` under this terminal is the
+      // departure proof. The animation's own completion is not a terminal fact.
+      return (
+        receipt.reasonCode === "emote_started" &&
+        exactEvidence(detail, ["emote", "native_dispatched"], (e) =>
+          hasBoundedNonemptyEvidenceValue(e.emote) && e.native_dispatched === "true"
+        )
+      );
+    case "face_direction":
+      // farmhandexecutioncontroller.movementactions.cs:800-808: the actor re-reads its own
+      // FacingDirection, so the emitted direction is the frozen enum spelling.
+      return (
+        receipt.reasonCode === "actor_facing_matches" &&
+        exactEvidence(
+          detail,
+          ["direction"],
+          (e) => e.direction === "up" || e.direction === "right" || e.direction === "down" || e.direction === "left",
+        )
+      );
+    case "interact_npc_with_item":
+      // Two terminals, both real completions of "offer an item to an NPC"
+      // (farmhandexecutioncontroller.machinesanimalsitemsactions.cs):
+      //   :768-769 — a matching unsatisfied delivery quest was completed: quest_item_delivered;
+      //   :888-889 — otherwise the gift path: gift_given.
+      return (
+        (receipt.reasonCode === "gift_given" && hasGiftGivenCompletionEvidence(detail)) ||
+        (receipt.reasonCode === "quest_item_delivered" &&
+          hasQuestItemDeliveredCompletionEvidence(detail))
+      );
+    case "pet_animal":
+      // farmhandexecutioncontroller.cs:1524-1529 UpdateActivePet: the native petting callback
+      // records the day AND grants friendship, and both are re-read before the terminal.
+      return (
+        receipt.reasonCode === "pet_completed" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "pet_day",
+            "friendship_before",
+            "friendship_after",
+            "day_recorded",
+            "friendship_callback",
+          ],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            integerEvidenceValue(e.pet_day) !== null &&
+            integerEvidenceValue(e.friendship_before) !== null &&
+            integerEvidenceValue(e.friendship_after) !== null &&
+            e.day_recorded === "true" &&
+            e.friendship_callback === "true",
+        )
+      );
+    case "advance_day":
+      // SleepAndAdvanceDayLifecycle.cs:835-853 Finish("passed", "day_advanced", settlement).
+      // This terminal is read by field membership, not by the shared key/value parser: the
+      // lifecycle's BuildReceiptEvidence (:863-894) appends its settlement block to a base
+      // list that already carries `topology`, so the emitted detail has a DUPLICATE key and
+      // the duplicate-rejecting parser cannot read it. The rule therefore matches the
+      // producer's own terminal markers exactly; `day_started_observed=true` is the one the
+      // lifecycle gates the `passed` terminal on (DecideDayStart => Confirmed).
+      return (
+        receipt.reasonCode === "day_advanced" && hasDayAdvancedCompletionEvidence(detail)
+      );
+    case "clear_debris":
+      // farmhandexecutioncontroller.farmingconstructionactions.cs:847-856: the clump is
+      // re-resolved by its own opaque identity and `cleared` is exactly "the clump is gone".
+      return (
+        receipt.reasonCode === "debris_cleared" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "parent",
+            "tool",
+            "required_upgrade",
+            "health_before",
+            "health_after",
+            "clump_removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+          ],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            integerEvidenceValue(e.parent) !== null &&
+            (e.tool === "axe" || e.tool === "pickaxe") &&
+            integerEvidenceValue(e.required_upgrade) !== null &&
+            finiteEvidenceValue(e.health_before) !== null &&
+            finiteEvidenceValue(e.health_after) !== null &&
+            e.clump_removed === "true" &&
+            hasStaminaConservationEvidence(e),
+        )
+      );
+    case "npc_relationship":
+      // farmhandexecutioncontroller.machinesanimalsitemsactions.cs:574-578: a read-only
+      // inspection that mints Succeeded from the live Friendship it just read.
+      return (
+        receipt.reasonCode === "npc_relationship_inspected" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "npc",
+            "points",
+            "status",
+            "talked_to_today",
+            "gifts_today",
+            "gifts_this_week",
+          ],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            hasOpaqueEvidenceValue(e.npc) &&
+            signedIntegerEvidenceValue(e.points) !== null &&
+            hasOpaqueEvidenceValue(e.status) &&
+            (e.talked_to_today === "true" || e.talked_to_today === "false") &&
+            integerEvidenceValue(e.gifts_today) !== null &&
+            integerEvidenceValue(e.gifts_this_week) !== null,
+        )
+      );
+    case "equip_wearable":
+      // farmhandexecutioncontroller.actorstateactions.cs:185-190 (a repeat of an already
+      // satisfied request) and :257-262 (the swap landed). Both are deterministic
+      // successes: append-only `slot/target id` identity plus the body slot's occupant.
+      return (
+        (receipt.reasonCode === "wearable_already_equipped" &&
+          exactEvidence(
+            detail,
+            ["body_slot", "source_slot", "requested", "occupant", "moved"],
+            (e) =>
+              isWearableBodySlot(e.body_slot) &&
+              validSlot(e.source_slot) &&
+              hasOpaqueEvidenceValue(e.requested) &&
+              e.occupant === e.requested &&
+              e.moved === "false",
+          )) ||
+        (receipt.reasonCode === "wearable_equipped" &&
+          exactEvidence(
+            detail,
+            [
+              "body_slot",
+              "source_slot",
+              "requested",
+              "occupant_before",
+              "occupant_after",
+              "displaced",
+              "pack_slot_after",
+            ],
+            (e) =>
+              isWearableBodySlot(e.body_slot) &&
+              validSlot(e.source_slot) &&
+              hasOpaqueEvidenceValue(e.requested) &&
+              isNoneOrOpaqueEvidenceValue(e.occupant_before) &&
+              e.occupant_after === e.requested &&
+              isNoneOrOpaqueEvidenceValue(e.displaced) &&
+              isNoneOrOpaqueEvidenceValue(e.pack_slot_after),
+          ))
+      );
+    case "unequip_wearable":
+      // farmhandexecutioncontroller.actorstateactions.cs:297-303 (the slot is already
+      // empty) and :374-379 (the wearable landed in the named destination slot).
+      return (
+        (receipt.reasonCode === "wearable_already_unequipped" &&
+          exactEvidence(
+            detail,
+            ["body_slot", "destination_slot", "occupant", "moved"],
+            (e) =>
+              isWearableBodySlot(e.body_slot) &&
+              validSlot(e.destination_slot) &&
+              e.occupant === "none" &&
+              e.moved === "false",
+          )) ||
+        (receipt.reasonCode === "wearable_unequipped" &&
+          exactEvidence(
+            detail,
+            [
+              "body_slot",
+              "destination_slot",
+              "occupant_before",
+              "occupant_after",
+              "removed",
+              "destination_before",
+              "destination_after",
+              "landed",
+            ],
+            (e) =>
+              isWearableBodySlot(e.body_slot) &&
+              validSlot(e.destination_slot) &&
+              isNoneOrOpaqueEvidenceValue(e.occupant_before) &&
+              e.occupant_after === "none" &&
+              hasOpaqueEvidenceValue(e.removed) &&
+              e.destination_before === "none" &&
+              e.destination_after === e.removed &&
+              e.landed === "true",
+          ))
+      );
+    case "dismount_transport":
+      // farmhandexecutioncontroller.actorstateactions.cs:439-446: the frozen postcondition
+      // is `!who.isRidingHorse()` re-read after the native Horse.dismount call.
+      return (
+        receipt.reasonCode === "transport_dismounted" &&
+        exactEvidence(
+          detail,
+          [
+            "horse_id",
+            "location",
+            "tile",
+            "riding_before",
+            "mounting_before",
+            "riding_after",
+            "mount_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.horse_id) &&
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasTileEvidenceValue(e.tile) &&
+            (e.riding_before === "true" || e.riding_before === "false") &&
+            (e.mounting_before === "true" || e.mounting_before === "false") &&
+            e.riding_after === "false" &&
+            e.mount_after === "false",
+        )
+      );
+    case "use_warp_item":
+      // farmhandexecutioncontroller.movementactions.cs:574/589-590: the totem's landing tile
+      // is chosen inside the game's own delayed callback, so the reached destination
+      // LOCATION is the postcondition — the same rule use_obelisk already follows.
+      return (
+        receipt.reasonCode === "warp_item_arrived" &&
+        exactEvidence(
+          detail,
+          ["expected", "actual"],
+          (e) =>
+            hasOpaqueEvidenceValue(e.expected) &&
+            hasOpaqueEvidenceValue(e.actual) &&
+            e.expected.split(":")[0] === e.actual.split(":")[0],
+        )
+      );
+    case "pan_ore":
+      // farmhandexecutioncontroller.itemtileactions.cs:531-554: success is the panning site
+      // advancing plus the native TimesPanned stat incrementing in the same call.
+      return (
+        receipt.reasonCode === "ore_panned" &&
+        exactEvidence(
+          detail,
+          [
+            "slot",
+            "tool",
+            "tile",
+            "location",
+            "site_before",
+            "site_after",
+            "site_moved",
+            "times_panned_before",
+            "times_panned_after",
+            "pan_output_overflow",
+            "inventory_slots_before",
+            "inventory_slots_after",
+            "inventory_units_before",
+            "inventory_units_after",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.times_panned_before);
+            const after = integerEvidenceValue(e.times_panned_after);
+            return (
+              validSlot(e.slot) &&
+              hasOpaqueEvidenceValue(e.tool) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              // The panning site is a live, non-zero tile before the pan (the admission refuses
+              // Point.Zero) and the native call clears it afterwards.
+              hasTileEvidenceValue(e.site_before) &&
+              hasTileEvidenceValue(e.site_after) &&
+              e.site_moved === "true" &&
+              before !== null &&
+              after !== null &&
+              after === before + 1 &&
+              (e.pan_output_overflow === "true" || e.pan_output_overflow === "false") &&
+              integerEvidenceValue(e.inventory_slots_before) !== null &&
+              integerEvidenceValue(e.inventory_slots_after) !== null &&
+              integerEvidenceValue(e.inventory_units_before) !== null &&
+              integerEvidenceValue(e.inventory_units_after) !== null
+            );
+          },
+        )
+      );
+    case "claim_mail_attachment":
+      // farmhandexecutioncontroller.itemtileactions.cs:785-805: `claimed` is exactly
+      // `mail_removed && mail_recorded` (the queue lost this letter and the mail registry
+      // holds it). The letter-menu and inventory facts are reported, never asserted.
+      return (
+        receipt.reasonCode === "mail_claimed" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "location",
+            "mail_id",
+            "mail_content_known",
+            "mail_has_attachment",
+            "mail_attachment_commands",
+            "mail_recorded_natively",
+            "pending_before",
+            "pending_after",
+            "mail_removed",
+            "mail_recorded",
+            "letter_opened",
+            "letter_closed",
+            "collection_overflow_pending",
+            "inventory_slots_before",
+            "inventory_slots_after",
+            "inventory_units_before",
+            "inventory_units_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasBoundedNonemptyEvidenceValue(e.mail_id) &&
+            booleanEvidenceValue(e.mail_content_known) &&
+            booleanEvidenceValue(e.mail_has_attachment) &&
+            integerEvidenceValue(e.mail_attachment_commands) !== null &&
+            booleanEvidenceValue(e.mail_recorded_natively) &&
+            integerEvidenceValue(e.pending_before) !== null &&
+            integerEvidenceValue(e.pending_after) !== null &&
+            e.mail_removed === "true" &&
+            e.mail_recorded === "true" &&
+            booleanEvidenceValue(e.letter_opened) &&
+            booleanEvidenceValue(e.letter_closed) &&
+            booleanEvidenceValue(e.collection_overflow_pending) &&
+            integerEvidenceValue(e.inventory_slots_before) !== null &&
+            integerEvidenceValue(e.inventory_slots_after) !== null &&
+            integerEvidenceValue(e.inventory_units_before) !== null &&
+            integerEvidenceValue(e.inventory_units_after) !== null,
+        )
+      );
+    case "water_pet_bowl":
+      // farmhandexecutioncontroller.petbowlactions.cs:112-115: the native watering path ran
+      // and the bowl's own watered flag flipped. Same embodied-conservation clause as
+      // water_crop, because it runs the same native tool path.
+      return (
+        receipt.reasonCode === "pet_bowl_watered" &&
+        hasWateringToolCompletionEvidence(detail)
+      );
+    case "water_slime_hutch_trough":
+      // farmhandexecutioncontroller.slimehutchtroughactions.cs:135-138: same native tool
+      // path and same evidence shape as water_pet_bowl.
+      return (
+        receipt.reasonCode === "slime_hutch_trough_watered" &&
+        hasWateringToolCompletionEvidence(detail)
+      );
+    case "dismiss_modal":
+      // farmhandexecutioncontroller.modalactions.cs:145-152: the close is proved by the
+      // modal registry and the dialogue flag, and `close_effect` names which of the two
+      // audited close paths actually ran.
+      return (
+        receipt.reasonCode === "modal_dismissed" &&
+        exactEvidence(
+          detail,
+          ["modal_type", "dismissed", "cleared_modal", "close_effect"],
+          (e) =>
+            hasOpaqueEvidenceValue(e.modal_type) &&
+            e.dismissed === "true" &&
+            e.cleared_modal === e.modal_type &&
+            (e.close_effect === "native_dialogue_close" || e.close_effect === "pure_cancel"),
+        )
+      );
+    case "answer_dialogue":
+      // farmhandexecutioncontroller.modalactions.cs:255-260: the native answer was accepted
+      // and the dialogue's own outro started.
+      return (
+        receipt.reasonCode === "answer_dialogue_answered" &&
+        exactEvidence(
+          detail,
+          ["modal_type", "question", "response_key", "native_answered", "outro_started", "postcondition"],
+          (e) =>
+            e.modal_type === "DialogueBox" &&
+            e.question === "true" &&
+            hasBoundedNonemptyEvidenceValue(e.response_key) &&
+            e.native_answered === "true" &&
+            e.outro_started === "true" &&
+            e.postcondition === "dialogue_outro_started",
+        )
+      );
+    case "chest_store":
+      // farmhandexecutioncontroller.containeractions.cs:107-113: the chest took the whole stack,
+      // the player slot released that same item, and the chest gained exactly the held stack.
+      return (
+        receipt.reasonCode === "chest_stored" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "container",
+            "item",
+            "player_stack_before",
+            "player_stack_after",
+            "source_consumed",
+            "chest_stack_before",
+            "chest_stack_after",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const playerBefore = integerEvidenceValue(e.player_stack_before);
+            const chestBefore = integerEvidenceValue(e.chest_stack_before);
+            const chestAfter = integerEvidenceValue(e.chest_stack_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              isStorageContainerKind(e.container) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              playerBefore !== null &&
+              integerEvidenceValue(e.player_stack_after) !== null &&
+              e.source_consumed === "true" &&
+              chestBefore !== null &&
+              chestAfter !== null &&
+              chestAfter === chestBefore + playerBefore &&
+              e.native_menu_opened === "false"
+            );
+          },
+        )
+      );
+    case "chest_retrieve":
+      // farmhandexecutioncontroller.containeractions.cs:192-196: the whole stack left the chest
+      // (`leftover is null`) and the same amount entered the backpack. The stack size itself is
+      // not in the receipt, so both observed deltas are required and must agree.
+      return (
+        receipt.reasonCode === "chest_retrieved" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "container",
+            "item",
+            "chest_stack_before",
+            "chest_stack_after",
+            "inventory_before",
+            "inventory_after",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const chestBefore = integerEvidenceValue(e.chest_stack_before);
+            const chestAfter = integerEvidenceValue(e.chest_stack_after);
+            const inventoryBefore = integerEvidenceValue(e.inventory_before);
+            const inventoryAfter = integerEvidenceValue(e.inventory_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              isStorageContainerKind(e.container) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              chestBefore !== null &&
+              chestAfter !== null &&
+              inventoryBefore !== null &&
+              inventoryAfter !== null &&
+              chestAfter < chestBefore &&
+              inventoryAfter > inventoryBefore &&
+              chestBefore - chestAfter === inventoryAfter - inventoryBefore &&
+              e.native_menu_opened === "false"
+            );
+          },
+        )
+      );
+    case "chop_stump":
+      // farmhandexecutioncontroller.resourcetoolactions.cs:575-584: the native stump fell
+      // (health marker -100) or its terrain feature is gone.
+      return (
+        receipt.reasonCode === "stump_cleared" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "type",
+            "tree",
+            "tool",
+            "tool_level",
+            "health_before",
+            "health_after",
+            "swings",
+            "stump_removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.type === "tree_stump" &&
+            hasOpaqueEvidenceValue(e.tree) &&
+            e.tool === "axe" &&
+            integerEvidenceValue(e.tool_level) !== null &&
+            finiteEvidenceValue(e.health_before) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.health_after) &&
+            positiveIntegerEvidence(e.swings) !== null &&
+            e.stump_removed === "true" &&
+            hasStaminaConservationEvidence(e),
+        )
+      );
+    case "plant_sapling":
+      // farmhandexecutioncontroller.farmingconstructionactions.cs:386-394: the native placement
+      // ran, a Tree now stands on the tile, and the backpack lost exactly one sapling.
+      return (
+        receipt.reasonCode === "sapling_planted" &&
+        exactEvidence(
+          detail,
+          ["location", "target", "tile", "item", "slot", "tree_type", "inventory_before", "inventory_after", "native_placement"],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            hasOpaqueEvidenceValue(e.item) &&
+            validSlot(e.slot) &&
+            e.tree_type !== "none" &&
+            hasOpaqueEvidenceValue(e.tree_type) &&
+            decremented(e.inventory_before, e.inventory_after) &&
+            e.native_placement === "true",
+        )
+      );
+    case "cut_weeds":
+      // farmhandexecutioncontroller.resourcetoolactions.cs:806-807: the native weed branch
+      // reported the cut AND the map entry left the world.
+      return (
+        receipt.reasonCode === "weeds_cut" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "type",
+            "tool",
+            "qualified_item_id",
+            "health_before",
+            "health_after",
+            "swings",
+            "removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.type === "weed" &&
+            e.tool === "scythe" &&
+            hasOpaqueEvidenceValue(e.qualified_item_id) &&
+            integerEvidenceValue(e.health_before) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.health_after) &&
+            positiveIntegerEvidence(e.swings) !== null &&
+            e.removed === "true" &&
+            hasStaminaConservationEvidence(e),
+        )
+      );
+    case "cut_grass":
+      // farmhandexecutioncontroller.resourcetoolactions.cs:740-742: the tuft is gone from the
+      // terrain layer. The hay roll inside Grass.TryDropItemsOnCut is deliberately not
+      // re-derived (the producer records only what actually changed).
+      return (
+        receipt.reasonCode === "grass_cut" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "type",
+            "tool",
+            "grass_type",
+            "weeds_before",
+            "weeds_after",
+            "swings",
+            "removed",
+            "tuft_removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.type === "grass" &&
+            e.tool === "scythe" &&
+            integerEvidenceValue(e.grass_type) !== null &&
+            integerEvidenceValue(e.weeds_before) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.weeds_after) &&
+            positiveIntegerEvidence(e.swings) !== null &&
+            e.removed === "true" &&
+            e.tuft_removed === "true" &&
+            hasStaminaConservationEvidence(e),
+        )
+      );
+    case "clear_cask":
+      // farmhandexecutioncontroller.facilityactions.cs:46-52: `postcondition` is the
+      // producer's own re-read of the cask tile (gone, or present and emptied).
+      return (
+        receipt.reasonCode === "cask_cleared" &&
+        exactEvidence(
+          detail,
+          ["target", "tool", "had_held_object", "held_qualified_item_id", "removed", "postcondition"],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasOpaqueEvidenceValue(e.tool) &&
+            booleanEvidenceValue(e.had_held_object) &&
+            isNoneOrOpaqueEvidenceValue(e.held_qualified_item_id) &&
+            booleanEvidenceValue(e.removed) &&
+            e.postcondition === "true",
+        )
+      );
+    case "dress_mannequin":
+      // farmhandexecutioncontroller.facilityactions.cs:88-98: the named body field of the
+      // mannequin now holds exactly the offered item. Slot/item stay in the identity clause.
+      return (
+        receipt.reasonCode === "mannequin_dressed" &&
+        exactEvidence(detail, ["target", "slot", "item", "stored"], (e) =>
+          hasOpaqueIdEvidenceValue(e.target) &&
+          validSlot(e.slot) &&
+          hasOpaqueEvidenceValue(e.item) &&
+          e.stored === "true",
+        )
+      );
+    case "set_sign_display":
+      // farmhandexecutioncontroller.facilityactions.cs:129-133: Sign.checkForAction handled the
+      // request and the sign's own display slot holds exactly the offered item.
+      return (
+        receipt.reasonCode === "sign_display_set" &&
+        exactEvidence(detail, ["target", "slot", "item"], (e) =>
+          hasOpaqueIdEvidenceValue(e.target) &&
+          validSlot(e.slot) &&
+          hasOpaqueEvidenceValue(e.item),
+        )
+      );
+    case "deposit_silo_hay":
+      // farmhandexecutioncontroller.facilityactions.cs:169-171: the silo's own hay counter gained
+      // exactly what the held stack lost, and the source slot released that much.
+      return (
+        receipt.reasonCode === "silo_hay_deposited" &&
+        exactEvidence(
+          detail,
+          ["target", "slot", "stored", "hay_before", "hay_after"],
+          (e) => {
+            const stored = positiveIntegerEvidence(e.stored);
+            const before = integerEvidenceValue(e.hay_before);
+            const after = integerEvidenceValue(e.hay_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              validSlot(e.slot) &&
+              stored !== null &&
+              before !== null &&
+              after !== null &&
+              after === before + stored
+            );
+          },
+        )
+      );
+    case "toggle_tool_light":
+      // farmhandexecutioncontroller.facilityactions.cs:184-189: the native LightSource.DoFunction
+      // returns void, so only the lantern's own flag moving proves the toggle.
+      return (
+        receipt.reasonCode === "tool_light_toggled" &&
+        exactEvidence(detail, ["slot", "was_on", "is_on"], (e) =>
+          validSlot(e.slot) &&
+          booleanEvidenceValue(e.was_on) &&
+          booleanEvidenceValue(e.is_on) &&
+          e.was_on !== e.is_on,
+        )
+      );
+    case "harvest_bush":
+      // farmhandexecutioncontroller.treebushactions.cs:67-72: the bush's own harvest state flip
+      // is the postcondition across every size. A size-4 bush queues its drop inside the native
+      // mutex, so the in-frame debris delta is OBSERVED and deliberately not asserted.
+      return (
+        receipt.reasonCode === "bush_harvested" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "ready_for_harvest_before",
+            "ready_for_harvest_after",
+            "debris_before",
+            "debris_after",
+            "item_dropped_in_frame",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            e.ready_for_harvest_before === "true" &&
+            e.ready_for_harvest_after === "false" &&
+            integerEvidenceValue(e.debris_before) !== null &&
+            integerEvidenceValue(e.debris_after) !== null &&
+            booleanEvidenceValue(e.item_dropped_in_frame),
+        )
+      );
+    case "harvest_fruit_tree":
+      // farmhandexecutioncontroller.treebushactions.cs:114-117: Tree.shake produced fruit debris
+      // in the same frame, and that debris delta is the whole postcondition.
+      return (
+        receipt.reasonCode === "fruit_tree_harvested" &&
+        exactEvidence(
+          detail,
+          ["target", "tile", "debris_before", "debris_after", "fruit_dropped"],
+          (e) => {
+            const before = integerEvidenceValue(e.debris_before);
+            const after = integerEvidenceValue(e.debris_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              before !== null &&
+              after !== null &&
+              after > before &&
+              e.fruit_dropped === "true"
+            );
+          },
+        )
+      );
+    case "shake_tree":
+      // farmhandexecutioncontroller.treebushactions.cs:185-188: the seed left the tree AND the
+      // native shaken-today lock was recorded, which is exactly the producer's own condition.
+      return (
+        receipt.reasonCode === "tree_shaken" &&
+        exactEvidence(
+          detail,
+          ["target", "tile", "has_seed_before", "has_seed_after", "shaken_today"],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            e.has_seed_before === "true" &&
+            e.has_seed_after === "false" &&
+            e.shaken_today === "true",
+        )
+      );
+    case "take_pedestal_item":
+      // farmhandexecutioncontroller.cs:1326-1331 UpdateActivePedestalTaking: the pedestal's own
+      // held object is empty and the backpack gained at least the stack that was on it.
+      return (
+        receipt.reasonCode === "pedestal_item_taken" &&
+        exactEvidence(
+          detail,
+          ["location", "target", "item", "stack", "inventory_before", "inventory_after", "held_object_empty"],
+          (e) => {
+            const stack = positiveIntegerEvidence(e.stack);
+            const before = integerEvidenceValue(e.inventory_before);
+            const after = integerEvidenceValue(e.inventory_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              stack !== null &&
+              before !== null &&
+              after !== null &&
+              after >= before + stack &&
+              e.held_object_empty === "true"
+            );
+          },
+        )
+      );
+    case "toggle_fence_gate":
+      // farmhandexecutioncontroller.pedestalfenceactions.cs:131-135: the gate's own position moved
+      // between its two native values (0 closed / 88 open), and `is_open` is derived from it.
+      return (
+        receipt.reasonCode === "fence_gate_toggled" &&
+        exactEvidence(
+          detail,
+          ["target", "tile", "gate_position_before", "gate_position_after", "is_open"],
+          (e) => {
+            const before = integerEvidenceValue(e.gate_position_before);
+            const after = integerEvidenceValue(e.gate_position_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              before !== null &&
+              after !== null &&
+              ((before === 0 && after === 88) || (before === 88 && after === 0)) &&
+              e.is_open === (after === 88 ? "true" : "false")
+            );
+          },
+        )
+      );
+    case "scythe_crop":
+      // farmhandexecutioncontroller.farmingconstructionactions.cs:939-954: the crop left the
+      // HoeDirt AND the matching produce debris appeared — the native scythe branch never
+      // puts anything in the backpack, so inventory growth is not a postcondition here.
+      return (
+        receipt.reasonCode === "scythe_crops_harvested" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "crop",
+            "harvested_item",
+            "debris_before",
+            "debris_after",
+            "crop_removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+            "native_scythe",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.debris_before);
+            const after = integerEvidenceValue(e.debris_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasBoundedNonemptyEvidenceValue(e.crop) &&
+              hasOpaqueEvidenceValue(e.harvested_item) &&
+              before !== null &&
+              after !== null &&
+              after > before &&
+              e.crop_removed === "true" &&
+              e.native_scythe === "true" &&
+              hasStaminaConservationEvidence(e)
+            );
+          },
+        )
+      );
+    case "craft_item":
+      // farmhandexecutioncontroller.craftingactions.cs:151-154: the Succeeded terminal is the
+      // `remainingStack == 0` branch, i.e. the whole product entered the backpack; the same
+      // call also requires exact ingredient consumption, the native craft counter, and no menu.
+      return (
+        receipt.reasonCode === "crafted_item_created" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "recipe",
+            "output",
+            "produced_stack",
+            "produced_per_craft",
+            "disposition",
+            "inventory_gained_stack",
+            "dropped_stack",
+            "inventory_accepting_before",
+            "materials_consumed_exactly",
+            "inventory_postcondition",
+            "count_before",
+            "count_after",
+            "count_postcondition",
+            "ingredients",
+            "dropped_debris",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const produced = positiveIntegerEvidence(e.produced_stack);
+            const perCraft = positiveIntegerEvidence(e.produced_per_craft);
+            const gained = integerEvidenceValue(e.inventory_gained_stack);
+            const countBefore = integerEvidenceValue(e.count_before);
+            const countAfter = integerEvidenceValue(e.count_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueEvidenceValue(e.recipe) &&
+              hasOpaqueEvidenceValue(e.output) &&
+              produced !== null &&
+              perCraft !== null &&
+              (e.disposition === "added_to_inventory" || e.disposition === "granted_without_inventory_space") &&
+              gained !== null &&
+              gained === produced &&
+              e.dropped_stack === "0" &&
+              booleanEvidenceValue(e.inventory_accepting_before) &&
+              e.materials_consumed_exactly === "true" &&
+              e.inventory_postcondition === "true" &&
+              countBefore !== null &&
+              countAfter !== null &&
+              countAfter === countBefore + perCraft &&
+              e.count_postcondition === "true" &&
+              hasBoundedNonemptyEvidenceValue(e.ingredients) &&
+              integerEvidenceValue(e.dropped_debris) !== null &&
+              e.native_menu_opened === "false"
+            );
+          },
+        )
+      );
+    case "cook_recipe":
+      // farmhandexecutioncontroller.cookingactions.cs:244-253 mints two Succeeded terminals:
+      //   dish_cooked                    — the whole dish entered the backpack (dropped 0);
+      //   dish_cooked_dropped_on_ground  — a full backpack, so the whole dish was dropped.
+      // `dish_cooked_output_dropped` is PartiallySucceeded and is refused by the state gate.
+      return (
+        (receipt.reasonCode === "dish_cooked" && hasCookRecipeCompletionEvidence(detail, false)) ||
+        (receipt.reasonCode === "dish_cooked_dropped_on_ground" &&
+          hasCookRecipeCompletionEvidence(detail, true))
+      );
+    case "collect_crab_pot_output":
+      // farmhandexecutioncontroller.crabpotactions.cs:177-185: the native 714 branch ran and the
+      // pot is back to its empty, unbaited 710 state, with the 1..2 native delivery window in the
+      // backpack. `numToCatch` is content/state derived (Crabbing book), so the window is the rule.
+      return (
+        receipt.reasonCode === "crab_pot_output_collected" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "pot",
+            "owner",
+            "output",
+            "stack_delivered",
+            "inventory_before",
+            "inventory_after",
+            "held_after",
+            "ready_after",
+            "tile_index_after",
+            "bait_after",
+            "pot_retained",
+            "native_handled",
+            "native_entry",
+            "fishing_experience_before",
+            "fishing_experience_after",
+          ],
+          (e) => {
+            const delivered = integerEvidenceValue(e.stack_delivered);
+            const before = integerEvidenceValue(e.inventory_before);
+            const after = integerEvidenceValue(e.inventory_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              e.pot === "(O)710" &&
+              hasDecimalOwnerIdEvidenceValue(e.owner) &&
+              hasOpaqueEvidenceValue(e.output) &&
+              delivered !== null &&
+              delivered >= 1 &&
+              delivered <= 2 &&
+              before !== null &&
+              after !== null &&
+              after === before + delivered &&
+              e.held_after === "none" &&
+              e.ready_after === "false" &&
+              e.tile_index_after === "710" &&
+              e.bait_after === "none" &&
+              e.pot_retained === "true" &&
+              e.native_handled === "true" &&
+              e.native_entry === "GameLocation.checkAction,CrabPot.checkForAction" &&
+              integerEvidenceValue(e.fishing_experience_before) !== null &&
+              integerEvidenceValue(e.fishing_experience_after) !== null
+            );
+          },
+        )
+      );
+    case "ship_item":
+      // farmhandexecutioncontroller.shippingactions.cs:106-111: the source slot released the
+      // stack, the bin gained exactly it, and the native Farm.lastItemShipped is that item.
+      return (
+        receipt.reasonCode === "item_shipped" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "bin",
+            "tile",
+            "item",
+            "slot",
+            "stack",
+            "inventory_before",
+            "inventory_after",
+            "bin_before",
+            "bin_after",
+            "last_item_shipped_matched",
+            "native_menu_opened",
+          ],
+          (e) => {
+            const stack = positiveIntegerEvidence(e.stack);
+            const inventoryBefore = integerEvidenceValue(e.inventory_before);
+            const inventoryAfter = integerEvidenceValue(e.inventory_after);
+            const binBefore = integerEvidenceValue(e.bin_before);
+            const binAfter = integerEvidenceValue(e.bin_after);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.bin) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              validSlot(e.slot) &&
+              stack !== null &&
+              inventoryBefore !== null &&
+              inventoryAfter !== null &&
+              inventoryAfter === inventoryBefore - stack &&
+              binBefore !== null &&
+              binAfter !== null &&
+              binAfter === binBefore + stack &&
+              e.last_item_shipped_matched === "true" &&
+              e.native_menu_opened === "false"
+            );
+          },
+        )
+      );
+    case "shop_purchase":
+      // Evidence literal: farmhandexecutioncontroller.shopactions.cs - the terminal is minted only when the trade
+      // moved BOTH sides (`moneyAfter < moneyBefore && gained > 0`), and the receipt carries:
+      // shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;
+      // gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops.
+      //
+      // The rule restates the Mod's OWN success condition from the evidence instead of trusting the code: money
+      // went down, goods went up, and the menu really closed. `owner` is `none` when the shop is entered through
+      // its counter TILE (no NPC owns it), and the two diagnostics are lists whose entries separate their parts
+      // with `|`.
+      //
+      // Both of those shapes are recent: the tile-opened case used to write an EMPTY `owner=`, and the diagnostics
+      // used to embed `;` inside their values - either one splits into fields this module cannot read, which is why
+      // the action previously had no rule at all (a rule that cannot match the producer's real detail would look
+      // like completion coverage while never accepting a success).
+      return (
+        receipt.reasonCode === "item_purchased" &&
+        exactEvidence(
+          detail,
+          [
+            "shop",
+            "owner",
+            "entry",
+            "item",
+            "requested",
+            "purchased",
+            "unit_price",
+            "money_before",
+            "money_after",
+            "owned_before",
+            "owned_after",
+            "gained",
+            "stock_before",
+            "stock_after",
+            "owner_tile",
+            "menu_closed",
+            "clicks",
+            "drops",
+          ],
+          (e) =>
+            (e.shop?.length ?? 0) > 0 &&
+            (e.owner?.length ?? 0) > 0 &&
+            (e.entry === "tile_action" || e.entry === "npc_owner") &&
+            hasOpaqueEvidenceValue(e.item) &&
+            integerEvidenceValue(e.requested) !== null &&
+            integerEvidenceValue(e.purchased) !== null &&
+            integerEvidenceValue(e.unit_price) !== null &&
+            // NOT `decremented`/`incremented`: those are the exact +/-1 helpers for a single-unit transfer, and a
+            // purchase of several units moves money and goods by the price and the quantity. The Mod's own success
+            // condition is the inequality (`moneyAfter < moneyBefore && gained > 0`), so the rule states it.
+            integerEvidenceValue(e.money_before) !== null &&
+            integerEvidenceValue(e.money_after) !== null &&
+            (integerEvidenceValue(e.money_after) ?? 0) < (integerEvidenceValue(e.money_before) ?? 0) &&
+            integerEvidenceValue(e.owned_before) !== null &&
+            integerEvidenceValue(e.owned_after) !== null &&
+            (integerEvidenceValue(e.owned_after) ?? 0) > (integerEvidenceValue(e.owned_before) ?? 0) &&
+            (integerEvidenceValue(e.gained) ?? 0) > 0 &&
+            e.menu_closed === "true" &&
+            hasTileEvidenceValue(e.owner_tile),
+        )
+      );
     default:
       return false;
   }
+}
+
+/** The four lowercase boolean spellings the Mod writes with `bool.ToString().ToLowerInvariant()`. */
+function booleanEvidenceValue(value: string | undefined): boolean {
+  return value === "true" || value === "false";
+}
+
+/** The six actor body slots the wearable family publishes
+ * (farmhandexecutioncontroller.actorstateactions.cs:146). */
+function isWearableBodySlot(value: string | undefined): boolean {
+  return (
+    value === "hat" ||
+    value === "boots" ||
+    value === "shirt" ||
+    value === "pants" ||
+    value === "left_ring" ||
+    value === "right_ring"
+  );
+}
+
+/** The two storage kinds the container family can resolve (a player chest or the fridge). */
+function isStorageContainerKind(value: string | undefined): boolean {
+  return value === "chest" || value === "fridge";
+}
+
+/**
+ * movementactions.cs:611-617 CompleteTravelAfterWarp for select_mine_elevator_floor.
+ * Floor 0 targets the mine-entrance MAP and emits only the expected/actual pair; a
+ * generated floor lands in a MineShaft and appends `level`. In both shapes only the
+ * destination LOCATION is a postcondition - the native layout picks the landing tile.
+ */
+function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const keys = Object.keys(evidence);
+  const generatedFloor = keys.length === 3 && "level" in evidence;
+  if (keys.length !== 2 && !generatedFloor) return false;
+  if (!("expected" in evidence) || !("actual" in evidence)) return false;
+  if (generatedFloor && positiveIntegerEvidence(evidence.level) === null) return false;
+  return (
+    hasOpaqueEvidenceValue(evidence.expected) &&
+    hasOpaqueEvidenceValue(evidence.actual) &&
+    evidence.expected.split(":")[0] === evidence.actual.split(":")[0]
+  );
+}
+
+/**
+ * The three producer shapes of enter_mine's `mine_entered` terminal:
+ *   transportactions.cs:194  level;tile;from_level — ladder descent, synchronous;
+ *   transportactions.cs:232  level;tile            — mine entrance, synchronous;
+ *   movementactions.cs:611-617 expected;actual;level — the asynchronous Warped arrival,
+ *     where the native MineShaft layout owns the landing tile.
+ * All three prove the same declared/reached level; none is admitted with a foreign shape.
+ */
+function hasMineEntryCompletionEvidence(detail: string): boolean {
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const keys = Object.keys(evidence);
+  if (keys.length === 3 && "level" in evidence && "tile" in evidence && "from_level" in evidence)
+    return (
+      positiveIntegerEvidence(evidence.level) !== null &&
+      positiveIntegerEvidence(evidence.from_level) !== null &&
+      hasTileEvidenceValue(evidence.tile)
+    );
+  if (keys.length === 2 && "level" in evidence && "tile" in evidence)
+    return positiveIntegerEvidence(evidence.level) !== null && hasTileEvidenceValue(evidence.tile);
+  if (keys.length === 3 && "expected" in evidence && "actual" in evidence && "level" in evidence)
+    return (
+      hasOpaqueEvidenceValue(evidence.expected) &&
+      hasOpaqueEvidenceValue(evidence.actual) &&
+      evidence.expected.split(":")[0] === evidence.actual.split(":")[0] &&
+      positiveIntegerEvidence(evidence.level) !== null
+    );
+  return false;
+}
+
+/**
+ * The gift branch of interact_npc_with_item
+ * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:885-889). Succeeded is exactly
+ * `giftGiven && consumedExactlyOne && (giftRecorded || pointsChanged)`, and the native answer
+ * is asked with `showResponse: false`, so no dialogue may have been mounted.
+ */
+function hasGiftGivenCompletionEvidence(detail: string): boolean {
+  return exactEvidence(
+    detail,
+    [
+      "location",
+      "target",
+      "tile",
+      "npc",
+      "item",
+      "slot",
+      "stack_before",
+      "points_before",
+      "gifts_today_before",
+      "gifts_this_week_before",
+      "quest_25_completed_before",
+      "stack_after",
+      "points_after",
+      "gifts_today_after",
+      "gifts_this_week_after",
+      "quest_25_completed_after",
+      "update_gift_limit",
+      "showed_response",
+      "gift_recorded",
+      "points_changed",
+      "spouse_jealousy",
+      "spouse_points_before",
+      "spouse_points_after",
+      "menu_open_after",
+      "dialogue_open_after",
+    ],
+    (e) =>
+      hasBoundedNonemptyEvidenceValue(e.location) &&
+      hasOpaqueIdEvidenceValue(e.target) &&
+      hasTileEvidenceValue(e.tile) &&
+      hasOpaqueEvidenceValue(e.npc) &&
+      hasOpaqueEvidenceValue(e.item) &&
+      validSlot(e.slot) &&
+      positiveIntegerEvidence(e.stack_before) !== null &&
+      signedIntegerEvidenceValue(e.points_before) !== null &&
+      integerEvidenceValue(e.gifts_today_before) !== null &&
+      integerEvidenceValue(e.gifts_this_week_before) !== null &&
+      booleanEvidenceValue(e.quest_25_completed_before) &&
+      integerEvidenceValue(e.stack_after) !== null &&
+      Number(e.stack_after) === Number(e.stack_before) - 1 &&
+      signedIntegerEvidenceValue(e.points_after) !== null &&
+      integerEvidenceValue(e.gifts_today_after) !== null &&
+      integerEvidenceValue(e.gifts_this_week_after) !== null &&
+      booleanEvidenceValue(e.quest_25_completed_after) &&
+      booleanEvidenceValue(e.update_gift_limit) &&
+      e.showed_response === "false" &&
+      booleanEvidenceValue(e.gift_recorded) &&
+      booleanEvidenceValue(e.points_changed) &&
+      (e.gift_recorded === "true" || e.points_changed === "true") &&
+      booleanEvidenceValue(e.spouse_jealousy) &&
+      signedIntegerEvidenceValue(e.spouse_points_before) !== null &&
+      signedIntegerEvidenceValue(e.spouse_points_after) !== null &&
+      booleanEvidenceValue(e.menu_open_after) &&
+      booleanEvidenceValue(e.dialogue_open_after),
+  );
+}
+
+/**
+ * The delivery-quest branch of interact_npc_with_item
+ * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:747-769). Succeeded is exactly
+ * `deliveryCompleted && consumedRequiredNumber && noModalMounted`, where `noModalMounted` is the
+ * receipt's own `dialogue_open_after=false && menu_open_after=false` pair.
+ */
+function hasQuestItemDeliveredCompletionEvidence(detail: string): boolean {
+  return exactEvidence(
+    detail,
+    [
+      "location",
+      "target",
+      "tile",
+      "npc",
+      "item",
+      "slot",
+      "stack_before",
+      "points_before",
+      "gifts_today_before",
+      "gifts_this_week_before",
+      "quest_25_completed_before",
+      "quest_id",
+      "quest_target",
+      "quest_item",
+      "quest_number",
+      "quest_daily",
+      "quest_completed_before",
+      "quest_completed_after",
+      "quest_stays_in_log",
+      "completed_quests_before",
+      "completed_quests_after",
+      "stack_after",
+      "points_after",
+      "friendship_amount",
+      "quest_25_completed_after",
+      "showed_response",
+      "dialogue_open_after",
+      "menu_open_after",
+    ],
+    (e) => {
+      const stackBefore = positiveIntegerEvidence(e.stack_before);
+      const requiredNumber = positiveIntegerEvidence(e.quest_number);
+      const stackAfter = integerEvidenceValue(e.stack_after);
+      return (
+        hasBoundedNonemptyEvidenceValue(e.location) &&
+        hasOpaqueIdEvidenceValue(e.target) &&
+        hasTileEvidenceValue(e.tile) &&
+        hasOpaqueEvidenceValue(e.npc) &&
+        hasOpaqueEvidenceValue(e.item) &&
+        validSlot(e.slot) &&
+        stackBefore !== null &&
+        signedIntegerEvidenceValue(e.points_before) !== null &&
+        integerEvidenceValue(e.gifts_today_before) !== null &&
+        integerEvidenceValue(e.gifts_this_week_before) !== null &&
+        booleanEvidenceValue(e.quest_25_completed_before) &&
+        hasBoundedNonemptyEvidenceValue(e.quest_id) &&
+        hasOpaqueEvidenceValue(e.quest_target) &&
+        hasOpaqueEvidenceValue(e.quest_item) &&
+        requiredNumber !== null &&
+        booleanEvidenceValue(e.quest_daily) &&
+        e.quest_completed_before === "false" &&
+        e.quest_completed_after === "true" &&
+        booleanEvidenceValue(e.quest_stays_in_log) &&
+        integerEvidenceValue(e.completed_quests_before) !== null &&
+        integerEvidenceValue(e.completed_quests_after) !== null &&
+        Number(e.completed_quests_after) >= Number(e.completed_quests_before) &&
+        stackAfter !== null &&
+        stackAfter === stackBefore - requiredNumber &&
+        signedIntegerEvidenceValue(e.points_after) !== null &&
+        positiveIntegerEvidence(e.friendship_amount) !== null &&
+        booleanEvidenceValue(e.quest_25_completed_after) &&
+        e.showed_response === "false" &&
+        e.dialogue_open_after === "false" &&
+        e.menu_open_after === "false"
+      );
+    },
+  );
+}
+
+/**
+ * advance_day's `day_advanced` terminal, read by exact field membership because
+ * SleepAndAdvanceDayLifecycle.BuildReceiptEvidence (:863-894) appends its settlement block to a
+ * base list that already carries `topology`, so the duplicate-rejecting key/value parser cannot
+ * read the detail at all. `day_started_observed=true` is the marker the lifecycle gates the
+ * `passed` terminal on (DecideDayStart => Confirmed, :811-813).
+ */
+function hasDayAdvancedCompletionEvidence(detail: string): boolean {
+  const fields = detail.split(";");
+  return (
+    fields.includes("state=passed") &&
+    fields.includes("reason=day_advanced") &&
+    fields.includes("day_started_observed=true")
+  );
+}
+
+/**
+ * The shared body of water_pet_bowl and water_slime_hutch_trough
+ * (farmhandexecutioncontroller.petbowlactions.cs:98-115,
+ * farmhandexecutioncontroller.slimehutchtroughactions.cs:121-138). Both run the same native
+ * watering-tool path, so both owe the same relation water_crop already asserts: the watered
+ * flag flipped from false to true, at most one unit left the can (a bottomless can or an
+ * enchantment legitimately consumes none), and the embodied stamina half closes.
+ */
+function hasWateringToolCompletionEvidence(detail: string): boolean {
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const expectedKeys = [
+    "location",
+    "target",
+    "tile",
+    "before_watered",
+    "after_watered",
+    "water_before",
+    "water_after",
+    "water_consumed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
+    "native_menu_opened",
+  ];
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
+    return false;
+  const before = integerEvidenceValue(evidence.water_before);
+  const after = integerEvidenceValue(evidence.water_after);
+  return (
+    hasBoundedNonemptyEvidenceValue(evidence.location) &&
+    hasOpaqueIdEvidenceValue(evidence.target) &&
+    hasTileEvidenceValue(evidence.tile) &&
+    evidence.before_watered === "false" &&
+    evidence.after_watered === "true" &&
+    before !== null &&
+    after !== null &&
+    after <= before &&
+    before - after <= 1 &&
+    evidence.water_consumed === "true" &&
+    evidence.native_menu_opened === "false" &&
+    hasStaminaConservationEvidence(evidence)
+  );
+}
+
+/**
+ * cook_recipe's two Succeeded terminals (farmhandexecutioncontroller.cookingactions.cs:244-253).
+ * `droppedOutput` selects the branch: false is `dish_cooked` (the whole dish entered the
+ * backpack), true is `dish_cooked_dropped_on_ground` (a full backpack, whole dish dropped).
+ * The partially-dropped terminal is PartiallySucceeded and never reaches this rule.
+ */
+function hasCookRecipeCompletionEvidence(
+  detail: string,
+  droppedOutput: boolean,
+): boolean {
+  return exactEvidence(
+    detail,
+    [
+      "location",
+      "recipe",
+      "station",
+      "crafted",
+      "crafted_stack",
+      "quality",
+      "seasoning_used",
+      "space_prechecked",
+      "inventory_before",
+      "inventory_after",
+      "delivered",
+      "dropped",
+      "disposition",
+      "recipes_cooked_before",
+      "recipes_cooked_after",
+      "count_incremented",
+      "native_menu_opened",
+      "native_entry",
+    ],
+    (e) => {
+      const craftedStack = positiveIntegerEvidence(e.crafted_stack);
+      const delivered = integerEvidenceValue(e.delivered);
+      const dropped = integerEvidenceValue(e.dropped);
+      const cookedBefore = integerEvidenceValue(e.recipes_cooked_before);
+      const cookedAfter = integerEvidenceValue(e.recipes_cooked_after);
+      return (
+        hasBoundedNonemptyEvidenceValue(e.location) &&
+        hasOpaqueEvidenceValue(e.recipe) &&
+        hasBoundedNonemptyEvidenceValue(e.station) &&
+        e.station.includes("@") &&
+        hasOpaqueEvidenceValue(e.crafted) &&
+        craftedStack !== null &&
+        integerEvidenceValue(e.quality) !== null &&
+        // `seasoning_used={seasoning is not null}` is the one boolean the cooking
+        // producer interpolates without ToLowerInvariant, so it is spelled Title-case.
+        (e.seasoning_used === "True" || e.seasoning_used === "False") &&
+        booleanEvidenceValue(e.space_prechecked) &&
+        integerEvidenceValue(e.inventory_before) !== null &&
+        integerEvidenceValue(e.inventory_after) !== null &&
+        delivered !== null &&
+        dropped !== null &&
+        delivered === craftedStack - dropped &&
+        Number(e.inventory_after) === Number(e.inventory_before) + delivered &&
+        (droppedOutput ? dropped > 0 && delivered === 0 && e.disposition === "dropped_on_ground"
+          : dropped === 0 && delivered > 0 && e.disposition === "inventory") &&
+        cookedBefore !== null &&
+        cookedAfter !== null &&
+        cookedAfter === cookedBefore + 1 &&
+        e.count_incremented === "true" &&
+        hasBoundedNonemptyEvidenceValue(e.native_entry) &&
+        e.native_menu_opened === "false"
+      );
+    },
+  );
 }
 
 function exactEvidence(
