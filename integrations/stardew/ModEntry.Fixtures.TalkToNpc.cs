@@ -119,10 +119,11 @@ public sealed partial class ModEntry
                         continue;
                     // The acceptance test is the NATIVE selection itself: TryGetDialogue(key) is the call the
                     // runner makes, and it can resolve a DIFFERENT row than the scan looked at (observed live:
-                    // Lewis@Saloon). Accept the pair only when BOTH the raw row and the native-selected line
-                    // carry the break.
-                    string? presented = candidate.TryGetDialogue(key)?.getCurrentDialogue();
-                    if (presented is null || !presented.Contains(PageBreakToken, StringComparison.Ordinal))
+                    // Lewis@Saloon). A line is MULTI-PAGE exactly when the native constructor SPLIT it - the break is
+                    // consumed in the split, so asking a page whether it contains the break is false by
+                    // construction. The observable shape of "multi-page" is `dialogues.Count > 1`.
+                    Dialogue? presentedDialogue = candidate.TryGetDialogue(key);
+                    if (presentedDialogue is null || presentedDialogue.dialogues.Count <= 1)
                     {
                         searched.Add($"{candidate.Name}@{key}:native_mismatch");
                         continue;
@@ -225,81 +226,11 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_native_local_talk_to_npc_other_target_in_reach:{other.Name};tile={(int)other.Tile.X},{(int)other.Tile.Y}");
 
-        // THE MULTI-PAGE LINE, chosen by scanning the villager's own loaded dialogue. Candidates are filtered by
-        // what can actually RENDER, not merely by what contains the break: a live run showed that keys carrying
-        // other dialogue commands (`accept_865` carries more than a break) throw out of `getCurrentString()` when
-        // re-keyed as the location dialogue, because those commands only work in the context they were written
-        // for. So a candidate must be plain text plus breaks, and the failure names every key it considered.
-        string multiPageSourceKey = string.Empty;
-        if (requireMultiPage)
-        {
-            List<string> breakKeys = villager.Dialogue
-                .Where(entry => entry.Value.Contains(PageBreakToken, StringComparison.Ordinal))
-                .Select(entry => entry.Key)
-                .ToList();
-            List<string> rejected = new();
-            foreach (string candidate in breakKeys)
-            {
-                string withoutBreaks = villager.Dialogue[candidate].Replace(PageBreakToken, string.Empty, StringComparison.Ordinal);
-                bool plain = !withoutBreaks.Contains('$', StringComparison.Ordinal)
-                    && !withoutBreaks.Contains('%', StringComparison.Ordinal)
-                    && !withoutBreaks.Contains('{', StringComparison.Ordinal)
-                    && !withoutBreaks.Contains('}', StringComparison.Ordinal);
-                if (!plain)
-                {
-                    rejected.Add(candidate);
-                    continue;
-                }
-                multiPageSourceKey = candidate;
-                break;
-            }
-            if (multiPageSourceKey.Length == 0)
-                throw new InvalidOperationException(
-                    $"fixture_native_local_talk_to_npc_no_plain_multi_page_dialogue:villager={villager.Name};"
-                        + $"break_keys={string.Join(",", breakKeys)};rejected_as_not_plain={string.Join(",", rejected)}");
-            // Queue it on the villager rather than re-keying the dialogue table. The earlier attempt assigned
-            // `villager.Dialogue[saloon.Name] = …` and a live run proved that does nothing observable: the box
-            // still showed Gus's PLAIN Saloon line, byte for byte. `Dialogue` is a property, so that assignment
-            // may well have mutated a temporary - and `CurrentDialogue` is the queue the game actually reads.
-            // The TEXT is still the game's own (chosen from `villager.Dialogue` above); only the delivery differs.
-            // The middle parameter is the TRANSLATION key: documented as optional ("if known") and expected as
-            // `assetName:fieldKey`. Passing the location name there was malformed - and a malformed key is why
-            // the queued text could not be read. So: try the two honest forms, keep the one that VERIFIABLY
-            // carries the break, and record what each produced.
-            string multiPageText = villager.Dialogue[multiPageSourceKey];
-            string translationKey = $"Characters/Dialogue/{villager.Name}:{multiPageSourceKey}";
-            List<int> attemptLengths = new();
-            bool queuedWithBreak = false;
-            foreach (Dialogue candidate in new[]
-            {
-                new Dialogue(villager, null, multiPageText),
-                new Dialogue(villager, translationKey, multiPageText),
-            })
-            {
-                villager.CurrentDialogue.Clear();
-                villager.CurrentDialogue.Push(candidate);
-                string attemptText = villager.CurrentDialogue.Peek().getCurrentDialogue() ?? string.Empty;
-                attemptLengths.Add(attemptText.Length);
-                // `getCurrentDialogue()` is the CURRENT PAGE, so a split text shows up as a page STRICTLY
-                // SHORTER than the whole line. Asking a page whether it contains the break is false by
-                // construction - the break is consumed when the text is split - which is the mistake that made
-                // a working delivery look broken and stopped every run at the fixture.
-                if (attemptText.Length > 0 && attemptText.Length < multiPageText.Length)
-                {
-                    queuedWithBreak = true;
-                    break;
-                }
-            }
-
-            // THE ASSERTION WHOSE ABSENCE COST A RUN. The earlier attempt made the pager look broken while the
-            // real fault was that the multi-page text never reached the box. So the fixture now verifies that
-            // what the villager is QUEUED to say is the multi-page text - before any run can blame the pager.
-            if (!queuedWithBreak)
-                throw new InvalidOperationException(
-                    $"fixture_native_local_talk_to_npc_multi_page_not_queued:villager={villager.Name};"
-                        + $"source_key={multiPageSourceKey};source_length={multiPageText.Length};"
-                        + $"attempt_lengths={string.Join(",", attemptLengths)};translation_key={translationKey}");
-        }
+        // NO MANUAL DELIVERY HERE. The pair chosen above presents through the game's own path: `TryGetDialogue`
+        // on the location key is the same call the talk branch makes, so the box the pager sees is a genuine
+        // native box. A hand-pushed `CurrentDialogue` once produced a box whose text read threw, and the fix was
+        // not to push differently - it was to let the native selection do the delivery. (The shipped single-page
+        // scenario enters here with `requireMultiPage == false`, so it also needs no delivery.)
 
         // The branch-selection fact itself, asked through the game's own dialogue table with
         // the key the native lookup builds from the actor's location (NPC.cs:3948). If the
@@ -308,13 +239,14 @@ public sealed partial class ModEntry
         if (villager.TryGetDialogue(saloon.Name) is null)
             throw new InvalidOperationException(
                 $"fixture_native_local_talk_to_npc_location_dialogue_missing:villager={villager.Name};dialogue_key={saloon.Name}");
-        // And for the multi-page scenario, the line the game will present must ITSELF carry the break: the search
-        // above found one, and this proves it is the one this pair actually talks about. Written as two steps
-        // because a pattern binding combined with `||` leaves the variable not-definitely-assigned.
+        // The line the game will present must itself be multi-page: the search above found it, and this proves
+        // it is the one this pair actually talks about. Multi-page is `dialogues.Count > 1` - the native
+        // constructor splits on the break and CONSUMES it, so checking a page for the break is false by
+        // construction (the same mistake made a working Lewis@Saloon look like a mismatch).
         if (requireMultiPage)
         {
             Dialogue? presented = villager.TryGetDialogue(saloon.Name);
-            if (presented is null || !presented.getCurrentDialogue().Contains(PageBreakToken, StringComparison.Ordinal))
+            if (presented is null || presented.dialogues.Count <= 1)
                 throw new InvalidOperationException(
                     $"fixture_native_local_talk_to_npc_presented_line_not_multi_page:villager={villager.Name};dialogue_key={saloon.Name}");
         }
@@ -326,7 +258,7 @@ public sealed partial class ModEntry
                 + $"location={saloon.NameOrUniqueName};villager={villager.Name};villager_tile={(int)villagerTile.X},{(int)villagerTile.Y};"
                 + $"standing_tile={(int)standingTile.X},{(int)standingTile.Y};hands_empty=true;"
                 + $"friendship_points=0;talked_to_today=false;dialogue_key={saloon.Name};villager_schedule_pinned=true;"
-                + $"multi_page_required={requireMultiPage.ToString().ToLowerInvariant()};dialogue_source_key={(requireMultiPage ? multiPageSourceKey : saloon.Name)};"
+                + $"multi_page_required={requireMultiPage.ToString().ToLowerInvariant()};dialogue_source_key={saloon.Name};"
                 + "production alone calls NPC.checkAction and emits the receipt.",
             LogLevel.Info);
     }

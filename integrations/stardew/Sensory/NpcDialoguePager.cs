@@ -85,7 +85,14 @@ internal sealed class NpcDialoguePager
             // ticking - the dialogue is skipped, not the session.
             string key = error.GetType().Name + ":" + error.Message;
             if (this.reportedFailures.Add(key))
-                this.monitor?.Log($"GameBuddy dialogue pager skipped a box: {key}", LogLevel.Warn);
+            {
+                // Name the state that was present when ObserveCore threw, so a NRE in the pager's own path is
+                // diagnosable instead of looking like "the game is broken".
+                string state =
+                    $"tracked={(this.trackedBox is null ? "null" : "box")};emitted={this.emitted.ToString().ToLowerInvariant()};"
+                    + $"pages={this.pages.Count};captured={this.capturedCurrentPage.ToString().ToLowerInvariant()}";
+                this.monitor?.Log($"GameBuddy dialogue pager skipped a box: {key} [{state}]", LogLevel.Warn);
+            }
             this.Reset();
         }
     }
@@ -121,29 +128,69 @@ internal sealed class NpcDialoguePager
             // re-tracked and reported under a second identity) but never touch
             // it again.
             return;
-        if (tracked.transitioning && tracked.transitioningBigger)
-            // Still sliding in. The box is not readable and a click would be
-            // discarded (DialogueBox.cs:357-360).
+        // CAPTURE FIRST, AND READ THE TEXT BEFORE DECIDING. Reading a page is safe at any moment
+        // (`getCurrentString()` returns the whole page) while CLICKING is not, and the text is what distinguishes
+        // the two transitions a live run showed: the PAGE CHANGE arrived with different text (16 -> 38 characters
+        // right after the advance), and the CLOSING transition kept presenting the page we had already captured.
+        string? currentPage = CurrentTextOrNull(tracked);
+        // An EMPTY or unreadable page counts as nothing new - it is not content, so it must not block the closing
+        // transition from being recognised (a first draft compared text alone, and the empty page after the last
+        // one read as "something new", so the report never happened).
+        bool presentsSomethingNew = !string.IsNullOrEmpty(currentPage)
+            && (this.pages.Count == 0 || !string.Equals(this.pages[^1], currentPage, StringComparison.Ordinal));
+        if (tracked.transitioning)
+        {
+            // No click during any transition: the native click discards one (DialogueBox.cs:357-360). A slide-IN
+            // (`transitioningBigger`, the pair a fresh box opens with) is not an end at all. A transition that
+            // presents nothing new IS the end - there is nothing left to show, which is how this pager recognises
+            // the closing transition without trusting the `transitioning && !transitioningBigger` heuristic: the
+            // tick log refuted that heuristic, because the page advance produces the very same pair.
+            if (presentsSomethingNew)
+                this.CapturePage(tracked);
+            else if (!tracked.transitioningBigger && this.pages.Count > 0)
+                this.Report(session, tracked);
             return;
-        if (IsOutro(tracked) || tracked.dialogueFinished)
+        }
+        this.CapturePage(tracked);
+        if (tracked.dialogueFinished)
         {
             this.Report(session, tracked);
             return;
         }
         if (tracked.isQuestion)
         {
-            // HARD STOP. Report the question once its text has finished typing,
-            // so the Agent answers what the player can actually read.
-            this.CapturePage(tracked);
-            if (IsTextSettled(tracked))
+            // HARD STOP: never click a question; the Agent answers it. Report once the page is readable, which the
+            // capture above already established - waiting for the typewriter index was an invented precondition (a
+            // live run kept `idx` at 0 through a whole dialogue while the text was fully readable).
+            if (this.pages.Count > 0)
                 this.Report(session, tracked);
             return;
         }
 
-        this.CapturePage(tracked);
         if (CanAdvance(tracked))
         {
-            tracked.receiveLeftClick(0, 0);
+            // Drive the page forward through the SAME native entry the player uses. A live run showed this call can
+            // itself throw (the pager then reported a skipped box and never emitted a fact), so it is guarded like
+            // the read: an un-drivable box must not take the tick down, and the failure is diagnosed rather than
+            // guessed - which page state was present when the click threw.
+            try
+            {
+                tracked.receiveLeftClick(0, 0);
+            }
+            catch (Exception clickError)
+            {
+                string key = "receiveLeftClick:" + clickError.GetType().Name;
+                if (this.reportedFailures.Add(key))
+                    this.monitor?.Log(
+                        "GameBuddy dialogue pager could not drive a page: " + key
+                            + ";characterDialogue_null=" + (tracked.characterDialogue is null).ToString().ToLowerInvariant()
+                            + ";page_count=" + (tracked.dialogues?.Count ?? -1)
+                            + ";index=" + tracked.characterIndexInDialogue
+                            + ";box_text_length=" + (tracked.getCurrentString()?.Length ?? -1),
+                        LogLevel.Warn);
+                this.Reset();
+                return;
+            }
             this.capturedCurrentPage = false;
         }
     }
@@ -167,44 +214,25 @@ internal sealed class NpcDialoguePager
     }
 
     /// <summary>
-    /// The native click would ADVANCE the page rather than only settle typing:
-    /// the text has reached the box's own end-of-page index, the box's
-    /// post-page safety window has elapsed, and the page is not a question.
+    /// The native click would ADVANCE the page: the box's post-page safety window has elapsed, the box is not
+    /// mid-transition, and the page is not a question.
     ///
-    /// "End of page" is the NATIVE boundary, not a finished typewriter: the
-    /// native click itself treats `characterIndexInDialogue` at
-    /// `getCurrentString().Length - 1` as settled (DialogueBox.cs:361-364) and
-    /// the game's `update` only reaches `Length` one step later (:843), so the
-    /// last character may still be undrawn when the page flips. That is the
-    /// boundary the player's own click uses, and the REPORTED text is complete
-    /// either way because `getCurrentString()` returns the whole string.
+    /// It does NOT require the typewriter to have finished. A live run settled that: `characterIndexInDialogue`
+    /// stayed 0 for the whole dialogue while `safetyTimer` drained normally, so a predicate that waited for the
+    /// index to reach the end of the page never fired and the pager never clicked at all - it reported page one and
+    /// stopped. The native click handles an unfinished page ITSELF (its first branch fast-forwards the typewriter:
+    /// DialogueBox.cs:361-364), which is exactly what a player's first click does, so waiting for it here was an
+    /// invented precondition rather than a native one.
     ///
-    /// The safety window is the box's <c>safetyTimer</c>, re-armed to
-    /// <c>DialogueBox.safetyDelay</c> (750, :34) after every advance
-    /// (DialogueBox.cs:462) and decremented by the game's own <c>update</c>
-    /// (:771-774), so pacing stays native instead of a Mod-invented delay. The
-    /// same window is what the native click itself enforces (:367-370).
+    /// The safety window stays: it is the box's own, re-armed to <c>DialogueBox.safetyDelay</c> (750, :34) after
+    /// every advance (:462) and decremented by the game's own <c>update</c> (:771-774), so the pacing remains the
+    /// game's rather than a Mod-invented delay - and it is what the native click enforces too (:367-370).
     /// </summary>
     internal static bool CanAdvance(DialogueBox box) =>
         !box.isQuestion
         && !box.transitioning
-        && box.safetyTimer <= 0
-        && IsTextSettled(box);
+        && box.safetyTimer <= 0;
 
-    /// <summary>
-    /// The native typing index has reached the end of the current page. The
-    /// native click settles typing before it flips the page
-    /// (DialogueBox.cs:361-364), so a page still typing is not presented yet and
-    /// must not be clicked again.
-    ///
-    /// An UNREADABLE page is reported as not settled: the conservative answer,
-    /// because the alternative is clicking a page this code cannot see.
-    /// </summary>
-    internal static bool IsTextSettled(DialogueBox box)
-    {
-        string? text = CurrentTextOrNull(box);
-        return text is not null && box.characterIndexInDialogue >= text.Length - 1;
-    }
 
     /// <summary>
     /// The box's current page, or null when the game cannot produce one.
@@ -228,23 +256,20 @@ internal sealed class NpcDialoguePager
         }
     }
 
-    /// <summary>
-    /// The box is playing its reverse transition. <c>beginOutro</c>
-    /// (DialogueBox.cs:256-261) is the only writer of <c>transitioning = true</c>
-    /// together with <c>transitioningBigger = false</c>, so the pair is the
-    /// native "the dialogue is over" signal; the opening transition of a fresh
-    /// box is the opposite pair (:73-75).
-    /// </summary>
-    internal static bool IsOutro(DialogueBox box) => box.transitioning && !box.transitioningBigger;
-
     private void CapturePage(DialogueBox box)
     {
         if (this.capturedCurrentPage)
             return;
         this.capturedCurrentPage = true;
         string? page = CurrentTextOrNull(box);
-        if (!string.IsNullOrEmpty(page))
-            this.pages.Add(page);
+        if (string.IsNullOrEmpty(page))
+            return;
+        // A capture equal to the previous one is NOT a new page. Native paging takes two clicks per page (the
+        // first finishes the typewriter, the second advances), so the tick after the first click still shows the
+        // same page; counting it would report the same page twice and turn "one page" into a false "two".
+        if (this.pages.Count > 0 && string.Equals(this.pages[^1], page, StringComparison.Ordinal))
+            return;
+        this.pages.Add(page);
     }
 
     /// <summary>
@@ -274,8 +299,26 @@ internal sealed class NpcDialoguePager
                 choices.Add(new NpcDialogueChoice(response.responseKey, response.responseText));
         }
 
+        // OUR CAPTURES FIRST. They are the pages this pager actually saw presented, in order and deduped. The
+        // native `characterDialoguesBrokenUp` is only the CURRENT page's remainder (a live run showed it holding one
+        // entry while the pager had captured two), so preferring it TRUNCATED a correct two-page dialogue to one -
+        // it is a last resort for a box the pager never got to capture at all.
+        string[] pages = this.pages.Count > 0
+            ? this.pages.ToArray()
+            : box.characterDialoguesBrokenUp is { } stack && stack.Count > 0
+                ? ((Func<string[]>)(() => { string[] remaining = stack.ToArray(); Array.Reverse(remaining); return remaining; }))()
+                : this.pages.ToArray();
+
+        if (this.monitor is not null)
+            this.monitor.Log(
+                "GameBuddy pager report: "
+                    + $"our_pages={this.pages.Count};box_dialogues={(box.dialogues?.Count.ToString() ?? "null")};"
+                    + $"box_broken_up={(box.characterDialoguesBrokenUp?.Count.ToString() ?? "null")};"
+                    + $"chosen={pages.Length};speaker={SpeakerOf(box)};question={box.isQuestion.ToString().ToLowerInvariant()}",
+                LogLevel.Trace);
+
         string payloadJson = JsonSerializer.Serialize(
-            new NpcDialoguePresentedPayload(SpeakerOf(box), this.pages.ToArray(), isQuestion, choices.ToArray()));
+            new NpcDialoguePresentedPayload(SpeakerOf(box), pages, isQuestion, choices.ToArray()));
 
         long sequence = System.Threading.Interlocked.Increment(ref dialogueSequence);
         string eventId = $"npc_dialogue_{this.dialogueStartTick}_{sequence}";

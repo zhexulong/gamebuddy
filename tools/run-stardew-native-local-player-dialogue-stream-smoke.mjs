@@ -89,7 +89,11 @@ export async function runDialogueStreamSmoke(client, receipts, config, options =
     );
     const speakers = payloads.map((payload) => payload.speaker);
     const reported = payloads.length > 0 && maxPages >= 1;
-    const speakerNamed = speakers.includes(EXPECTED_SPEAKER);
+    // The speaker the gate expects is the villager the fixture ACTUALLY picked, not a constant: the multi-page
+    // search may choose Lewis or another villager whose location line is multi-page. Hard-coding Gus here made a
+    // correct run fail `speaker_unexpected` once the fixture stopped forcing Gus.
+    const expectedSpeaker = talk?.npc ?? EXPECTED_SPEAKER;
+    const speakerNamed = speakers.includes(expectedSpeaker);
     // The claim this fixture now exists to settle: the pager advanced past page one. Ecumenically counted -
     // `maxPages >= 2` for one box, or two facts for a chain of boxes.
     const paged = maxPages >= 2 || dialogueFacts.length >= 2;

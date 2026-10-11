@@ -39,22 +39,21 @@ public sealed class NpcDialoguePagerTests
     private const string ImplementationRelativePath = "integrations/stardew/Sensory/NpcDialoguePager.cs";
 
     [Fact]
-    public void ABrokenPageReadIsNotSettled_AndNeverEscapes()
+    public void ABrokenPageReadStaysNullAndIsNeverEscaped()
     {
         // The regression a LIVE run found: `Observe` threw a NullReferenceException EVERY tick and starved the
         // bridge (`bridge_response_timeout`). It came out of `getCurrentString()`, which is NOT total -
         // `DialogueBox.cs:716` dereferences `characterDialogue.getCurrentDialogue()`. That accessor is not
-        // virtual, so the state is built through the real chain: an uninitialized `Dialogue` (its `dialogues` list
-        // is null) with a non-empty broken-up stack takes exactly that branch and throws for real.
+        // virtual, so the state is built through the real chain: an uninitialized `Dialogue` (its `dialogues`
+        // list is null) with a non-empty broken-up stack takes exactly that branch and throws for real.
         DialogueBox box = CreateDialogueBox("unreadable");
         box.characterDialogue = (Dialogue)FormatterServices.GetUninitializedObject(typeof(Dialogue));
         box.characterDialoguesBrokenUp.Push("broken up");
 
-        // The read fails, so nothing may claim it succeeded.
+        // The read fails, and it is ALLOWED to: the pager treats an unreadable page as nothing to capture, and
+        // it no longer claims the page is unsettled - a live run showed `characterIndexInDialogue` staying 0
+        // through a whole readable dialogue, so 'settled' could never be established and every page was lost.
         NpcDialoguePager.CurrentTextOrNull(box).Should().BeNull();
-        NpcDialoguePager.IsTextSettled(box).Should().BeFalse(
-            "an unreadable page is not settled: the alternative is clicking a page this code cannot see");
-        NpcDialoguePager.CanAdvance(box).Should().BeFalse();
     }
 
     // ---- the advance predicate -------------------------------------------------
@@ -71,15 +70,22 @@ public sealed class NpcDialoguePagerTests
     }
 
     [Fact]
-    public void CanAdvance_WaitsForTheTypingIndexAndTheBoxesOwnSafetyWindow()
+    public void CanAdvance_WaitsForTheBoxesOwnSafetyWindowAndTransitionsOnly()
     {
+        // WHAT CHANGED AND WHY, from a live run (a real Lewis multi-page dialogue, per-tick log):
+        //   `characterIndexInDialogue` stayed 0 for the whole dialogue while `safetyTimer` drained normally and
+        //   the page text was fully readable, so requiring the typing index made `CanAdvance` false forever and
+        //   the pager NEVER clicked - it reported page one and stopped. The native click does not require it
+        //   either: its own first branch fast-forwards the typewriter (DialogueBox.cs:361-364), which is what a
+        //   player's first click does. So the predicate is the safety window plus 'not a transition, not a
+        //   question', and the pacer ends up taking the two clicks per page the native click expects.
         DialogueBox box = CreateDialogueBox("Fully typed page.");
 
         NpcDialoguePager.CanAdvance(box).Should().BeTrue();
 
         box.characterIndexInDialogue = 3;
-        NpcDialoguePager.CanAdvance(box).Should().BeFalse(
-            "a click while the text is still typing only settles typing (DialogueBox.cs:361-364)");
+        NpcDialoguePager.CanAdvance(box).Should().BeTrue(
+            "the typing index is NOT a precondition: the native click fast-forwards it itself (DialogueBox.cs:361-364)");
 
         box.characterIndexInDialogue = 1000;
         box.safetyTimer = 750;
@@ -90,22 +96,6 @@ public sealed class NpcDialoguePagerTests
         box.transitioning = true;
         NpcDialoguePager.CanAdvance(box).Should().BeFalse(
             "a click during a transition is discarded (DialogueBox.cs:357-360)");
-    }
-
-    [Fact]
-    public void IsOutro_MatchesOnlyTheReverseTransition()
-    {
-        DialogueBox box = CreateDialogueBox("Page.");
-
-        box.transitioning = true;
-        box.transitioningBigger = true;
-        NpcDialoguePager.IsOutro(box).Should().BeFalse("this is the opening transition of a fresh box");
-
-        box.transitioningBigger = false;
-        NpcDialoguePager.IsOutro(box).Should().BeTrue("only beginOutro writes this pair (DialogueBox.cs:256-261)");
-
-        box.transitioning = false;
-        NpcDialoguePager.IsOutro(box).Should().BeFalse();
     }
 
     [Fact]

@@ -5,6 +5,7 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  waitForActionable,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
@@ -44,7 +45,7 @@ const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
 export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
   try {
-    const snapshot = await observeFresh(client, { actionable: true });
+    const snapshot = await waitForActionable(client, await observeFresh(client), 30_000).catch(() => observeFresh(client, { actionable: true }));
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const target = chooseAdjacentVillager(snapshot);
 
