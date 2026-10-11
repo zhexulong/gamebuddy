@@ -116,7 +116,9 @@ export function catalogues(text, fileName = "i18n.ts") {
       name,
       entries,
       duplicates,
-      declaration: `${sourceFile.fileName.replace(/\\/gu, "/").split("/dialogue-web/").pop()}:${line + 1}`,
+      declaration: at(node, sourceFile),
+      file: sourceFile.fileName,
+      line,
     });
   });
   return found;
@@ -151,9 +153,10 @@ function loadCatalogues() {
     assert.equal(
       wanted.length,
       bindings.length,
-      `${relative(DIALOGUE_WEB, file)} must declare the catalogues ${bindings.join(", ")}`,
+      `${relative(DIALOGUE_WEB, file).replace(/\\/gu, "/")} must declare the catalogues ${bindings.join(", ")}`,
     );
-    for (const catalogue of wanted) loaded.push({ ...catalogue, file: relative(DIALOGUE_WEB, file) });
+    for (const catalogue of wanted)
+      loaded.push({ ...catalogue, file: relative(DIALOGUE_WEB, file).replace(/\\/gu, "/") });
   }
   return loaded;
 }
@@ -181,9 +184,9 @@ test("i18n.1: the locales of one catalogue declare exactly the same keys", (t) =
     const rightKeys = new Set(right.entries.map((entry) => entry.key));
     keys += leftKeys.size;
     for (const entry of left.entries)
-      if (!rightKeys.has(entry.key)) failures.push(`${entry.line} ${file}: ${left.name}.${entry.key} has no ${right.name} entry`);
+      if (!rightKeys.has(entry.key)) failures.push(`${entry.line}: ${left.name}.${entry.key} has no ${right.name} entry`);
     for (const entry of right.entries)
-      if (!leftKeys.has(entry.key)) failures.push(`${entry.line} ${file}: ${right.name}.${entry.key} has no ${left.name} entry`);
+      if (!leftKeys.has(entry.key)) failures.push(`${entry.line}: ${right.name}.${entry.key} has no ${left.name} entry`);
   }
   t.diagnostic(`i18n.1: ${files} catalogue file(s), ${keys} keys per locale, ${failures.length} violating key(s)`);
   assert.deepEqual(failures, [], "every key must exist in every locale of its own catalogue");
@@ -210,7 +213,7 @@ test("i18n.2: both locales of a key carry the same placeholders", (t) => {
       const actual = placeholdersOf(counterpart.value);
       if (expected.join(",") !== actual.join(","))
         failures.push(
-          `${counterpart.line} ${file}: ${right.name}.${entry.key} has placeholders [${actual.join(", ")}] but ${left.name}.${entry.key} has [${expected.join(", ")}]`,
+          `${counterpart.line}: ${right.name}.${entry.key} has placeholders [${actual.join(", ")}] but ${left.name}.${entry.key} has [${expected.join(", ")}]`,
         );
     }
   }
@@ -226,7 +229,7 @@ test("i18n.3: a catalogue never declares the same key twice", (t) => {
   for (const catalogue of loadCatalogues()) {
     checked += 1;
     for (const duplicate of catalogue.duplicates)
-      failures.push(`${duplicate.line} ${catalogue.file}: ${catalogue.name}.${duplicate.key} is declared more than once`);
+      failures.push(`${duplicate.line}: ${catalogue.name}.${duplicate.key} is declared more than once`);
   }
   t.diagnostic(`i18n.3: ${checked} catalogue(s), ${failures.length} duplicate key(s)`);
   assert.deepEqual(failures, [], "a duplicate key means the second declaration silently wins");
