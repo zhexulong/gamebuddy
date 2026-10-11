@@ -29,6 +29,26 @@ import process from "node:process";
 
 const DIALOGUE_KIND = "npc_dialogue_presented";
 
+/**
+ * The dialogue's typed content out of a recorded world fact.
+ *
+ * The Mod puts it in `payloadJson` as a STRING (the Host parses that when no structured payload is present), so
+ * reading `payload.pages` directly sees nothing - the exact defect the bridge-level runner had.
+ */
+export function dialoguePayloadOf(fact) {
+  const payload = fact?.worldFactPayload ?? fact?.payload ?? fact;
+  if (payload === null || payload === undefined) return null;
+  if (Array.isArray(payload.pages)) return payload;
+  const json = payload.payloadJson;
+  if (typeof json !== "string" || json.length === 0) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return parsed !== null && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Tier-2 action ids are snake_case; a pure player goal has none, nor a coordinate pair, nor a tool name. */
 const IMPURE = [
   [/[a-z]+_[a-z_]{3,}/, "an action id or snake_case identifier"],
@@ -81,18 +101,23 @@ export function judgeDialogueAutonomy(result, { sessionText = null, pinnedPrompt
 
   // A5: the fact reached the Agent's CONTEXT. Only assertable when a session transcript is supplied, and reported
   // as `not_checked` (not as a pass) when it is not.
+  //
+  // IT MUST LOOK FOR THE TEXT, NOT THE SPEAKER. A first version searched for the speaker's name alone - and that is
+  // satisfied by the TALK RECEIPT (`npc=Lewis`), so it would have passed a run whose dialogue text never reached the
+  // model. The transcript may store the payload JSON-escaped, so both forms are searched: the literal page and its
+  // `JSON.stringify` form.
   if (sessionText === null) g.a5 = "not_checked";
   else {
-    const speakers = dialogueFacts.map((fact) => {
-      const payload = fact?.worldFactPayload;
-      if (payload?.speaker !== undefined) return String(payload.speaker);
-      try {
-        return String(JSON.parse(String(payload?.payloadJson ?? "{}"))?.speaker ?? "");
-      } catch {
-        return "";
-      }
+    const pages = dialogueFacts.flatMap((fact) => {
+      const payload = dialoguePayloadOf(fact);
+      return Array.isArray(payload?.pages) ? payload.pages : [];
     });
-    g.a5 = speakers.some((speaker) => speaker.length > 0 && sessionText.includes(speaker));
+    const present = (text) =>
+      typeof text === "string" &&
+      text.length > 0 &&
+      (sessionText.includes(text) || sessionText.includes(JSON.stringify(text).slice(1, -1)));
+    // EVERY page, not one: a truncating delivery would otherwise pass on the first page it managed to carry.
+    g.a5 = pages.length > 0 && pages.every((page) => present(page));
   }
 
   const failed = Object.entries(g)

@@ -37,7 +37,8 @@ function result(overrides = {}) {
 }
 
 test("a pure goal, a reported dialogue and a tool-layer talk PASS", () => {
-  const verdict = judgeDialogueAutonomy(result(), { sessionText: 'the model saw: "Lewis" said something' });
+  // The transcript must carry the PAGES (not merely the speaker) - see the A5-strength case below for why.
+  const verdict = judgeDialogueAutonomy(result(), { sessionText: 'the model saw: Lewis said "a" and "b"' });
   assert.equal(verdict.state, "passed");
   assert.equal(verdict.g.a1, true);
   assert.equal(verdict.g.a5, true);
@@ -84,6 +85,25 @@ test("never talking is UNOBSERVED, not passed - and it names what the Agent did 
   assert.equal(verdict.state, "unobserved");
   assert.match(verdict.reason, /no_dialogue_fact/);
   assert.deepEqual(verdict.observed.attempted, ["move_to_tile"]);
+});
+
+test("a transcript that carries only the SPEAKER does not satisfy A5: it must carry the dialogue TEXT", () => {
+  // The gap a first version had: the speaker name is satisfied by the talk receipt itself (`npc=Lewis`), so A5
+  // passed a run whose dialogue text never reached the model. The card's own live run looked exactly like that
+  // until the session was read closely, so this case pins the difference.
+  const speakerOnly = judgeDialogueAutonomy(result(), { sessionText: "tool result: npc=Lewis;talked_to_today=true" });
+  assert.equal(speakerOnly.state, "blocked");
+  assert.match(speakerOnly.reason, /a5/);
+
+  // Both pages present IS a pass (the transcript may store them JSON-escaped; the judge searches both forms).
+  const both = judgeDialogueAutonomy(result(), { sessionText: 'Lewis said: "a" and also "b"' });
+  assert.equal(both.state, "passed");
+  assert.equal(both.g.a5, true);
+
+  // Only ONE of two pages is not enough: a truncating delivery must not pass.
+  const partial = judgeDialogueAutonomy(result(), { sessionText: 'Lewis said: "a"' });
+  assert.equal(partial.state, "blocked");
+  assert.match(partial.reason, /a5/);
 });
 
 test("a dialogue fact with no talk receipt is BLOCKED: the fact alone does not prove the Agent acted", () => {
