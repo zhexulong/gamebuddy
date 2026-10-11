@@ -9,7 +9,7 @@ public sealed class RuntimeSupervisorEnvironmentTests
     private const string NonceKey = "GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256";
 
     // The declared block is the contract: exactly these names, no more and no fewer,
-    // apart from the proxy names which are forwarded only when the ambient environment
+    // apart from the ambient names which are forwarded only when the launcher environment
     // happens to carry them. Counting entries could not express that - it went stale
     // every time a required name was added, and it reported a healthy launch as broken
     // while saying nothing about which name was missing.
@@ -28,7 +28,10 @@ public sealed class RuntimeSupervisorEnvironmentTests
         "WINDIR",
     ];
 
-    private static readonly string[] ForwardedProxyKeys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"];
+    // Ambient names the launcher forwards only when it has them: the three proxy names, and the
+    // environment-managed provider credential the composed chat's default connection resolves
+    // (`CPA_OAI_API_KEY`).
+    private static readonly string[] ForwardedAmbientKeys = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "CPA_OAI_API_KEY"];
 
     private static string[] SortedKeys(IEnumerable<string> keys) =>
         keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
@@ -36,7 +39,7 @@ public sealed class RuntimeSupervisorEnvironmentTests
     private static void AssertDeclaredBlock(IReadOnlyDictionary<string, string> environment, params string[] conditionalKeys)
     {
         Assert.Empty(FrozenWireKeys.Except(environment.Keys));
-        Assert.All(environment.Keys, key => Assert.Contains(key, FrozenWireKeys.Concat(ForwardedProxyKeys).Concat(conditionalKeys)));
+        Assert.All(environment.Keys, key => Assert.Contains(key, FrozenWireKeys.Concat(ForwardedAmbientKeys).Concat(conditionalKeys)));
     }
 
     [Fact]
@@ -218,6 +221,38 @@ public sealed class RuntimeSupervisorEnvironmentTests
 
         Assert.Throws<GuardianLaunchUnavailableException>(() => RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { VoicePort = 49731 }));
         Assert.Throws<GuardianLaunchUnavailableException>(() => RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout, new HostBootstrapEnvironmentOptions { VoiceToken = "vGQf7mKx2LpR9sBw4Aa1" }));
+    }
+
+    [Fact]
+    public void BuildBootstrapEnvironment_forwards_the_environment_managed_provider_credential_only_when_the_launcher_has_one()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        using var layout = CreateLayout();
+        TestDeploymentManifest.WriteDeploymentManifest(layout.Layout.OperationalRoot);
+
+        const string name = "CPA_OAI_API_KEY";
+        var previous = Environment.GetEnvironmentVariable(name);
+        try
+        {
+            // Presented: the declared block must carry it, because the Host child is the only
+            // process that can resolve the composed chat's environment-managed connection, and a
+            // declared block does not inherit it.
+            Environment.SetEnvironmentVariable(name, "cpaoai-synthetic-desktop-test-value");
+            var withCredential = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout));
+            Assert.Equal("cpaoai-synthetic-desktop-test-value", withCredential[name]);
+            AssertDeclaredBlock(withCredential);
+
+            // Absent: nothing is carried, and the launch is not failed for it.
+            Environment.SetEnvironmentVariable(name, null);
+            var withoutCredential = ParseEnvironmentBlock(RuntimeSupervisor.BuildBootstrapEnvironment(layout.Layout));
+            Assert.False(withoutCredential.ContainsKey(name));
+            AssertDeclaredBlock(withoutCredential);
+            Assert.Equal(SortedKeys(withoutCredential.Keys), SortedKeys(withCredential.Keys.Where(key => key != name)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, previous);
+        }
     }
 
     [Fact]

@@ -378,11 +378,24 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             ["HTTP_PROXY"] = OptionalEnvironment("HTTP_PROXY"),
             ["HTTPS_PROXY"] = OptionalEnvironment("HTTPS_PROXY"),
             ["NO_PROXY"] = OptionalEnvironment("NO_PROXY"),
+            // The environment-managed provider connection is the composed chat's
+            // zero-configuration default (design/28 §5.2), and its credential is an ambient
+            // OPERATOR fact: the catalog reads it from this name at request time
+            // (`tavern/provider-catalog.ts` TAVERN_ENVIRONMENT_VARIABLE) and the Host child is
+            // the only process that talks to the provider. Because the child receives a
+            // DECLARED block rather than the launcher's own environment, omitting the name
+            // made every composed turn fail while Pi built the request - no network attempt,
+            // no provider answer - and the Host could only classify it as the generic
+            // `runtime_unavailable`, so the player was invited to retry a turn that could never
+            // succeed. Absent is normal (a player without an environment connection configures
+            // one in the product, and the Chat surface reports no credential) and is simply
+            // not carried.
+            ["CPA_OAI_API_KEY"] = OptionalEnvironment("CPA_OAI_API_KEY"),
             ["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"] = manifestPath,
             ["GAMEBUDDY_HOST_GAME_SESSION_MODE"] = options.GameSessionMode,
             ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
         };
-        foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY" })
+        foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "CPA_OAI_API_KEY" })
             if (values[optional].Length == 0) values.Remove(optional);
         if (nonce is not null) values["GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"] = nonce;
         if (voicePort is not null && voiceToken is not null)
