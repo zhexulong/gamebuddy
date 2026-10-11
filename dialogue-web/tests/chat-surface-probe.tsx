@@ -22,6 +22,13 @@ const LABELS = messages("en");
 const reads = new Map<string, number>();
 
 /**
+ * What the composer actually handed to the surface's send path. A keyboard
+ * journey has to observe the *send*, not the field's contents: a composer that
+ * leaves the text in the field on Enter looks identical in the DOM.
+ */
+const sends: string[] = [];
+
+/**
  * A committed companion message whose `text` is a getter. `React.memo` on the
  * bubble compares the `message` prop by reference and bails without reading it,
  * so a read only happens when the bubble's body genuinely ran.
@@ -51,6 +58,7 @@ let rerender: (() => void) | null = null;
 
 function Probe() {
   const [, bump] = useState(0);
+  const [drafted, setDrafted] = useState("");
   useEffect(() => {
     rerender = () => bump((count) => count + 1);
     return () => {
@@ -70,9 +78,12 @@ function Probe() {
         pending={model.pending}
       />
       <Composer
-        value=""
-        onChange={() => undefined}
-        onSend={() => undefined}
+        value={drafted}
+        onChange={setDrafted}
+        onSend={() => {
+          sends.push(drafted);
+          setDrafted("");
+        }}
         onStop={() => undefined}
         isGenerating={false}
         labels={LABELS}
@@ -194,6 +205,17 @@ const chatProbe = {
       animationDuration: style.animationDuration,
       transitionDuration: style.transitionDuration,
     };
+  },
+  /** The composer field's live value, so a newline can be told from a send. */
+  composerValue(): string | null {
+    return document.querySelector<HTMLTextAreaElement>("textarea.composer-textarea")?.value ?? null;
+  },
+  /** Every send the composer performed, in order. */
+  sends(): readonly string[] {
+    return [...sends];
+  },
+  resetSends(): void {
+    sends.length = 0;
   },
   textReads(handle: string): number {
     return reads.get(handle) ?? 0;

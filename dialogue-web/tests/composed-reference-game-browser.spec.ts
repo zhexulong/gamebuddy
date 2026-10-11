@@ -2815,11 +2815,16 @@ test("the conversation column is the transcript and the composer, with the model
   await expect(composer).toHaveValue("");
 
   // The model settings are one click away, over the conversation.
+  const drawer = page.getByTestId("chat-model-drawer");
   const trigger = chatSurface.getByTestId("chat-model-trigger");
+  await expect(drawer).toHaveCount(0);
   await expect(chatSurface.locator(".surface-model-settings")).toHaveCount(0);
   await trigger.click();
   const popout = page.getByRole("dialog", { name: "Chat model settings" });
   await expect(popout).toBeVisible();
+  // The product's own drawer, under its frozen testid: the assertion is about
+  // `chat-model-drawer`, not about the shared primitive's own tests.
+  await expect(drawer).toBeVisible();
   await expect(popout.locator(".surface-model-settings")).toBeVisible();
   await expect(popout.getByLabel("Model ID")).toHaveValue("deepseek-v4");
   await expect(popout.getByLabel("Thinking level")).toHaveValue("medium");
@@ -2827,9 +2832,14 @@ test("the conversation column is the transcript and the composer, with the model
   // ...and the conversation column still carries no form while it is open.
   await expect(chatSurface.locator("input, select, textarea")).toHaveCount(1);
 
+  // Escape closes this exact drawer and gives focus back to the button that
+  // opened it. The failure this catches: a popout whose only way out is its
+  // backdrop strands a keyboard player over the conversation, and focus
+  // dropped on <body> makes the next Tab restart from the top of the shell.
   await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
   await expect(popout).toHaveCount(0);
-  await expect(trigger).toBeFocused();
+  await expect(page.getByTestId("chat-model-trigger")).toBeFocused();
 });
 
 /**

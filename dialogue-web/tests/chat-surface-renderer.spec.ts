@@ -30,6 +30,13 @@ import { expect, test, type Page } from "@playwright/test";
  *    streaming preview must not use a second, poorer renderer: the bytes the
  *    player saw while streaming must be the bytes of the committed message, or
  *    the reply "changes" as it settles.
+ * 6. `Enter sends and Shift+Enter writes a newline` - a companion chat is
+ *    multi-line by nature, so the two keys have to do different things: without
+ *    the Shift branch a player who presses Enter mid-thought fires a half-written
+ *    message, and a composer that swallowed Shift+Enter into a send would make a
+ *    second paragraph impossible. The assertion reads the field *and* the send
+ *    log, because a composer that fired the send and left the text behind would
+ *    look correct in the DOM alone.
  */
 
 type ChatProbe = {
@@ -37,6 +44,9 @@ type ChatProbe = {
   setPreview(text: string | null): void;
   bubbleHtml(handle: string): string | null;
   narrationStyle(handle: string): { color: string; expectedColor: string; fontStyle: string } | null;
+  composerValue(): string | null;
+  sends(): readonly string[];
+  resetSends(): void;
   textReads(handle: string): number;
   totalTextReads(): number;
   resetTextReads(): void;
@@ -170,4 +180,37 @@ test("settled preview and committed message render identically", async ({ page }
 
   expect(committedHtml).toBe(previewHtml);
   expect(previewHtml).toContain('<em class="message-action">');
+});
+
+/**
+ * One assertion per key, and one on the hint that teaches them.
+ *
+ * The failure it catches: a composer that sends on every Enter - the shape this
+ * surface would take by default - makes a two-paragraph message impossible,
+ * while a composer that inserts a newline on plain Enter never sends at all.
+ * Both are invisible in a screenshot of a one-line draft, so the assertion
+ * presses both keys and reads the field *and* the surface's send log.
+ */
+test("Enter sends and Shift+Enter writes a newline", async ({ page }) => {
+  await openProbe(page);
+  const composer = page.locator("textarea.composer-textarea");
+  await expect(composer).toBeVisible();
+
+  // The discoverability carrier for the same two keys, in the field the player
+  // is already looking at: a shortcut nobody is told about is not ergonomics.
+  await expect(composer).toHaveAttribute("placeholder", /Enter to send, Shift\+Enter for newline/);
+
+  await composer.click();
+  await page.keyboard.type("First line");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("Second line");
+
+  // Shift+Enter stayed inside the one drafted message and sent nothing.
+  expect(await page.evaluate(() => window.chatProbe.composerValue())).toBe("First line\nSecond line");
+  expect(await page.evaluate(() => window.chatProbe.sends())).toEqual([]);
+
+  await page.keyboard.press("Enter");
+  // The same message, newline and all, went out; Enter did not stay in the field.
+  expect(await page.evaluate(() => window.chatProbe.sends())).toEqual(["First line\nSecond line"]);
+  await expect(composer).toHaveValue("");
 });
