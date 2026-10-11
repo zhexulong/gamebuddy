@@ -237,7 +237,11 @@ export function ModelProfilesPanel({
       <p className="management-settings-hint" data-model-profiles-hint>
         {labels.modelProfilesHint}
       </p>
-      {view.notice === "conflict" && <p data-model-profiles-conflict>{labels.modelProfilesRevisionConflict}</p>}
+      {view.notice === "conflict" && (
+        <p className="warning-banner" data-model-profiles-conflict>
+          {labels.modelProfilesRevisionConflict}
+        </p>
+      )}
       <ModelProfileEditor
         surface="chat"
         surfaceLabel={labels.modelProfilesChat}
@@ -353,10 +357,26 @@ export function ConnectionSettingsPanel({
               </dd>
             </div>
           </dl>
-          {connectionView.state.active === null && <p data-connection-no-selection>{labels.connectionNoSelectionNotice}</p>}
-          {connectionView.notice === "activation" && <p data-connection-activated>{labels.connectionActivationNotice}</p>}
-          {connectionView.notice === "busy" && <p data-connection-busy>{labels.connectionBusy}</p>}
-          {connectionView.notice === "conflict" && <p data-connection-conflict>{labels.connectionRevisionConflict}</p>}
+          {connectionView.state.active === null && (
+            <p className="warning-banner" data-connection-no-selection>
+              {labels.connectionNoSelectionNotice}
+            </p>
+          )}
+          {connectionView.notice === "activation" && (
+            <p className="success-banner" data-connection-activated>
+              {labels.connectionActivationNotice}
+            </p>
+          )}
+          {connectionView.notice === "busy" && (
+            <p className="warning-banner" data-connection-busy>
+              {labels.connectionBusy}
+            </p>
+          )}
+          {connectionView.notice === "conflict" && (
+            <p className="warning-banner" data-connection-conflict>
+              {labels.connectionRevisionConflict}
+            </p>
+          )}
 
           <form
             className="connection-form"
@@ -675,7 +695,7 @@ export function LanguageSettingsPanel({
     >
       <h2>{labels.languageSettings}</h2>
       <p>{labels.languageHint}</p>
-      {languageView.kind === "loading" && <p>{labels.openingChat}</p>}
+      {languageView.kind === "loading" && <p>{labels.loading}</p>}
       {languageView.kind === "unavailable" && <p>{labels.languageUnavailable}</p>}
       {languageView.kind === "error" && <p>{labels.failure}</p>}
       {languageView.kind === "ready" && (
@@ -751,7 +771,7 @@ export function VoiceSettingsPanel({
     <section className="management-settings-section" aria-label={labels.voiceSettings} data-voice-settings>
       <h2>{labels.voiceSettings}</h2>
       <p>{labels.voiceDisclosure}</p>
-      {voiceView.kind === "loading" && <p>{labels.openingChat}</p>}
+      {voiceView.kind === "loading" && <p>{labels.loading}</p>}
       {voiceView.kind === "unavailable" && <p>{labels.voiceSettingsUnavailable}</p>}
       {voiceView.kind === "error" && <p>{labels.failure}</p>}
       {voiceView.kind === "ready" && (
@@ -908,7 +928,7 @@ export function MemoryPanel({
       </div>
       {memoryView.kind === "loading" && (
         <div className="state-placeholder" data-memory-state="loading">
-          <p className="loading-text">{labels.openingChat}</p>
+          <p className="loading-text">{labels.loading}</p>
         </div>
       )}
       {memoryView.kind === "unavailable" && (

@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
 import type { Locale } from "../i18n";
 import type {
@@ -170,8 +171,11 @@ export function CharacterCardImport({
       />
       {busy && <p className="loading-text">{labels.importBusy}</p>}
 
-      <details>
-        <summary>{labels.importPasteLabel}</summary>
+      <details className="custom-disclosure">
+        <summary>
+          <ChevronDown size={16} aria-hidden="true" />
+          {labels.importPasteLabel}
+        </summary>
         <p className="management-settings-hint">{labels.importPasteHint}</p>
         <textarea
           className="form-textarea"
@@ -196,27 +200,27 @@ export function CharacterCardImport({
       {outcome !== null && (
         <div role="status" className={outcome.kind === "created" ? "success-banner" : "error-banner"} data-card-import-result={outcome.kind}>
           {outcome.kind === "created" ? (
-            <>
-              <p>{labels.importCreated.replace("{{name}}", outcome.name)}</p>
-              <p>{labels.importCreatedDetail}</p>
-              <p>{labels.importKept.replace("{{count}}", String(outcome.kept))}</p>
+            <dl className="management-settings-details" data-card-import-details>
+              <div><dd>{labels.importCreated.replace("{{name}}", outcome.name)}</dd></div>
+              <div><dd>{labels.importCreatedDetail}</dd></div>
+              <div><dd>{labels.importKept.replace("{{count}}", String(outcome.kept))}</dd></div>
               {outcome.lorebookCount > 0 && (
-                <p>{labels.importLorebookCount.replace("{{count}}", String(outcome.lorebookCount))}</p>
+                <div><dd>{labels.importLorebookCount.replace("{{count}}", String(outcome.lorebookCount))}</dd></div>
               )}
               {outcome.preserved > 0 && (
-                <p>{labels.importPreserved.replace("{{count}}", String(outcome.preserved))}</p>
+                <div><dd>{labels.importPreserved.replace("{{count}}", String(outcome.preserved))}</dd></div>
               )}
-              <p>
-                {outcome.notUsed.length === 0
-                  ? labels.importAllUsed
-                  : labels.importNotUsed.replace("{{fields}}", outcome.notUsed.join(", "))}
-              </p>
+              <div>
+                <dd>
+                  {outcome.notUsed.length === 0
+                    ? labels.importAllUsed
+                    : labels.importNotUsed.replace("{{fields}}", outcome.notUsed.join(", "))}
+                </dd>
+              </div>
               {outcome.longFieldChars !== null && (
-                <p className="management-settings-hint">
-                  {labels.importLongField.replace("{{chars}}", String(outcome.longFieldChars))}
-                </p>
+                <div><dd>{labels.importLongField.replace("{{chars}}", String(outcome.longFieldChars))}</dd></div>
               )}
-            </>
+            </dl>
           ) : (
             <p>{outcome.message}</p>
           )}

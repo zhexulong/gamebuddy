@@ -34,7 +34,7 @@ export function GameDiagnosticsDisclosure({
   labels,
 }: Readonly<{ game: GameBrowserStateV1 | null; labels: Messages }>) {
   return (
-    <details className="game-diagnostics" data-testid="game-diagnostics-disclosure">
+    <details className="game-diagnostics custom-disclosure" data-testid="game-diagnostics-disclosure">
       <summary className="game-diagnostics-summary">
         <ChevronRight className="game-diagnostics-chevron" size={16} aria-hidden="true" />
         {labels.gameDiagnostics}
