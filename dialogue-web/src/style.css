@@ -74,6 +74,21 @@
   --palette-gray-400: #90877e;
   --palette-gray-200: #c8c0b6;
   --palette-gray-100: #f5f0e8;
+
+  /* The warm brand and status families the semantic tokens below are built
+     from - the same shape as the grey palette above: one place a colour is
+     written, and the semantic token aliases it instead of restating the
+     literal. Two members have no semantic alias: the dark burgundy a monogram
+     plate or a card gradient sits on, and the stronger glass edge a selected
+     card carries (the same accent at the alpha the selection ring already
+     used). */
+  --palette-burgundy-dark: #3a2226;
+  --palette-burgundy-base: #c8787d;
+  --palette-burgundy-border: rgba(200, 120, 125, 0.35);
+  --palette-crimson-base: #d96565;
+  --palette-gold-base: #d6a85b;
+  --palette-teal-base: #4fae9a;
+
   --surface-raised: var(--surface-card);
   --surface-hover: var(--surface-elevated);
 
@@ -86,14 +101,14 @@
   /* The translucent glass hairline that names the accent of every card. */
   --border-glass: rgba(200, 120, 125, 0.16);
 
-  --accent: #c8787d;
+  --accent: var(--palette-burgundy-base);
   --accent-hover: #d07a7f;
   --selection: #533137;
-  --focus-ring: #d6a85b;
+  --focus-ring: var(--palette-gold-base);
 
-  --success: #4fae9a;
-  --warning: #d6a85b;
-  --danger: #d96565;
+  --success: var(--palette-teal-base);
+  --warning: var(--palette-gold-base);
+  --danger: var(--palette-crimson-base);
 
   /* Layer 3: Component & Layout Tokens (kept, plus the cadence + floor). */
   --appbar-height: 56px;
@@ -103,6 +118,10 @@
   --drawer-max-width: 420px;
   --touch-target-min: 44px;
   --row-min-height: 52px;
+  /* The monospaced stack every code-shaped value reads: the swipe indicator, a
+     code block, an id. Written once here so a `code` element and the chrome
+     around it never drift apart. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   /* The 4/8 px spacing system the plan and design/26 §6.4 mandate. */
   --space-1: 4px;
   --space-2: 8px;
@@ -2061,7 +2080,7 @@ body {
   background-color: var(--surface-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -2846,7 +2865,7 @@ body {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
   padding: 10px 12px;
@@ -3109,7 +3128,7 @@ body {
 }
 
 .message-bubble code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.92em;
   background-color: var(--surface-elevated);
   border-radius: var(--radius-xs);
