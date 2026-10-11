@@ -1692,15 +1692,18 @@ export function ComposedReferenceGameApp() {
                     onClick: () => setModelPopoutOpen(true),
                     ref: modelPopoutEntryRef,
                   }}
-                  draftActions={
-                    view.draft.text === null
-                      ? undefined
-                      : {
-                          onSave: () => void handleDraftMutation("save"),
-                          onDiscard: () => void handleDraftMutation("discard"),
-                          notice: draftNotice,
-                        }
-                  }
+                  draftActions={{
+                    onSave: () => void handleDraftMutation("save"),
+                    onDiscard: () => void handleDraftMutation("discard"),
+                    // The row's own visibility is the composer's: it shows while a
+                    // durable draft exists, while there is fresh text to keep as
+                    // a first draft, or while a failed attempt has nothing else to
+                    // report it. `durable` is what keeps Discard (and the "saved"
+                    // wording) honest - the first draft is saved through this
+                    // same command, under the same revision CAS.
+                    durable: view.draft.text !== null,
+                    notice: draftNotice,
+                  }}
                 />
               </SurfaceView>
             )}

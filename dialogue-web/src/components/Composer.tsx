@@ -19,6 +19,13 @@ export type VoiceSurfaceStateV1 = Readonly<{ state: "unavailable" | "ready" | "s
 export type ComposerDraftActions = Readonly<{
   onSave: () => void;
   onDiscard: () => void;
+  /**
+   * True while the Host holds a durable draft for this conversation. It is the
+   * one fact the row is rendered from: Discard is only meaningful for a draft
+   * that exists, and the row itself only has something to do while there is a
+   * draft, fresh text, or an outcome to report.
+   */
+  durable: boolean;
   /** The closed outcome line the last save/discard reported, if any. */
   notice: Readonly<{ kind: "success" | "failure"; text: string }> | null;
 }>;
@@ -57,12 +64,26 @@ export function Composer({
   labels: Messages;
   /** Additive optional voice surface; absent null renders no mic icon. */
   voice?: VoiceSurfaceStateV1 | null;
-  /** Present only while a durable draft exists; absent renders no draft row. */
+  /**
+   * Present whenever this surface can author a durable draft; the row itself is
+   * conditional. `durable` is the fact it is rendered from: a player who has
+   * typed nothing into a chat without a durable draft has nothing to save yet,
+   * and Discard only exists for a draft that does.
+   */
   draftActions?: ComposerDraftActions;
   /** Present when this surface has model settings to open. */
   settingsAction?: ComposerSettingsAction;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // The row exists while there is something for it to do: a durable draft to
+  // save or discard, freshly typed text to keep as a first draft, or a *failed*
+  // attempt with nothing else left to report it. A success does not need the
+  // clause - saving leaves a durable draft behind and discarding takes the row
+  // with the draft, which is the contract the row already had.
+  const showDraftRow =
+    draftActions !== undefined &&
+    (draftActions.durable || value.trim().length > 0 || draftActions.notice?.kind === "failure");
 
   const voiceLabel =
     voice?.state === "speaking"
@@ -95,14 +116,18 @@ export function Composer({
 
   return (
     <section className="composer-section" aria-label={labels.typeMessagePlaceholder}>
-      {draftActions !== undefined && (
-        // A durable draft exists, so the row appears: it is the only place the
-        // draft's own verbs live, and it disappears with the draft instead of
-        // occupying the reading flow while there is nothing to save or discard.
+      {showDraftRow && draftActions !== undefined && (
+        // The row is the draft's own verbs, in the composer band the draft is
+        // edited in, and it disappears with the draft instead of occupying the
+        // reading flow while there is nothing to save or discard. Save is
+        // offered as soon as there is text to keep - including the first draft
+        // of a chat that has none, which is the same `draft.save` command under
+        // the same revision CAS the Host already serves. Discard is only
+        // meaningful for a draft that exists, so it is only rendered then.
         <div className="composer-draft" data-draft-actions>
           <span className="composer-draft-label">
             <FileText size={14} aria-hidden="true" />
-            {labels.savedDraft}
+            {draftActions.durable ? labels.savedDraft : labels.unsavedDraft}
           </span>
           <button
             type="button"
@@ -112,9 +137,13 @@ export function Composer({
           >
             {labels.save}
           </button>
-          <button type="button" className="small-button" onClick={draftActions.onDiscard}>
-            {labels.discard}
-          </button>
+          {draftActions.durable && (
+            // Only a draft that exists can be discarded; with none, the row
+            // offers Save alone rather than a Discard that has nothing to clear.
+            <button type="button" className="small-button" onClick={draftActions.onDiscard}>
+              {labels.discard}
+            </button>
+          )}
           {draftActions.notice !== null && (
             <span
               role="status"

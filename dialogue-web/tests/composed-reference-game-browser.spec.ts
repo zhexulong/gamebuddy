@@ -3256,3 +3256,135 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
   expect(stateReads).toBe(0);
   expect(statusReads).toBe(0);
 });
+
+/**
+ * The first draft (owner's item C).
+ *
+ * The failure this catches: Save/Discard used to render only when the Host
+ * already held a durable draft, so the one case where a player most needs to
+ * keep what they typed - a chat with no draft yet - offered no way to save it.
+ * Four things are asserted, in the order they can go wrong:
+ *
+ * 1. with no draft and no text the row offers neither action at all;
+ * 2. typing offers Save, and not Discard, which no draft exists to honour;
+ * 3. activating it issues the same `draft.save` command the existing path
+ *    issues, and what the surface then shows is the Host's read-back - the
+ *    "saved" state and the revision the next command CASes on both come from
+ *    the Host's answer, not from the click;
+ * 4. a refused save is reported in the row and never reads as saved - the row
+ *    is still there to say so, because a failure is what keeps it alive.
+ */
+test("a chat with no durable draft lets the player save the first one from the composer", async ({ page }) => {
+  const draftWrites: Readonly<{ method: string; body: unknown }>[] = [];
+  let snapshotDraft: Readonly<{ revision: number; present: boolean }> = { revision: 0, present: false };
+  let durable: Readonly<{ apiVersion: number; revision: number; text: string | null }> = {
+    apiVersion: 1,
+    revision: 0,
+    text: null,
+  };
+  let refuseNextSave = false;
+
+  const submittable = {
+    ...root,
+    // `chat.submit` published, exactly as the reference profile declares it: the
+    // composer's own enablement is a projection of the nested Chat snapshot, so
+    // a journey that has to type publishes the operation rather than working
+    // around a disabled field.
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+    },
+  };
+  // The nested Chat projection and the draft route are read together and
+  // cross-checked (`rereadChat` fails closed when they disagree), so both sides
+  // of the fixture move together.
+  const composed = () => ({
+    ...submittable,
+    chat: { ...submittable.chat, chat: { ...submittable.chat.chat, draft: snapshotDraft } },
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composed()) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composed()) }),
+  );
+  await page.route("**/api/tavern/v1/draft", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(durable) });
+      return;
+    }
+    const body = route.request().postDataJSON() as { text?: string };
+    draftWrites.push({ method: route.request().method(), body });
+    if (refuseNextSave || route.request().method() === "DELETE") {
+      // A refused save, and the authoritative re-read that follows it: the
+      // durable draft the surface must take instead is older and empty.
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "chat_draft_revision_conflict" }) });
+      durable = { apiVersion: 1, revision: 3, text: null };
+      snapshotDraft = { revision: 3, present: false };
+      return;
+    }
+    // The Host answers with its own revision, which is not the revision the
+    // client asked under: only the read-back can be the surface's truth.
+    durable = { apiVersion: 1, revision: 9, text: body.text ?? null };
+    snapshotDraft = { revision: 9, present: durable.text !== null };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(durable) });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+  const composer = chatSurface.locator(".composer-textarea");
+  await expect(composer).toBeEnabled();
+  const row = chatSurface.locator(".composer-draft");
+  const save = row.getByRole("button", { name: "Save", exact: true });
+  const discard = row.getByRole("button", { name: "Discard", exact: true });
+
+  // 1. Nothing to save and nothing to discard: no row.
+  await expect(row).toHaveCount(0);
+
+  // 2. Typing offers Save and only Save.
+  await composer.fill("A first draft.");
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("Unsaved draft");
+  await expect(save).toBeVisible();
+  await expect(discard).toHaveCount(0);
+
+  // 3. The same command, under the revision the Host gave this mount.
+  await save.click();
+  await expect.poll(() => draftWrites.length).toBe(1);
+  expect(draftWrites[0]).toEqual({
+    method: "PUT",
+    body: { apiVersion: 1, selectionGeneration: 1, expectedRevision: 0, text: "A first draft." },
+  });
+  // The click itself cannot do this: `durable` comes from the Host's answer, so
+  // "Saved draft", Discard and the success line all appear only because the
+  // read-back was taken as the truth.
+  await expect(row).toContainText("Saved draft");
+  await expect(discard).toBeVisible();
+  await expect(row.getByRole("status")).toContainText("Saved successfully.");
+
+  // 4. A refused save is reported, and the row never claims it was saved. The
+  // command carries revision 9 - the revision the Host answered with in step 3,
+  // which no local rule could have derived from the 0 this mount started at.
+  refuseNextSave = true;
+  await composer.fill("A draft the Host will refuse.");
+  await save.click();
+  await expect.poll(() => draftWrites.length).toBe(2);
+  expect(draftWrites[1]).toEqual({
+    method: "PUT",
+    body: { apiVersion: 1, selectionGeneration: 1, expectedRevision: 9, text: "A draft the Host will refuse." },
+  });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("Unsaved draft");
+  await expect(row.getByRole("status")).toContainText("Operation failed.");
+  await expect(row).not.toContainText("Saved draft");
+  await expect(discard).toHaveCount(0);
+});
