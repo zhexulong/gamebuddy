@@ -2763,3 +2763,125 @@ test("the conversation column is the transcript and the composer, with the model
   await expect(popout).toHaveCount(0);
   await expect(trigger).toBeFocused();
 });
+
+/**
+ * The Memory surface's origin filter (reviewer point 4).
+ *
+ * The failure each assertion catches:
+ *
+ * 1. `narrows to one origin` - without the filter the panel renders every row
+ *    in one mixed list, which is the reported "只能在混杂长列表里逐条肉眼查找": a
+ *    player auditing what the companion remembered on its own has no way to
+ *    ask. The assertion is on the rows actually rendered, not on a control
+ *    being present, so a filter that is painted but not wired fails.
+ * 2. `and back` - a filter that narrows but cannot be released strands the
+ *    player in a slice of their own memory, so the return to All is asserted
+ *    with the full row count - both by pressing the All chip and by pressing the
+ *    chip that is currently pressed.
+ */
+test("the Memory surface narrows to one origin and back", async ({ page }) => {
+  const playerMemoryHandle = `${"N".repeat(42)}A`;
+  const companionMemoryHandle = `${"Q".repeat(42)}A`;
+  const memoryRevision = `${"M".repeat(42)}A`;
+
+  const memoryWrites: unknown[] = [];
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/memory", (route) => {
+    // The filter is presentation state over the projection the Host already
+    // sent, so a filter click must issue no request at all; a write reaching
+    // this route is recorded and refused instead of being answered.
+    if (route.request().method() !== "GET") {
+      memoryWrites.push(route.request().postDataJSON());
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        projectionRevision: memoryRevision,
+        memories: [
+          {
+            handle: playerMemoryHandle,
+            title: "Player memory",
+            content: "You told her about the farm.",
+            category: "semantic",
+            status: "active",
+            origin: "player",
+            pinned: false,
+          },
+          {
+            handle: companionMemoryHandle,
+            title: "Companion memory",
+            content: "She remembers the rainy afternoon.",
+            category: "interaction",
+            status: "active",
+            origin: "companion",
+            pinned: false,
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+
+  const surface = page.getByTestId("memory-surface");
+  await expect(surface).toBeVisible();
+  const rows = surface.locator("[data-memory-state=ready] [role=listitem]");
+  await expect(rows).toHaveCount(2);
+
+  const filter = surface.locator("[data-memory-filter-group]");
+  await expect(filter).toBeVisible();
+  // The group is named by the panel's heading, and the two origin chips reuse the
+  // labels the rows themselves carry: the filter is the same split, said twice.
+  await expect(filter).toHaveAccessibleName("Semantic Memory");
+  const chips = {
+    all: filter.locator("[data-memory-filter=all]"),
+    player: filter.locator("[data-memory-filter=player]"),
+    companion: filter.locator("[data-memory-filter=companion]"),
+  };
+  await expect(chips.all).toHaveText("All");
+  await expect(chips.player).toHaveText("I told her this");
+  await expect(chips.companion).toHaveText("She remembers this");
+  await expect(chips.all).toHaveAttribute("aria-pressed", "true");
+
+  await chips.player.click();
+  await expect(chips.player).toHaveAttribute("aria-pressed", "true");
+  await expect(chips.all).toHaveAttribute("aria-pressed", "false");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator("[data-memory-origin]")).toHaveAttribute("data-memory-origin", "player");
+  await expect(surface).not.toContainText("She remembers the rainy afternoon.");
+
+  await chips.companion.click();
+  await expect(chips.companion).toHaveAttribute("aria-pressed", "true");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator("[data-memory-origin]")).toHaveAttribute("data-memory-origin", "companion");
+  await expect(surface).not.toContainText("You told her about the farm.");
+
+  // The pressed chip releases itself: pressing it again clears back to All.
+  await chips.companion.click();
+  await expect(chips.all).toHaveAttribute("aria-pressed", "true");
+  await expect(chips.companion).toHaveAttribute("aria-pressed", "false");
+  await expect(rows).toHaveCount(2);
+
+  // ...and the All chip reaches the same place from a fresh selection.
+  await chips.player.click();
+  await expect(rows).toHaveCount(1);
+  await chips.all.click();
+  await expect(chips.all).toHaveAttribute("aria-pressed", "true");
+  await expect(rows).toHaveCount(2);
+  // Nothing here mutates anything: the filter is presentation state over the
+  // projection the Host already sent.
+  expect(memoryWrites).toEqual([]);
+});

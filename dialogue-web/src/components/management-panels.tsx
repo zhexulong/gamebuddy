@@ -861,6 +861,18 @@ export const MEMORY_STATUS_LABELS: Readonly<Record<string, { en: string; zh: str
   archived: { en: "Archived", zh: "已归档" },
 };
 
+/**
+ * The one dimension the Memory audit filters on. The Host has separated
+ * `origin: "player" | "companion"` all along, so the panel offers exactly that
+ * split and nothing else: a player asking "what did she remember on her own"
+ * reads one list instead of scanning a mixed one. No other dimension is
+ * invented here, because the Host publishes no other one.
+ */
+type MemoryOriginFilter = "all" | "player" | "companion";
+
+/** The panel heading, which also names the filter group below it. */
+const MEMORY_TITLE_ID = "tavern-memory-title";
+
 export function MemoryPanel({
   memoryView,
   labels,
@@ -881,10 +893,15 @@ export function MemoryPanel({
     const pinnedLabel = locale === "zh-CN" ? "固定" : "Pinned";
     return pinned ? `${base} · ${pinnedLabel}` : base;
   };
+  // The filter is presentation state, not a projection: switching it re-reads
+  // nothing, and the mounted rows are what it narrows.
+  const [originFilter, setOriginFilter] = useState<MemoryOriginFilter>("all");
+  const rows = memoryView.kind === "ready" ? memoryView.rows : [];
+  const visibleRows = originFilter === "all" ? rows : rows.filter((item) => item.origin === originFilter);
   return (
     <section className="tavern-memory-section" aria-label={labels.semanticMemory} data-memory-panel>
       <div className="tavern-memory-header">
-        <h2 className="tavern-memory-title">{labels.semanticMemory}</h2>
+        <h2 className="tavern-memory-title" id={MEMORY_TITLE_ID}>{labels.semanticMemory}</h2>
         <button type="button" className="small-button" onClick={onRefresh} title={labels.refreshMemory}>
           {labels.refreshMemory}
         </button>
@@ -905,19 +922,53 @@ export function MemoryPanel({
         </div>
       )}
       {mutationAvailable && <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />}
+      {memoryView.kind === "ready" && (
+        // The group is named by the panel's own heading, so no string exists only
+        // for the filter and the two origin chips keep the labels the rows
+        // themselves already use.
+        <div className="memory-filter" role="group" aria-labelledby={MEMORY_TITLE_ID} data-memory-filter-group>
+          {(
+            [
+              ["all", labels.memoryFilterAll],
+              ["player", labels.originPlayer],
+              ["companion", labels.originCompanion],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="memory-filter-chip"
+              data-memory-filter={value}
+              aria-pressed={originFilter === value}
+              // A pressed chip is its own release: pressing it again clears the
+              // filter back to All, so the player is never stuck inside a slice.
+              onClick={() => setOriginFilter(originFilter === value ? "all" : value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       {memoryView.kind === "empty" && (
         <div className="state-placeholder" data-memory-state="empty">
           <p className="loading-text">{labels.noMemories}</p>
         </div>
       )}
-      {memoryView.kind === "ready" && (
-        <div className="memory-list" role="list" data-memory-state="ready">
-          {memoryView.rows.map((item) => (
+      {memoryView.kind === "ready" && visibleRows.length === 0 && (
+        // Still the one "nothing recorded" line: under an active filter it reads
+        // as "none of these", and the pressed chip says which slice is shown.
+        <div className="state-placeholder" data-memory-state="filtered-empty">
+          <p className="loading-text">{labels.noMemories}</p>
+        </div>
+      )}
+      {memoryView.kind === "ready" && visibleRows.length > 0 && (
+        <div className="memory-list" role="list" data-memory-state="ready" data-memory-filter={originFilter}>
+          {visibleRows.map((item) => (
             <MemoryRow
               key={item.handle}
               item={item}
               statusText={statusText(item.status, item.pinned)}
-            originText={item.origin === "player" ? labels.originPlayer : labels.originCompanion}
+              originText={item.origin === "player" ? labels.originPlayer : labels.originCompanion}
               labels={labels}
               mutationAvailable={mutationAvailable}
               onUpdate={(content) => onMutate({ operation: "update", handle: item.handle, content })}

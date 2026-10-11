@@ -124,6 +124,10 @@ const en = {
   // companion remembers, and can audit or correct either.
   originPlayer: "I told her this",
   originCompanion: "She remembers this",
+  // The Memory panel's origin filter. One chip, one dimension, and the two
+  // origin chips reuse the row labels above: the filter never needs its own
+  // vocabulary for the same split.
+  memoryFilterAll: "All",
 
   // Composer
   typeMessagePlaceholder: "Type a message to your companion… (Enter to send, Shift+Enter for newline)",
@@ -534,6 +538,7 @@ const zh: Messages = {
   deleteMemory: "删除记忆",
   originPlayer: "我告诉她的",
   originCompanion: "她自己记得的",
+  memoryFilterAll: "全部",
 
   // Composer
   typeMessagePlaceholder: "给伴侣发送消息… (Enter 发送, Shift+Enter 换行)",

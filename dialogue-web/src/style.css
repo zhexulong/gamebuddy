@@ -962,6 +962,7 @@ body {
 
 /* Voice surface single-point status dot (additive v1 snapshot field). */
 .voice-status-dot {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -979,15 +980,53 @@ body {
 }
 .voice-status-speaking {
   color: var(--success, #2f9e44);
-  animation: voice-status-pulse 1.2s ease-in-out infinite;
 }
-@keyframes voice-status-pulse {
-  0%,
-  100% {
-    opacity: 1;
+
+/*
+   The mic's halo, and the reason it is exactly one state wide.
+
+   `tavern_browser_api/v1` closes the voice surface to `unavailable | ready |
+   speaking` (host/src/tavern/browser-contract/index.ts, TavernVoiceSurfaceStateV1Schema)
+   and the one production producer only ever emits `ready` or `speaking`
+   (host/src/voice-gateway-client.ts, createVoiceSurfaceReader). There is no
+   recording/capturing reading on this wire, so `speaking` - the companion's own
+   playback, the state a player can barge in on - is the only active-audio state
+   a pulse may be keyed to. Animating anything else would be animating a state
+   the Host never told us about.
+
+   Compositor-only properties (transform + opacity), the 150 ms token for the
+   dot's own transition, and a loop long enough to read as a soft halo rather
+   than as a strobe. prefers-reduced-motion removes the motion entirely, below.
+*/
+.voice-pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: voice-pulse-ring 1.6s var(--motion-ease-smooth) infinite;
+}
+@keyframes voice-pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
   }
-  50% {
-    opacity: 0.35;
+  70% {
+    transform: scale(1.75);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.75);
+    opacity: 0;
+  }
+}
+
+/* Motion off is not state off: the labelled state and its colour stay, and only
+   the halo's motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  .voice-pulse-ring {
+    animation: none;
   }
 }
 
@@ -3131,6 +3170,59 @@ body {
   .message[data-pending] .message-bubble {
     opacity: 1;
   }
+}
+
+/* ==========================================================================
+   The Memory panel's origin filter
+
+   The backend already separates `player` from `companion` origin, so the panel
+   offers exactly that one dimension at the top of the list. Selection is
+   carried by `aria-pressed` plus a border/weight change, never by colour alone.
+   ========================================================================== */
+
+.memory-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.memory-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-card);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.memory-filter-chip:hover:not([aria-pressed="true"]) {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.memory-filter-chip[aria-pressed="true"] {
+  background-color: var(--selection);
+  border-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.memory-item-origin {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-disabled);
+  white-space: nowrap;
 }
 
 } /* end @layer theme.polish */
