@@ -3460,3 +3460,83 @@ body {
 .custom-disclosure[open] > summary > svg:not(.game-diagnostics-chevron) {
   transform: rotate(180deg);
 }
+
+/* ==========================================================================
+   The two lists that had no rules at all
+
+   The world book's entries and the card-import history are the two places the
+   product renders a collection of its own rows, and both had no styling: the
+   world book's items ran together as bare text, and the history rendered as a
+   native `<ul>` with two levels of bullets under the platform's 40 px indent,
+   inside a `<section>` that is already indented. Both are the card/list layer
+   now: no marker, no native indent, one card per row with the glass hairline
+   and the row floor the token layer declares.
+   ========================================================================== */
+
+[data-world-book-list],
+[data-import-history-entries] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+[data-world-book-list] > [role="listitem"],
+[data-import-history-entries] > [data-import-history-entry] {
+  min-height: var(--row-min-height);
+  padding: var(--space-3);
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+}
+
+[data-world-book-list] > [role="listitem"] > strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+[data-world-book-list] > [role="listitem"] > p {
+  margin: var(--space-1) 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+[data-world-book-list] > [role="listitem"] > .composer-actions {
+  margin-top: var(--space-2);
+}
+
+[data-import-history-entry] > span {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+[data-import-history-entry] > .management-settings-hint {
+  margin: 0;
+}
+
+/* The four disposition counts are a compact set of chips, not a second bulleted
+   list: the entry is one row about one import, and the counts are its values. */
+[data-import-history-counts] {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+[data-import-history-counts] > li {
+  padding: 2px var(--space-2);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background-color: var(--surface-elevated);
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+}

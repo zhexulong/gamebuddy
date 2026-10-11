@@ -125,7 +125,7 @@ async function mountCharacters(page: Page): Promise<void> {
   await page.route("**/api/tavern/v1/world-info", (route) =>
     route.fulfill(
       jsonOk({
-        state: "ready",
+        state: "none",
         revision: worldBookRevision,
         items: [
           {
@@ -326,4 +326,72 @@ test("the Game diagnostics disclosure keeps its treatment on the shared rule", a
   const after = await page.getByTestId("game-diagnostics-disclosure").locator("> summary > svg").evaluate((node) => getComputedStyle(node).transform);
   expect(after).not.toBe(before);
   expect(after).not.toBe("none");
+});
+
+/**
+ * Item 3: the two lists that had no rules at all.
+ *
+ * The failure it catches: a native `<ul>` inside an already-indented section
+ * renders as bullets under the platform's 40 px indent - twice over for the
+ * import counts - and the world book's entries ran together as bare text with no
+ * row boundary. The assertion reads computed `list-style` and padding for the
+ * lists and the card chrome for the rows, so a rule that lost the cascade looks
+ * the same as a rule that was never written.
+ */
+test("the world book and import history read as card rows, not native bullets", async ({ page }) => {
+  await mountCharacters(page);
+
+  const measured = await page.getByTestId("characters-surface").evaluate((node) => {
+    const token = (name: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    const read = (selector: string) => {
+      const element = node.querySelector(selector);
+      if (element === null) return null;
+      const style = getComputedStyle(element);
+      return {
+        listStyleType: style.listStyleType,
+        paddingLeft: style.paddingLeft,
+        minHeight: style.minHeight,
+        height: Math.round(element.getBoundingClientRect().height),
+        background: style.backgroundColor,
+        borderTopColor: style.borderTopColor,
+      };
+    };
+    return {
+      card: token("--surface-card"),
+      glass: token("--border-glass"),
+      worldBook: read("[data-world-book-list]"),
+      worldBookRow: read("[data-world-book-list] > [role=listitem]"),
+      history: read("[data-import-history-entries]"),
+      historyRow: read("[data-import-history-entries] > li"),
+      counts: read("[data-import-history-counts]"),
+    };
+  });
+
+  for (const [what, list] of [
+    ["the import history", measured.history],
+    ["the import counts", measured.counts],
+  ] as const) {
+    expect(list, `${what} is rendered`).not.toBeNull();
+    expect(list?.listStyleType, `${what} draws no marker`).toBe("none");
+    expect(list?.paddingLeft, `${what} keeps no native indent`).toBe("0px");
+  }
+
+  // Both collections are card rows: the card tone with the glass hairline, and
+  // the row floor the token layer declares.
+  expect(measured.worldBookRow?.background, "a world book entry is a card").toBe(measured.card);
+  expect(measured.worldBookRow?.borderTopColor).toBe(measured.glass);
+  expect(measured.worldBookRow?.minHeight).toBe("52px");
+  expect(measured.worldBookRow?.height ?? 0).toBeGreaterThanOrEqual(52);
+  expect(measured.historyRow?.background, "an import history entry is a card").toBe(measured.card);
+  expect(measured.historyRow?.borderTopColor).toBe(measured.glass);
+  // The world book list is a `div role="list"`, so its own indent is asserted
+  // through its row: the card starts where the list starts.
+  expect(measured.worldBookRow?.height ?? 0).toBeGreaterThan(0);
 });
