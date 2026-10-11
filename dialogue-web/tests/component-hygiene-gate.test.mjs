@@ -10,6 +10,8 @@
  * produced those defects, so the next occurrence is caught before review.
  *
  * Every failure names the file and the 1-based line, so the message is a route.
+ * Every test also prints what it checked and found clean (`t.diagnostic`), so a
+ * passing run is evidence rather than silence.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -175,49 +177,62 @@ function labelKeyIsOpeningChat(node) {
   );
 }
 
-test("gate 1.1: a file input is never the browser's raw choose-file control", () => {
+test("gate 1.1: a file input is never the browser's raw choose-file control", (t) => {
   const styled = styledClassNames();
   const failures = [];
-  for (const file of componentFiles()) {
+  let fileInputs = 0;
+  const files = componentFiles();
+  for (const file of files) {
     const sourceFile = parse(file);
     walk(sourceFile, (node) => {
       if ((!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) || !isElement(node, "input")) return;
       if (attributes(node).get("type") !== "file") return;
+      fileInputs += 1;
       const className = classNameOf(node);
       const first = className === null ? null : className.split(/\s+/u)[0];
       if (className === null || first === null || !styled.has(first))
         failures.push(`${at(node, sourceFile)} raw <input type="file"> (className=${JSON.stringify(className)})`);
     });
   }
+  t.diagnostic(`gate 1.1: ${files.length} files, ${fileInputs} file input(s), ${failures.length} violation(s)`);
   assert.deepEqual(failures, [], "a file input must be styled (or sit in a styled wrapper), never raw");
 });
 
-test("gate 1.2: a <details> is classed and its <summary> carries an explicit icon", () => {
+test("gate 1.2: a <details> is classed and its <summary> carries an explicit icon", (t) => {
   const failures = [];
-  for (const file of componentFiles()) {
+  let details = 0;
+  let summaries = 0;
+  const files = componentFiles();
+  for (const file of files) {
     const sourceFile = parse(file);
     const lucide = lucideComponentNames(sourceFile);
     walk(sourceFile, (node) => {
       if (!ts.isJsxElement(node) || !isElement(node, "details")) return;
+      details += 1;
       const className = classNameOf(node);
       if (className === null || className.trim() === "")
         failures.push(`${at(node, sourceFile)} bare <details> with no styling class`);
       for (const element of jsxElements(node)) {
         if (!isElement(element, "summary")) continue;
+        summaries += 1;
         if (!summaryHasIcon(element, lucide))
           failures.push(`${at(element, sourceFile)} <summary> without an explicit icon`);
       }
     });
   }
+  t.diagnostic(`gate 1.2: ${files.length} files, ${details} <details>, ${summaries} <summary>, ${failures.length} violation(s)`);
   assert.deepEqual(failures, [], "a <details> must be styled and its <summary> must render an icon");
 });
 
-test("gate 1.3: no status/card container stacks three or more bare <p>", () => {
+test("gate 1.3: no status/card container stacks three or more bare <p>", (t) => {
   const failures = [];
-  for (const file of componentFiles()) {
+  let containers = 0;
+  const files = componentFiles();
+  for (const file of files) {
     const sourceFile = parse(file);
     walk(sourceFile, (node) => {
       if (!ts.isJsxElement(node) || !isStatusOrCardContainer(node)) return;
+      containers += 1;
       let run = 0;
       for (const child of node.children) {
         if (ts.isJsxText(child)) continue; // whitespace between elements
@@ -230,18 +245,22 @@ test("gate 1.3: no status/card container stacks three or more bare <p>", () => {
       }
     });
   }
+  t.diagnostic(`gate 1.3: ${files.length} files, ${containers} status/card container(s), ${failures.length} violation(s)`);
   assert.deepEqual(failures, [], "three stacked bare <p> read as a console dump; use a dl/dt/dd, chips or a card");
 });
 
-test("gate 1.4: a list carrying dynamic entries is never the raw bullet list", () => {
+test("gate 1.4: a list carrying dynamic entries is never the raw bullet list", (t) => {
   const failures = [];
-  for (const file of componentFiles()) {
+  let dynamicLists = 0;
+  const files = componentFiles();
+  for (const file of files) {
     const sourceFile = parse(file);
     walk(sourceFile, (node) => {
       if (!ts.isJsxElement(node)) return;
       const name = jsxTagName(node);
       if (name === null || !ts.isIdentifier(name) || (name.text !== "ul" && name.text !== "ol")) return;
       if (!hasMapCall(node)) return;
+      dynamicLists += 1;
       const attrs = attributes(node);
       const hasClass = classNameOf(node) !== null;
       const hasHook = [...attrs.keys()].some((key) => key.startsWith("data-"));
@@ -249,10 +268,11 @@ test("gate 1.4: a list carrying dynamic entries is never the raw bullet list", (
         failures.push(`${at(node, sourceFile)} bare <${name.text}> with .map() entries`);
     });
   }
+  t.diagnostic(`gate 1.4: ${files.length} files, ${dynamicLists} dynamic list(s), ${failures.length} violation(s)`);
   assert.deepEqual(failures, [], "a dynamic list must carry a styling class or a data hook");
 });
 
-test("gate 1.5: a panel's loading text is not another panel's copy", () => {
+test("gate 1.5: a panel's loading text is not another panel's copy", (t) => {
   // The three panel loading states reused `openingChat` ("Opening chat…"), which
   // is the chat surface's own copy. The honest generic loading string is the
   // `loading` key; assert both that the reuse is gone and that the generic key
@@ -274,4 +294,5 @@ test("gate 1.5: a panel's loading text is not another panel's copy", () => {
   assert.equal(opening.length, 2, "openingChat must exist in both catalogs");
   assert.equal(loading.length, 2, "loading must exist in both catalogs");
   assert.notDeepEqual(loading, opening, "the generic loading string must not be the chat-opening string");
+  t.diagnostic(`gate 1.5: management-panels.tsx, ${failures.length} openingChat reuse(s); loading=${JSON.stringify(loading)} vs openingChat=${JSON.stringify(opening)}`);
 });

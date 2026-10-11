@@ -86,17 +86,20 @@ function unlayeredText(css) {
   return result + text.slice(cursor);
 }
 
-test("gate 2.1: every custom property the stylesheet reads is declared in it", () => {
+test("gate 2.1: every custom property the stylesheet reads is declared in it", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const { declared } = customProperties(css);
   const failures = [];
+  let reads = 0;
   css.split("\n").forEach((line, index) => {
     // Ignore a comment tail the way the collector does: only a real consumption point counts.
     const code = line.replace(/\/\*.*?\*\//gu, " ");
     for (const match of code.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/gu)) {
+      reads += 1;
       if (!declared.has(match[1])) failures.push(`src/style.css:${index + 1} reads undeclared ${match[1]}`);
     }
   });
+  t.diagnostic(`gate 2.1: ${declared.size} declared properties, ${reads} read(s), ${failures.length} undeclared`);
   assert.deepEqual(
     failures,
     [],
@@ -104,11 +107,12 @@ test("gate 2.1: every custom property the stylesheet reads is declared in it", (
   );
 });
 
-test("gate 2.2: a named component rule sits inside its declared layer, not unlayered", () => {
+test("gate 2.2: a named component rule sits inside its declared layer, not unlayered", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const layers = layerBodies(css);
   const unlayered = unlayeredText(css);
 
+  t.diagnostic(`gate 2.2: ${layers.size} layer block(s): ${[...layers.keys()].join(", ")}`);
   assert.ok(layers.has("theme.legacy"), "theme.legacy must be a named layer block");
   assert.ok(layers.has("theme.polish"), "theme.polish must be a named layer block");
 
