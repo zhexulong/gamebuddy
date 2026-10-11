@@ -905,3 +905,47 @@ test("gate 8: the regenerate control clears the touch floor with a visible affor
   );
   expect(failures, "the regenerate control is a real target and the swipe pair matches it").toEqual([]);
 });
+
+/**
+ * Gate 9: the app bar announces which peer surface is showing.
+ *
+ * `class="nav-button active"` is presentation, not state: assistive technology
+ * reads none of it, and neither can any gate. The attribute is `aria-current`
+ * (`"page"`): the surfaces are peers within one addressable set - the URL names
+ * the selected one and Back returns to the previous one - which is what
+ * `aria-current` is defined to mark. It is not `aria-selected` (that requires a
+ * widget role such as `tab`/`option`, which a plain button does not have), and
+ * not `aria-pressed` (a toggle that can be released, while these are exclusive).
+ * The failure this catches: the only record of the selection being a CSS class.
+ */
+test("gate 9: the app bar marks the current peer surface and moves the mark", async ({ page }) => {
+  await mountShell(page);
+  const read = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".app-bar-actions .nav-button")].map((entry) => ({
+        name: entry.getAttribute("aria-label"),
+        current: entry.getAttribute("aria-current"),
+      })),
+    );
+
+  const failures: string[] = [];
+  const chatShown = await read();
+  const markedForChat = chatShown.filter((entry) => entry.current !== null);
+  if (markedForChat.length !== 1) failures.push(`${markedForChat.length} entries carry aria-current while Chat is shown`);
+  else if (markedForChat[0]!.name !== "Chat")
+    failures.push(`the marked entry is "${markedForChat[0]!.name}" while Chat is shown`);
+  else if (markedForChat[0]!.current !== "page") failures.push(`the Chat entry is marked aria-current="${markedForChat[0]!.current}"`);
+
+  await openSurface(page, SURFACES[1]!);
+  const gameShown = await read();
+  const markedForGame = gameShown.filter((entry) => entry.current !== null);
+  if (markedForGame.length !== 1) failures.push(`${markedForGame.length} entries carry aria-current while Game is shown`);
+  else if (markedForGame[0]!.name !== "Game")
+    failures.push(`the mark did not move: "${markedForGame[0]!.name}" is still current with Game shown`);
+
+  record(
+    "gate-9",
+    `Chat: ${chatShown.map((entry) => `${entry.name}=${entry.current ?? "-"}`).join(", ")}; Game: ${gameShown.map((entry) => `${entry.name}=${entry.current ?? "-"}`).join(", ")}`,
+  );
+  expect(failures, "exactly one peer entry is marked current, and the mark follows the selection").toEqual([]);
+});

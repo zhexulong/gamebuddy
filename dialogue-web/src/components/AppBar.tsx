@@ -24,7 +24,7 @@ export type AppBarEntry = Readonly<{
   /** The visible and accessible name; the same string is the tooltip. */
   label: string;
   icon: LucideIcon;
-  /** True while this entry's drawer is the open one. */
+  /** True while this entry's surface is the one occupying the main region. */
   active: boolean;
   onClick: () => void;
   /** The entry's own button, so a closed drawer can restore focus to it. */
@@ -93,8 +93,18 @@ export function AppBar({
               ref={entry.ref}
               type="button"
               className={entry.active ? "nav-button active" : "nav-button"}
+              // `active` is presentation; the selection is stated in
+              // `aria-current`. These entries are peers within one addressable
+              // set - the URL names the selected surface and Back returns to the
+              // previous one (design/104 §2) - which is exactly what
+              // `aria-current="page"` marks. Not `aria-selected`, which needs a
+              // widget role such as `tab`/`option` a plain button does not have;
+              // not `aria-pressed`, a toggle that can be released while exactly
+              // one of these can be current; and not `aria-expanded`, which
+              // described a drawer opening when selecting a peer surface opens
+              // nothing - the previous surface is replaced.
+              aria-current={entry.active ? "page" : undefined}
               aria-label={entry.label}
-              aria-expanded={entry.active}
               title={entry.label}
               onClick={entry.onClick}
             >
