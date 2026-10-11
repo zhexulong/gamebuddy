@@ -422,34 +422,47 @@ test("gate 2: long unbroken content never pushes the page", async ({ page }) => 
 });
 
 /**
- * Gate 2, known gap: the companion's name is also rendered as the transcript's
- * author line, and `.message-author` has no `overflow-wrap`/`min-width`, so the
- * long name overflows its own box and is hard-clipped by the surface instead of
- * wrapping or ellipsising.
+ * Gate 2, the author line: the companion's name is also rendered as the
+ * transcript's author line, and a 250-character name - the wire's own maximum -
+ * must wrap there instead of overflowing its own box and being hard-clipped by
+ * the surface.
  *
- * Measured today at 400x800: `.message-author` scrollWidth 2582 against
+ * Before the fix, measured at 400x800: `.message-author` scrollWidth 2582 against
  * clientWidth 339, `overflow-wrap: normal`, `overflow: visible`.
- * Owner: `dialogue-web/src/style.css` `.message-author` (see the gate report).
  */
-test.fixme(
-  "gate 2 (known gap): the transcript author line wraps a long companion name",
-  async ({ page }) => {
-    const root = composedRoot({
-      companionName: LONG_NAME,
-      transcript: [{ role: "companion", text: `Have a look at this: ${LONG_URL}` }],
-    });
-    await mountShell(page, { root });
-    await page.setViewportSize({ width: 400, height: 800 });
-    const measured = await page.locator(".message-author").first().evaluate((node) => {
-      const style = getComputedStyle(node);
-      return { scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, overflowWrap: style.overflowWrap, overflow: style.overflow };
-    });
-    expect(
-      measured.scrollWidth <= measured.clientWidth + 1 || ["anywhere", "break-word"].includes(measured.overflowWrap) || measured.overflow === "hidden",
-      `the author line wraps, clips or ellipsises the name (scrollWidth ${measured.scrollWidth}, clientWidth ${measured.clientWidth}, overflow-wrap ${measured.overflowWrap}, overflow ${measured.overflow})`,
-    ).toBe(true);
-  },
-);
+test("gate 2: the transcript author line wraps a long companion name", async ({ page }) => {
+  const root = composedRoot({
+    companionName: LONG_NAME,
+    transcript: [{ role: "companion", text: `Have a look at this: ${LONG_URL}` }],
+  });
+  await mountShell(page, { root });
+  await page.setViewportSize({ width: 400, height: 800 });
+  const measured = await page.locator(".message-author").first().evaluate((node) => {
+    const style = getComputedStyle(node);
+    const surface = node.closest<HTMLElement>('[data-testid="chat-surface"]');
+    return {
+      scrollWidth: node.scrollWidth,
+      clientWidth: node.clientWidth,
+      overflowWrap: style.overflowWrap,
+      right: Math.round(node.getBoundingClientRect().right),
+      surfaceRight: surface === null ? -1 : Math.round(surface.getBoundingClientRect().right),
+      surfaceScrollWidth: surface?.scrollWidth ?? -1,
+      surfaceClientWidth: surface?.clientWidth ?? -1,
+    };
+  });
+  record(
+    "gate-2-author",
+    `250-char name at 400x800: author scrollWidth ${measured.scrollWidth} / clientWidth ${measured.clientWidth} (overflow-wrap ${measured.overflowWrap}), right ${measured.right} vs surface right ${measured.surfaceRight}; conversation scroll ${measured.surfaceScrollWidth}/${measured.surfaceClientWidth}`,
+  );
+  expect(
+    measured.scrollWidth,
+    "the author line wraps the long name instead of overflowing its own box",
+  ).toBeLessThanOrEqual(measured.clientWidth + 1);
+  expect(measured.right, "the author line stays inside the conversation").toBeLessThanOrEqual(measured.surfaceRight + 1);
+  expect(measured.surfaceScrollWidth, "the conversation does not scroll sideways for the name").toBeLessThanOrEqual(
+    measured.surfaceClientWidth + 1,
+  );
+});
 
 /**
  * Gate 3: WCAG AA contrast for every text tone the surfaces draw.

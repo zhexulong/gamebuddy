@@ -627,10 +627,15 @@ body {
   min-width: 0;
 }
 
+/* The name here is the wire's own maximum (256 units), and the author line is a
+   flex item of `.message-header`: without a wrap opportunity its min-content is
+   the whole name, which pushes the line and the conversation sideways. `anywhere`
+   (not `break-word`) is what makes the min-content one character. */
 .message-author {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-disabled);
+  overflow-wrap: anywhere;
 }
 
 .message.player .message-author {
