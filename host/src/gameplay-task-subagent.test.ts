@@ -633,6 +633,11 @@ test("Gameplay worker hides action tools without a runtime-owned dispatch admiss
   assert.equal(result.state, "blocked");
   assert.equal(mountedNames.includes("stardew_equip_tool"), false);
   assert.equal(mountedNames.includes("stardew_cancel_active_execution"), false);
+  // The narrowed control is a DIFFERENT name on purpose: the shipped assertion above is about the generic cancel
+  // and still holds, while `stardew_stop_action` is the one control the model gets - bound to the execution the
+  // latest observation named and refused by name past its cancel point (asserted in game-tools.test.ts). A
+  // blocked run mounts neither, so assert both here rather than relaxing anything.
+  assert.equal(mountedNames.includes("stardew_stop_action"), false);
   assert.deepEqual(calls.execute, []);
   assert.deepEqual(calls.cancel, []);
 });

@@ -2563,6 +2563,47 @@ export function createStardewActionTools(
     }
   }
 
+  // THE ONE cancellation the model may use, and it is deliberately NOT an action: it is absent from the action
+  // registry, carries no game semantics of its own, and can only stop the execution the LATEST observation named.
+  // A generic cancel stays refused, which is what the two shipped assertions pin; the narrowed primitive is gated
+  // twice over - here on the observation's `cancelSafe`, and again in the Mod on the same reason code, so a race
+  // between the observation and the request cannot cancel a committed action.
+  tools.push(
+    defineTool({
+      name: "stardew_stop_action",
+      label: "Stop the current Stardew action",
+      description:
+        "Stop the action that currently holds the character's body, so a different action can be issued. Read the latest observation first: this stops ONLY the execution that observation named (its requestId/executionId), and only while it says the hold can still be released (`activeExecution.cancelSafe === true`). When the action is already past its cancel point the tool refuses by name - the action is committed and you must wait for its terminal receipt. It never changes the world beyond ending that action.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const snapshot = integration.state.snapshot;
+        if (!integration.state.connected || snapshot === null)
+          return receiptResult(null, "integration_not_ready");
+        const active = snapshot.activeExecution ?? null;
+        if (active === null) return receiptResult(null, "no_active_execution");
+        if (active.cancelSafe !== true)
+          return receiptResult(
+            null,
+            `action_past_cancel_point: phase=${active.phase ?? "unknown"};cancel_safe=false`,
+          );
+        try {
+          // The Mod's own gate keys on this reason code, so the player STOP and the worker's teardown keep their
+          // semantics while a MODEL stop can be refused.
+          return receiptResult(
+            await integration.cancel(active.requestId, active.executionId, "model_stop_requested"),
+            null,
+          );
+        } catch (error) {
+          return receiptResult(
+            null,
+            error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_cancel_failed",
+            "write_unknown",
+          );
+        }
+      },
+    }),
+  );
+
   return tools;
 }
 async function executeGameAction(

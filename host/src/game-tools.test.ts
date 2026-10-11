@@ -1719,6 +1719,132 @@ test("model-facing tools never expose active-execution cancellation", () => {
   );
 });
 
+test("the narrowed stop primitive refuses past the cancel point, and stops inside it", async () => {
+  // The owner's ruling: a generic cancel stays refused, and the model gets ONE narrowed control that is bound to
+  // the execution the latest observation named and to the phase that observation reported.
+  const withActive = (activeExecution: Readonly<Record<string, unknown>> | null, cancellations: string[]) => ({
+    scope,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    state: {
+      connected: true,
+      sessionId: "session",
+      capabilities: ["cancel_active_execution", "move_to_tile"],
+      catalogRevision: 1,
+      enabledActionIds: ["cancel_active_execution", "move_to_tile"],
+      snapshot: {
+        revision: 7,
+        location: "Farm",
+        tile: { x: 1, y: 2 },
+        stamina: 100,
+        exhausted: false,
+        health: 100,
+        actionable: activeExecution === null,
+        capabilities: ["cancel_active_execution", "move_to_tile"],
+        catalogRevision: 1,
+        enabledActionIds: ["cancel_active_execution", "move_to_tile"],
+        presentationLocale: "en-US",
+        timeOfDay: 600,
+        dayOfMonth: 1,
+        seasonIndex: 0,
+        year: 1,
+        activeExecution,
+      },
+      latestReceipt: null,
+      latestReasonCode: null,
+      catalogRegistrations: TEST_MOD_REGISTRATIONS,
+    },
+    async execute() {
+      throw new Error("unused");
+    },
+    async cancel(requestId: string, executionId: string, reasonCode: string) {
+      cancellations.push(`${requestId}|${executionId}|${reasonCode}`);
+      return {
+        executionId,
+        requestId,
+        actionId: "move_to_tile",
+        state: "cancelled",
+        reasonCode,
+        revision: 8,
+        evidence: null,
+      };
+    },
+  });
+
+  const stopOf = (integration: ReturnType<typeof withActive>) => {
+    const tools = createStardewActionTools(integration as never, undefined, () => ({
+      state: () => "admitted",
+    }) as never);
+    const tool = tools.find((candidate) => candidate.name === "stardew_stop_action");
+    assert.ok(tool, "the narrowed control must be mounted");
+    return tool!;
+  };
+
+  // INSIDE the approach: the stop is sent, with the identity the observation carried and the model's reason code.
+  {
+    const cancellations: string[] = [];
+    const tool = stopOf(withActive({
+      executionId: "exec_1",
+      requestId: "req_1",
+      action: "move_to_tile",
+      state: "accepted",
+      reasonCode: "accepted",
+      evidence: null,
+      ownerKind: "body_owned_by_movement",
+      interruptible: true,
+      phase: "approaching",
+      cancelSafe: true,
+    }, cancellations));
+    await tool.execute("t", {}, new AbortController().signal, () => undefined, {} as never);
+    assert.deepEqual(cancellations, ["req_1|exec_1|model_stop_requested"]);
+  }
+
+  // PAST the cancel point: refused by name and NOTHING is sent - a doomed request would be a vague failure.
+  {
+    const cancellations: string[] = [];
+    const tool = stopOf(withActive({
+      executionId: "exec_2",
+      requestId: "req_2",
+      action: "navigate_to_destination",
+      state: "accepted",
+      reasonCode: "accepted",
+      evidence: null,
+      ownerKind: "body_owned_by_navigation",
+      interruptible: false,
+      phase: "committed",
+      cancelSafe: false,
+    }, cancellations));
+    const result = await tool.execute("t", {}, new AbortController().signal, () => undefined, {} as never);
+    assert.deepEqual(cancellations, [], "the request must not be sent at all");
+    assert.match(String((result.details as { reasonCode?: string }).reasonCode), /^action_past_cancel_point/);
+    // The diagnosis travels with the refusal, so the Agent is told WHICH phase made it unsafe.
+    assert.match(String((result.details as { reasonCode?: string }).reasonCode), /phase=committed;cancel_safe=false/);
+  }
+
+  // A Mod that does not report the phase at all is treated as not-stoppable rather than assumed stoppable.
+  {
+    const cancellations: string[] = [];
+    const tool = stopOf(withActive({
+      executionId: "exec_3",
+      requestId: "req_3",
+      action: "move_to_tile",
+      state: "accepted",
+      reasonCode: "accepted",
+      evidence: null,
+    }, cancellations));
+    const result = await tool.execute("t", {}, new AbortController().signal, () => undefined, {} as never);
+    assert.deepEqual(cancellations, []);
+    assert.match(String((result.details as { reasonCode?: string }).reasonCode), /phase=unknown/);
+  }
+
+  // Nothing to stop is its own named refusal, not a silent success.
+  {
+    const cancellations: string[] = [];
+    const tool = stopOf(withActive(null, cancellations));
+    const result = await tool.execute("t", {}, new AbortController().signal, () => undefined, {} as never);
+    assert.equal((result.details as { reasonCode?: string }).reasonCode, "no_active_execution");
+  }
+});
+
 test("action tools fail closed without runtime-owned dispatch admission", () => {
   const integration = {
     scope,
