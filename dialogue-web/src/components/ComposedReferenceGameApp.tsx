@@ -147,7 +147,7 @@ export function ComposedReferenceGameApp() {
   // gate; swipe and regenerate had none, so a double click issued two admitted
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
-  const [chatMutation, setChatMutation] = useState<Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null>(null);
+  const [chatMutation, setChatMutation] = useState<Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -743,6 +743,36 @@ export function ComposedReferenceGameApp() {
       await tavernApiRef.current.selectSwipe(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
         { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await rereadChat();
+    } catch (error) {
+      await rereadChat().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
+    }
+  };
+
+  /**
+   * The new-chat opening choice. It has the same shape as swipe - single-flight, no local variant
+   * held - but it records the choice through the Host's `chat.opening` route and then rereads the
+   * authoritative snapshot, because the committed variant and the sealed-opening fact are the
+   * Host's, never React state's.
+   */
+  const handleOpeningVariant = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (chatMutationRef.current) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "opening" as const, handle: messageHandle }));
+    try {
+      await managementPipelineApiRef.current.selectOpeningVariant(
+        { apiVersion: 1, selectionGeneration: selection.generation, direction },
+        current.session.snapshot.csrfToken,
       );
       await rereadChat();
     } catch (error) {
@@ -1669,6 +1699,7 @@ export function ComposedReferenceGameApp() {
                   pending={chatMutation}
                   onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                   onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
+                  onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
                 />
                 {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
                 {/* The conversation is the reading flow and the writing flow, and
