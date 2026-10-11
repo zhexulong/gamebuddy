@@ -2004,6 +2004,71 @@ body {
   color: var(--text-disabled);
 }
 
+/* The read-only Game data disclosure. It is a `<details>`, so it is collapsed
+   by default and the panel's reading order is unchanged until a player opens it.
+   When it is open the dump is a bounded scroller, and it takes focus because a
+   scrollable region that cannot take focus is unreachable for a keyboard-only
+   player (axe: scrollable-region-focusable). */
+.game-diagnostics {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.game-diagnostics-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--touch-target-min);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.game-diagnostics-summary::-webkit-details-marker {
+  display: none;
+}
+
+.game-diagnostics-chevron {
+  flex: 0 0 auto;
+  color: var(--text-disabled);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.game-diagnostics[open] .game-diagnostics-chevron {
+  transform: rotate(90deg);
+}
+
+.game-diagnostics-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.game-diagnostics-note[data-tone="warning"] {
+  color: var(--text-disabled);
+}
+
+.game-diagnostics-json {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
 /* Connection facts: one bounded panel of label/value rows, not a loose wall of
    underlined lines. The `dt`/`dd` pair stays adjacent inside one row so the
    row's text content is exactly `label` + `value` (the browser spec reads it

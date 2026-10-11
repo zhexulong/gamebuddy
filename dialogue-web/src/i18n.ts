@@ -413,6 +413,16 @@ const en = {
   gameInstallationConfirm: "Confirm",
   gameInstallationChooseFolder: "Choose game folder",
   gameInstallationFindAgain: "Find again",
+
+  // Game data disclosure. The dump is what the composed state route publishes
+  // (`game.state.read`); the contract's separate `game.instances.read` and
+  // `game.diagnostics.read` commands have no route on this shell, so the
+  // diagnostics half says exactly that rather than showing an empty box.
+  gameDiagnostics: "Game data and diagnostics",
+  gameDiagnosticsPublished: "Published by the Host, read-only: the instance and session projection.",
+  gameDiagnosticsNoChannel: "No diagnostics are published on this route.",
+  gameDiagnosticsJson: "Instance and session projection, as published",
+  gameDiagnosticsUnavailable: "No game data is published for this profile, so there is nothing to show.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -821,6 +831,12 @@ const zh: Messages = {
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
   gameInstallationFindAgain: "重新查找",
+
+  gameDiagnostics: "游戏数据与诊断",
+  gameDiagnosticsPublished: "由 Host 发布，只读：实例与会话投影。",
+  gameDiagnosticsNoChannel: "此路由未发布诊断信息。",
+  gameDiagnosticsJson: "按发布内容呈现的实例与会话投影",
+  gameDiagnosticsUnavailable: "该档案未发布游戏数据，因此没有可显示的内容。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

@@ -35,6 +35,7 @@ import { Composer } from "./Composer";
 import { ContextDrawer } from "./ContextDrawer";
 import { SurfaceView } from "./SurfaceView";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
+import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
@@ -1764,6 +1765,12 @@ export function ComposedReferenceGameApp() {
                   csrfToken={view.session.snapshot.csrfToken}
                   labels={labels()}
                 />
+                {/* Read-only Host data at the bottom of the Game surface: the
+                    instance and session projection the composed state route
+                    publishes, and the honest fact that this Host mounts no
+                    diagnostics route. Collapsed by default; see the component
+                    for the reachability evidence. */}
+                <GameDiagnosticsDisclosure game={view.root.game} labels={labels()} />
               </SurfaceView>
             )}
             {shownSurface === CHATS_PANEL && (

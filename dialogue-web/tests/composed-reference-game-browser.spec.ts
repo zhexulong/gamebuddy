@@ -188,6 +188,69 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   expect(cabinReadRequests).toBe(2);
 });
 
+/**
+ * The Game surface's read-only data disclosure.
+ *
+ * Reachability first: `game.instances.read` and `game.diagnostics.read` are
+ * declared by `host/src/game-browser-contract/index.ts` (operation ids plus the
+ * two command bodies) but have no route on the composed shell, no producer and
+ * no result schema, so the only Host game data a browser can actually obtain is
+ * the projection `game.state.read` serves. The disclosure renders exactly that,
+ * collapsed, and says plainly that no diagnostics are published.
+ *
+ * The failures this catches: a disclosure that starts open (a debug box pushing
+ * the panel's own facts down the surface), a body that is placeholder text
+ * rather than the Host's own response (the assertions read fixture values this
+ * test chose), and a dump that leaks a session secret (the CSRF token never
+ * crosses into it).
+ */
+test("the Game data disclosure is closed by default and reveals the Host's own published projection", async ({ page }) => {
+  const published = {
+    ...game,
+    game: {
+      ...game.game,
+      instance: { status: "running", gameTitle: "Stardew Valley", generation: 7 },
+      connectionStatus: "active",
+      actionAuthority: "active",
+      capabilitySummary: { available: true, count: 42 },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: published }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+
+  const disclosure = page.getByTestId("game-diagnostics-disclosure");
+  await expect(disclosure).toBeVisible();
+  // Closed by default: the dump is not part of the panel's reading order until
+  // the player asks for it.
+  expect(await disclosure.evaluate((node) => (node as HTMLDetailsElement).open)).toBe(false);
+
+  await disclosure.locator("summary").click();
+  const dump = page.getByTestId("game-diagnostics-json");
+  await expect(dump).toBeVisible();
+  const text = (await dump.textContent()) ?? "";
+  // The values are the Host's own, taken from this response: a hardcoded or
+  // placeholder dump cannot carry the fixture values this test chose.
+  expect(text).toContain('"generation": 7');
+  expect(text).toContain('"count": 42');
+  expect(text).toContain("Stardew Valley");
+  // Only the nested game projection crosses, so no session secret is renderable.
+  expect(text).not.toContain(csrfToken);
+  // The disclosure is the region's sibling, so the region still reads as
+  // localized player outcomes and never as the Host's raw enum spellings.
+  const panelText = await page.getByTestId("game-state-panel").innerText();
+  expect(panelText).not.toContain("connected_idle");
+});
+
 test("composed profile renders game null honestly without exposing mutation controls", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: null }) }),
@@ -202,6 +265,11 @@ test("composed profile renders game null honestly without exposing mutation cont
   const panel = page.getByRole("region", { name: "Game state" });
   await expect(panel).toContainText("Game state is unavailable for this profile.");
   await expect(panel.locator("button, input, textarea, select, form")).toHaveCount(0);
+  // Nothing is published, so the read-only disclosure says so instead of
+  // rendering an empty box.
+  await expect(page.getByTestId("game-diagnostics-disclosure")).toContainText(
+    "No game data is published for this profile",
+  );
 });
 
 test("composed profile fails closed on a malformed root", async ({ page }) => {
