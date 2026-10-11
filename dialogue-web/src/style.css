@@ -799,33 +799,9 @@ body {
   border-radius: var(--radius-sm);
 }
 
-/* The two one-line surface notices. Both shells mount them (the management
-   banner and the composed shell's in-place `SurfaceNotice`), so both are global
-   and both read from the semantic feedback tokens rather than a raw colour. */
-.error-banner,
-.success-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  border-radius: var(--radius-sm);
-  margin: 0;
-}
-
-.error-banner {
-  background-color: rgba(217, 101, 101, 0.12);
-  border: 1px solid rgba(217, 101, 101, 0.32);
-  color: var(--danger);
-}
-
-.success-banner {
-  background-color: rgba(79, 174, 154, 0.14);
-  border: 1px solid rgba(79, 174, 154, 0.4);
-  color: var(--success);
-}
+/* The one-line surface notices live in `theme.polish` (see the banner family
+   there): they are text a panel's own paragraph rule would otherwise win on
+   specificity, and the layer is what decides instead of an escalating selector. */
 
 /* Saved-draft region: the labelled read-only band a shell shows above its
    composer. Padding is horizontal-only because the band is full-bleed inside
@@ -3580,4 +3556,53 @@ body {
      talk" at the mini-window width, never enough to grow the band. The clamp
      draws that ellipsis itself, which is why no `text-overflow` is stated here. */
   -webkit-line-clamp: 2;
+}
+
+/* ==========================================================================
+   The surface notices
+
+   Both shells mount them (the management banner and the composed shell's own
+   `SurfaceNotice`) and they are also what a panel puts around a line of status
+   text, which is why they are stated here rather than under a panel's paragraph
+   rule: `.management-settings-section > p` sets the muted prose colour, and at
+   `theme.legacy` that beat the banner on specificity. The layer decides, so no
+   selector has to out-specify anybody.
+
+   Each banner is one semantic colour over a wash of that same colour, taken
+   from the token rather than restated as a literal, so a palette retune moves
+   all three together. The warning tone is the one the reviewer audit found
+   missing entirely: the text beside a model conflict or an unselected connection
+   was a bare `<p>`, i.e. ordinary prose.
+   ========================================================================== */
+
+.error-banner,
+.success-banner,
+.warning-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-radius: var(--radius-sm);
+  margin: 0;
+}
+
+.error-banner {
+  background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  color: var(--danger);
+}
+
+.warning-banner {
+  background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+  color: var(--warning);
+}
+
+.success-banner {
+  background-color: color-mix(in srgb, var(--success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+  color: var(--success);
 }

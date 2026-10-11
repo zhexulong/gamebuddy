@@ -451,3 +451,74 @@ test("the voice status yields without bursting the composer rail", async ({ page
   expect(measured?.labelText).toContain("Voice ready");
   expect(measured?.statusText).toContain(measured?.labelText ?? "");
 });
+
+/**
+ * Item 5: the two banner classes a bare `<p>` needs.
+ *
+ * The failure it catches: the warning text next to a connection or model
+ * conflict was a bare `<p>` with no rule, so it read as ordinary prose - the
+ * same class of accident as the transparent stop button. `.warning-banner` is
+ * asserted on the shipped Settings surface (the "no connection is active" line
+ * renders by default), and it must be a different tone from the error banner
+ * rather than a second name for it.
+ */
+test("the warning banner carries the warning tone, not the bare-prose one", async ({ page }) => {
+  // The read route is singular and the create route plural (the frozen contract),
+  // so both are anchored: the plural is a prefix of the singularity.
+  const connectionState = {
+    apiVersion: 1,
+    revision: 1,
+    active: null,
+    connections: [],
+    providers: [],
+  };
+  await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) => route.fulfill(jsonOk(connectionState)));
+  await page.route(/\/api\/tavern\/v1\/settings\/connections$/, (route) => route.fulfill(jsonOk(connectionState)));
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill(jsonOk({ revision: 1, locale: "en-US" })),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill(
+      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill(jsonOk({ devices: [], defaultSelectable: true })),
+  );
+
+  await mountChat(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface).toBeVisible();
+
+  const banner = surface.locator(".warning-banner").first();
+  await expect(banner).toBeVisible();
+  await expect(banner).not.toBeEmpty();
+
+  const drawn = await banner.evaluate((node) => {
+    const token = (name: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    const style = getComputedStyle(node);
+    return {
+      warning: token("--warning"),
+      danger: token("--danger"),
+      color: style.color,
+      background: style.backgroundColor,
+      borderTopColor: style.borderTopColor,
+      borderTopWidth: style.borderTopWidth,
+    };
+  });
+
+  // The text is the warning tone, it is not transparent, and it is bordered -
+  // the three things a bare `<p>` does not have.
+  expect(drawn.color).toBe(drawn.warning);
+  expect(drawn.color, "the warning is not the error tone").not.toBe(drawn.danger);
+  expect(["transparent", "rgba(0, 0, 0, 0)"]).not.toContain(drawn.background);
+  expect(drawn.borderTopWidth).toBe("1px");
+});
