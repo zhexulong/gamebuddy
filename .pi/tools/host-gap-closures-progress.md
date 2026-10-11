@@ -29,8 +29,32 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
       `PUT /api/tavern/v1/chat/opening` through the management client and then rereading the composed
       root snapshot. Rendered only when the Host published an unlocked `openingVariant`
       (`openingVariant.count > 1 && !openingVariant.locked`), so it is ABSENT once sealed. Reuses the
-      existing swipe labels (no new `i18n.ts` keys) so it does not touch another lane's file.
-- [ ] Report: `requestChatSelection` having no caller is a separate gap (no browser-reachable create op)
+      existing swipe labels and CSS classes (no `i18n.ts`/`style.css` change) so it does not touch
+      another lane's files.
+- [x] Report: `requestChatSelection` having no caller is a separate gap (no browser-reachable create op)
+      - production chat creation is `requestChatSelection({kind:"create"})`
+        (`host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts:2008`),
+        which mints the identity and materializes content with a hardcoded `opening: "blank"` (:2153-2160).
+        It has no caller outside the coordinator and no browser route, so there is still no way for a player
+        to create a second Chat. This lane deliberately did not add one.
+
+### Commits
+- `492aa94b` bank the contract + variant plumbing (additive contract, `readExact`, `commitOpeningVariant`)
+- `a6ca6602` the Host half: route + downlink + bounded refusals + the two required Host assertions
+- `ecce6328` the client control (render state + management client method + reference validator)
+- `8250a922` the shell wiring (handler + reread + pending record)
+
+### Final gates at HEAD
+- `cd host; node node_modules/typescript/lib/tsc.js -p tsconfig.json` -> 0 errors
+- `node tools/check-head-typecheck.mjs` -> `head_typecheck_ok rev=8250a922b8ad projects=tsconfig.json`, exit 0
+- focused host suites -> 44 pass / 0 fail
+- `cd dialogue-web; node node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit` -> 0 errors
+- playwright composed-reference-game-browser + stardew-installation-discovery -> 50 passed / 1 skipped / 0 failed
+
+### Known follow-ups (not closed here)
+- No dedicated Playwright case renders an actual `openingVariant`; the client side is covered by tsc +
+  the existing suite, which cannot exercise a greeting opening through the real host today (production
+  Chats are created blank).
 
 ### Concurrent-writer note (dialogue-web)
 While this lane worked, another lane held uncommitted WIP in `Composer.tsx`,
