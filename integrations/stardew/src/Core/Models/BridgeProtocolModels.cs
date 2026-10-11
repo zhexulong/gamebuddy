@@ -540,7 +540,13 @@ public sealed record BridgeActiveExecution(
     // observation surface and the refusal vocabulary cannot disagree. Optional and last: a settled body and
     // the world-not-ready snapshot keep ActiveExecution null, and existing positional construction is unchanged.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OwnerKind = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Interruptible = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Interruptible = null,
+    // The holder's PHASE and whether that hold can still be released, both read from the same owner table as
+    // `OwnerKind`. Cancel safety is a property of the phase, never of an action id: an approach leg is motion
+    // (stoppable, held in the same KIND as `move_to_tile`) while everything from the native release onwards is
+    // committed and exits only through its terminal receipt. Optional and last, for the same reason as above.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Phase = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? CancelSafe = null
 );
 
 public sealed record BridgeReceipt(

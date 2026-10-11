@@ -1862,6 +1862,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
         else if (this.activePedestalTaking is not null)
             this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
+        // The phase and its cancel safety come from the SAME describer that names the holder, so an Agent that
+        // sees `cancelSafe=false` cannot be told by a refusal that the hold was releasable, or the reverse.
+        BodyOwner activeOwner = this.DescribeBodyOwner();
         BridgeActiveExecution? activeExecution = this.activeNavigate is not null
             ? new(
                 this.activeNavigate.ExecutionId,
@@ -1869,7 +1872,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 "navigate_to_destination",
                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                 activeReceipt?.ReasonCode ?? "accepted",
-                new Dictionary<string, string> { ["destination"] = this.activeNavigate.CanonicalDestinationIdentity })
+                new Dictionary<string, string> { ["destination"] = this.activeNavigate.CanonicalDestinationIdentity }, activeOwner.Phase, activeOwner.CancelSafe)
             : this.active is not null
             ? new(
                 this.active.ExecutionId,
@@ -1877,7 +1880,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 "move_to_tile",
                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                 activeReceipt?.ReasonCode ?? "accepted",
-                new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile), ["deadline_ms"] = this.active.DeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture) })
+                new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile), ["deadline_ms"] = this.active.DeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture) }, activeOwner.Phase, activeOwner.CancelSafe)
             : this.activeTravel is not null
                 ? new(
                     this.activeTravel.ExecutionId,
@@ -1885,9 +1888,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     this.activeTravel.Action,
                     (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                     activeReceipt?.ReasonCode ?? "accepted",
-                    new Dictionary<string, string> { ["source"] = $"{this.activeTravel.SourceLocation}:{this.activeTravel.SourceX},{this.activeTravel.SourceY}", ["target"] = $"{this.activeTravel.TargetLocation}:{this.activeTravel.TargetX},{this.activeTravel.TargetY}" })
+                    new Dictionary<string, string> { ["source"] = $"{this.activeTravel.SourceLocation}:{this.activeTravel.SourceX},{this.activeTravel.SourceY}", ["target"] = $"{this.activeTravel.TargetLocation}:{this.activeTravel.TargetX},{this.activeTravel.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
                 : this.activeMountTransport is not null
-                    ? new(this.activeMountTransport.ExecutionId, this.activeMountTransport.RequestId, "mount_transport", (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted", new Dictionary<string, string> { ["target"] = this.activeMountTransport.TargetId, ["tile"] = $"{this.activeMountTransport.TargetX},{this.activeMountTransport.TargetY}" })
+                    ? new(this.activeMountTransport.ExecutionId, this.activeMountTransport.RequestId, "mount_transport", (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted", new Dictionary<string, string> { ["target"] = this.activeMountTransport.TargetId, ["tile"] = $"{this.activeMountTransport.TargetX},{this.activeMountTransport.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
                 : this.activePet is not null
                     ? new(
                         this.activePet.ExecutionId,
@@ -1895,7 +1898,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                         "pet_animal",
                         (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                         activeReceipt?.ReasonCode ?? "accepted",
-                        new Dictionary<string, string> { ["target"] = this.activePet.TargetId, ["tile"] = $"{this.activePet.TargetX},{this.activePet.TargetY}" })
+                        new Dictionary<string, string> { ["target"] = this.activePet.TargetId, ["tile"] = $"{this.activePet.TargetX},{this.activePet.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
                     : this.activeAnimalProduct is not null
                         ? new(
                             this.activeAnimalProduct.ExecutionId,
@@ -1903,7 +1906,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                             "collect_animal_product",
                             (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                             activeReceipt?.ReasonCode ?? "accepted",
-                            new Dictionary<string, string> { ["target"] = this.activeAnimalProduct.TargetId, ["slot"] = this.activeAnimalProduct.Slot.ToString(), ["animal"] = this.activeAnimalProduct.AnimalId.ToString() })
+                            new Dictionary<string, string> { ["target"] = this.activeAnimalProduct.TargetId, ["slot"] = this.activeAnimalProduct.Slot.ToString(), ["animal"] = this.activeAnimalProduct.AnimalId.ToString() }, activeOwner.Phase, activeOwner.CancelSafe)
                     : this.activeItemUse is not null
                         ? new(
                             this.activeItemUse.ExecutionId,
@@ -1911,7 +1914,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                             "use_item",
                             (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                             activeReceipt?.ReasonCode ?? "accepted",
-                            new Dictionary<string, string> { ["slot"] = this.activeItemUse.Slot.ToString(), ["item"] = this.activeItemUse.QualifiedItemId })
+                            new Dictionary<string, string> { ["slot"] = this.activeItemUse.Slot.ToString(), ["item"] = this.activeItemUse.QualifiedItemId }, activeOwner.Phase, activeOwner.CancelSafe)
                         : this.activeToolApproach is not null
                             ? new(
                                 this.activeToolApproach.ExecutionId,
@@ -1919,7 +1922,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                 this.activeToolApproach.ActionId,
                                 (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                                 activeReceipt?.ReasonCode ?? "accepted",
-                                new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" })
+                                new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" }, activeOwner.Phase, activeOwner.CancelSafe)
                              : this.activeItemPickup is not null
                                  ? new(
                                      this.activeItemPickup.ExecutionId,
@@ -1927,11 +1930,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                      "pickup_item",
                                      (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
                                      activeReceipt?.ReasonCode ?? "accepted",
-                                     new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" })
+                                     new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
                                  : this.activePedestalTaking is not null
                                      ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
                                          (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
-                                         new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" })
+                                         new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
                                   : null;
         if (activeExecution is not null)
         {

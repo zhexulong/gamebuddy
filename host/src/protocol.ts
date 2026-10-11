@@ -94,6 +94,15 @@ type ActiveExecution = Readonly<{
   ownerKind?: string;
   /** Whether a new command can take that owner over. */
   interruptible?: boolean;
+  /**
+   * The holder's PHASE, when the Mod names it: `approaching` while the actor is still walking to the target,
+   * `committed` once the native call has taken over. Cancel safety is a property of this phase rather than of an
+   * action id - an approach leg is held in the same KIND as `move_to_tile` and can be braked, a committed step can
+   * only exit through its terminal receipt.
+   */
+  phase?: string;
+  /** Whether this hold can still be released. Derived by the Mod from the phase, so it cannot disagree with it. */
+  cancelSafe?: boolean;
 }>;
 
 export type Snapshot = Readonly<{
@@ -4922,12 +4931,15 @@ const ACTIVE_EXECUTION_KEYS = Object.freeze([
   "evidence",
   "ownerKind",
   "interruptible",
+  "phase",
+  "cancelSafe",
 ] as const);
 
 function validateActiveExecution(value: Record<string, unknown>): string | null {
-  // `ownerKind`/`interruptible` are OPTIONAL, so an older Mod that does not send them still validates - but
-  // a newer one that does must not be refused, which is exactly what happened when the Mod gained them and
-  // this list did not (every in-flight snapshot would have been `invalid_snapshot` and closed the bridge).
+  // `ownerKind`/`interruptible`/`phase`/`cancelSafe` are OPTIONAL, so an older Mod that does not send them still
+  // validates - but a newer one that does must not be refused, which is exactly what happened when the Mod gained
+  // the first two and this list did not (every in-flight snapshot would have been `invalid_snapshot` and closed the
+  // bridge). The additions are declared HERE, once, so the next field cannot be forgotten in a second list.
   return hasOnlyKeys(value, [...ACTIVE_EXECUTION_KEYS]) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
@@ -4937,9 +4949,11 @@ function validateActiveExecution(value: Record<string, unknown>): string | null 
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
     (value.evidence === null || isRecord(value.evidence)) &&
-    // The two optional members are type-checked when present: the allowance must not become a hole.
+    // The optional members are type-checked when present: the allowance must not become a hole.
     (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
-    (value.interruptible === undefined || typeof value.interruptible === "boolean")
+    (value.interruptible === undefined || typeof value.interruptible === "boolean") &&
+    (value.phase === undefined || (typeof value.phase === "string" && value.phase.length <= 64)) &&
+    (value.cancelSafe === undefined || typeof value.cancelSafe === "boolean")
     ? null
     : "invalid_active_execution";
 }

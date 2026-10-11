@@ -3038,7 +3038,7 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   );
 });
 
-test("a snapshot taken while an execution is in flight carries the body owner", () => {
+test("a snapshot taken while an execution is in flight carries the body owner, its PHASE, and the cancel safety that follows from it", () => {
   // This is the coverage whose ABSENCE let a real defect through: the Mod gained `ownerKind`/`interruptible`
   // on the wire active execution while this side still required exactly six keys, so every snapshot taken
   // during an in-flight action would have been refused as `invalid_snapshot` and the bridge would have closed
@@ -3072,6 +3072,30 @@ test("a snapshot taken while an execution is in flight carries the body owner", 
     },
   };
     assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, older, "older_1", now), scope, now), null);
+
+  // The phase pair, added for the same reason as the owner pair above: a hold's cancel safety is a property of
+  // its PHASE, and the Host must be able to see both while refusing nothing it should accept.
+  const withPhase = {
+    ...inFlight,
+    activeExecution: { ...inFlight.activeExecution, phase: "approaching", cancelSafe: true },
+  };
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, withPhase, "phase_1", now), scope, now), null);
+
+  // Absent is fine (an older Mod), and a wrong type is not.
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...inFlight, activeExecution: { ...inFlight.activeExecution, cancelSafe: "yes" } },
+        "bad_cancel_safe",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    "invalid_snapshot:activeExecution",
+  );
 
   // A WRONG TYPE is still refused, so the allowance did not become a hole.
   // validateBridgeMessage returns the BARE code for a snapshot; the named code comes from the diagnostic
