@@ -2027,37 +2027,12 @@ body {
    by default and the panel's reading order is unchanged until a player opens it.
    When it is open the dump is a bounded scroller, and it takes focus because a
    scrollable region that cannot take focus is unreachable for a keyboard-only
-   player (axe: scrollable-region-focusable). */
+   player (axe: scrollable-region-focusable). The summary's own treatment is the
+   shared disclosure one (see `.custom-disclosure` below). */
 .game-diagnostics {
   margin-top: 4px;
   padding-top: 12px;
   border-top: 1px solid var(--border-subtle);
-}
-
-.game-diagnostics-summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--touch-target-min);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  list-style: none;
-}
-
-.game-diagnostics-summary::-webkit-details-marker {
-  display: none;
-}
-
-.game-diagnostics-chevron {
-  flex: 0 0 auto;
-  color: var(--text-disabled);
-  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.game-diagnostics[open] .game-diagnostics-chevron {
-  transform: rotate(90deg);
 }
 
 .game-diagnostics-note {
@@ -3424,3 +3399,64 @@ body {
 }
 
 } /* end @layer theme.polish */
+
+/* ==========================================================================
+   The disclosure (`<details>`)
+
+   `<details>` is the right element for "there is more here, if you want it", and
+   the only chrome the platform gives it is a marker: a triangle in the
+   platform's own style, at the platform's own indent. The marker is retired,
+   the summary becomes a 44 px row with a pointer, a hover and a focus ring, and
+   the chevron the JSX already places inside it carries the open state.
+
+   This is the treatment the Game diagnostics disclosure used to state under its
+   own class; the card-import paste disclosure had none at all and rendered the
+   platform's triangle. Stated once here, because two copies drift - and the
+   class is the same one both `<details>` carry now.
+   ========================================================================== */
+
+.custom-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--touch-target-min);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+/* `list-style: none` is the standard half of this; the pseudo-element is what
+   Chromium and WebKit actually draw when they draw a marker. */
+.custom-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.custom-disclosure > summary:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+  border-radius: var(--radius-xs);
+}
+
+.custom-disclosure > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.custom-disclosure > summary > svg {
+  flex: 0 0 auto;
+  color: var(--text-disabled);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+/* A chevron that points right opens downwards... */
+.custom-disclosure[open] > summary > .game-diagnostics-chevron {
+  transform: rotate(90deg);
+}
+
+/* ...and one that points down flips up. Both are closed by default, so the
+   open state is the only thing either rotation says. */
+.custom-disclosure[open] > summary > svg:not(.game-diagnostics-chevron) {
+  transform: rotate(180deg);
+}

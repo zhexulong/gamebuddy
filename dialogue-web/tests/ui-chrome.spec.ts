@@ -259,3 +259,71 @@ test("every field on the Characters surface clears the 44px floor", async ({ pag
     "controls under the 44 px floor",
   ).toEqual([]);
 });
+
+/**
+ * Item 2: the disclosure.
+ *
+ * The failure it catches: without a rule of its own a `<details>` renders the
+ * platform's triangle at the platform's indent, which is the same
+ * black-on-dark accident the native select was, and the chevron inside the
+ * summary never changes - so an open disclosure looks exactly like a closed one
+ * to anyone who did not see the click. Both are asserted as computed style, and
+ * the rotation is asserted by opening the element rather than by looking for a
+ * rule.
+ */
+test("the paste disclosure retires the native marker and carries its open state", async ({ page }) => {
+  await mountCharacters(page);
+
+  const details = page.locator("details.custom-disclosure").first();
+  const summary = details.locator("> summary");
+  await expect(summary).toBeVisible();
+
+  const closed = await summary.evaluate((node) => {
+    const style = getComputedStyle(node);
+    const chevron = node.querySelector("svg");
+    return {
+      listStyleType: style.listStyleType,
+      display: style.display,
+      height: Math.round(node.getBoundingClientRect().height),
+      chevron: chevron === null ? null : getComputedStyle(chevron).transform,
+    };
+  });
+  expect(closed.listStyleType, "the platform's marker is retired").toBe("none");
+  expect(closed.display).toBe("flex");
+  expect(closed.height, "the summary is a 44 px row").toBeGreaterThanOrEqual(44);
+  expect(closed.chevron, "the summary carries the chevron").not.toBeNull();
+
+  await summary.click();
+  await expect(details).toHaveAttribute("open", "");
+  const open = await summary.evaluate((node) => {
+    const chevron = node.querySelector("svg");
+    return chevron === null ? null : getComputedStyle(chevron).transform;
+  });
+  // The open state is rendered: the glyph is rotated, so a player who did not
+  // see the click can still tell which way the disclosure went.
+  expect(open).not.toBe(closed.chevron);
+  expect(open).not.toBe("none");
+});
+
+/**
+ * The Game diagnostics disclosure moved onto that shared treatment (it used to
+ * state the same rules under its own class). Its own panel keeps its shape: the
+ * summary still rotates its right-pointing chevron downwards when it opens.
+ */
+test("the Game diagnostics disclosure keeps its treatment on the shared rule", async ({ page }) => {
+  await mountChat(page);
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+
+  const details = page.getByTestId("game-diagnostics-disclosure");
+  const summary = details.locator("> summary");
+  await expect(summary).toBeVisible();
+  expect(await summary.evaluate((node) => getComputedStyle(node).listStyleType)).toBe("none");
+  expect(await summary.evaluate((node) => Math.round(node.getBoundingClientRect().height))).toBeGreaterThanOrEqual(44);
+
+  const before = await page.getByTestId("game-diagnostics-disclosure").locator("> summary > svg").evaluate((node) => getComputedStyle(node).transform);
+  await summary.click();
+  const after = await page.getByTestId("game-diagnostics-disclosure").locator("> summary > svg").evaluate((node) => getComputedStyle(node).transform);
+  expect(after).not.toBe(before);
+  expect(after).not.toBe("none");
+});
