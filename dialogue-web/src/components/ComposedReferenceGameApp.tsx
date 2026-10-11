@@ -290,6 +290,19 @@ export function ComposedReferenceGameApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [shownSurface]);
 
+  // Returning to the conversation puts the player back where they type. A
+  // surface's own landing place is its heading (`SurfaceView`), which is right
+  // for a peer surface a keyboard user is stepping into; the conversation's
+  // landing place is the composer's field, and `Composer` owns that field, so the
+  // shell reaches it by the class the composer renders - the same handle the
+  // mounted gates use. Only a return moves focus; the first paint does not.
+  const previousSurfaceRef = useRef<string>(shownSurface);
+  useEffect(() => {
+    const returned = shownSurface === CHAT_PANEL && previousSurfaceRef.current !== CHAT_PANEL;
+    previousSurfaceRef.current = shownSurface;
+    if (returned) document.querySelector<HTMLTextAreaElement>(".composer-textarea")?.focus();
+  }, [shownSurface]);
+
   // Selecting a surface is one history entry (design/104 §2). The entries are the
   // shell's surface switcher, so all of them share this one behaviour.
   const openPanelOf = (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) => (): void => {

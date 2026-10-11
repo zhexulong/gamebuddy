@@ -25,12 +25,9 @@
  *   6. Empty and loading states are distinguishable from a blank region, and the
  *      shell's loading state names what it is loading.
  *
- * Two contracts are known to be unmet today and are pinned as `test.fixme`
- * (they still appear in the run, with the measured value in the reason):
- * `Escape` leaves focus on the conversation heading rather than the composer,
- * and a long companion name overflows the transcript's author line. Both live in
- * files this gate does not own, so they are reported for routing - see the
- * annotations and the gate report.
+ * The two contracts this file once pinned as `test.fixme` are met: `Escape`
+ * returns focus to the conversation's composer, and a 250-character companion
+ * name wraps in the transcript's author line. Both gates run as normal tests.
  */
 import { expect, test, type Page } from "@playwright/test";
 
@@ -645,21 +642,25 @@ test("gate 4: Tab reaches every AppBar entry, Enter opens a surface, Escape retu
 });
 
 /**
- * Gate 4, known gap: the documented contract says returning to the conversation
- * "moves focus back to where the player types" (`SurfaceView.tsx`), but the
- * composed shell renders the conversation's `SurfaceView` with no
- * `restoreFocusTo` (`ComposedReferenceGameApp.tsx:1687`), so Escape leaves focus
- * on the conversation heading.
+ * Gate 4, the conversation's landing place: the documented contract says
+ * returning to the conversation "moves focus back to where the player types"
+ * (`SurfaceView.tsx`), and the conversation's own `SurfaceView` is mounted with
+ * no focus target, so its heading takes the mount focus and Escape leaves the
+ * keyboard user on the heading.
  *
- * Measured today: after Escape, `document.activeElement` is
+ * Before the fix, measured: after Escape, `document.activeElement` is
  * `H2#chat-surface-title`, not `.composer-textarea`.
  */
-test.fixme("gate 4 (known gap): Escape returns focus to the composer", async ({ page }) => {
+test("gate 4: Escape returns focus to the composer", async ({ page }) => {
   await mountShell(page);
   await openSurface(page, SURFACES[1]!);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("chat-surface")).toBeVisible();
   await page.waitForTimeout(100);
+  record(
+    "gate-4-composer",
+    `after Escape from Game: activeElement ${await page.evaluate(() => (document.activeElement as HTMLElement | null)?.id || (document.activeElement as HTMLElement | null)?.className || "(none)")}`,
+  );
   await expect(page.locator(".composer-textarea")).toBeFocused();
 });
 
