@@ -56,6 +56,14 @@ Shell note: this machine's `bash` tool is PowerShell (no heredocs); files are wr
   the existing suite, which cannot exercise a greeting opening through the real host today (production
   Chats are created blank).
 
+### Final observed state (shared working tree)
+At the last check the host WORKTREE typecheck (`tsc -p tsconfig.json`) was red with 21 errors, all in
+`host/src/stardew-game-integration-adapter.ts` - another lane's UNCOMMITTED WIP (mtime 16:51:58), which
+this lane never touched. The committed tree is green: `node tools/check-head-typecheck.mjs` ->
+`head_typecheck_ok rev=092e497bdd97 projects=tsconfig.json`. Every file this lane changed is committed and
+`git status` is clean for `host/src/tavern*`, `host/src/greeting-management`, `host/src/composed-*` and
+`dialogue-web/src`.
+
 ### Concurrent-writer note (dialogue-web)
 While this lane worked, another lane held uncommitted WIP in `Composer.tsx`,
 `CharacterCardImport.tsx`, `GameDiagnosticsDisclosure.tsx`, `management-panels.tsx`,
