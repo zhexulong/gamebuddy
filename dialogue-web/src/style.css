@@ -4096,9 +4096,6 @@ body {
   flex-shrink: 0;
 }
 
-} /* end @layer theme.polish */
-
-
 /* ==========================================================================
    The game session's one terminal operation (`game.endgame`)
 
@@ -4108,7 +4105,6 @@ body {
    session. Appended block; the rules above are untouched.
    ========================================================================== */
 
-@layer theme.polish {
   .game-endgame {
     display: flex;
     flex-direction: column;
@@ -4134,8 +4130,6 @@ body {
     background-color: color-mix(in srgb, var(--danger) 18%, transparent);
     border-color: var(--danger);
   }
-}
-
 
 /* ==========================================================================
    The optimistic player message (send lane)
@@ -4145,7 +4139,6 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-@layer theme.polish {
   .message-optimistic {
     display: flex;
     flex-direction: column;
@@ -4197,4 +4190,4 @@ body {
       animation: none;
     }
   }
-}
+} /* end @layer theme.polish */
