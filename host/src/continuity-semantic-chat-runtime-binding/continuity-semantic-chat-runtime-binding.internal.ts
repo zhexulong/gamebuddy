@@ -302,16 +302,22 @@ function assertOwnerProof(value: unknown): asserts value is Readonly<{ processId
 const OWNER_IDENTITY_QUERY_TIMEOUT_MS = 15_000;
 
 /**
- * Reads this process's own creation time as an owner proof.
- *
- * The proof stays strict: stdout must be exactly `<pid>|<ticks>` and stderr must be
- * empty. The only concession is one retry, because a loaded Windows host can lose
- * the ephemeral PowerShell handshake while the process being attested is perfectly
- * healthy - and that spurious failure reads to the player as the companion runtime
- * dying. A retry re-queries the same facts, so a successful retry produces a fresh
- * exact proof and nothing about the validation is relaxed.
+ * How long the retry waits before asking again. A loaded Windows host can lose the
+ * ephemeral PowerShell handshake while the attested process is healthy; re-asking in
+ * the same instant loses it the same way, so the retry steps outside that instant.
  */
-async function queryCurrentOwnerProof(attempt = 0): Promise<OwnerProofRecord> {
+const OWNER_IDENTITY_QUERY_RETRY_BACKOFF_MS = 250;
+
+/**
+ * The one external effect this query performs: launch PowerShell and hand back its raw streams.
+ *
+ * Production passes the real launch and a test passes a stand-in, which can only produce raw
+ * output: the strict reading below, the proof it constructs, and the branding that follows are
+ * all out of a replacement's reach.
+ */
+export type OwnerIdentityQueryRun = () => Promise<Readonly<{ stdout: string; stderr: string }>>;
+
+function runCurrentProcessOwnerQuery(): OwnerIdentityQueryRun {
   const run = promisify(execFile);
   const processId = process.pid;
   const script = [
@@ -322,22 +328,51 @@ async function queryCurrentOwnerProof(attempt = 0): Promise<OwnerProofRecord> {
     "$creationTicks = ([datetime]$processRecord.CreationDate).ToUniversalTime().Ticks",
     "[Console]::Out.WriteLine(([string]$processRecord.ProcessId + '|' + [string]$creationTicks))",
   ].join("; ");
-  try {
-    const result = await run(
+  return () =>
+    run(
       // Absolute path: a reduced or over-long PATH must not read as a failed
       // owner-identity query.
       resolveWindowsPowerShell() ?? "powershell.exe",
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
       { windowsHide: true, timeout: OWNER_IDENTITY_QUERY_TIMEOUT_MS, maxBuffer: 256, encoding: "utf8" },
     );
-    if (result.stderr.length !== 0) throw new Error("unexpected_windows_owner_identity_stderr");
-    const match = /^([1-9][0-9]{0,9})\|([1-9][0-9]{0,19})\r?\n$/.exec(result.stdout);
-    if (!match || Number(match[1]) !== processId || !match[2]) throw new Error("invalid_windows_owner_identity_output");
-    const proof = Object.freeze({ processId, creationTime100ns: match[2] });
-    assertOwnerProof(proof);
-    return proof;
+}
+
+/** One strict read: the answer must be exactly `<pid>|<ticks>` for this process, with nothing on stderr. */
+async function readCurrentOwnerProof(processId: number, run: OwnerIdentityQueryRun): Promise<OwnerProofRecord> {
+  const result = await run();
+  if (result.stderr.length !== 0) throw new Error("unexpected_windows_owner_identity_stderr");
+  const match = /^([1-9][0-9]{0,9})\|([1-9][0-9]{0,19})\r?\n$/.exec(result.stdout);
+  if (!match || Number(match[1]) !== processId || !match[2]) throw new Error("invalid_windows_owner_identity_output");
+  const proof = Object.freeze({ processId, creationTime100ns: match[2] });
+  assertOwnerProof(proof);
+  return proof;
+}
+
+/**
+ * Reads this process's own creation time as an owner proof.
+ *
+ * The proof stays strict: stdout must be exactly `<pid>|<ticks>` and stderr must be
+ * empty. The only concession is one retry after a bounded backoff, because a loaded
+ * Windows host can lose the ephemeral PowerShell handshake while the process being
+ * attested is perfectly healthy - and that spurious failure reads to the player as
+ * the companion runtime dying. A retry re-queries the same facts, so a successful
+ * retry produces a fresh exact proof and nothing about the validation is relaxed.
+ */
+export async function queryCurrentOwnerProof(
+  run: OwnerIdentityQueryRun = runCurrentProcessOwnerQuery(),
+): Promise<OwnerProofRecord> {
+  const processId = process.pid;
+  try {
+    return await readCurrentOwnerProof(processId, run);
+  } catch {
+    // The first attempt's own verdict is not the report: either the retry below returns a
+    // fresh exact proof, or the failure names why the query never answered.
+    await new Promise<void>((resolve) => setTimeout(resolve, OWNER_IDENTITY_QUERY_RETRY_BACKOFF_MS));
+  }
+  try {
+    return await readCurrentOwnerProof(processId, run);
   } catch (error) {
-    if (attempt === 0) return queryCurrentOwnerProof(1);
     // Same defect as the Game port had: the classification is the whole report of why the query failed.
     throw new Error(`windows_runtime_owner_identity_query_failed:${describeOwnerIdentityQueryFailure(error)}`);
   }
