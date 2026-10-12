@@ -147,7 +147,6 @@ export function ChatsSurfacePanel({
   retentionAvailable,
   createAvailable,
   selectAvailable,
-  turnInFlight,
   onRenamedTitle,
   onChatSwitched,
   onNotice,
@@ -171,11 +170,6 @@ export function ChatsSurfacePanel({
    * route and the rows are not selectable; `undefined` means the served route is the capability.
    */
   selectAvailable?: boolean;
-  /**
-   * `true` while a turn is generating. Switching is turn-level, so the rows are then not
-   * selectable and the panel states the reason the player can act on (Stop, then switch).
-   */
-  turnInFlight?: boolean;
   /** Lets the mount fold the validated rename read-back into its own mounted session. */
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
@@ -188,11 +182,10 @@ export function ChatsSurfacePanel({
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
   const [creating, setCreating] = useState(false);
-  // The Chat whose switch the Host refused because a turn is still generating. Switching is
-  // turn-level, so this is a refusal the player can act on (Stop, then switch), never a claim
-  // that the mounted conversation moved.
-  const [blocked, setBlocked] = useState<string | null>(null);
-  const [selecting, setSelecting] = useState(false);
+  // The Chat whose switch is in flight. Switching another Chat is a focus transfer, so this is
+  // never a refusal: the row stays selectable and this only marks the request that is out, so a
+  // click during a generating turn does not look ignored while the Host aborts and switches.
+  const [selecting, setSelecting] = useState<string | null>(null);
   const { inline, report } = useSurfaceNotice(onNotice);
 
   useEffect(() => {
@@ -283,28 +276,30 @@ export function ChatsSurfacePanel({
   };
 
   /**
-   * Chat selection (ADR 0009). Switching is turn-level: while the runtime is idle the Host
-   * switches the mounted conversation inside the same process and answers `switched`, so the
-   * surface re-reads the authoritative list and the shell reloads the target's transcript. While
-   * a turn is generating the Host answers `turn_in_flight` and the surface states the reason it
-   * can act on instead of pretending a switch happened. A bounded refusal
-   * (`selection_conflict`) re-reads the durable list before it is reported.
+   * Chat selection (ADR 0009 / ADR-0010). Selecting another Chat is a focus transfer, so the
+   * request is never refused for a generating turn: the Host aborts the mounted turn through the
+   * same cancel path an explicit Stop uses, lets that abort settle, releases the runtime and mounts
+   * the target, then answers `switched` - the surface re-reads the authoritative list and the shell
+   * reloads the target's transcript. `turn_in_flight` is only the bounded residual for a durable
+   * turn whose attempt has not started yet, where there is nothing to abort: the selection is
+   * recorded and takes effect at the next start. A bounded refusal (`selection_conflict`) re-reads
+   * the durable list before it is reported.
    */
   const selectChat = (handle: string): void => {
-    if (selectAvailable === false || turnInFlight === true || selecting) return;
+    if (selectAvailable === false || selecting !== null) return;
     // The mounted Chat is a no-op: there is nothing to switch to.
     if (handle === currentChatHandle) return;
-    setSelecting(true);
+    setSelecting(handle);
     void (async () => {
       try {
         const result = await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
+        await reread();
         if (result.status === "turn_in_flight") {
-          setBlocked(handle);
-          report({ kind: "failure", text: labels.chatSelectTurnInFlight });
+          // Nothing to abort, so the mounted conversation has not moved; the recorded selection is
+          // durable and lands the next time that conversation starts.
+          report({ kind: "success", text: labels.chatSelectRecordedNextStart });
           return;
         }
-        setBlocked(null);
-        await reread();
         // The mounted identity itself changed, so the shell must replace its session from the new
         // snapshot and restart its live cursor on the target conversation.
         onChatSwitched?.();
@@ -313,7 +308,7 @@ export function ChatsSurfacePanel({
         await reread();
         report({ kind: "failure", text: labels.failure });
       } finally {
-        setSelecting(false);
+        setSelecting(null);
       }
     })();
   };
@@ -364,17 +359,12 @@ export function ChatsSurfacePanel({
         </div>
       )}
       <div className="chat-list" role="list">
-        {turnInFlight === true && (
-          <p className="empty-subtle" data-testid="chat-select-blocked">
-            {labels.chatSelectTurnInFlight}
-          </p>
-        )}
         {list.length === 0 ? (
           <p className="empty-subtle">{labels.noChats}</p>
         ) : (
           list.map((chat) => {
             const isSelected = chat.handle === currentChatHandle;
-            const isBlocked = chat.handle === blocked;
+            const isSelecting = chat.handle === selecting;
             return (
               <div
                 key={chat.handle}
@@ -417,14 +407,16 @@ export function ChatsSurfacePanel({
                       className="chat-item-title chat-item-select"
                       data-testid="chat-select"
                       aria-current={isSelected ? "true" : undefined}
-                      disabled={selectAvailable === false || turnInFlight === true || selecting}
+                      disabled={selectAvailable === false || selecting !== null}
                       onClick={() => selectChat(chat.handle)}
                     >
                       {chat.title ?? labels.untitledChat}
                     </button>
-                    {isBlocked && !isSelected && (
+                    {/* The transient acknowledgement: the switch request is out, so the click is
+                        not ignored. Never a refusal - the row stays enabled while a turn runs. */}
+                    {isSelecting && (
                       <span className="chat-item-badge" data-testid="chat-select-pending">
-                        {labels.chatSelectTurnInFlight}
+                        {labels.chatSelectSwitching}
                       </span>
                     )}
                     <div className="chat-item-actions">

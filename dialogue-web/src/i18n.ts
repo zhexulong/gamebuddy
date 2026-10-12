@@ -502,10 +502,17 @@ const en = {
 
   // --- chat selection lane: switching the mounted Chat is turn-level ---
   chatSelectSwitchedNotice: "Chat switched.",
-  chatSelectTurnInFlight: "A reply is still being written. Stop it, then switch chat.",
 
   // --- optimistic send lane: the sent text is visible before the Host answers ---
   chatSending: "Sending...",
+
+  // --- class A/B action split lane (appended): a focus transfer aborts, a state change waits ---
+  // The transient acknowledgement while a Chat switch is in flight. The row stays enabled, so this
+  // says the request is out rather than that the switch was refused.
+  chatSelectSwitching: "Switching...",
+  // The bounded residual: a durable turn whose attempt has not started has nothing to abort, so the
+  // recorded selection takes effect the next time that conversation starts.
+  chatSelectRecordedNextStart: "The switch is recorded and takes effect the next time this conversation starts.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -981,10 +988,15 @@ const zh: Messages = {
 
   // --- 会话选择 lane：挂载会话的切换是 turn 级的 ---
   chatSelectSwitchedNotice: "已切换会话。",
-  chatSelectTurnInFlight: "正在生成回复。请先停止，再切换会话。",
 
   // --- 乐观发送 lane：在 Host 回应前先显示已发送文本 ---
   chatSending: "发送中...",
+
+  // --- Class A/B 动作分层 lane（追加）：焦点转移会中止，状态变更等待 ---
+  // 切换会话进行中的临时提示：该行仍可点击，所以它表示请求已发出，而不是切换被拒绝。
+  chatSelectSwitching: "正在切换…",
+  // 有界残留：回合尚未开始，没有可中止的生成，切换已记录，将在下次启动该会话时生效。
+  chatSelectRecordedNextStart: "切换已记录，将在下次启动该会话时生效。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

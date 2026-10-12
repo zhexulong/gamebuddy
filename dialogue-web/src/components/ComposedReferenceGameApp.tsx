@@ -1118,7 +1118,6 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
                 currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
-                turnInFlight={stopAvailable}
                 onRenamedTitle={handleRenamedTitle}
                 onChatSwitched={handleChatSwitched}
                 restoreFocusTo={chatsEntryRef}

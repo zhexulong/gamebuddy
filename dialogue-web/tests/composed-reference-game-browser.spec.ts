@@ -4527,13 +4527,195 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
 });
 
 /**
- * The other half of the turn-level ruling: while a turn is generating, the affordance is disabled and
- * the panel names the reason the player can act on (Stop, then switch) - never a raw code, and never a
- * switch that would tear a generating conversation down.
+ * The unified action rule (ADR-0010), Class A: selecting another Chat is a focus transfer, and a
+ * focus transfer is never withheld. While a turn is generating the rows stay ENABLED, the click
+ * reaches the selection route, the Host aborts the running turn through the same cancel path an
+ * explicit Stop uses, the outcome is `switched`, and the conversation the app shows is the
+ * target's.
+ *
+ * The assertions, and the failure each one catches:
+ *  - `chat-select` is enabled with no `chat-select-blocked` notice: catches the grey-out, which held
+ *    the player's attention hostage while another conversation was one click away.
+ *  - The selection route is reached exactly once: catches a control that silently swallows the
+ *    click.
+ *  - `chat-select-pending` while the request is out, gone once it lands: catches a click that looks
+ *    ignored - the acknowledgement is a request, never a refusal.
+ *  - The switched notice and the target row marked selected: catches a Host answer that refuses the
+ *    switch (the old `turn_in_flight` reading) instead of performing it.
+ *  - The transcript being the target's and no longer the first chat's: catches a `switched` answer
+ *    that did not actually move the mounted conversation - the failure mode where only the *next*
+ *    start would have honoured the choice.
+ *  - The interrupted turn's produced text present again after switching back, with its Stop gone:
+ *    catches an abort that throws away the part of the reply the player had already been shown.
  */
-test("Chats surface disables the switch and names the reason while a turn is generating", async ({ page }) => {
+test("clicking another chat while a turn generates aborts that turn and switches", async ({ page }) => {
   let selectRequests = 0;
-  const runningRoot = {
+  let mountedHandle = handle;
+  const targetHandle = "C".repeat(42) + "A";
+  const runningTurnHandle = "F".repeat(42) + "A";
+  // What the interrupted turn had already produced: aborting it to switch must keep this text, not
+  // discard the part of the reply the player had already been shown.
+  const producedText = "And then she said, before the switch interrupted her,";
+  let selectTarget = targetHandle;
+  let selectGeneration = 1;
+  // A generating turn on the first conversation. The switch aborts it; its produced text stays.
+  let turnRunning = true;
+  const firstChat = () => ({
+    ...chat,
+    selection: { chatHandle: handle, generation: 1, stateRevision: handle },
+    operations: turnRunning
+      ? [{ operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" }]
+      : [],
+    chat: {
+      ...chat.chat,
+      transcript: [
+        ...chat.chat.transcript,
+        {
+          handle: runningTurnHandle,
+          role: "companion",
+          text: producedText,
+          locale: "und",
+          order: 1,
+          revision: 1,
+        },
+      ],
+      turn: turnRunning
+        ? { handle: runningTurnHandle, state: "running", projectionRevision: 1, canCancel: true }
+        : null,
+    },
+  });
+  const targetChat = {
+    ...chat,
+    selection: { chatHandle: targetHandle, generation: 2, stateRevision: targetHandle },
+    chat: {
+      ...chat.chat,
+      title: "Second conversation",
+      transcript: [
+        {
+          handle: "E".repeat(42) + "A",
+          role: "companion",
+          text: "This is the second conversation.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+      ],
+      turn: null,
+    },
+  };
+  const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? firstChat() : targetChat });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill(
+        jsonOk({
+          apiVersion: 1,
+          chats: [
+            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+            { handle: targetHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === targetHandle },
+          ],
+        }),
+      );
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "not_found" }) });
+  });
+  await page.route("**/api/tavern/v1/chat/select", async (route) => {
+    selectRequests += 1;
+    expect(route.request().method()).toBe("PUT");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, selectionGeneration: selectGeneration, chatHandle: selectTarget });
+    // Hold the answer so the transient acknowledgement is observable, exactly as a Host that has to
+    // abort and settle a running turn before it can switch.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    turnRunning = false;
+    mountedHandle = selectTarget;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  // The turn really is generating, and it has already produced text the abort must preserve.
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface.getByRole("button", { name: "Stop" })).toBeVisible();
+  await expect(chatSurface.getByRole("region", { name: "Chat transcript" })).toContainText(producedText);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.getByTestId("chat-item")).toHaveCount(2);
+
+  const target = surface.getByTestId("chat-item").nth(1).getByTestId("chat-select");
+  // Nothing is greyed out and no "stop first" reason is posted: the gesture is available.
+  await expect(target).toBeEnabled();
+  await expect(surface.getByTestId("chat-select-blocked")).toHaveCount(0);
+
+  await target.click();
+  // The click is acknowledged while the request is out - a request, never a refusal.
+  await expect(surface.getByTestId("chat-select-pending")).toContainText("Switching");
+  await expect.poll(() => selectRequests).toBe(1);
+  await expect(surface.getByRole("status")).toContainText("Chat switched.");
+  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
+  await expect(surface.getByTestId("chat-select-pending")).toHaveCount(0);
+
+  // The mounted conversation really moved: the transcript is the target's, not the first chat's.
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
+  await expect(page.getByRole("region", { name: "Chat transcript" })).not.toContainText("The game projection is read-only.");
+
+  // The interrupted turn's produced text survived the abort, and that turn is no longer running:
+  // switching back shows both. This catches an abort that throws away what the turn had written.
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  selectTarget = handle;
+  selectGeneration = 2;
+  await surface.getByTestId("chat-item").first().getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(2);
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(producedText);
+  await expect(chatSurface.getByRole("button", { name: "Stop" })).toHaveCount(0);
+});
+
+/**
+ * The unified action rule (ADR-0010), Class B: state, configuration and metadata writes never abort,
+ * block or refuse a running generation - they take effect on the next turn. Two members are driven
+ * here, the surface's own model parameters and another Chat's title, both while a turn generates.
+ *
+ * The assertions, and the failure each one catches:
+ *  - Both writes reach their routes: catches a Class B action withheld because a turn runs.
+ *  - The app bar still reports the generation after each write: catches a Class B write that tore the
+ *    running turn down - the same defect family as the greyed-out Chats rows.
+ *  - The durable read-backs are what the surfaces show (the saved model, the renamed title): catches
+ *    a write that only looked applied locally.
+ *  - The authoritative state after the turn settles is a COMPLETED turn carrying the reply: catches a
+ *    Class B write that silently cancelled or parked the generation instead of letting it finish.
+ *  - The model editor still reads the chosen value back after that settlement: catches a value the
+ *    surface only kept locally, which the next turn would then not start from.
+ */
+test("a Class B action mid-turn reaches its route and leaves the running turn alone", async ({ page }) => {
+  const targetHandle = "C".repeat(42) + "A";
+  const replyText = "A reply that finished while the settings changed.";
+  const renamedTitle = "Second conversation, renamed";
+  const recommendedModels = [
+    {
+      providerId: "cpa-oai",
+      providerLabel: "CPA OAI",
+      modelId: "deepseek-v4",
+      modelLabel: "DeepSeek V4",
+      allowedThinkingLevels: ["off", "medium", "high"],
+      defaultThinkingLevel: "medium",
+    },
+  ];
+  let turnSettled = false;
+  // The durable title the list projects: the rename route's read-back is the only thing that moves it.
+  let targetTitle = "Second conversation";
+  let targetTitleRevision = 1;
+  let chatProfile = { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" };
+  const gameProfile = { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" };
+  const profileWrites: unknown[] = [];
+  const titleWrites: unknown[] = [];
+  const projected = () => ({
     ...root,
     chat: {
       ...chat,
@@ -4542,48 +4724,120 @@ test("Chats surface disables the switch and names the reason while a turn is gen
       ],
       chat: {
         ...chat.chat,
-        turn: { handle: "F".repeat(42) + "A", state: "running", projectionRevision: 1, canCancel: true },
+        transcript: turnSettled
+          ? [
+              ...chat.chat.transcript,
+              { handle: "G".repeat(42) + "A", role: "companion", text: replyText, locale: "und", order: 1, revision: 1 },
+            ]
+          : chat.chat.transcript,
+        turn: turnSettled
+          ? { handle: "F".repeat(42) + "A", state: "completed", projectionRevision: 2, canCancel: false }
+          : { handle: "F".repeat(42) + "A", state: "running", projectionRevision: 1, canCancel: true },
       },
     },
-  };
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(runningRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(runningRoot)));
+  });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projected())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projected())));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
-  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        chats: [
-          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
-          { handle: "C".repeat(42) + "A", title: "Second conversation", status: "active", managementRevision: 1, isSelected: false },
-        ],
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/chat/select", (route) => {
-    selectRequests += 1;
-    return route.fulfill(jsonOk({ apiVersion: 1, status: "turn_in_flight" }));
+  await page.route("**/api/tavern/v1/settings/profiles", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill(
+        jsonOk({ apiVersion: 1, chat: chatProfile, game: gameProfile, recommendedModels }),
+      );
+    const body = route.request().postDataJSON() as { modelId: string; thinkingLevel: string };
+    profileWrites.push(route.request().postDataJSON());
+    chatProfile = { revision: chatProfile.revision + 1, modelId: body.modelId, thinkingLevel: body.thinkingLevel };
+    return route.fulfill(jsonOk({ apiVersion: 1, chat: chatProfile, game: gameProfile, recommendedModels }));
+  });
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill(
+        jsonOk({
+          apiVersion: 1,
+          chats: [
+            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
+            { handle: targetHandle, title: targetTitle, status: "active", managementRevision: targetTitleRevision, isSelected: false },
+          ],
+        }),
+      );
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "not_found" }) });
+  });
+  await page.route("**/api/tavern/v1/chat/title", (route) => {
+    titleWrites.push(route.request().postDataJSON());
+    targetTitle = renamedTitle;
+    targetTitleRevision = 2;
+    return route.fulfill(
+      jsonOk({ apiVersion: 1, handle: targetHandle, title: renamedTitle, managementRevision: 2 }),
+    );
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  // The turn really is generating before either Class B write.
+  await expect(page.getByText("Thinking…")).toBeVisible();
+
+  // Class B, member one: this surface's model parameters.
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+  await chatSurface.getByTestId("chat-model-trigger").click();
+  const popout = page.getByRole("dialog", { name: "Chat model settings" });
+  await expect(popout).toBeVisible();
+  await popout.getByLabel("Model ID").fill("deepseek-v5");
+  await popout.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => profileWrites.length).toBe(1);
+  expect(profileWrites[0]).toEqual({
+    apiVersion: 1,
+    surface: "chat",
+    expectedRevision: 1,
+    modelId: "deepseek-v5",
+    thinkingLevel: "medium",
+  });
+  // The durable read-back is what the editor shows, and the generation is untouched.
+  await expect(popout.locator('[data-model-notice="saved"]')).toBeVisible();
+  await expect(popout.getByLabel("Model ID")).toHaveValue("deepseek-v5");
+  await expect(page.getByText("Thinking…")).toBeVisible();
+  // The drawer's own close control, not Escape: the Save that just ran disabled itself and dropped
+  // focus to <body>, so this asserts the surface's close affordance rather than a keyboard accident.
+  await popout.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(popout).toHaveCount(0);
+
+  // Class B, member two: another Chat's title.
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  await expect(surface.getByTestId("chat-item")).toHaveCount(2);
+  await surface.getByTestId("chat-item").nth(1).getByTitle("Rename Chat").click();
+  await surface.getByLabel("Rename Chat").fill(renamedTitle);
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => titleWrites.length).toBe(1);
+  expect(titleWrites[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    chatHandle: targetHandle,
+    expectedManagementRevision: 1,
+    title: renamedTitle,
+  });
+  // The durable read-back is what the list shows, and the generation survived the rename.
+  await expect(surface.getByTestId("chat-item").nth(1)).toContainText(renamedTitle);
+  await expect(page.getByText("Thinking…")).toBeVisible();
 
-  // The reason is the player's next action, not a code.
-  await expect(surface.getByTestId("chat-select-blocked")).toContainText("still being written");
-  await expect(surface.getByTestId("chat-select-blocked")).toContainText("Stop");
-  // Both rows are unselectable, the mounted one included.
-  await expect(surface.getByTestId("chat-item").first().getByTestId("chat-select")).toBeDisabled();
-  await expect(surface.getByTestId("chat-item").nth(1).getByTestId("chat-select")).toBeDisabled();
-  // A disabled control never reaches the selection route.
-  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click({ force: true });
-  await page.waitForTimeout(50);
-  expect(selectRequests, "a generating turn must not reach the selection route").toBe(0);
+  // The turn reaches its own settlement: the authoritative state is a COMPLETED turn whose reply is
+  // in the transcript, so no Class B write cancelled or parked the generation.
+  turnSettled = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(replyText);
+  await expect(page.getByText("Thinking…")).toHaveCount(0);
+
+  // The value the next turn starts from is the one the player chose mid-turn: re-opening this
+  // surface's own model settings reads it back from the Host, never from anything the surface kept
+  // locally through the switch and the completion.
+  await page.getByTestId("chat-surface").getByTestId("chat-model-trigger").click();
+  await expect(page.getByRole("dialog", { name: "Chat model settings" }).getByLabel("Model ID")).toHaveValue(
+    "deepseek-v5",
+  );
 });
 
 

@@ -13,6 +13,10 @@ import { SurfaceView } from "./SurfaceView";
  * mounted selection's generation (every rename and lifecycle CAS carries it),
  * the current chat handle, and the reread that moves the shell's own Chat
  * heading after a rename.
+ *
+ * It holds no turn state (ADR-0010): selecting another Chat is a focus
+ * transfer, so the Host aborts a generating turn itself and the rows stay
+ * enabled while one runs.
  */
 export function ChatsSurface({
   api,
@@ -21,7 +25,6 @@ export function ChatsSurface({
   selectionGeneration,
   currentChatHandle,
   selectAvailable,
-  turnInFlight,
   onRenamedTitle,
   onChatSwitched,
   restoreFocusTo,
@@ -33,11 +36,6 @@ export function ChatsSurface({
   currentChatHandle: string;
   /** `false` when the mount knows no `chat.select` route is served; the rows are then not selectable. */
   selectAvailable?: boolean;
-  /**
-   * `true` while a turn is generating. Switching is turn-level, so the rows are
-   * then not selectable and the panel names the reason the player can act on.
-   */
-  turnInFlight?: boolean;
   onRenamedTitle: () => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
   onChatSwitched?: () => void;
@@ -57,7 +55,6 @@ export function ChatsSurface({
         selectionGeneration={selectionGeneration}
         currentChatHandle={currentChatHandle}
         {...(selectAvailable === undefined ? {} : { selectAvailable })}
-        {...(turnInFlight === undefined ? {} : { turnInFlight })}
         onRenamedTitle={onRenamedTitle}
         {...(onChatSwitched === undefined ? {} : { onChatSwitched })}
       />

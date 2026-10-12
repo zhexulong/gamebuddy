@@ -405,7 +405,7 @@ export type ChatCreateResultV1 = Readonly<{
   opening: string | null;
 }>;
 
-/** Chat selection (ADR 0009): the browser names the exact Chat it read and the generation it read. */
+/** Chat selection (ADR 0009 / ADR-0010): the browser names the exact Chat it read and the generation it read. */
 type SelectChatCommandV1 = Readonly<{
   apiVersion: 1;
   selectionGeneration: number;
@@ -413,10 +413,12 @@ type SelectChatCommandV1 = Readonly<{
 }>;
 
 /**
- * The honest selection outcome. An idle runtime switches the mounted conversation inside the same
- * process (`switched`); a runtime whose turn is still generating refuses with `turn_in_flight` and
- * the durable expectation settles at the next start instead. Neither answer tears down a running
- * conversation, and the recorded selection is durable either way.
+ * The honest selection outcome. Switching is turn-level and the request is never refused for a
+ * generating turn (ADR-0010): the Host aborts the mounted turn through the same cancel path an
+ * explicit Stop uses, lets that abort settle, releases the runtime and mounts the target, then
+ * answers `switched`. `turn_in_flight` survives only as the bounded residual for a durable turn
+ * whose attempt has not started yet, where there is nothing to abort and the recorded selection
+ * settles at the next start instead. The recorded selection is durable either way.
  */
 export type ChatSelectResultV1 = Readonly<{
   apiVersion: 1;
