@@ -33,6 +33,8 @@ public sealed class ModEntryFixtureBoundaryTests
         "FindNativeLocalItemTileStandingTile",
         "FindNativeLocalMailboxTile",
         "InitializeNativeLocalToggleAnimalDoorFixture",
+        "InitializeNativeLocalClearFishPondFixture", "ResolveNativeLocalClearFishPondFixtureFishType",
+        "PlaceNativeLocalClearFishPondFixtureBuilding", "FindNativeLocalClearFishPondStandingTile",
         "InitializeNativeLocalUseWarpItemFixture", "InitializeNativeLocalPanOreFixture",
         "InitializeNativeLocalClaimMailAttachmentFixture",
         "InitializeNativeLocalEnterExitWarpActionFixture",
