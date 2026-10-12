@@ -239,6 +239,12 @@ test("the model drawer's select is themed and the fields keep the 44px floor", a
  * five such controls on this surface; this asserts the family rather than the
  * five, and asserts that it measured something at all, so a surface that stopped
  * rendering its fields cannot pass by having nothing to measure.
+ *
+ * A control the sheet has taken out of the visual flow (`clip-path:
+ * inset(50%)`, the card-import file input) is not a target at all: the themed
+ * control that drives it is, and `ui-hygiene-runtime.spec.ts` gate 3 measures
+ * that one. It is still read here, so the exemption cannot be taken by a control
+ * that is merely missing its own height.
  */
 test("every field on the Characters surface clears the 44px floor", async ({ page }) => {
   await mountCharacters(page);
@@ -250,12 +256,14 @@ test("every field on the Characters surface clears the 44px floor", async ({ pag
         tag: control.tagName.toLowerCase(),
         label: control.getAttribute("aria-label") ?? control.getAttribute("type") ?? "",
         height: Math.round(control.getBoundingClientRect().height),
+        clipped: getComputedStyle(control).clipPath === "inset(50%)",
       })),
   );
 
-  expect(measured.length, "the surface still renders fields to measure").toBeGreaterThan(0);
+  const targets = measured.filter((control) => !control.clipped);
+  expect(targets.length, "the surface still renders fields to measure").toBeGreaterThan(0);
   expect(
-    measured.filter((control) => control.height < 44),
+    targets.filter((control) => control.height < 44),
     "controls under the 44 px floor",
   ).toEqual([]);
 });
