@@ -1,6 +1,16 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  assertAccessibilityBaseline,
+  assertCriteriaCoverage,
+  assertKeyboardReachable,
+  assertLayoutFloor,
+  assertQuiet,
+  assertSectionsKeyboardReachable,
+  resetCriteriaLedger,
+  watchSurface,
+} from "./frontend-criteria.js";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -4935,4 +4945,344 @@ test("sending shows the player's text immediately with a pending marker, then co
   await expect(reloaded).toBeVisible();
   await expect(reloaded.getByTestId("optimistic-player-message")).toHaveCount(0);
   await expect(reloaded.locator(".message-list > li", { hasText: playerText })).toHaveCount(1);
+});
+
+/**
+ * The obligations the product surface declares for itself. The reference and
+ * management surfaces' criteria journeys went with their shells (13c4c70a,
+ * 6406dd0a); the one remaining surface carries their obligations, and this list
+ * is what keeps a checker from being dropped quietly.
+ */
+const PRODUCT_CRITERIA_OBLIGATIONS = [
+  "frontend-accessibility-baseline",
+  "frontend-keyboard-reach",
+  "frontend-layout-floor",
+  "frontend-quiet-walk",
+] as const;
+
+/**
+ * The criteria the journeys above are instances of, asserted as properties of
+ * the product surface.
+ *
+ * The failures this catches: a frontend change that drops an accessibility,
+ * keyboard, layout or quietness property while every behavioural journey still
+ * passes - which is what the conformance contract (`frontend-criteria.ts`,
+ * design/architecture/tavern-frontend-criteria.md) exists to prevent. The
+ * conversation carries real content first, because an empty transcript never
+ * overflows and has nothing to reach with a keyboard, so a floor measured on it
+ * would report a pass that means nothing.
+ */
+test("conformance: the product surface meets the frontend criteria", async ({ page }) => {
+  test.setTimeout(60_000);
+  const noise = watchSurface(page);
+  // `chat.submit` is published, exactly as the reference profile declares it: the
+  // composer's own enablement is a projection of the nested Chat snapshot, so the
+  // surface judged here is the operable one a player is actually given.
+  const operable = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+      ],
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(operable)));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  const composer = surface.getByRole("textbox", { name: /Type a message/u });
+  await expect(composer).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "The game projection is read-only.",
+  );
+
+  // Keyboard reach is measured from the document as loaded: no programmatic
+  // focus, no pointer event, and before anything has been typed into the
+  // composer (typing would leave focus there and Tab would walk away from it).
+  resetCriteriaLedger();
+  await assertKeyboardReachable(page, composer, "the chat composer");
+  await assertSectionsKeyboardReachable(page, "[aria-label]");
+
+  await assertAccessibilityBaseline(page, "composed");
+  await assertLayoutFloor(page);
+  assertQuiet(noise, "composed");
+  assertCriteriaCoverage("composed", PRODUCT_CRITERIA_OBLIGATIONS);
+});
+
+/**
+ * The Chat surface's own Stop control, end to end on the product shell.
+ *
+ * The mounted reference journey that asserted this ("reference browser stops an
+ * armed response, reloads its durable cancellation, and sends again") went with
+ * the reference shell. The capability is this surface's own - the stop control,
+ * the durable cancelled turn it rereads, and the composer it hands back - so the
+ * journey is asserted here rather than lost with the shell.
+ *
+ * The assertions, and the failure each one catches:
+ *  - Stop is offered only for a turn the Host published `chat.cancel` for:
+ *    catches a stop control offered for a turn the Host never offered to cancel;
+ *  - the click posts exactly one `chat.cancel`, with this session's csrf token
+ *    and the mounted generation: catches a double-submitted stop and a stop aimed
+ *    at a generation the Host is not serving;
+ *  - the notice is what the authoritative reread says, not what the click hoped:
+ *    catches a surface that prints "stopped" for a cancellation nobody confirmed;
+ *  - a reload still shows it: catches a stop the surface only kept in memory;
+ *  - the player can send again afterwards: catches a stopped conversation left
+ *    permanently locked.
+ */
+test("the mounted conversation stops an armed reply, keeps the stop durable across a reload, and sends again", async ({ page }) => {
+  test.setTimeout(60_000);
+  const turnHandle = `${"T".repeat(42)}A`;
+  const nextTurnHandle = `${"U".repeat(42)}A`;
+  const stoppedTurn = { handle: turnHandle, state: "cancelled", projectionRevision: 2, canCancel: false };
+  const runningTurn = { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true };
+  const nextMessage = {
+    handle: `${'P'.repeat(42)}A`,
+    role: "player",
+    text: "A second message after Stop",
+    locale: "und",
+    order: 1,
+    revision: 1,
+  };
+  let turn: Readonly<{ handle: string; state: string; projectionRevision: number; canCancel: boolean }> = runningTurn;
+  let cancels = 0;
+  let sends = 0;
+  let sent = false;
+  let stateReads = 0;
+
+  const projection = () => ({
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+        ...(turn.canCancel
+          ? [{ operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" }]
+          : []),
+      ],
+      chat: {
+        ...chat.chat,
+        transcript: sent ? [...chat.chat.transcript, nextMessage] : chat.chat.transcript,
+        turn: sent ? { handle: nextTurnHandle, state: "running", projectionRevision: 1, canCancel: true } : turn,
+      },
+    },
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill(jsonOk(projection()));
+  });
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route("**/api/tavern/v1/turns/*/cancel", async (route) => {
+    cancels += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, selectionGeneration: 1 });
+    turn = stoppedTurn;
+    await route.fulfill(jsonOk({ apiVersion: 1, disposition: "cancelled", turn: stoppedTurn }));
+  });
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sends += 1;
+    sent = true;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: nextMessage,
+        turn: { handle: nextTurnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, disposition: "terminal" })),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  const composer = surface.locator(".composer-textarea");
+  const stop = surface.getByRole("button", { name: "Stop", exact: true });
+  await expect(stop).toBeEnabled();
+
+  await stop.click();
+  await expect.poll(() => cancels).toBe(1);
+  // The notice is the reread's fact, and the control goes with the cancellable
+  // turn: both come from the authoritative projection, not from the click.
+  await expect(surface).toContainText("Reply stopped. You can send another message.");
+  await expect(stop).toHaveCount(0);
+  await expect(composer).toBeEnabled();
+  expect(stateReads).toBe(1);
+  expect(cancels).toBe(1);
+
+  await page.reload();
+  const reloaded = page.getByTestId("chat-surface");
+  await expect(reloaded).toBeVisible();
+  await expect(reloaded).toContainText("Reply stopped. You can send another message.");
+
+  await reloaded.locator(".composer-textarea").fill("A second message after Stop");
+  await reloaded.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => sends).toBe(1);
+  await expect(reloaded.locator(".message-list")).toContainText("A second message after Stop");
+});
+
+/**
+ * The composed conversation's live event stream, at the client contract.
+ *
+ * The Host publishes the composed Chat projection with a non-null `eventStream`
+ * (the composed tavern profile declares the `events` route), and this client
+ * opens the stream, previews `companion.delta` frames, and repairs a rejected
+ * frame by rereading authoritative state. The mounted reference journeys that
+ * asserted the wire behaviour went with the reference shell; the *decisions*
+ * this client makes are this surface's own, so they are asserted here.
+ *
+ * The transport is a synthetic EventSource (the composed lane has no real Host
+ * SSE endpoint, and `route.fulfill` cannot stream): it proves which URL and
+ * cursor the surface subscribes with and how it reacts to frames, not how
+ * Chromium reassembles bytes - which is the Host's own suite's subject.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the subscription carries the projected checkpoint: catches a surface that
+ *    opens the stream at the wrong position, or ignores the projection entirely;
+ *  - a delta becomes a preview with no authoritative read: catches a typewriter
+ *    that rereads the whole conversation on every token;
+ *  - a frame the session rejects (a generation the mounted conversation is not
+ *    on) recovers exactly once, through `/state` and the draft, and reconnects on
+ *    the cursor that state names: catches a recovery loop, a reconnect on the
+ *    stale frame id, and a surfaced failure where a repair was required;
+ *  - an explicit `stream.resync_required` frame repairs the same way: catches a
+ *    resync marker treated as a fatal problem.
+ */
+test("the composed conversation opens the projected event stream, previews a delta, and recovers through authoritative state once per resync", async ({ page }) => {
+  test.setTimeout(90_000);
+  const streamEpoch = `${"E".repeat(42)}A`;
+  const initialCursor = `${"F".repeat(42)}A`;
+  const recoveredCursor = `${"G".repeat(42)}A`;
+  const deltaHandle = `${"T".repeat(42)}A`;
+  const frameId = `${"H".repeat(42)}A`;
+  let currentCursor = initialCursor;
+  let stateReads = 0;
+  let draftReads = 0;
+
+  const projection = () => ({ ...root, chat: { ...chat, eventStream: { epoch: streamEpoch, cursor: currentCursor } } });
+
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      __streams: Array<{ url: string; closed: boolean }>;
+      __streamHandlers: Array<Map<string, Array<(raw: unknown) => void>>>;
+      __emit: (index: number, type: string, data: string, id: string) => void;
+    };
+    state.__streams = [];
+    state.__streamHandlers = [];
+    class SyntheticEventSource {
+      onerror: ((event: unknown) => void) | null = null;
+      constructor(url: string | URL) {
+        const index = state.__streams.length;
+        state.__streams.push({ url: String(url), closed: false });
+        state.__streamHandlers.push(new Map());
+        this.__index = index;
+      }
+      __index = -1;
+      addEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, [...(entry.get(type) ?? []), handler]);
+      }
+      removeEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, (entry.get(type) ?? []).filter((candidate) => candidate !== handler));
+      }
+      close(): void {
+        state.__streams[this.__index]!.closed = true;
+      }
+    }
+    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+    state.__emit = (index, type, data, id) => {
+      const handlers = state.__streamHandlers[index]?.get(type) ?? [];
+      for (const handler of handlers) handler({ data, lastEventId: id, type });
+    };
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    // The repair's own read moves the checkpoint: the reconnect must carry the
+    // cursor this answer names, never the id of the frame that was rejected.
+    currentCursor = recoveredCursor;
+    return route.fulfill(jsonOk(projection()));
+  });
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => {
+    draftReads += 1;
+    return route.fulfill(jsonOk(draft));
+  });
+
+  const streamUrls = async (): Promise<string[]> =>
+    await page.evaluate(() => (window as unknown as { __streams: Array<{ url: string }> }).__streams.map((stream) => stream.url));
+  const emit = async (index: number, type: string, event: unknown, id: string): Promise<void> => {
+    await page.evaluate(
+      (input: { index: number; type: string; data: string; id: string }) => {
+        (window as unknown as { __emit: (i: number, t: string, d: string, e: string) => void }).__emit(
+          input.index,
+          input.type,
+          input.data,
+          input.id,
+        );
+      },
+      { index, type, data: JSON.stringify(event), id },
+    );
+  };
+  const frame = (sequence: number, selectionGeneration: number, eventType: string, payload: unknown) => ({
+    apiVersion: 1,
+    epoch: streamEpoch,
+    sequence,
+    selectionGeneration,
+    eventType,
+    payload,
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await expect.poll(streamUrls).toHaveLength(1);
+  expect((await streamUrls())[0]).toContain(`/api/tavern/v1/events?`);
+  expect((await streamUrls())[0]).toContain(`cursor=${initialCursor}`);
+
+  // A delta is a preview: it costs no authoritative read.
+  await emit(0, "companion.delta", frame(1, 1, "companion.delta", { turnHandle: deltaHandle, delta: "A provisional reply." }), frameId);
+  await expect(surface).toContainText("A provisional reply.");
+  expect(stateReads).toBe(0);
+
+  // A frame for a generation this conversation is not on is rejected by the
+  // session and repaired once, through the authoritative read.
+  await emit(0, "draft.changed", frame(2, 2, "draft.changed", { revision: 2, present: false }), `${"I".repeat(42)}A`);
+  await expect.poll(() => stateReads).toBe(1);
+  await expect.poll(streamUrls).toHaveLength(2);
+  expect((await streamUrls())[1]).toContain(`cursor=${recoveredCursor}`);
+  expect(draftReads).toBe(2);
+  expect(await page.evaluate(() => (window as unknown as { __streams: Array<{ closed: boolean }> }).__streams[0]!.closed)).toBe(true);
+  await expect(surface).not.toContainText("Unable to read chat");
+
+  // No recovery loop: the repaired stream carries the new cursor and one frame
+  // does not become a second read.
+  await page.waitForTimeout(750);
+  expect(stateReads).toBe(1);
+  expect(await streamUrls()).toHaveLength(2);
+
+  // An explicit resync marker repairs the same way instead of becoming a fault.
+  await emit(1, "stream.resync_required", frame(3, 1, "stream.resync_required", { reason: "gap" }), `${"J".repeat(42)}A`);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(surface).not.toContainText("Unable to read chat");
 });

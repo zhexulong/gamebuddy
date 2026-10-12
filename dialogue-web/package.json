@@ -6,12 +6,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "pnpm run test:unit && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-reference && pnpm run test:mounted-management && pnpm run test:mounted-composed",
+    "test": "pnpm run test:unit && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-composed",
     "test:unit": "node --test tests/i18n.test.mjs tests/style-tokens.test.mjs tests/style-tokens-gate.test.mjs tests/component-hygiene-gate.test.mjs tests/game-presentation.test.mjs tests/pi-settings-model.test.mjs tests/reference-pipeline-api.test.mjs tests/reference-pipeline-session.test.mjs tests/management-pipeline-api.test.mjs tests/management-connection-api.test.mjs",
     "test:artifact": "node --test tests/manifest-boundary.test.mjs tests/game-manifest-boundary.test.mjs",
     "test:composed": "node --test --import tsx tests/reference-pipeline-composed-browser.test.mjs tests/composed-reference-game-browser-api.test.mjs tests/game-lifecycle-launch-gate.test.mjs",
-    "test:mounted-reference": "playwright test tests/reference-pipeline-browser.spec.ts --project=chromium --workers=1",
-    "test:mounted-management": "playwright test tests/management-pipeline-browser.spec.ts --project=chromium --workers=1",
     "typecheck": "tsc --project tsconfig.json",
     "test:mounted-composed": "playwright test tests/composed-reference-game-browser.spec.ts tests/stardew-installation-discovery.spec.ts tests/ui-hygiene-runtime.spec.ts tests/runtime-frontend-gates.spec.ts --project=chromium --workers=1",
     "test:ui-chrome": "playwright test tests/ui-chrome.spec.ts --project=chromium --workers=1",
