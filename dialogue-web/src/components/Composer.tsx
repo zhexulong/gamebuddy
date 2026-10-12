@@ -1,5 +1,5 @@
 import { FileText, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, type Ref, useLayoutEffect, useRef } from "react";
+import { type ChangeEvent, type KeyboardEvent, type Ref, useId, useLayoutEffect, useRef } from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -31,6 +31,27 @@ export type ComposerDraftActions = Readonly<{
 }>;
 
 /**
+ * The card's own openings, offered on a conversation that has not started yet.
+ *
+ * The chips are not a second composer and they are not reviewer-invented
+ * starters: each one is one of the character card's own opening lines, read from
+ * the companion's greeting record, and tapping it says exactly that line through
+ * this composer's one submit path. They live in the composer band rather than in
+ * the reading flow because the conversation column is the transcript and the
+ * composer and nothing else, and they leave with the first message.
+ */
+export type ComposerChips = Readonly<{
+  /** The group's own name: the card's word for this material, never a sentence. */
+  label: string;
+  items: readonly Readonly<{
+    id: string;
+    /** The card's own opening line; this is exactly what the chip sends. */
+    text: string;
+    onClick: () => void;
+  }>[];
+}>;
+
+/**
  * The one control that opens this surface's model settings, as a popout
  * (design/104 §3: the model a surface uses belongs on that surface). It sits in
  * the send-form action row - the same place the vendor's own front ends keep
@@ -54,6 +75,7 @@ export function Composer({
   voice,
   draftActions,
   settingsAction,
+  chips,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -73,8 +95,15 @@ export function Composer({
   draftActions?: ComposerDraftActions;
   /** Present when this surface has model settings to open. */
   settingsAction?: ComposerSettingsAction;
+  /**
+   * The card's own openings, rendered directly above the input. Absent (or
+   * empty) when the card carries no opening material: this composer never
+   * invents a line the card did not carry.
+   */
+  chips?: ComposerChips;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chipsLabelId = useId();
 
   // The row exists while there is something for it to do: a durable draft to
   // save or discard, freshly typed text to keep as a first draft, or a *failed*
@@ -116,6 +145,28 @@ export function Composer({
 
   return (
     <section className="composer-section" aria-label={labels.typeMessagePlaceholder}>
+      {chips !== undefined && chips.items.length > 0 && (
+        <div className="composer-chips">
+          <span className="composer-chips-label" id={chipsLabelId}>
+            {chips.label}
+          </span>
+          <div className="composer-chips-row" role="group" aria-labelledby={chipsLabelId}>
+            {chips.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="composer-chip"
+                // The visible line is the chip's own accessible name (it is the
+                // button's content); `title` carries it whole when the row clamps it.
+                title={item.text}
+                onClick={item.onClick}
+              >
+                {item.text}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {showDraftRow && draftActions !== undefined && (
         // The row is the draft's own verbs, in the composer band the draft is
         // edited in, and it disappears with the draft instead of occupying the

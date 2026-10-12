@@ -3573,3 +3573,309 @@ test("a chat with no durable draft lets the player save the first one from the c
   await expect(row).not.toContainText("Saved draft");
   await expect(discard).toHaveCount(0);
 });
+
+/**
+ * The conversation's first screen: the card's own openings (owner's item 1).
+ *
+ * The owner looked at the first screen and found a void with one line in it -
+ * "开启一段新的旅程" - and nothing a player could say first. The correction that
+ * decides the content is explicit: the chips are the character card's own
+ * opening lines ("首屏场景破冰胶囊应该按角色卡开场白来"), not reviewer-invented
+ * starters. The card's opening material is real data - the companion's greeting
+ * record carries its variants, and `PUT /api/tavern/v1/chat/opening` chooses
+ * among them - so the chips are read from that record and each tap records the
+ * opening *and* says it through the composer's one submit path.
+ *
+ * The failure each assertion catches, in order:
+ *
+ * 1. `reflects the card's own openings` - chips that carry reviewer prose
+ *    (a generic "今天农场有什么要忙的") or a truncated variant label instead of
+ *    the card's line fail; the visible chip text is compared to the greeting
+ *    record, line for line.
+ * 2. `records the opening through the Host's own route` - a chip that only
+ *    fills the composer, or that holds the chosen variant locally, fails; the
+ *    route body, the CSRF header and the target index are asserted.
+ * 3. `says it through the one submit path` - a second composer or a second
+ *    submit authority fails; the send is the composed `POST /messages` with the
+ *    idempotency key, and the surface still holds exactly one textarea.
+ * 4. `adopts the Host's read-back, never its own optimism` - a shell that
+ *    appends the sent message itself fails; while the state route still reports
+ *    an empty conversation, nothing is rendered, and the chips only leave once
+ *    the Host's own projection carries the committed transcript.
+ */
+test("the first screen offers the card's own openings, and a tap says one and records it as the opening", async ({ page }) => {
+  const openings = [
+    { label: "Default", text: "The lantern over the porch is still lit." },
+    { label: "Alternate 1", text: "Rain has been falling since dawn." },
+  ];
+  const openingVariantId = "V".repeat(42) + "A";
+  const openedMessageHandle = "W".repeat(42) + "A";
+  const playerMessageHandle = "X".repeat(42) + "A";
+  const turnHandle = "Y".repeat(42) + "A";
+
+  const emptyRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+      chat: {
+        ...chat.chat,
+        transcript: [],
+        draft: { revision: 0, present: false },
+      },
+    },
+  };
+
+  /** The Host's projection, before and after its own opening commit. */
+  let openingCommitted = false;
+  const projection = () =>
+    openingCommitted
+      ? {
+          ...emptyRoot,
+          chat: {
+            ...emptyRoot.chat,
+            chat: {
+              ...emptyRoot.chat.chat,
+              transcript: [
+                {
+                  handle: openedMessageHandle,
+                  role: "companion",
+                  text: openings[1]!.text,
+                  locale: "und",
+                  order: 0,
+                  revision: 1,
+                  openingVariant: { variantId: openingVariantId, index: 1, count: 2, label: openings[1]!.label, locked: false },
+                },
+                { handle: playerMessageHandle, role: "player", text: openings[1]!.text, locale: "und", order: 1, revision: 1 },
+              ],
+              turn: { handle: turnHandle, state: "completed", projectionRevision: 1, canCancel: false },
+            },
+          },
+        }
+      : emptyRoot;
+
+  const greetingReads: number[] = [];
+  const openingCommits: Array<Readonly<{ body: unknown; csrf: string | undefined }>> = [];
+  const sends: Array<Readonly<{ body: unknown; csrf: string | undefined; idempotencyKey: string | undefined }>> = [];
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk(emptyRoot)),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) => {
+    greetingReads.push(1);
+    return route.fulfill(
+      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
+    );
+  });
+  await page.route("**/api/tavern/v1/chat/opening", async (route) => {
+    openingCommits.push({
+      body: route.request().postDataJSON(),
+      csrf: route.request().headers()["x-csrf-token"],
+    });
+    await route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        openingVariant: { variantId: openingVariantId, index: 1, count: 2, label: openings[1]!.label, locked: false },
+      }),
+    );
+  });
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sends.push({
+      body: route.request().postDataJSON(),
+      csrf: route.request().headers()["x-csrf-token"],
+      idempotencyKey: route.request().headers()["idempotency-key"],
+    });
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: {
+          handle: playerMessageHandle,
+          role: "player",
+          text: openings[1]!.text,
+          locale: "und",
+          order: 1,
+          revision: 1,
+        },
+        turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        disposition: "accepted",
+        committedResult: {
+          apiVersion: 1,
+          disposition: "accepted",
+          message: {
+            handle: playerMessageHandle,
+            role: "player",
+            text: openings[1]!.text,
+            locale: "und",
+            order: 1,
+            revision: 1,
+          },
+          turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+        },
+      }),
+    ),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
+
+  // 1. The chips are the greeting record's own variants, named by the card's line.
+  const chips = surface.locator(".composer-chip");
+  await expect(chips).toHaveCount(2);
+  await expect(chips.nth(0)).toHaveText(openings[0]!.text);
+  await expect(chips.nth(1)).toHaveText(openings[1]!.text);
+  await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
+  expect(greetingReads.length, "the card's opening record is read for the empty conversation").toBeGreaterThan(0);
+
+  // Above the input, not in the reading flow, and a real 44 px target.
+  const geometry = await page.evaluate(() => {
+    const row = document.querySelector<HTMLElement>(".composer-chips-row");
+    const chip = document.querySelector<HTMLElement>(".composer-chip");
+    const input = document.querySelector<HTMLElement>(".composer-textarea");
+    return {
+      rowBottom: row === null ? -1 : row.getBoundingClientRect().bottom,
+      chipHeight: chip === null ? 0 : chip.getBoundingClientRect().height,
+      inputTop: input === null ? -1 : input.getBoundingClientRect().top,
+    };
+  });
+  expect(geometry.rowBottom, "the chips sit above the input").toBeLessThanOrEqual(geometry.inputTop + 1);
+  expect(geometry.chipHeight, "a chip clears the 44 px touch floor").toBeGreaterThanOrEqual(44);
+
+  // The composer's own keys are untouched by the chips beside them.
+  const composer = surface.locator(".composer-textarea");
+  await composer.fill("kept");
+  await composer.press("Shift+Enter");
+  await expect(composer).toHaveValue("kept\n");
+  await composer.fill("");
+
+  await chips.nth(1).click();
+
+  // 2 + 3. One tap: the Host's opening route with that variant's index, then the
+  // composed send under the same CSRF and a fresh idempotency key.
+  await expect.poll(() => openingCommits.length).toBe(1);
+  await expect.poll(() => sends.length).toBe(1);
+  expect(openingCommits[0]!.body).toEqual({ apiVersion: 1, selectionGeneration: 1, targetIndex: 1 });
+  expect(openingCommits[0]!.csrf).toBe(csrfToken);
+  expect(sends[0]!.body).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    text: openings[1]!.text,
+    locale: "en",
+    expectedDraftRevision: 0,
+  });
+  expect(sends[0]!.csrf).toBe(csrfToken);
+  expect(sends[0]!.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{22}$/);
+  await expect(surface.locator(".composer-textarea")).toHaveCount(1);
+
+  // 4. The Host has not published the committed opening yet, so the surface still
+  // paints the first screen's own zero state: no local echo of the line it sent,
+  // and no second submit while the admitted turn is in flight.
+  expect(openingCommitted, "the fixture has not published the opening yet").toBe(false);
+  await expect(surface.locator(".message-list")).toHaveCount(0);
+  await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
+  await expect(chips).toHaveCount(0);
+
+  // The Host's own projection is the only thing that can move the screen on.
+  openingCommitted = true;
+  await expect(chips).toHaveCount(0, { timeout: 15_000 });
+  await expect(surface.locator(".message-list > li")).toHaveCount(2);
+  await expect(surface.locator(".message-bubble").first()).toContainText(openings[1]!.text);
+});
+
+/**
+ * The first screen only: a conversation that has already started keeps its
+ * openings out of the way, and the shell does not even read the card's record
+ * for it. The failure this catches: chips that survive the first message (an
+ * affordance offered where it can no longer mean anything), and a shell that
+ * reads the greeting record on every chat - the read itself is asserted here,
+ * not only the rendering.
+ */
+test("a conversation with a message offers no opening chips and does not read the card's record", async ({ page }) => {
+  let greetingReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route("**/api/tavern/v1/greeting", (route) => {
+    greetingReads += 1;
+    return route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        present: true,
+        revision: 1,
+        label: "Initial Greeting",
+        variants: [{ label: "Default", text: "The lantern over the porch is still lit." }],
+      }),
+    );
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".message-list > li")).toHaveCount(1);
+  await expect(surface.locator(".composer-chip")).toHaveCount(0);
+  await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
+  expect(greetingReads, "a started conversation asks for no opening material").toBe(0);
+});
+
+/**
+ * The honest empty case: a card whose greeting record carries nothing (the state
+ * the owner's own screenshot was taken in - "还没有保存开场白") offers no chip at
+ * all, and the surface does not invent one. The failure this catches: fabricated
+ * starters and a greeting read that never completes leaving the first screen
+ * blank instead of falling back to the conversation's own zero state.
+ */
+test("a card with no opening material shows no chip and invents none", async ({ page }) => {
+  const emptyRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+      chat: { ...chat.chat, transcript: [], draft: { revision: 0, present: false } },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(emptyRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(emptyRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, label: null, variants: [] })),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
+  await expect(surface.locator(".composer-chip")).toHaveCount(0);
+  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  // The first screen is still the conversation's own, with a usable composer.
+  await expect(surface.locator(".composer-textarea")).toBeEnabled();
+});

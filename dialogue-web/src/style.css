@@ -3737,4 +3737,71 @@ body {
   color: var(--text-primary);
 }
 
+
+/* ==========================================================================
+   The card's own openings, on a conversation that has not started
+   (conversation-surface lane block)
+
+   The owner's report: the first screen is a void with one line in it, and a
+   player does not know what to say first. The chips above the input are the
+   character card's own opening lines, read from the companion's greeting
+   record; tapping one says it and records it as the Chat's opening. They are
+   not a second composer - they sit in the composer band, so the reading column
+   stays the transcript and the composer and nothing else - and they leave with
+   the first message. Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.composer-chips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.composer-chips-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The row scrolls sideways inside itself: a card's opening line can be long, and
+   the conversation column must never grow a horizontal scrollbar for it. */
+.composer-chips-row {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.composer-chip {
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background-color: var(--surface-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  /* The visible line is the chip's own accessible name; `title` carries it whole
+     when this clamp cuts it short. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.composer-chip:hover {
+  background-color: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.composer-chip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 } /* end @layer theme.polish */

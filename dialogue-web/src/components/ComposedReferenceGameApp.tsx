@@ -151,6 +151,11 @@ export function ComposedReferenceGameApp() {
     setInputText(text);
   };
   const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
+  // The character card's own openings, for a conversation that has not started:
+  // read from the companion's greeting record and never invented. `null` means
+  // "not read yet", an empty array means "the card carries none".
+  const [icebreakers, setIcebreakers] = useState<readonly Readonly<{ index: number; text: string }>[] | null>(null);
+  const icebreakerReadRef = useRef(false);
   // The chat mutation currently in flight. The submit button already has its own
   // gate; swipe and regenerate had none, so a double click issued two admitted
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
@@ -711,6 +716,42 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * The first screen's break-ice chips are the card's own openings, so they are
+   * read from the companion's greeting record rather than authored here. Only a
+   * conversation with no messages has a first thing to say, so the record is read
+   * once per empty conversation and dropped as soon as a message exists. A record
+   * that cannot be read, or that carries no variant, yields no chip at all - this
+   * surface never fabricates an opening the card does not carry.
+   */
+  useEffect(() => {
+    if (view.kind !== "ready") return;
+    if ((view.session.snapshot.chat?.transcript.length ?? 0) > 0) {
+      icebreakerReadRef.current = false;
+      setIcebreakers(null);
+      return;
+    }
+    if (icebreakerReadRef.current) return;
+    icebreakerReadRef.current = true;
+    let active = true;
+    void (async () => {
+      try {
+        const greeting = await managementPipelineApiRef.current.readGreeting();
+        if (!active) return;
+        setIcebreakers(
+          greeting.present
+            ? greeting.variants.map((variant, index) => Object.freeze({ index, text: variant.text }))
+            : [],
+        );
+      } catch {
+        if (active) setIcebreakers([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [view]);
+
+  /**
    * Durable draft authoring, merged from the removed management surface: the
    * PUT/DELETE carries this mount's exact expected revision and the validated
    * durable read-back replaces the draft - nothing is ever guessed locally.
@@ -822,6 +863,37 @@ export function ComposedReferenceGameApp() {
       chatMutationRef.current = false;
       setChatMutation(null);
     }
+  };
+
+  /**
+   * A break-ice chip: one of the card's own openings, on a conversation that has
+   * not started. Tapping it records that opening through the Host's own
+   * `chat.opening` route and then says it through this composer's one submit
+   * path - there is no second composer and no second submit authority. The
+   * record is legal only while the mounted Chat's opening is an unlocked
+   * greeting; a refusal must not eat the message the player tapped, and the
+   * authoritative reread - never this handler - is what the transcript shows.
+   */
+  const handleIcebreaker = (chip: Readonly<{ index: number; text: string }>): void => {
+    const current = viewRef.current;
+    if (current.kind !== "ready" || current.session.pending !== null) return;
+    const selection = current.session.snapshot.selection;
+    void (async () => {
+      if (selection !== null) {
+        try {
+          await managementPipelineApiRef.current.selectOpeningVariant(
+            { apiVersion: 1, selectionGeneration: selection.generation, targetIndex: chip.index },
+            current.session.snapshot.csrfToken,
+          );
+        } catch {
+          // The Chat's opening is not a greeting variant that can be chosen here,
+          // or the route is not served on this profile. The chip's line is still
+          // the player's to send, so the send below is not conditional on it.
+        }
+      }
+      writeInput(chip.text);
+      await handleSend();
+    })();
   };
 
   const handleRegenerate = async (messageHandle: string): Promise<void> => {
@@ -1778,6 +1850,24 @@ export function ComposedReferenceGameApp() {
                     durable: view.draft.text !== null,
                     notice: draftNotice,
                   }}
+                  chips={
+                    // The card's own openings, and only where a first thing to say
+                    // still exists: a started conversation, an unread record, a card
+                    // with no opening material and a locked composer all render none.
+                    submitAvailable &&
+                    icebreakers !== null &&
+                    icebreakers.length > 0 &&
+                    (view.session.snapshot.chat?.transcript.length ?? 0) === 0
+                      ? {
+                          label: labels().openingChipsLabel,
+                          items: icebreakers.map((chip) => ({
+                            id: `opening-${chip.index}`,
+                            text: chip.text,
+                            onClick: () => handleIcebreaker(chip),
+                          })),
+                        }
+                      : undefined
+                  }
                 />
               </SurfaceView>
             )}
