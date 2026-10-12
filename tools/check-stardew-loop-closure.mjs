@@ -28,9 +28,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SELECTOR_VERDICTS, METHOD_VERDICTS } from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
 import { REJECTED_LAYER_VERDICTS } from "../integrations/stardew/action-development/src/analysis/stardew-rejected-layer-verdicts.mjs";
+import { resolveStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REF = path.join(ROOT, "ref", "external", "StardewValleyDecompiled", "Stardew Valley");
+// An absent or empty decompile tree is "I could not look", not "no anchor problems": resolve it
+// through the shared guard so the gate fails closed, naming the path and how to restore it.
+const REF = resolveStardewDecompileRoot({ repositoryRoot: ROOT });
 
 class Missing extends Error {
   constructor(code, message) {

@@ -20,6 +20,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateMultiplayerSensitivityRegister } from "./lib/stardew-native-multiplayer-sensitivity.mjs";
+import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 
 /** Admission tokens that constitute an outright multiplayer rejection. */
 const MP_REJECT_PATTERN =
@@ -377,7 +378,7 @@ const repoRoot = process.cwd();
 try {
   const [registerText, sources, modAdmission, pipelines] = await Promise.all([
     readFile(args.register, "utf8"),
-    collectSources(args["source-root"]),
+    collectSources(assertStardewDecompileRoot(path.resolve(args["source-root"]))),
     deriveModAdmission(repoRoot),
     derivePipelineRoutedActions(repoRoot),
   ]);
