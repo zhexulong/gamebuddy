@@ -404,6 +404,22 @@ export type ChatCreateResultV1 = Readonly<{
   opening: string | null;
 }>;
 
+/** Chat selection (ADR 0009): the browser names the exact Chat it read and the generation it read. */
+type SelectChatCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  chatHandle: string;
+}>;
+
+/**
+ * The honest selection outcome: the chosen Chat is recorded durably and becomes the mounted
+ * conversation at the next runtime start, so this never claims a running conversation switched.
+ */
+export type ChatSelectResultV1 = Readonly<{
+  apiVersion: 1;
+  status: "restart_required";
+}>;
+
 export type MemoryItemV1 = Readonly<{
   handle: string;
   title: string;
@@ -866,6 +882,8 @@ const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] 
 const CHAT_OPENING_RESULT_KEYS = ["apiVersion", "openingVariant"] as const;
 const CREATE_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration"] as const;
 const CHAT_CREATE_RESULT_KEYS = ["apiVersion", "chat", "opening"] as const;
+const SELECT_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "chatHandle"] as const;
+const CHAT_SELECT_RESULT_KEYS = ["apiVersion", "status"] as const;
 const OPENING_COMMAND_REQUIRED_KEYS = ["apiVersion", "selectionGeneration"] as const;
 const OPENING_COMMAND_ALLOWED_KEYS = ["apiVersion", "selectionGeneration", "direction", "targetIndex"] as const;
 const OPENING_VARIANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -2039,6 +2057,30 @@ function validateChatCreateResult(value: unknown): ChatCreateResultV1 {
   return value;
 }
 
+function isSelectChatCommand(value: unknown): value is SelectChatCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SELECT_CHAT_COMMAND_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isOpaqueHandle(value.chatHandle)
+  );
+}
+
+function isChatSelectResult(value: unknown): value is ChatSelectResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CHAT_SELECT_RESULT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    value.status === "restart_required"
+  );
+}
+
+function validateChatSelectResult(value: unknown): ChatSelectResultV1 {
+  if (!isChatSelectResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatTitle(value: unknown): ChatTitleV1 {
   if (!isChatTitle(value)) throw new TavernProtocolError();
   return value;
@@ -2089,6 +2131,8 @@ export type ManagementPipelineApi = Readonly<{
    * The Host mints the thread identity and resolves the companion's own greeting as the opening.
    */
   createChat(command: CreateChatCommandV1, csrfToken: string): Promise<ChatCreateResultV1>;
+  /** PUT /api/tavern/v1/chat/select: chooses which existing Chat the next runtime start mounts. */
+  selectChat(command: SelectChatCommandV1, csrfToken: string): Promise<ChatSelectResultV1>;
   /** GET /api/tavern/v1/draft for the exact mounted Chat. */
   readDraft(): Promise<BrowserDraftV1>;
   /** PUT /api/tavern/v1/draft with durable revision CAS. */
@@ -2283,6 +2327,20 @@ export function createManagementPipelineApi(
         command,
       );
       observe("chat.create", "passed", result.chat.handle);
+      return result;
+    },
+    async selectChat(command: SelectChatCommandV1, csrfToken: string): Promise<ChatSelectResultV1> {
+      if (!isSelectChatCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/chat/select",
+        200,
+        validateChatSelectResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("chat.select", "passed", "restart_required");
       return result;
     },
     async readDraft(): Promise<BrowserDraftV1> {

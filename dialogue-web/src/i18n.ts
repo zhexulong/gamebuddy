@@ -487,6 +487,11 @@ const en = {
   gameEndgameConfirmNo: "Keep playing",
   gameEndgameInProgress: "Ending the game...",
   gameEndgameFailed: "The game could not be ended. The latest authoritative game state is shown.",
+
+  // --- chat selection lane: choosing which existing Chat the next start mounts ---
+  chatSelectNextStart: "Next start",
+  chatSelectChosenNotice:
+    "Chat selected. It becomes the active conversation the next time GameBuddy starts.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -949,6 +954,10 @@ const zh: Messages = {
   gameEndgameConfirmNo: "继续游玩",
   gameEndgameInProgress: "正在结束游戏...",
   gameEndgameFailed: "无法结束游戏；当前显示的是最新权威游戏状态。",
+
+  // --- 会话选择 lane：选择下次启动时挂载的已有会话 ---
+  chatSelectNextStart: "下次启动",
+  chatSelectChosenNotice: "已选择该会话。下次启动 GameBuddy 时它会成为当前会话。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

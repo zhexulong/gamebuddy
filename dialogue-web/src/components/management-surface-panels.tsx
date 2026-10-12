@@ -146,6 +146,7 @@ export function ChatsSurfacePanel({
   renameAvailable,
   retentionAvailable,
   createAvailable,
+  selectAvailable,
   onRenamedTitle,
   onNotice,
 }: Readonly<{
@@ -163,6 +164,11 @@ export function ChatsSurfacePanel({
    * projection and the served route is the capability, exactly like `renameAvailable`.
    */
   createAvailable?: boolean;
+  /**
+   * Chat selection (ADR 0009). `false` means the mount knows the Host published no `chat.select`
+   * route and the rows are not selectable; `undefined` means the served route is the capability.
+   */
+  selectAvailable?: boolean;
   /** Lets the mount fold the validated rename read-back into its own mounted session. */
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
@@ -173,6 +179,11 @@ export function ChatsSurfacePanel({
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
   const [creating, setCreating] = useState(false);
+  // The Chat the player chose for the next runtime start. The mounted conversation does not
+  // switch here (the Host records the selection and settles it at the next start), so this is
+  // the surface's own honest marker of the choice, never a claim that a running turn switched.
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [selecting, setSelecting] = useState(false);
   const { inline, report } = useSurfaceNotice(onNotice);
 
   useEffect(() => {
@@ -262,6 +273,33 @@ export function ChatsSurfacePanel({
     })();
   };
 
+  /**
+   * Chat selection (ADR 0009). Clicking an already-selected Chat is a no-op: there is nothing
+   * to record and no second admission. Otherwise the Host records a durable expectation and
+   * answers `restart_required`; the surface marks the chosen row and says the selection takes
+   * effect at the next start - it never claims the running conversation switched. A bounded
+   * refusal (`selection_conflict`) re-reads the durable list before it is reported.
+   */
+  const selectChat = (handle: string): void => {
+    if (selectAvailable === false || selecting) return;
+    // The mounted Chat and the already-chosen Chat are both no-ops: there is nothing new to
+    // record and no second admission.
+    if (handle === currentChatHandle || handle === chosen) return;
+    setSelecting(true);
+    void (async () => {
+      try {
+        await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
+        setChosen(handle);
+        report({ kind: "success", text: labels.chatSelectChosenNotice });
+      } catch {
+        await reread();
+        report({ kind: "failure", text: labels.failure });
+      } finally {
+        setSelecting(false);
+      }
+    })();
+  };
+
   const transition = (handle: string, operation: "archive" | "trash"): void => {
     const entry = chatListRows(list).find((chat) => chat.handle === handle);
     if (entry === undefined) {
@@ -313,11 +351,14 @@ export function ChatsSurfacePanel({
         ) : (
           list.map((chat) => {
             const isSelected = chat.handle === currentChatHandle;
+            const isChosen = chat.handle === chosen;
             return (
               <div
                 key={chat.handle}
                 role="listitem"
-                className={`chat-item-card ${isSelected ? "selected" : ""}`}
+                data-testid="chat-item"
+                data-selected={isSelected || isChosen ? "true" : "false"}
+                className={`chat-item-card ${isSelected || isChosen ? "selected" : ""}`}
               >
                 {editing !== null && editing.handle === chat.handle && renameAvailable !== false ? (
                   <>
@@ -348,7 +389,21 @@ export function ChatsSurfacePanel({
                   </>
                 ) : (
                   <div className="chat-item-main">
-                    <div className="chat-item-title">{chat.title ?? labels.untitledChat}</div>
+                    <button
+                      type="button"
+                      className="chat-item-title chat-item-select"
+                      data-testid="chat-select"
+                      aria-current={isSelected || isChosen ? "true" : undefined}
+                      disabled={selectAvailable === false || selecting}
+                      onClick={() => selectChat(chat.handle)}
+                    >
+                      {chat.title ?? labels.untitledChat}
+                    </button>
+                    {isChosen && !isSelected && (
+                      <span className="chat-item-badge" data-testid="chat-select-pending">
+                        {labels.chatSelectNextStart}
+                      </span>
+                    )}
                     <div className="chat-item-actions">
                       {renameAvailable !== false && (
                         <button

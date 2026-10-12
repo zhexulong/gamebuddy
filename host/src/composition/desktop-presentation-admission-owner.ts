@@ -15,7 +15,9 @@ import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-
 import { type ComposedTavernProfile, composeTavernProfile, type BrowserTurnV1 } from "../tavern/browser-contract/index.js";
 import {
   type ChatCreateResultV1,
+  type ChatSelectResultV1,
   type CreateChatCommandV1,
+  type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
@@ -80,6 +82,22 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   inspector?: WindowsReparseInspectorCapability;
   /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
   voiceSurface?: VoiceSurfaceReader;
+  /**
+   * The shared semantic authority's Chat selection capability (ADR 0009). When present, the
+   * management domains mount `chat.select`: the player's chosen Chat is recorded durably and
+   * becomes the mounted conversation at the next runtime start. Absent means the route is not
+   * mounted and the Chats surface offers no selection control.
+   */
+  chatSelection?: Readonly<{
+    requestChatSelection(
+      input: Readonly<{
+        kind: "select";
+        selectionGeneration: number;
+        chatThreadId: string;
+        chatSurfaceSessionId: string;
+      }>,
+    ): Promise<unknown>;
+  }>;
   /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
   speechSink?: ChatVoiceSpeechPublisher;
   /**
@@ -154,6 +172,8 @@ type TavernManagementDomains = Readonly<
     worldInfoService: WorldInfoBindingManagementService;
     modelProfileStore: ModelProfileStore;
     playerPreferenceStore: PlayerPreferenceStore;
+    /** Present only when the shared semantic authority supplied the ADR 0009 selection capability. */
+    chatSelectProvisioner?: TavernManagementDialogueWebOptions["chatSelectProvisioner"];
   }
 >;
 
@@ -216,6 +236,7 @@ function createTavernManagementDomains(
   lease: MountedChatRuntimeLease,
   profile: ComposedTavernProfile,
   worldInfoService: WorldInfoBindingManagementService,
+  chatSelection: DesktopPresentationAdmissionInput["chatSelection"],
 ): Readonly<{ domains: TavernManagementDomains; owned: readonly { close(): Promise<void> }[] }> {
   const owned: { close(): Promise<void> }[] = [];
   const managementService = createChatManagementService({ manifest, lease, profile });
@@ -354,6 +375,58 @@ function createTavernManagementDomains(
       });
     },
   });
+  /**
+   * Chat selection (ADR 0009). The browser names the exact Chat it read from `chat.list` and the
+   * generation it read; the Host resolves the opaque handle to the exact persisted thread pair,
+   * records the durable selection expectation through the shared semantic authority, and answers
+   * `restart_required` - the honest product answer, because the selected Chat becomes the mounted
+   * conversation only at the next runtime start. The already-selected Chat is a no-op: the request
+   * names the mounted Chat, so nothing is recorded and no second admission is created.
+   */
+  const chatSelectProvisioner =
+    chatSelection === undefined
+      ? undefined
+      : Object.freeze({
+          async select(command: SelectChatCommandV1): Promise<ChatSelectResultV1> {
+            if (command.selectionGeneration !== lease.browserProjection.selectionGeneration)
+              throw new Error("chat_management_selection_conflict");
+            const threads = await libraryThreads.listThreads?.();
+            if (threads === undefined) throw new Error("chat_management_service_unavailable");
+            const target = threads.find(
+              (thread) =>
+                thread.companionId === manifest.principal.companionId &&
+                thread.continuityId === manifest.principal.continuityId &&
+                (thread.lifecycleStatus ?? "active") === "active" &&
+                lease.browserProjection.projectChatHandle(
+                  thread.chatThreadId,
+                  thread.chatSurfaceSessionId,
+                ) === command.chatHandle,
+            );
+            if (target === undefined) throw new Error("chat_management_selection_conflict");
+            const alreadySelected =
+              target.chatThreadId === lease.chatThreadId &&
+              target.chatSurfaceSessionId === lease.chatSurfaceSessionId;
+            if (!alreadySelected) {
+              try {
+                await chatSelection.requestChatSelection({
+                  kind: "select",
+                  selectionGeneration: command.selectionGeneration,
+                  chatThreadId: target.chatThreadId,
+                  chatSurfaceSessionId: target.chatSurfaceSessionId,
+                });
+              } catch (error) {
+                if (
+                  error instanceof Error &&
+                  (error.message === "semantic_chat_selection_generation_conflict" ||
+                    error.message === "semantic_chat_selection_conflict")
+                )
+                  throw new Error("chat_management_selection_conflict");
+                throw error;
+              }
+            }
+            return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "restart_required" });
+          },
+        });
   // Reviewed ST-card import pipeline: artifacts are persisted by the service
   // under the tavern import path; confirm re-reads the exact reviewed candidate
   // and provisions it (profile + reviewed world book) into a NEW Host-owned
@@ -394,6 +467,7 @@ function createTavernManagementDomains(
       companionDetailService,
       newCompanionProvisioner,
       newChatProvisioner,
+      ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
       personaService,
       scenarioService,
       greetingService,
@@ -475,7 +549,9 @@ export async function startDesktopPresentationAdmission(
       input.lease,
       managementProfile,
       worldInfoService,
+      input.chatSelection,
     );
+    const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
     createdManagement.push(...owned);
     // The connection service owns the player's provider/model/credential
     // selection for the exact mounted Chat runtime. Its turn-state reader is this
@@ -491,7 +567,8 @@ export async function startDesktopPresentationAdmission(
     createdManagement.push(connectionService);
     management = Object.freeze({
       profile: managementProfile,
-      ...domains,
+      ...domainsWithoutSelection,
+      ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
       connectionService,
       ...(input.listVoiceOutputDevices === undefined
         ? {}
@@ -663,6 +740,9 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.opening",
       // New Chat follows the opening choice in that same canonical order.
       "chat.create",
+      // Chat selection (ADR 0009) follows New Chat: choosing an existing Chat the
+      // next runtime start mounts.
+      "chat.select",
     ],
     operationIds: [
       "draft.save",
@@ -702,6 +782,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.history",
       "chat.opening",
       "chat.create",
+      "chat.select",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

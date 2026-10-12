@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-chat-select"
+  },
+  "include": [],
+  "files": [
+    "src/tavern-management-dialogue-web.chat-select.test.ts"
+  ]
+}

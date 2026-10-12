@@ -13,6 +13,8 @@ import {
   type ComposedTavernProfile,
   type CreateCompanionCommandV1,
   type CreateChatCommandV1,
+  type SelectChatCommandV1,
+  type ChatSelectResultV1,
   type DiscardDraftCommandV1,
   type GreetingUpdateCommandV1,
   type GreetingV1,
@@ -188,6 +190,11 @@ const MANAGEMENT_CHAT_OPENING_ROUTES = ["chat.opening"] as const;
  * opening choice it is declared after the core and in the frozen group order, so a profile that
  * advertises it without the bound Chat creator fails closed at composition. */
 const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
+/** Optional Chat selection extension (ADR 0009): only a profile that declares this route
+ * mounts `PUT /api/tavern/v1/chat/select`; the selected Chat becomes the mounted
+ * conversation at the next runtime start. A profile that advertises it without the bound
+ * selection provisioner fails closed at composition. */
+const MANAGEMENT_CHAT_SELECT_ROUTES = ["chat.select"] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
  * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
@@ -204,6 +211,7 @@ const draftDiscardValidator = Compile(TavernBrowserContractV1.schemas.DiscardDra
 const renameRequestValidator = Compile(TavernBrowserContractV1.schemas.RenameChatTitleCommandV1Schema);
 const chatOpeningValidator = Compile(TavernBrowserContractV1.schemas.ChatOpeningCommandV1Schema);
 const createChatValidator = Compile(TavernBrowserContractV1.schemas.CreateChatCommandV1Schema);
+const selectChatValidator = Compile(TavernBrowserContractV1.schemas.SelectChatCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
 const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
@@ -317,6 +325,16 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    */
   newChatProvisioner?: Readonly<{
     create(command: CreateChatCommandV1): Promise<ChatCreateResultV1>;
+  }>;
+  /**
+   * Host-owned Chat selection (ADR 0009). The browser names the exact Chat it read from
+   * `chat.list` and the generation it read; the provisioner records the durable selection
+   * expectation and reports the honest `restart_required` outcome (the selection becomes the
+   * mounted conversation at the next runtime start). Present only when the mounted profile
+   * declares `chat.select`; the route stays unavailable otherwise.
+   */
+  chatSelectProvisioner?: Readonly<{
+    select(command: SelectChatCommandV1): Promise<ChatSelectResultV1>;
   }>;
   personaService?: Readonly<{
     read(): Promise<Readonly<{ revision: number; name: string; description?: string }> | null>;
@@ -503,6 +521,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionDetailService = options.companionDetailService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
+  const chatSelectProvisioner = options.chatSelectProvisioner;
   const personaService = options.personaService;
   const scenarioService = options.scenarioService;
   const greetingService = options.greetingService;
@@ -617,6 +636,13 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (profile.routeIds.includes("chat.create")) {
     if (newChatProvisioner === undefined) throw new Error("tavern_management_composition_unavailable");
     if (!profile.operationIds.includes("chat.create")) throw new Error("tavern_management_composition_unavailable");
+  }
+  // The Chat selection route is mounted only when the exact provisioner is
+  // injected; a profile that advertises `chat.select` without it fails closed
+  // before any dispatch.
+  if (profile.routeIds.includes("chat.select")) {
+    if (chatSelectProvisioner === undefined) throw new Error("tavern_management_composition_unavailable");
+    if (!profile.operationIds.includes("chat.select")) throw new Error("tavern_management_composition_unavailable");
   }
 
   let browser: BrowserSession | undefined;
@@ -907,6 +933,30 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!createChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const result = await newChatProvisioner.create(body as CreateChatCommandV1);
         if (!TavernBrowserValidatorsV1.ChatCreateResultV1Schema.Check(result))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/select") {
+        // chat.select (ADR 0009): the browser names the exact Chat it read and the
+        // generation it read; the Host records a durable selection expectation and
+        // answers the honest `restart_required`, because the selection becomes the
+        // mounted conversation at the next runtime start. Refusals are bounded: a
+        // stale generation or an unknown/non-active Chat is `selection_conflict`.
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("chat.select") ||
+          !profile.operationIds.includes("chat.select") ||
+          chatSelectProvisioner === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!selectChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const result = await chatSelectProvisioner.select(body as SelectChatCommandV1);
+        if (!TavernBrowserValidatorsV1.ChatSelectResultV1Schema.Check(result))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, result);
       }
@@ -1735,6 +1785,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
+    MANAGEMENT_CHAT_SELECT_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -1746,6 +1797,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
+    MANAGEMENT_CHAT_SELECT_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;

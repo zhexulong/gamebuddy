@@ -192,6 +192,9 @@ export async function createDesktopProductComposition(
         bootstrapToken: randomBytes(32).toString("base64url"),
         eventStream: createChatEventStream(),
         lease: mountedLease,
+        // ADR 0009 Chat selection: the management domains mount `chat.select`
+        // over the same shared semantic authority the mounted Chat lane owns.
+        chatSelection: shared.chat,
       });
       presentationAdmission = surface === "chat-only"
         ? await startChatOnlyPresentationAdmission({
@@ -254,6 +257,7 @@ export async function createDesktopProductComposition(
       eventStream: createChatEventStream(),
       lease: mountedLease,
       presentation,
+      chatSelection: shared.chat,
     });
     // The composed reference-game surface is ready at the Host-owned seam; the
     // launch URL is published exactly once and never projects through the

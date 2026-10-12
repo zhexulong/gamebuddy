@@ -1,0 +1,284 @@
+/**
+ * Chat selection (ADR 0009): the `PUT /api/tavern/v1/chat/select` route over the real dispatcher.
+ *
+ * The point of this test is the durable read-back and the bounded refusals, not the wire: the
+ * chosen Chat must become the durable active selection the very next mount settles, the generation
+ * the browser read must be the generation the Host accepts, and the already-selected Chat must be
+ * a no-op rather than a second admission.
+ */
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
+import {
+  type ChatListV1,
+  type ChatSelectResultV1,
+  composeTavernProfile,
+  type SelectChatCommandV1,
+  TAVERN_BROWSER_API_VERSION,
+} from "./tavern/browser-contract/index.js";
+import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./tavern/chat-thread-store.js";
+import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
+import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
+import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
+import { startTavernManagementDialogueWebServer } from "./tavern-management-dialogue-web.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
+
+const bootstrapToken = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+function opaqueHandle(seed: string): string {
+  return createHash("sha256").update(seed, "utf8").digest("base64url").slice(0, 43);
+}
+
+function profile() {
+  return composeTavernProfile({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "world-info.read",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "chat.select",
+    ],
+    operationIds: [
+      "draft.save",
+      "draft.discard",
+      "chat.rename",
+      "world-info.bind",
+      "settings.voice.read",
+      "settings.voice.consent",
+      "chat.select",
+    ],
+    navigationItemIds: ["chat"],
+  });
+}
+
+async function fixture() {
+  const root = await canonicalTestRoot("tavern-chat-select-");
+  const threads = createChatThreadStore(root, "b".repeat(64), () => 10);
+  const first = { chatThreadId: `chat-${"1".repeat(16)}`, chatSurfaceSessionId: `surface-${"1".repeat(16)}` };
+  const second = { chatThreadId: `chat-${"2".repeat(16)}`, chatSurfaceSessionId: `surface-${"2".repeat(16)}` };
+  const creation = createProfileAwareChatThreadCreationCapability(threads, {
+    async readExact() {
+      return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
+  await creation.createExplicit({
+    ...first,
+    companionId: "companion",
+    continuityId: "continuity",
+    opening: "blank",
+  });
+  await creation.createExplicit({
+    ...second,
+    companionId: "companion",
+    continuityId: "continuity",
+    opening: "blank",
+  });
+  await threads.selectActiveThread(first.chatThreadId, first.chatSurfaceSessionId);
+  const handleOf = (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) =>
+    opaqueHandle(`${target.chatThreadId}\u0000${target.chatSurfaceSessionId}`);
+  let selectionCalls = 0;
+  const chatSelectProvisioner = Object.freeze({
+    /**
+     * The dispatch route's splice point, reduced to this fixture: resolve the opaque handle to the
+     * durable thread pair, refuse a stale generation, no-op the already-selected Chat, and record
+     * the selection durably (the real production provisioner records the semantic expectation).
+     */
+    async select(command: SelectChatCommandV1): Promise<ChatSelectResultV1> {
+      const active = await threads.readActiveThreadSelection();
+      const generation = active === null ? 1 : 1;
+      if (command.selectionGeneration !== generation) throw new Error("chat_management_selection_conflict");
+      const durable = await threads.listThreads!();
+      const target = durable.find((thread) => handleOf(thread) === command.chatHandle);
+      if (target === undefined) throw new Error("chat_management_selection_conflict");
+      const alreadySelected =
+        active !== null &&
+        active.chatThreadId === target.chatThreadId &&
+        active.chatSurfaceSessionId === target.chatSurfaceSessionId;
+      if (!alreadySelected) {
+        selectionCalls += 1;
+        await threads.selectActiveThread(target.chatThreadId, target.chatSurfaceSessionId);
+      }
+      return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "restart_required" });
+    },
+  });
+  const state: TavernManagementState = {
+    selection: { chatHandle: handleOf(first), generation: 1, stateRevision: opaqueHandle("state-revision") },
+    companionDisplayName: "Mira",
+    title: null,
+    transcript: [],
+    draft: { revision: 0, text: null },
+    turn: null,
+    operations: [],
+    worldInfo: null,
+  };
+  const facade: TavernManagementStateFacade = Object.freeze({
+    read: async () => state,
+    close: async () => undefined,
+  });
+  const managementService: ChatManagementService = Object.freeze({
+    async listChats(): Promise<ChatListV1> {
+      const active = await threads.readActiveThreadSelection();
+      const durable = await threads.listThreads!();
+      return Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        chats: durable.map((thread) =>
+          Object.freeze({
+            handle: handleOf(thread),
+            title: thread.title ?? null,
+            status: "active" as const,
+            managementRevision: thread.managementRevision ?? 1,
+            isSelected:
+              active !== null &&
+              active.chatThreadId === thread.chatThreadId &&
+              active.chatSurfaceSessionId === thread.chatSurfaceSessionId,
+          }),
+        ),
+      });
+    },
+    async renameChatTitle() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async transitionLifecycle() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async commitOpeningVariant() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async readDraft() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async saveDraft() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async discardDraft() {
+      throw new Error("chat_management_service_unavailable");
+    },
+    async close() {},
+  });
+  const worldInfoService: WorldInfoBindingManagementService = Object.freeze({
+    async read() {
+      return { state: "none" as const, revision: opaqueHandle("world-info"), items: [] };
+    },
+    async setBinding() {
+      return { state: "none" as const, revision: opaqueHandle("world-info"), items: [] };
+    },
+    async close() {},
+  });
+  const page = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService,
+    worldInfoService,
+    chatSelectProvisioner,
+    playerPreferenceStore: Object.freeze({
+      async read() {
+        return {
+          revision: 0,
+          locale: null,
+          disclosureVersion: null,
+          consent: "undecided" as const,
+          decidedAtMs: null,
+          outputDevice: null,
+        };
+      },
+      async update() {
+        throw new Error("player_preference_store_unavailable");
+      },
+    }),
+    profile: profile(),
+    bootstrapToken,
+  });
+  return { page, threads, first, second, handleOf, selectionCalls: () => selectionCalls };
+}
+
+async function openSession(origin: string): Promise<{ cookie: string; csrf: string }> {
+  const response = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
+  });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { csrfToken: string };
+  return { cookie: response.headers.get("set-cookie")!.split(";", 1)[0]!, csrf: body.csrfToken };
+}
+
+test("chat.select records the chosen Chat durably, refuses a stale generation, and no-ops the selection", async () => {
+  const f = await fixture();
+  try {
+    const { origin } = f.page;
+    const { cookie, csrf } = await openSession(origin);
+    const select = (body: unknown, includeCsrf = true) =>
+      fetch(`${origin}/api/tavern/v1/chat/select`, {
+        method: "PUT",
+        headers: {
+          Origin: origin,
+          Cookie: cookie,
+          "Sec-Fetch-Site": "same-origin",
+          "Content-Type": "application/json",
+          ...(includeCsrf ? { "X-CSRF-Token": csrf } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+
+    // CSRF is required for the mutation.
+    const noCsrf = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) }, false);
+    assert.equal(noCsrf.status, 403);
+
+    // A stale generation is the bounded selection refusal, not a silent switch.
+    const stale = await select({ apiVersion: 1, selectionGeneration: 99, chatHandle: f.handleOf(f.second) });
+    assert.equal(stale.status, 409);
+    assert.equal(((await stale.json()) as { code?: string }).code, "selection_conflict");
+    assert.equal(f.selectionCalls(), 0);
+
+    // An unknown Chat is the same bounded refusal.
+    const unknown = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: opaqueHandle("no-such-chat") });
+    assert.equal(unknown.status, 409);
+    assert.equal(((await unknown.json()) as { code?: string }).code, "selection_conflict");
+    assert.equal(f.selectionCalls(), 0);
+
+    // Selecting the mounted Chat is a no-op: no durable write, no second admission.
+    const noop = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.first) });
+    assert.equal(noop.status, 200);
+    assert.deepEqual(await noop.json(), { apiVersion: 1, status: "restart_required" });
+    assert.equal(f.selectionCalls(), 0);
+
+    // A real selection records the durable expectation and answers the honest restart outcome.
+    const chosen = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) });
+    assert.equal(chosen.status, 200);
+    assert.deepEqual(await chosen.json(), { apiVersion: 1, status: "restart_required" });
+    assert.equal(f.selectionCalls(), 1);
+
+    // Real read-back: the durable active selection is now the chosen Chat, and a fresh list read
+    // reflects it. This is the "switched conversation" fact the next runtime start settles.
+    const active = await f.threads.readActiveThreadSelection();
+    assert.equal(active?.chatThreadId, f.second.chatThreadId);
+    assert.equal(active?.chatSurfaceSessionId, f.second.chatSurfaceSessionId);
+    const list = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
+      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as ChatListV1;
+    assert.equal(body.chats.filter((entry) => entry.isSelected).length, 1);
+    assert.equal(body.chats.find((entry) => entry.isSelected)?.handle, f.handleOf(f.second));
+  } finally {
+    await f.page.close();
+  }
+});

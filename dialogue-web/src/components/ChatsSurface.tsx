@@ -20,6 +20,7 @@ export function ChatsSurface({
   labels,
   selectionGeneration,
   currentChatHandle,
+  selectAvailable,
   onRenamedTitle,
   restoreFocusTo,
 }: {
@@ -28,6 +29,8 @@ export function ChatsSurface({
   labels: Messages;
   selectionGeneration: number;
   currentChatHandle: string;
+  /** `false` when the mount knows no `chat.select` route is served; the rows are then not selectable. */
+  selectAvailable?: boolean;
   onRenamedTitle: () => void;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
@@ -44,6 +47,7 @@ export function ChatsSurface({
         labels={labels}
         selectionGeneration={selectionGeneration}
         currentChatHandle={currentChatHandle}
+        {...(selectAvailable === undefined ? {} : { selectAvailable })}
         onRenamedTitle={onRenamedTitle}
       />
     </SurfaceView>
