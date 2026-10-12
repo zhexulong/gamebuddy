@@ -67,6 +67,9 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // than completing an action, so neither has a published gate entry (their fixtures are scenarios, not actions)
   // - but they are still runners whose config contract must be checked, which is what this list is for.
   "run-stardew-native-local-player-body-owner-hold-smoke.mjs": "body_owner_hold",
+  // The pond runner drives the action whose fixture it uses, so this table names that action: the fixture
+  // library keys the scenario on it.
+  "run-stardew-native-local-player-clear-fish-pond-smoke.mjs": "clear_fish_pond",
   "run-stardew-native-local-player-dialogue-stream-smoke.mjs": "dialogue_stream",
   // A read-only reachability probe: no gate entry either, declared for the same reason. It belongs to the L3
   // scene-reachability lane; declared here because this completeness invariant was red with it uncovered.
