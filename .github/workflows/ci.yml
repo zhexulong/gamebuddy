@@ -59,6 +59,19 @@ jobs:
       # This builds only the browser's contributor-quality bundle; ordinary CI
       # has no authority to assemble a Host production generation.
       - run: pnpm --filter @gamebuddy/dialogue-web build
+      # The three frontend gate zones, named explicitly. dialogue-web's own `test`
+      # is only its static zone and root `pnpm test` runs the vendored and
+      # companion-host suites, so an aggregate command leaves the artifact and
+      # mounted zones running nowhere - a gate that stops running is worse than a
+      # gate that fails. The step that used to run the frontend suites was dropped
+      # because the old aggregate needed a freshly assembled Host production
+      # generation; no zone does (static reads source, the artifact zone builds its
+      # own private staging copy, the mounted zone drives the vite dev server).
+      - run: pnpm --filter @gamebuddy/dialogue-web test:static
+      - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
+      - name: Install the frontend journeys' Chromium
+        run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
+      - run: pnpm --filter @gamebuddy/dialogue-web test:mounted
       - run: pnpm test
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session

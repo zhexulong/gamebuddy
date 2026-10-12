@@ -59,6 +59,13 @@ jobs:
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
       - run: pnpm typecheck
+      # The artifact gate zone, named explicitly. dialogue-web's own `test` is only
+      # its static zone, so this zone runs nowhere unless a caller names it - and
+      # this lane is the one that ships the browser artifact whose manifest, hash
+      # and symlink boundaries it verifies (built here from this same tree, into
+      # its own private staging directory). The static zone stays ordinary
+      # contributor CI's, and the mounted zone is named below.
+      - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
       # Host tests mint only repository-built, fixed Windows helper pairs; they
       # never use an unverified production generation.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
@@ -102,24 +109,22 @@ jobs:
         run: node tools/run-tavern-release-live-gate.mjs --orchestrate --mounted-profile tavern-operation-evidence.json.profile.json --operation-evidence-mapping tavern-operation-evidence.json --report tavern-release-live-gate.json
         env:
           CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
-      # The player-visible side of the same release claim: the mounted browser
-      # journeys mount the real management composition on a fresh root and drive
-      # the shipped UI in Chromium (draft/rename, World Info bind and pending
-      # state, two-page consistency, stale-revision conflicts, zh-CN at 375x667,
-      # connection create/test/activate/model, Characters CRUD, lifecycle
-      # retention, and the reviewed card import end to end). They resolve their
-      # generation from GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT, which without this
-      # step defaults to host/dist - a checked-in directory whose generation is
-      # older than the code under test, which is why they fail to load locally.
+      # The player-visible side of the same release claim, run as the mounted gate
+      # zone. The zone's corpus is the whole tests/ journey directory, so the
+      # journeys the removed management/Chat shells used to carry (draft/rename,
+      # World Info bind and pending state, two-page consistency, stale-revision
+      # conflicts, zh-CN at 375x667, connection create/test/activate/model,
+      # Characters CRUD, lifecycle retention, the reviewed card import, the Chat
+      # Stop journey) run through the suites that own them now
+      # (management-surface-panels.spec.ts, composed-reference-game-browser.spec.ts),
+      # and a renamed or re-added spec joins this gate instead of leaving a
+      # hand-written file list naming suites that no longer exist. The two provider
+      # journeys from the removed companion-turn suite have no home yet; they are
+      # reported rather than silently dropped.
       - name: Install the browser journeys' Chromium
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
       - name: Tavern mounted browser journeys
-        # Exactly the two suites that need no game: the management surface and the
-        # Chat surface. The composed-reference-game and installation-discovery
-        # specs require a real Stardew installation and belong to that gate.
-        run: pnpm --dir dialogue-web exec playwright test tests/reference-pipeline-browser.spec.ts tests/management-pipeline-browser.spec.ts --project=chromium --workers=1
-        env:
-          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
+        run: pnpm --filter @gamebuddy/dialogue-web test:mounted
       # The frontend criteria, and the corpus itself, as one gate: the shipped
       # suites must run (no silent skip, no shrunk corpus), and the criteria they
       # are instances of - accessibility baseline, keyboard reach, layout floor,
@@ -127,16 +132,6 @@ jobs:
       # design/architecture/tavern-frontend-criteria.md.
       - name: Tavern frontend conformance gate
         run: node tools/run-tavern-frontend-conformance.mjs --report tavern-frontend-conformance.json
-        env:
-          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
-          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
-      # The product journeys that mount twice and spend real provider time: a real
-      # provider turn through the shipped UI, the same conversation surviving a
-      # full app restart on one root, and the keyboard/layout floor. They are their
-      # own step because the SSE/replay suite above is timing-sensitive and stays
-      # lean. The two provider journeys skip (loudly) when the credential is absent.
-      - name: Tavern product journeys
-        run: pnpm --dir dialogue-web exec playwright test tests/companion-turn-browser.spec.ts --project=chromium --workers=1 --retries=1
         env:
           GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
           CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
