@@ -274,6 +274,21 @@ const presentation: GamePresentationProjection = Object.freeze({
   }),
 });
 
+/**
+ * The one shared semantic Chat-selection capability the composed surface mounts
+ * `chat.select` from. The production profile declares that route, so an
+ * admission without this capability fails closed at composition; the fixture
+ * never calls it, so every operation refuses rather than fabricating a switch.
+ */
+const chatSelectionStub = Object.freeze({
+  async requestChatSelection(): Promise<never> {
+    throw new Error("chat_selection_unused");
+  },
+  async startMountedChatRuntime(): Promise<never> {
+    throw new Error("chat_selection_unused");
+  },
+});
+
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   await mock.module(
@@ -414,6 +429,7 @@ async function main(): Promise<void> {
         bootstrapToken,
         eventStream,
         lease: Object.freeze({}) as never,
+        chatSelection: chatSelectionStub,
         presentation,
         inspector: inspector(),
       });

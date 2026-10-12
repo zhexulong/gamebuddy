@@ -34,13 +34,14 @@ import { StCardImportService } from "../tavern/st-card-import-service.js";
 import { createStCardImportHistoryService } from "../tavern/st-card-import-history.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 import { createChatPipelineService } from "../tavern/chat-pipeline-service.js";
+import type { ChatPipelineService } from "../tavern/chat-pipeline-service.js";
 import { startComposedReferenceGameStaticShellComposition } from "../tavern/composed-reference-game-static-shell-composition.js";
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import type { MemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import { createTavernConnectionService } from "../tavern/connection-service.js";
 import type { TavernManagementDialogueWebOptions } from "../tavern-management-dialogue-web.js";
 import type { TavernManagementDelegatedOptions } from "../tavern-management-dialogue-web.delegated.js";
-import { createReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
+import { createReferencePipelineStateFacade, type ReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
 import { createWorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import type { WorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -84,9 +85,10 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   voiceSurface?: VoiceSurfaceReader;
   /**
    * The shared semantic authority's Chat selection capability (ADR 0009). When present, the
-   * management domains mount `chat.select`: the player's chosen Chat is recorded durably and
-   * becomes the mounted conversation at the next runtime start. Absent means the route is not
-   * mounted and the Chats surface offers no selection control.
+   * management domains mount `chat.select`: choosing another Chat switches the mounted conversation
+   * inside the same process while the runtime is idle, and reports `turn_in_flight` while a turn is
+   * generating, so a running conversation is never torn down. Absent means the route is not mounted
+   * and the Chats surface offers no selection control.
    */
   chatSelection?: Readonly<{
     requestChatSelection(
@@ -96,7 +98,9 @@ export type DesktopPresentationAdmissionInput = Readonly<{
         chatThreadId: string;
         chatSurfaceSessionId: string;
       }>,
-    ): Promise<unknown>;
+    ): Promise<Readonly<{ status: string }>>;
+    /** Mints (or returns) the capability for the currently selected Chat. */
+    startMountedChatRuntime(): Promise<MountedChatRuntimeLease>;
   }>;
   /** Optional Host-owned streaming speech sink: reads the Chat delta aloud while the turn streams. */
   speechSink?: ChatVoiceSpeechPublisher;
@@ -377,11 +381,11 @@ function createTavernManagementDomains(
   });
   /**
    * Chat selection (ADR 0009). The browser names the exact Chat it read from `chat.list` and the
-   * generation it read; the Host resolves the opaque handle to the exact persisted thread pair,
-   * records the durable selection expectation through the shared semantic authority, and answers
-   * `restart_required` - the honest product answer, because the selected Chat becomes the mounted
-   * conversation only at the next runtime start. The already-selected Chat is a no-op: the request
-   * names the mounted Chat, so nothing is recorded and no second admission is created.
+   * generation it read; the Host resolves the opaque handle to the exact persisted thread pair and
+   * asks the semantic authority to make it the mounted conversation. The authority switches in
+   * process while the runtime is idle (`switched`) and refuses with `turn_in_flight` while a turn is
+   * generating, so a running conversation is never torn down. The already-selected Chat is a no-op:
+   * the request names the mounted Chat, so nothing is recorded and no second admission is created.
    */
   const chatSelectProvisioner =
     chatSelection === undefined
@@ -406,25 +410,28 @@ function createTavernManagementDomains(
             const alreadySelected =
               target.chatThreadId === lease.chatThreadId &&
               target.chatSurfaceSessionId === lease.chatSurfaceSessionId;
-            if (!alreadySelected) {
-              try {
+            if (alreadySelected)
+              return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
+            let status: ChatSelectResultV1["status"];
+            try {
+              status = (
                 await chatSelection.requestChatSelection({
                   kind: "select",
                   selectionGeneration: command.selectionGeneration,
                   chatThreadId: target.chatThreadId,
                   chatSurfaceSessionId: target.chatSurfaceSessionId,
-                });
-              } catch (error) {
-                if (
-                  error instanceof Error &&
-                  (error.message === "semantic_chat_selection_generation_conflict" ||
-                    error.message === "semantic_chat_selection_conflict")
-                )
-                  throw new Error("chat_management_selection_conflict");
-                throw error;
-              }
+                })
+              ).status as ChatSelectResultV1["status"];
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                (error.message === "semantic_chat_selection_generation_conflict" ||
+                  error.message === "semantic_chat_selection_conflict")
+              )
+                throw new Error("chat_management_selection_conflict");
+              throw error;
             }
-            return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "restart_required" });
+            return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status });
           },
         });
   // Reviewed ST-card import pipeline: artifacts are persisted by the service
@@ -506,96 +513,162 @@ export async function startDesktopPresentationAdmission(
         gameProfile: input.presentation.gameProfile,
       });
   const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
-  const referenceStateFacade = await createReferencePipelineStateFacade(
-    input.manifest,
-    input.lease,
-    tavernProfile,
-    input.eventStream,
-    input.voiceSurface,
-  );
-  const pipelineService = createChatPipelineService({
-    manifest: input.manifest,
-    lease: input.lease,
-    profile: tavernProfile,
-    eventStream: input.eventStream,
-    ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
-  });
-  // The management domains the one app's Chats/Characters/Settings/Memory
-  // surfaces read and write (design/104 §2, design/26 §4.2). They come from the
-  // one management-domain assembly, over the same durable stores and
-  // lease-bound services, so a panel and its surface are two views of one state
-  // rather than two owners of it.
-  //
-  // They are built against the MANAGEMENT tavern profile, not the composed shell's
-  // frozen reference profile: the composed browser contract pins that profile's
-  // route list verbatim (it is what the browser validates), while these services
-  // require the routes they own - chat.list, chat.rename, draft.save, draft.discard,
-  // memory.read, world-info.read and their operations - to be declared. The shell
-  // mounts them under the management profile's own delegated dispatcher on the same
-  // loopback origin, so one frozen Chat contract and the management domains coexist
-  // instead of one masquerading as the other.
   const managementProfile = composeTavernManagementProfile();
-  const createdManagement: { close(): Promise<void> }[] = [];
-  let management: Omit<TavernManagementDelegatedOptions, "capability">;
-  try {
-    const worldInfoService = createTavernManagedWorldInfoService(
-      input.manifest,
-      input.lease,
-      managementProfile,
-    );
-    createdManagement.push(worldInfoService);
-    const { domains, owned } = createTavernManagementDomains(
-      input.manifest,
-      input.lease,
-      managementProfile,
-      worldInfoService,
-      input.chatSelection,
-    );
-    const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
-    createdManagement.push(...owned);
-    // The connection service owns the player's provider/model/credential
-    // selection for the exact mounted Chat runtime. Its turn-state reader is this
-    // admission's own reference facade: the same durable turn the composed broker
-    // already projects, so an activation cannot switch a running turn (design/28
-    // §5.3).
-    const connectionService = createTavernConnectionService({
-      agentDir: managementAgentDir(input.manifest, input.lease),
-      readTurnState: async () => ({
-        turnActive: mountedTurnActive((await referenceStateFacade.read()).turn),
-      }),
-    });
-    createdManagement.push(connectionService);
-    management = Object.freeze({
-      profile: managementProfile,
-      ...domainsWithoutSelection,
-      ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
-      connectionService,
-      ...(input.listVoiceOutputDevices === undefined
-        ? {}
-        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
-    });
-  } catch (error) {
-    for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
+  let lane: ChatLane | undefined;
+  const currentLane = (): ChatLane => {
+    if (lane === undefined) throw new Error("chat_lane_unavailable");
+    return lane;
+  };
+
+  /**
+   * Closes every service one lane built, in reverse creation order: the
+   * management domains and the connection service first, then the Chat pipeline
+   * service, then the state facade they project through.
+   */
+  const drainChatLane = async (target: ChatLane): Promise<void> => {
+    for (let index = target.owned.length - 1; index >= 0; index -= 1) {
       try {
-        await createdManagement[index]!.close();
+        await target.owned[index]!.close();
       } catch {
-        // Preserve the management construction failure.
+        // Keep draining the rest; one close failure must not leak the others.
       }
     }
     try {
-      await pipelineService.close();
+      await target.pipelineService.close();
     } catch {
-      // Preserve the management construction failure.
+      // Preserve the caller's failure, not this one.
     }
-    throw error;
+    try {
+      await target.referenceStateFacade.close();
+    } catch {
+      // Preserve the caller's failure, not this one.
+    }
+  };
+
+  /**
+   * Everything the admission serves for exactly one mounted Chat, built over
+   * exactly one mounted lease: the state facade, the Chat pipeline service and
+   * the management domains. A turn-level Chat switch replaces the whole lane,
+   * because the mounted thread pair determines each of these services' bearer
+   * projection, per-surface paths and stores.
+   */
+  async function buildChatLane(lease: MountedChatRuntimeLease): Promise<ChatLane> {
+    const referenceStateFacade = await createReferencePipelineStateFacade(
+      input.manifest,
+      lease,
+      tavernProfile,
+      input.eventStream,
+      input.voiceSurface,
+    );
+    const pipelineService = createChatPipelineService({
+      manifest: input.manifest,
+      lease,
+      profile: tavernProfile,
+      eventStream: input.eventStream,
+      ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
+    });
+    const owned: { close(): Promise<void> }[] = [];
+    try {
+      const worldInfoService = createTavernManagedWorldInfoService(
+        input.manifest,
+        lease,
+        managementProfile,
+      );
+      owned.push(worldInfoService);
+      const { domains, owned: domainOwned } = createTavernManagementDomains(
+        input.manifest,
+        lease,
+        managementProfile,
+        worldInfoService,
+        input.chatSelection,
+      );
+      const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
+      owned.push(...domainOwned);
+      // The connection service owns the player's provider/model/credential
+      // selection for the exact mounted Chat runtime. Its turn-state reader is
+      // this lane's own state facade: the same durable turn the composed broker
+      // already projects, so an activation cannot switch a running turn.
+      const connectionService = createTavernConnectionService({
+        agentDir: managementAgentDir(input.manifest, lease),
+        readTurnState: async () => ({
+          turnActive: mountedTurnActive((await referenceStateFacade.read()).turn),
+        }),
+      });
+      owned.push(connectionService);
+      const management = Object.freeze({
+        profile: managementProfile,
+        ...domainsWithoutSelection,
+        ...(chatSelectProvisioner === undefined
+          ? {}
+          : {
+              chatSelectProvisioner: Object.freeze({
+                async select(command: SelectChatCommandV1): Promise<ChatSelectResultV1> {
+                  const result = await chatSelectProvisioner.select(command);
+                  // A turn-level switch already committed the successor mount;
+                  // only the presentation lane still has to follow it.
+                  if (result.status === "switched") await switchChatLane();
+                  return result;
+                },
+              }),
+            }),
+        connectionService,
+        ...(input.listVoiceOutputDevices === undefined
+          ? {}
+          : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+      });
+      return Object.freeze({
+        referenceStateFacade,
+        pipelineService,
+        management,
+        owned: Object.freeze(owned),
+      });
+    } catch (error) {
+      await drainChatLane({ referenceStateFacade, pipelineService, management: Object.freeze({}), owned });
+      throw error;
+    }
   }
+
+  /**
+   * Follows a committed turn-level Chat switch: the coordinator has already
+   * released the previous mounted runtime and mounted the selected Chat, so the
+   * admission only has to replace its own lane with one built over the successor
+   * lease and drain the previous lane's services.
+   */
+  async function switchChatLane(): Promise<void> {
+    if (input.chatSelection === undefined) throw new Error("chat_selection_unavailable");
+    const lease = await input.chatSelection.startMountedChatRuntime();
+    const previous = lane;
+    lane = await buildChatLane(lease);
+    if (previous !== undefined) await drainChatLane(previous);
+  }
+
+  lane = await buildChatLane(input.lease);
+  // The composed shell mounts its one delegated dispatcher and its one
+  // reference dispatcher once, so it is handed stable members that resolve to
+  // whichever lane is current when a request runs. A lane swap is therefore
+  // invisible to the shell and no route can observe a half-switched lane.
+  const stableReferenceStateFacade: ReferencePipelineStateFacade = Object.freeze({
+    read: () => currentLane().referenceStateFacade.read(),
+    readDraft: () => currentLane().referenceStateFacade.readDraft(),
+    // The admission owns every lane's lifetime; the shell closes only its own
+    // dispatchers, never a lane another owner built.
+    close: async () => undefined,
+  });
+  const stablePipelineService: ChatPipelineService = Object.freeze({
+    submitAfterResponseCommit: (command, idempotencyKey, commit202) =>
+      currentLane().pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
+    readSubmissionStatus: (query) => currentLane().pipelineService.readSubmissionStatus(query),
+    cancel: (turnHandle, command) => currentLane().pipelineService.cancel(turnHandle, command),
+    close: async () => undefined,
+  });
+  const stableManagementOptions = createStableManagementOptions(currentLane);
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>>;
   try {
     server = await startComposedReferenceGameStaticShellComposition({
       profile,
       bootstrapToken: input.bootstrapToken,
-      referenceStateFacade,
-      pipelineService,
+      referenceStateFacade: stableReferenceStateFacade,
+      pipelineService: stablePipelineService,
       eventStream: input.eventStream,
       // The Game projection's own routes and lifecycle admission exist exactly
       // when a projection was supplied: the Chat-owned entry points construct no
@@ -613,24 +686,13 @@ export async function startDesktopPresentationAdmission(
       // The management domains' services: the composed shell serves the Chats,
       // drafts, Memory, World Info, Settings, Characters, Persona/Scenario/
       // Greeting and card-import routes under /api/tavern/v1/ from them.
-      ...(management === undefined ? {} : { management }),
+      management: stableManagementOptions,
     });
   } catch (error) {
-    // No listener and no Game-side effect exist yet; the Chat pipeline service and
-    // the management services this admission created are the only owners it holds,
-    // so drain them and preserve the construction failure unchanged.
-    for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
-      try {
-        await createdManagement[index]!.close();
-      } catch {
-        // Preserve the presentation construction failure.
-      }
-    }
-    try {
-      await pipelineService.close();
-    } catch {
-      // Preserve the presentation construction failure.
-    }
+    // No listener exists yet; the lane this admission just built is the only
+    // owner it holds, so drain it and preserve the construction failure.
+    await drainChatLane(currentLane());
+    lane = undefined;
     throw error;
   }
   let closePromise: Promise<void> | undefined;
@@ -644,19 +706,86 @@ export async function startDesktopPresentationAdmission(
         try {
           await server.close();
         } finally {
-          // Listener first, then the management domains it served, then the state
-          // facade they projected: creation order reversed.
-          for (let index = createdManagement.length - 1; index >= 0; index -= 1) {
-            try {
-              await createdManagement[index]!.close();
-            } catch {
-              // Keep draining the rest; one close failure must not leak the others.
-            }
-          }
-          await referenceStateFacade.close();
+          // Listener first, then the lane it served: creation order reversed.
+          const current = lane;
+          lane = undefined;
+          if (current !== undefined) await drainChatLane(current);
         }
       })()),
   });
+}
+
+/** One mounted Chat lane: every service the admission built over one mounted lease. */
+type ChatLane = Readonly<{
+  referenceStateFacade: ReferencePipelineStateFacade;
+  pipelineService: ChatPipelineService;
+  management: Omit<TavernManagementDelegatedOptions, "capability">;
+  owned: readonly { close(): Promise<void> }[];
+}>;
+
+/**
+ * The lane-owned services the management dispatcher resolves per request and
+ * the exact methods it may call on each. Forwarding is explicit rather than
+ * reflective so a service method cannot silently escape the lane swap, and
+ * `close` is deliberately absent: the presentation admission owns every lane's
+ * lifetime, never the shell's delegated dispatcher.
+ */
+const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  managementService: [
+    "listChats",
+    "renameChatTitle",
+    "transitionLifecycle",
+    "commitOpeningVariant",
+    "readDraft",
+    "saveDraft",
+    "discardDraft",
+  ],
+  memoryService: ["read", "mutate"],
+  worldInfoService: ["read", "setBinding"],
+  connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
+  libraryService: ["listCompanions"],
+  companionDetailService: ["read"],
+  newCompanionProvisioner: ["create"],
+  newChatProvisioner: ["create"],
+  chatSelectProvisioner: ["select"],
+  personaService: ["read", "update"],
+  scenarioService: ["read", "update"],
+  greetingService: ["read", "update"],
+  stCardImportService: ["import", "read", "recordReview", "readReview"],
+  stCardImportHistoryService: ["list"],
+  modelProfileStore: ["read", "update"],
+  playerPreferenceStore: ["read", "update"],
+});
+
+/**
+ * The stable management-options projection the composed shell mounts once. Each
+ * member resolves to the lane that is current when its route runs, so a
+ * turn-level Chat switch replaces every thread-scoped service while the shell's
+ * delegated dispatcher stays exactly where it was.
+ */
+function createStableManagementOptions(
+  current: () => ChatLane,
+): Omit<TavernManagementDelegatedOptions, "capability"> {
+  const laneOptions = (): Record<string, unknown> =>
+    current().management as unknown as Record<string, unknown>;
+  const sample = laneOptions();
+  const stable: Record<string, unknown> = { profile: sample.profile };
+  for (const [serviceName, methods] of Object.entries(LANE_SERVICE_METHODS)) {
+    if (!(serviceName in sample)) continue;
+    const forwarded: Record<string, unknown> = {};
+    for (const method of methods) {
+      const member = (laneOptions()[serviceName] as Record<string, unknown> | undefined)?.[method];
+      if (typeof member !== "function") continue;
+      forwarded[method] = (...args: unknown[]) =>
+        ((laneOptions()[serviceName] as Record<string, (...callArgs: unknown[]) => unknown>)[method]!)(...args);
+    }
+    stable[serviceName] = Object.freeze(forwarded);
+  }
+  if (typeof sample.confirmStCardImport === "function")
+    stable.confirmStCardImport = (importId: string) => current().management.confirmStCardImport!(importId);
+  if (typeof sample.listVoiceOutputDevices === "function")
+    stable.listVoiceOutputDevices = () => current().management.listVoiceOutputDevices!();
+  return Object.freeze(stable) as Omit<TavernManagementDelegatedOptions, "capability">;
 }
 
 /**

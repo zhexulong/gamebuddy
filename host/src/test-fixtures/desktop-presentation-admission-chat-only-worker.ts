@@ -110,6 +110,76 @@ async function artifactFixture(withManifest = true): Promise<{ hostArtifactRoot:
   };
 }
 
+/**
+ * The one shared semantic Chat-selection capability the composed surface mounts
+ * `chat.select` from. The production profile declares that route, so an
+ * admission without this capability fails closed at composition; the fixture
+ * never calls it, so every operation refuses rather than fabricating a switch.
+ */
+const chatSelectionStub = Object.freeze({
+  async requestChatSelection(): Promise<never> {
+    throw new Error("chat_selection_unused");
+  },
+  async startMountedChatRuntime(): Promise<never> {
+    throw new Error("chat_selection_unused");
+  },
+});
+
+/**
+ * The one management-domain service the fixture's mocked builders return. The
+ * entry point constructs the management domains over the mounted Chat lane, so
+ * a hermetic fixture must supply them; the test asserts nothing about them, so
+ * every operation refuses rather than fabricating a management result.
+ */
+const fakeDomainService = Object.freeze({
+  listChats: async () => {
+    throw new Error("unused_list");
+  },
+  renameChatTitle: async () => {
+    throw new Error("unused_rename");
+  },
+  transitionLifecycle: async () => {
+    throw new Error("unused_lifecycle");
+  },
+  commitOpeningVariant: async () => {
+    throw new Error("unused_opening");
+  },
+  readDraft: async () => {
+    throw new Error("unused_draft_read");
+  },
+  saveDraft: async () => {
+    throw new Error("unused_draft_save");
+  },
+  discardDraft: async () => {
+    throw new Error("unused_draft_discard");
+  },
+  read: async () => {
+    throw new Error("unused_read");
+  },
+  mutate: async () => {
+    throw new Error("unused_mutate");
+  },
+  setBinding: async () => {
+    throw new Error("unused_bind");
+  },
+  create: async () => {
+    throw new Error("unused_create");
+  },
+  test: async () => {
+    throw new Error("unused_test");
+  },
+  activate: async () => {
+    throw new Error("unused_activate");
+  },
+  selectModel: async () => {
+    throw new Error("unused_model");
+  },
+  remove: async () => {
+    throw new Error("unused_remove");
+  },
+  close: async () => undefined,
+});
+
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   await mock.module(
@@ -165,6 +235,23 @@ async function main(): Promise<void> {
       },
     },
   );
+  for (const [relativePath, builder] of [
+    [join("tavern", "chat-management", "chat-management-service.js"), "createChatManagementService"],
+    [join("tavern", "memory-management", "memory-management.js"), "createMemoryManagementService"],
+    [
+      join("tavern", "world-info-binding", "world-info-binding-management-service.js"),
+      "createWorldInfoBindingManagementService",
+    ],
+    [join("tavern", "connection-service.js"), "createTavernConnectionService"],
+  ] as const) {
+    await mock.module(pathToFileURL(join(moduleDirectory, "..", relativePath)).href, {
+      namedExports: { [builder]: () => fakeDomainService },
+    });
+  }
+  await mock.module(
+    pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-management", "world-info-management.js")).href,
+    { namedExports: { createWorldInfoManagementRepository: () => Object.freeze({}) } },
+  );
 
   const { startChatOnlyPresentationAdmission } = await import(
     pathToFileURL(join(moduleDirectory, "..", "composition", "desktop-presentation-admission-owner.js")).href
@@ -178,11 +265,19 @@ async function main(): Promise<void> {
   try {
     try {
       admission = await startChatOnlyPresentationAdmission({
-        manifest: Object.freeze({}) as never,
+        manifest: Object.freeze({
+          runtimeRoot: "E:/fixture/runtime-root",
+          principal: Object.freeze({
+            playerId: "player_fixture",
+            companionId: "companion_fixture",
+            continuityId: "continuity_fixture",
+          }),
+        }) as never,
         hostArtifactRoot: fixture.hostArtifactRoot,
         bootstrapToken,
         eventStream,
         lease: Object.freeze({}) as never,
+        chatSelection: chatSelectionStub,
         inspector: inspector(),
         // Voice surface reader: exercises the additive v1 `voice` projection
         // through the real facade + real bootstrap route.
