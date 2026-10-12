@@ -133,8 +133,13 @@ async function expectOpaque(locator: Locator, what: string): Promise<string> {
   return background;
 }
 
-/** Every laid-out button/input under the surface keeps the 44 px touch floor. */
-async function measureTouchFloor(page: Page, testId: string): Promise<{ checked: number; short: string[] }> {
+/**
+ * Every laid-out button/input under the surface keeps the 44 px touch floor. A
+ * control the sheet has taken out of the visual flow (`clip-path: inset(50%)`)
+ * is not a target at all: the themed trigger that drives it is, and it is
+ * measured here instead.
+ */
+async function measureTouchFloor(page: Page, testId: string): Promise<{ checked: number; clipped: number; short: string[] }> {
   const measured = await page.locator(`[data-testid="${testId}"] button, [data-testid="${testId}"] input`).evaluateAll(
     (nodes) =>
       nodes
@@ -143,12 +148,14 @@ async function measureTouchFloor(page: Page, testId: string): Promise<{ checked:
           tag: node.tagName.toLowerCase(),
           label: node.getAttribute("aria-label") ?? (node.textContent ?? "").trim().slice(0, 40),
           height: node.getBoundingClientRect().height,
+          clipped: getComputedStyle(node).clipPath === "inset(50%)",
         })),
   );
-  const short = measured
+  const targets = measured.filter((control) => !control.clipped);
+  const short = targets
     .filter((control) => control.height < 44)
     .map((control) => `${control.tag} "${control.label}" = ${Math.round(control.height)}px`);
-  return { checked: measured.length, short };
+  return { checked: targets.length, clipped: measured.length - targets.length, short };
 }
 
 test("gate 3: the stop control and the card-import trigger are not transparent", async ({ page }) => {
@@ -161,16 +168,67 @@ test("gate 3: the stop control and the card-import trigger are not transparent",
   await expect(stop).toBeVisible();
   checked.push(`chat-surface stop control=${await expectOpaque(stop, "the stop control")}`);
 
-  // The characters surface: the card-import file trigger is the primary path
-  // into importing a companion card, so it is the second control pinned opaque.
+  // The characters surface: the card-import trigger is the primary path into
+  // importing a companion card, so it is the second control pinned opaque. It is
+  // the themed trigger, not the file input behind it: the input is taken out of
+  // the visual flow (gate 1.1 of `component-hygiene-gate.test.mjs`), and it was
+  // the platform's own white "Choose file" face that this anchors.
   await page.getByRole("button", { name: "Characters", exact: true }).click();
   await expect(page.getByTestId("characters-surface")).toBeVisible();
-  const trigger = page.getByTestId("characters-surface").locator("[data-card-import-file]");
+  const trigger = page.getByTestId("characters-surface").locator("[data-card-import-trigger]");
   await expect(trigger).toBeVisible();
   checked.push(`characters-surface card-import trigger=${await expectOpaque(trigger, "the card-import trigger")}`);
 
   test.info().annotations.push({ type: "colour-floor", description: checked.join("; ") });
   console.log(`gate 3 colour floor: checked ${checked.length} anchors, all opaque - ${checked.join("; ")}`);
+});
+
+test("gate 3 (file control): the card-import input is out of the visual flow, and its trigger is the control the player gets", async ({
+  page,
+}) => {
+  // The audit's `10-角色-1440x900.png`: a bare `<input type="file">` painted the
+  // platform's own white "Choose file" face in the middle of the tavern surface.
+  // The pair is what is measured here on the real mount - the input taken out of
+  // the visual flow, and the themed trigger that is the control the player sees.
+  await mountBothPanels(page);
+  await page.getByRole("button", { name: "Characters", exact: true }).click();
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+
+  const measured = await page.getByTestId("characters-surface").evaluate((surface) => {
+    const input = surface.querySelector<HTMLElement>('[data-card-import-file]');
+    const trigger = surface.querySelector<HTMLElement>("[data-card-import-trigger]");
+    if (input === null || trigger === null) throw new Error("the card-import control pair is not rendered");
+    const inputBox = input.getBoundingClientRect();
+    const triggerBox = trigger.getBoundingClientRect();
+    return {
+      input: {
+        clipPath: getComputedStyle(input).clipPath,
+        width: Math.round(inputBox.width),
+        height: Math.round(inputBox.height),
+        tabIndex: input.tabIndex,
+      },
+      trigger: {
+        tag: trigger.tagName.toLowerCase(),
+        background: getComputedStyle(trigger).backgroundColor,
+        width: Math.round(triggerBox.width),
+        height: Math.round(triggerBox.height),
+      },
+    };
+  });
+  console.log(`gate 3 file control: ${JSON.stringify(measured)}`);
+
+  expect(measured.input.clipPath, "the native file control is out of the visual flow, not merely styled").toBe(
+    "inset(50%)",
+  );
+  expect(measured.input.width, "nothing of the platform's file widget is laid out").toBeLessThanOrEqual(1);
+  expect(measured.input.tabIndex, "the hidden input is not a tab stop").toBe(-1);
+  expect(measured.trigger.tag, "the player's control is the product's own button").toBe("button");
+  expect(
+    ["transparent", "rgba(0, 0, 0, 0)"],
+    "the trigger is not left to the browser's control face",
+  ).not.toContain(measured.trigger.background);
+  expect(measured.trigger.height, "the trigger keeps the 44 px touch floor").toBeGreaterThanOrEqual(44);
+  expect(measured.trigger.width, "the trigger keeps the 44 px touch floor").toBeGreaterThanOrEqual(44);
 });
 
 test("gate 3 (touch floor): mounted buttons and inputs clear the 44 px target", async ({ page }) => {
@@ -184,7 +242,7 @@ test("gate 3 (touch floor): mounted buttons and inputs clear the 44 px target", 
   const characters = await measureTouchFloor(page, "characters-surface");
   expect(characters.short, 'controls under [data-testid="characters-surface"] below the 44 px floor').toEqual([]);
 
-  const summary = `chat-surface ${chat.checked} control(s), characters-surface ${characters.checked} control(s); all >= 44px`;
+  const summary = `chat-surface ${chat.checked} control(s) (${chat.clipped} out of the visual flow), characters-surface ${characters.checked} control(s) (${characters.clipped} out of the visual flow); all >= 44px`;
   test.info().annotations.push({ type: "touch-floor", description: summary });
   console.log(`gate 3 touch floor: ${summary}`);
 });

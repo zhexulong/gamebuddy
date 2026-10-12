@@ -9,6 +9,15 @@
  * not a regex that a comment can defeat) and fails on the four shapes that
  * produced those defects, so the next occurrence is caught before review.
  *
+ * Gate 1.1 asks for the *pair*, not for a class: a file input styled on its own
+ * box - the shape the character surface shipped, a `<input type="file">` with
+ * `className="form-input"` - still paints the platform's own "Choose file"
+ * button and file name inside that box, white-on-dark in the middle of the
+ * tavern surface. So the input must be taken out of the visual flow
+ * (`clip-path: inset(50%)`, the recipe this sheet writes) and the file it picks
+ * must be asked for by a themed `button`/`label` in the same file - a class that
+ * merely *exists* is not a control.
+ *
  * Every failure names the file and the 1-based line, so the message is a route.
  * Every test also prints what it checked and found clean (`t.diagnostic`), so a
  * passing run is evidence rather than silence.
@@ -93,6 +102,16 @@ function attributes(node) {
   return out;
 }
 
+/** The raw `name={…}` attribute node, for the values a static string cannot read. */
+function jsxAttribute(node, name) {
+  const attrs = jsxAttributes(node);
+  if (attrs === undefined) return undefined;
+  for (const property of attrs.properties) {
+    if (ts.isJsxAttribute(property) && property.name.getText() === name) return property;
+  }
+  return undefined;
+}
+
 function classNameOf(node) {
   const attrs = attributes(node);
   return attrs.get("className") ?? attrs.get("class") ?? null;
@@ -103,14 +122,6 @@ function at(node, sourceFile) {
   const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   const file = sourceFile.fileName.replace(/\\/gu, "/").split("/dialogue-web/").pop();
   return `${file}:${line + 1}`;
-}
-
-/** The class names style.css actually writes a rule for. */
-function styledClassNames() {
-  const css = readFileSync(STYLESHEET, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
-  const names = new Set();
-  for (const match of css.matchAll(/\.(-?[A-Za-z_][A-Za-z0-9_-]*)/gu)) names.add(match[1]);
-  return names;
 }
 
 function lucideComponentNames(sourceFile) {
@@ -177,8 +188,9 @@ function labelKeyIsOpeningChat(node) {
   );
 }
 
-test("gate 1.1: a file input is never the browser's raw choose-file control", (t) => {
-  const styled = styledClassNames();
+test("gate 1.1: a file input is visually hidden and driven by a themed control", (t) => {
+  const byClass = classDeclarations();
+  const hidden = visuallyHiddenClassNames();
   const failures = [];
   let fileInputs = 0;
   const files = componentFiles();
@@ -189,13 +201,31 @@ test("gate 1.1: a file input is never the browser's raw choose-file control", (t
       if (attributes(node).get("type") !== "file") return;
       fileInputs += 1;
       const className = classNameOf(node);
-      const first = className === null ? null : className.split(/\s+/u)[0];
-      if (className === null || first === null || !styled.has(first))
-        failures.push(`${at(node, sourceFile)} raw <input type="file"> (className=${JSON.stringify(className)})`);
+      const tokens = className === null ? [] : className.split(/\s+/u).filter(Boolean);
+      if (!tokens.some((token) => hidden.has(token))) {
+        failures.push(
+          `${at(node, sourceFile)} a visible native <input type="file"> (className=${JSON.stringify(className)}); ` +
+            "hide it with the sheet's clip-path recipe and drive it from a themed control",
+        );
+        return;
+      }
+      // The control that asks for the file, wired to this input: a themed
+      // button/label that clicks its ref or names its id.
+      if (themedTriggerFor(sourceFile, byClass, node) === null)
+        failures.push(
+          `${at(node, sourceFile)} the hidden file input has no themed button/label wired to it ` +
+            "(click the input's ref, or a label that names its id)",
+        );
     });
   }
-  t.diagnostic(`gate 1.1: ${files.length} files, ${fileInputs} file input(s), ${failures.length} violation(s)`);
-  assert.deepEqual(failures, [], "a file input must be styled (or sit in a styled wrapper), never raw");
+  t.diagnostic(
+    `gate 1.1: ${files.length} files, ${fileInputs} file input(s), ${hidden.size} visually-hidden class(es), ${failures.length} violation(s)`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "a file input must be hidden behind the product's own control, never the browser's visible choose-file widget",
+  );
 });
 
 test("gate 1.2: a <details> is classed and its <summary> carries an explicit icon", (t) => {
@@ -357,6 +387,54 @@ function blockPaintsThemedSurface(block) {
   });
 }
 
+/**
+ * The classes the sheet actually takes out of the visual flow: the controller's
+ * `clip-path: inset(50%)` recipe. A class named "visually hidden" that the sheet
+ * gives no rule is exactly the defect this gate must not accept, so the class
+ * list is read from the declarations and never from the name.
+ */
+function visuallyHiddenClassNames() {
+  const names = new Set();
+  for (const [name, blocks] of classDeclarations())
+    if (blocks.some((block) => /clip-path:\s*inset\(50%\)/iu.test(block))) names.add(name);
+  return names;
+}
+
+/**
+ * The control that asks for the file: a `button`/`label` whose own class
+ * declares a themed surface (the `.small-button` vocabulary), wired to *this*
+ * input - either by clicking the ref the input is bound to, or by naming the
+ * input's own id. A `className` that merely exists is not a control, and an
+ * unrelated themed button in the same file is not this input's trigger.
+ */
+function themedTriggerFor(sourceFile, byClass, input) {
+  const idAttribute = jsxAttribute(input, "id");
+  const idText = idAttribute === undefined ? null : idAttribute.getText(sourceFile);
+  const refAttribute = jsxAttribute(input, "ref");
+  const refName = refAttribute === undefined ? null : (/\{\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\}/u.exec(refAttribute.getText(sourceFile))?.[1] ?? null);
+  let found = null;
+  walk(sourceFile, (node) => {
+    if (found !== null) return;
+    if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return;
+    const name = jsxTagName(node);
+    if (name === null || !ts.isIdentifier(name) || (name.text !== "button" && name.text !== "label")) return;
+    const className = classNameOf(node);
+    if (className === null) return;
+    const declared = className
+      .split(/\s+/u)
+      .filter(Boolean)
+      .flatMap((token) => byClass.get(token) ?? []);
+    if (!declared.some(blockPaintsThemedSurface)) return;
+    const onClick = jsxAttribute(node, "onClick");
+    const clicksTheInput =
+      refName !== null && onClick !== undefined && onClick.getText(sourceFile).includes(`${refName}.current`);
+    const htmlFor = jsxAttribute(node, "htmlFor");
+    const namesTheInput = idText !== null && htmlFor !== undefined && htmlFor.getText(sourceFile) === idText;
+    if (clicksTheInput || namesTheInput) found = node;
+  });
+  return found;
+}
+
 /** Controls the browser paints with its own surface when nothing styles them. */
 const INTERACTIVE_CONTROL_TAGS = new Set(["button", "select", "textarea"]);
 const NON_TEXT_INPUT_TYPES = new Set([
@@ -393,9 +471,11 @@ test("gate 1.6: an interactive control paints a themed surface, never the browse
   // class that merely EXISTS is not styling; the control's own classes must
   // declare a background that is a theme token or a deliberate transparent one.
   const byClass = classDeclarations();
+  const hidden = visuallyHiddenClassNames();
   const failures = [];
   let controls = 0;
   let unjudged = 0;
+  let unpainted = 0;
   const files = componentFiles();
   for (const file of files) {
     const sourceFile = parse(file);
@@ -404,6 +484,15 @@ test("gate 1.6: an interactive control paints a themed surface, never the browse
       const kind = interactiveControlKind(node);
       if (kind === null) return;
       controls += 1;
+      const own = classNameOf(node);
+      const ownTokens = own === null ? [] : own.split(/\s+/u).filter(Boolean);
+      if (ownTokens.some((token) => hidden.has(token))) {
+        // Taken out of the visual flow: the browser paints nothing here, so
+        // there is no default face to catch. The control the player sees is the
+        // themed trigger gate 1.1 requires beside it.
+        unpainted += 1;
+        return;
+      }
       if (classNameOf(node) === null && attributes(node).has("className")) {
         // A dynamic `className={…}` cannot be resolved statically. The runtime
         // assertion in `ui-hygiene-runtime.spec.ts` measures those controls'
@@ -424,7 +513,7 @@ test("gate 1.6: an interactive control paints a themed surface, never the browse
     });
   }
   t.diagnostic(
-    `gate 1.6: ${files.length} files, ${controls} interactive control(s), ${unjudged} dynamic className(s) left to the runtime gate, ${failures.length} violation(s)`,
+    `gate 1.6: ${files.length} files, ${controls} interactive control(s), ${unjudged} dynamic className(s) left to the runtime gate, ${unpainted} out of the visual flow, ${failures.length} violation(s)`,
   );
   assert.deepEqual(
     failures,

@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n";
 import type {
   ManagementPipelineApi,
@@ -54,6 +54,7 @@ export function CharacterCardImport({
   onCreated?: () => void;
 }): ReactElement {
   const labels = characterLabels(locale);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   const [pasted, setPasted] = useState("");
@@ -155,12 +156,26 @@ export function CharacterCardImport({
       <h3>{labels.importTitle}</h3>
       <p className="management-settings-hint">{labels.importHint}</p>
 
+      <button
+        type="button"
+        className="small-button"
+        data-card-import-trigger
+        disabled={busy}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        {labels.importChooseFile}
+      </button>
       <input
+        ref={fileInputRef}
         type="file"
         accept=".json,.png,application/json,image/png"
         aria-label={labels.importFileLabel}
-        className="form-input"
+        className="card-import-file-input"
         disabled={busy}
+        // The trigger above is the surface's visible control and its tab stop;
+        // this input is the browser's real picker behind it, taken out of the
+        // visual flow (`.card-import-file-input`) but never out of the form.
+        tabIndex={-1}
         data-card-import-file
         onChange={(event) => {
           const file = event.target.files?.[0];

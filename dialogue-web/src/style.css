@@ -4263,4 +4263,40 @@ body {
   }
 }
 
+/* ==========================================================================
+   The card-import file control (character-import lane block)
+
+   The audit's screenshot `10-角色-1440x900.png`: the character surface's primary
+   path - choosing a character card - was a bare Windows `<input type="file">`
+   sitting white-on-dark in the middle of the tavern surface, with the
+   platform's own "Choose file" button and its own file-name text inside it.
+
+   The input is the browser's real picker and stays one: it keeps
+   `data-card-import-file`, it keeps reading the chosen file, and the mounted
+   journeys keep driving it with `setInputFiles`. What changes is that it is
+   taken out of the visual flow, and the surface's own control - the product's
+   `small-button` vocabulary - is what the player sees and what Tab stops on.
+
+   `clip-path` rather than `display: none`: the input stays a real, laid-out
+   input (a file input the browser cannot lay out is still a control, and the
+   mounted runtime gate measures laid-out controls); `tabIndex={-1}` in the JSX
+   is what keeps it out of the tab order, not its paint. Gate 1.1 of
+   `component-hygiene-gate.test.mjs` now requires exactly this pair, so a file
+   input that is merely *styled* - the shape this defect shipped - fails there.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.card-import-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 } /* end @layer theme.polish */
