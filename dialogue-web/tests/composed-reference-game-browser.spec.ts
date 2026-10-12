@@ -2108,6 +2108,9 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
   await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
   expect(reads).toBe(1);
 
+  // Manual authoring is secondary now: it opens from the quiet button beneath
+  // the notebook and then writes through the same `memory.mutate` route.
+  await surface.locator("[data-memory-authoring-toggle]").click();
   await surface.getByRole("textbox", { name: "Memory content" }).fill(writtenContent);
   await surface.getByRole("button", { name: "Create", exact: true }).click();
 
@@ -2119,7 +2122,9 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
     content: writtenContent,
   });
   expect(writes[0]?.csrf).toBe(csrfToken);
-  await expect(surface.getByText("Semantic memory", { exact: true })).toBeVisible();
+  // The row carries the Host's own opaque handle for the written memory, so a
+  // locally invented row cannot pass this.
+  await expect(surface.locator(`[data-memory-handle="${memoryHandle}"]`)).toBeVisible();
   await expect(surface.getByText(writtenContent, { exact: true })).toBeVisible();
 
   // A refresh re-reads the authority, and the written row is still the store's.
@@ -2136,6 +2141,90 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
   await expect.poll(() => reads).toBe(3);
   await expect(surface.getByText(refusedContent, { exact: true })).toHaveCount(0);
   await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
+});
+
+/**
+ * The Memory surface reads as the companion's notebook, not as a database form
+ * (the owner's report: "我得像程序员填数据一样手动往里写记忆").
+ *
+ * The failure each assertion catches:
+ *
+ * 1. `explains the notebook while it is empty` - an empty Memory projection that
+ *    paints a blank form (no historian card, no honest zero) is the reported
+ *    defect; the card must say what the notebook is and that it fills from
+ *    ordinary play even when the Host returns no rows.
+ * 2. `counts exactly what the Host returned` - a fabricated or locally guessed
+ *    number, or a count that ignores the mounted rows, fails; the card's number is
+ *    compared to the two rows the route returned.
+ * 3. `says the category in player words` - a badge that prints the contract's own
+ *    member (`semantic`/`interaction`) or drops the label fails, and the surface's
+ *    own text is asserted to contain neither member.
+ * 4. `keeps manual authoring behind the quiet button` - a surface that either
+ *    always shows the create form (a form, not a notebook) or hides authoring
+ *    entirely fails; the textbox is absent until the toggle opens it.
+ */
+test("the Memory surface reads as the companion's notebook, with a real count and player-word badges", async ({ page }) => {
+  const memoryRevision = "M".repeat(42) + "A";
+  const semanticHandle = "N".repeat(42) + "A";
+  const interactionHandle = "Q".repeat(42) + "A";
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  let memories: ReadonlyArray<Record<string, unknown>> = [];
+  await page.route("**/api/tavern/v1/memory", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, projectionRevision: memoryRevision, memories }),
+    }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+
+  const surface = page.getByTestId("memory-surface");
+  await expect(surface).toBeVisible();
+
+  // 1. Zero memories still explains the notebook, with an honest zero.
+  const notebook = surface.locator("[data-memory-notebook]");
+  await expect(notebook).toBeVisible();
+  await expect(notebook).toContainText("Your companion writes this down");
+  await expect(notebook.locator("[data-memory-count]")).toHaveAttribute("data-memory-count", "0");
+  await expect(notebook.locator("[data-memory-count]")).toContainText("Nothing written down yet");
+
+  // 4. Authoring is secondary: it opens on demand and does not define the surface.
+  await expect(surface.getByRole("textbox", { name: "Memory content" })).toHaveCount(0);
+  await surface.locator("[data-memory-authoring-toggle]").click();
+  await expect(surface.getByRole("textbox", { name: "Memory content" })).toBeVisible();
+
+  // 2 + 3. Two rows, two life-flavoured badges, and a count that equals them.
+  memories = [
+    { handle: semanticHandle, title: "Semantic memory", content: "The farmer keeps a spare watering can by the door.", category: "semantic", status: "active", origin: "player", pinned: false },
+    { handle: interactionHandle, title: "Interaction memory", content: "They shared a rainy afternoon by the sea.", category: "interaction", status: "active", origin: "companion", pinned: false },
+  ];
+  await surface.getByRole("button", { name: "Refresh Memory" }).click();
+  const rows = surface.locator("[data-memory-state=ready] [role=listitem]");
+  await expect(rows).toHaveCount(2);
+  await expect(notebook.locator("[data-memory-count]")).toHaveAttribute("data-memory-count", "2");
+  await expect(notebook.locator("[data-memory-count]")).toContainText("2 memories written down");
+
+  const badges = surface.locator("[data-memory-category]");
+  await expect(badges).toHaveCount(2);
+  await expect(badges.first()).toHaveText("Things she keeps");
+  await expect(badges.nth(1)).toHaveText("Times you shared");
+
+  // The raw contract members never reach the player (design/104 §10).
+  const text = await surface.innerText();
+  expect(text).not.toMatch(/\bsemantic\b/iu);
+  expect(text).not.toMatch(/\binteraction\b/iu);
 });
 
 
@@ -2923,7 +3012,7 @@ test("the Memory surface narrows to one origin and back", async ({ page }) => {
   await expect(filter).toBeVisible();
   // The group is named by the panel's heading, and the two origin chips reuse the
   // labels the rows themselves carry: the filter is the same split, said twice.
-  await expect(filter).toHaveAccessibleName("Semantic Memory");
+  await expect(filter).toHaveAccessibleName("Your companion's notebook");
   const chips = {
     all: filter.locator("[data-memory-filter=all]"),
     player: filter.locator("[data-memory-filter=player]"),

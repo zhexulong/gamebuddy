@@ -251,6 +251,8 @@ test("the management surface mounts the shared panels: language seed, Chats rena
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await expect(page.locator("[data-memory-panel]")).toBeVisible();
   await expect(page.locator("[data-memory-state=empty]")).toBeVisible();
+  // Authoring is secondary: the player opens it, then the same memory.mutate path runs.
+  await page.locator("[data-memory-authoring-toggle]").click();
   await page.getByRole("textbox", { name: "Memory content" }).fill("A memory written by the shared panel.");
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect.poll(() => memoryWrites.length).toBe(1);

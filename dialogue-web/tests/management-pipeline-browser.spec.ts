@@ -493,6 +493,7 @@ test("management browser lists, saves and discards a durable draft, and renames 
     await page.getByRole("button", { name: "Memory" }).click();
     await expect(page.locator("[data-memory-panel]")).toBeVisible();
     await expect(page.locator("[data-memory-state=empty]")).toBeVisible();
+    await page.locator("[data-memory-authoring-toggle]").click();
     await page.getByRole("textbox", { name: "Memory content" }).fill("A durable player memory");
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page.getByText("A durable player memory", { exact: true })).toBeVisible();
@@ -790,6 +791,7 @@ test("stale revision title and draft mutations receive the durable conflict and 
     // read-back instead of retaining its local text.
     await pageA.getByRole("button", { name: "Memory" }).click();
     await expect(pageA.locator("[data-memory-panel]")).toBeVisible();
+    await pageA.locator("[data-memory-authoring-toggle]").click();
     await pageA.getByRole("textbox", { name: "Memory content" }).fill("Original durable memory");
     await pageA.getByRole("button", { name: "Create", exact: true }).click();
     await expect(pageA.getByText("Original durable memory", { exact: true })).toBeVisible();
