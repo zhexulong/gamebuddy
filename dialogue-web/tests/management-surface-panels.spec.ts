@@ -1,13 +1,17 @@
 /**
- * TEMPORARY lane probe (deleted before the change lands).
+ * The composed shell's management surfaces, over fully route-mocked
+ * `/api/tavern/v1/*` responses - the lightweight, generation-free counterpart of
+ * the mounted `management-pipeline-browser.spec.ts`.
  *
- * The mounted-management spec needs a built production generation under
- * host/dist, which this lane must not touch. This probe drives the same
- * ManagementApp through vite with fully route-mocked `/api/tavern/v1/*`
- * responses, the way the composed spec mocks its own routes, so the shared
- * management panels can be exercised on the management surface: the seed of the
- * companion language, the Chats rename (including the session's title fold), the
- * Memory authoring path and the World Info bind through the mounted snapshot.
+ * It drives the shipped product shell with route stubs so the shared management
+ * panels can be exercised without a built Host generation: the Chats rename
+ * (including the shell's own title fold), the character's world book bind through
+ * the authoritative revision, and the Settings surface's two languages.
+ *
+ * The standalone `ManagementApp` this file was first written against is gone
+ * (single-frontend convergence, 6406dd0a) and the World Info peer surface was
+ * folded into Characters (cf4d37c0). `dialogue-web/src/main.tsx` is the authority
+ * for the profile ids that exist: only `composed-reference-game` is mounted.
  */
 import { expect, test } from "@playwright/test";
 
@@ -15,11 +19,6 @@ const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
 const chatHandle = `${"B".repeat(42)}A`;
 const worldInfoItemHandle = `${"V".repeat(42)}A`;
-const memoryRevision = `${"M".repeat(42)}A`;
-const memoryNextRevision = `${"P".repeat(42)}A`;
-const worldInfoRevision = `${"W".repeat(42)}A`;
-const worldInfoNextRevision = `${"X".repeat(42)}A`;
-const memoryHandle = `${"N".repeat(42)}A`;
 const expiresAtMs = 1_900_000_000_000;
 
 // The composed product root, mirroring the composed spec's own fixture: a real
@@ -74,213 +73,6 @@ const composedRoot = {
 };
 
 const composedDraft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
-
-const operations = [
-  { operationId: "draft.save", labelKey: "tavern.operation.draft.save", availability: "available", routeId: "draft.save" },
-  { operationId: "draft.discard", labelKey: "tavern.operation.draft.discard", availability: "available", routeId: "draft.discard" },
-  { operationId: "chat.rename", labelKey: "tavern.operation.rename", availability: "available", routeId: "chat.rename" },
-  { operationId: "memory.mutate", labelKey: "tavern.operation.memory.mutate", availability: "available", routeId: "memory.mutate" },
-  { operationId: "world-info.bind", labelKey: "tavern.operation.world-info.bind", availability: "available", routeId: "world-info.bind" },
-  { operationId: "chat.archive", labelKey: "tavern.operation.chat.archive", availability: "available", routeId: "chat.archive" },
-  { operationId: "chat.trash", labelKey: "tavern.operation.chat.trash", availability: "available", routeId: "chat.trash" },
-] as const;
-
-function worldInfo(selected: boolean, revision: string) {
-  return {
-    state: selected ? "selected" : "none",
-    revision,
-    items: [
-      {
-        handle: worldInfoItemHandle,
-        title: "Pelican Town",
-        summary: null,
-        selected,
-        pending: false,
-      },
-    ],
-  };
-}
-
-function snapshot(worldInfoState: ReturnType<typeof worldInfo>) {
-  return {
-    apiVersion: 1,
-    build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.tavern-management.chat-list-title" },
-    csrfToken,
-    browserSession: { expiresAtMs },
-    operations,
-    navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
-    selection: { chatHandle, generation: 1, stateRevision: chatHandle },
-    chat: {
-      companion: { name: "Mira" },
-      title: null,
-      transcript: [],
-      draft: { revision: 4, present: true },
-      turn: null,
-      worldInfo: worldInfoState,
-    },
-    memory: { readAvailable: true, mutationAvailable: true, projectionRevision: memoryRevision },
-    eventStream: null,
-  };
-}
-
-test("the management surface mounts the shared panels: language seed, Chats rename, Memory authoring and the World Info bind", async ({ page }) => {
-  let worldInfoState = worldInfo(false, worldInfoRevision);
-  const languageWrites: unknown[] = [];
-  const titleWrites: unknown[] = [];
-  const memoryWrites: unknown[] = [];
-  const bindingWrites: unknown[] = [];
-  const strayRequests: string[] = [];
-  let memories: unknown[] = [];
-
-  await page.route("**/api/tavern/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(snapshot(worldInfoState)) }),
-  );
-  await page.route("**/api/tavern/v1/state", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(snapshot(worldInfoState)) }),
-  );
-  await page.route("**/api/tavern/v1/draft", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, revision: 4, text: "A durable draft." }) }),
-  );
-  await page.route("**/api/tavern/v1/chats?*", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        apiVersion: 1,
-        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true }],
-      }),
-    }),
-  );
-  await page.route("**/api/tavern/v1/chat/title", async (route) => {
-    titleWrites.push(route.request().postDataJSON());
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ apiVersion: 1, title: "A probe title", managementRevision: 2 }),
-    });
-  });
-  await page.route("**/api/tavern/v1/memory", async (route) => {
-    if (route.request().method() === "GET") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ apiVersion: 1, projectionRevision: memoryRevision, memories }),
-      });
-      return;
-    }
-    memoryWrites.push(route.request().postDataJSON());
-    memories = [
-      {
-        handle: memoryHandle,
-        title: "Semantic memory",
-        content: "A memory written by the shared panel.",
-        category: "semantic",
-        status: "active",
-        origin: "player",
-        pinned: false,
-      },
-    ];
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ apiVersion: 1, projectionRevision: memoryNextRevision, memories }),
-    });
-  });
-  await page.route("**/api/tavern/v1/world-info", async (route) => {
-    bindingWrites.push(route.request().postDataJSON());
-    const bound = (route.request().postDataJSON() as { sourceHandle: string | null }).sourceHandle;
-    worldInfoState = worldInfo(bound !== null, bound === null ? worldInfoRevision : worldInfoNextRevision);
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(worldInfoState) });
-  });
-  await page.route("**/api/tavern/v1/settings/language", async (route) => {
-    if (route.request().method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 0, locale: null }) });
-      return;
-    }
-    languageWrites.push(route.request().postDataJSON());
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: "en-US" }) });
-  });
-  for (const unavailable of ["settings/voice-preference", "settings/voice-devices", "settings/connection", "settings/profiles", "companions"]) {
-    await page.route(`**/api/tavern/v1/${unavailable}`, (route) =>
-      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "unavailable" }) }),
-    );
-  }
-  for (const stray of ["messages", "events", "persona", "scenario", "greeting"]) {
-    await page.route(`**/api/tavern/v1/${stray}*`, (route) => {
-      strayRequests.push(stray);
-      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "must_not_be_called" }) });
-    });
-  }
-
-  await page.goto(`/#profile=management&boot=${token}`);
-  await expect(page.locator("[data-language-settings]")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Chats", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Memory", exact: true })).toBeVisible();
-
-  // The never-configured companion language is seeded from the display language,
-  // exactly once, and the control shows the durable read-back.
-  await expect(page.locator("#companion-language")).toHaveValue("en-US");
-  await expect.poll(() => languageWrites.length).toBe(1);
-  expect(languageWrites[0]).toEqual({ expectedRevision: 0, locale: "en-US" });
-  // A profile whose voice routes are absent says so instead of showing controls.
-  await expect(page.locator("[data-voice-settings]")).toContainText("Voice settings are unavailable");
-
-  // The Chats drawer is the same panel the composed shell's Chats surface mounts.
-  await page.getByRole("button", { name: "Chats", exact: true }).click();
-  const drawer = page.getByRole("dialog", { name: "Chats" });
-  await expect(drawer.getByText("New chat", { exact: true })).toBeVisible();
-  await drawer.getByTitle("Rename Chat").click();
-  await drawer.locator("input.form-input").fill("A probe title");
-  await drawer.getByRole("button", { name: "Save" }).click();
-  await expect.poll(() => titleWrites.length).toBe(1);
-  expect(titleWrites[0]).toEqual({
-    apiVersion: 1,
-    selectionGeneration: 1,
-    chatHandle,
-    expectedManagementRevision: 1,
-    title: "A probe title",
-  });
-  await expect(drawer.getByText("A probe title", { exact: true })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("Saved successfully.");
-  // The rename read-back is folded into the mounted session, so the transcript
-  // heading follows it without a reload.
-  await expect(page.getByRole("heading", { name: "A probe title" })).toBeVisible();
-  await drawer.getByRole("button", { name: "Close" }).click();
-
-  // Memory authoring on the management surface goes through the same panel.
-  await page.getByRole("button", { name: "Memory", exact: true }).click();
-  await expect(page.locator("[data-memory-panel]")).toBeVisible();
-  await expect(page.locator("[data-memory-state=empty]")).toBeVisible();
-  // Authoring is secondary: the player opens it, then the same memory.mutate path runs.
-  await page.locator("[data-memory-authoring-toggle]").click();
-  await page.getByRole("textbox", { name: "Memory content" }).fill("A memory written by the shared panel.");
-  await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect.poll(() => memoryWrites.length).toBe(1);
-  expect(memoryWrites[0]).toEqual({
-    apiVersion: 1,
-    operation: "create",
-    expectedProjectionRevision: memoryRevision,
-    content: "A memory written by the shared panel.",
-  });
-  await expect(page.getByText("A memory written by the shared panel.", { exact: true })).toBeVisible();
-
-  // World Info binds from the mounted snapshot and re-reads it, so the panel
-  // shows the authoritative revision rather than the local click.
-  const binding = page.locator("[data-world-info-binding]");
-  await expect(binding.getByRole("button", { name: "Bind: Pelican Town" })).toBeEnabled();
-  await binding.getByRole("button", { name: "Bind: Pelican Town" }).click();
-  await expect.poll(() => bindingWrites.length).toBe(1);
-  expect(bindingWrites[0]).toEqual({
-    apiVersion: 1,
-    selectionGeneration: 1,
-    expectedRevision: worldInfoRevision,
-    sourceHandle: worldInfoItemHandle,
-  });
-  await expect(binding.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
-  await expect(page.getByRole("status")).toContainText("Saved successfully.");
-
-  expect(strayRequests).toEqual([]);
-});
 
 /**
  * The composed shell's Chats surface: the same panel, over the same route, and
@@ -363,14 +155,16 @@ test("the product Chats surface renames through chat/title and moves the convers
 });
 
 /**
- * The composed shell's World Info surface: the same panel and bind state machine,
- * reading the dedicated management route because the composed Chat projection
- * carries no World Info at all.
+ * The composed shell's Characters surface owns the character's world book: the
+ * standalone World Info peer surface is gone, so the same bind state machine -
+ * read, bind with the exact opaque revision, then re-read the authoritative
+ * revision before anything is reported - runs from inside Characters, in the
+ * character domain's own vocabulary. The composed Chat projection carries no
+ * World Info at all, so the panel reads the dedicated management route.
  */
-test("the product World Info surface binds through world-info.bind and shows the authoritative revision", async ({ page }) => {
-  const worldInfoItemHandle = `${"V".repeat(42)}A`;
-  const revision = `${"W".repeat(42)}A`;
-  const nextRevision = `${"X".repeat(42)}A`;
+test("the product Characters surface owns the world book and binds through world-info.bind with the authoritative revision", async ({ page }) => {
+  const revision = `${'W'.repeat(42)}A`;
+  const nextRevision = `${'X'.repeat(42)}A`;
   const writes: unknown[] = [];
   const reads = { count: 0 };
   let selected = false;
@@ -387,27 +181,50 @@ test("the product World Info surface binds through world-info.bind and shows the
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
   );
+  // The Characters surface's own one-shot reads on mount, so the world book
+  // renders inside the surface it actually lives on.
+  await page.route("**/api/tavern/v1/companions", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, companions: [] }),
+    }),
+  );
+  const characterReads = {
+    persona: { apiVersion: 1, present: false, revision: null, name: null, description: null },
+    scenario: { apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null },
+    greeting: { apiVersion: 1, present: false, revision: null, label: null, variants: [] },
+    "import-history": { apiVersion: 1, entries: [] },
+  };
+  for (const [path, body] of Object.entries(characterReads)) {
+    await page.route(`**/api/tavern/v1/${path}`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }),
+    );
+  }
   await page.route("**/api/tavern/v1/world-info", async (route) => {
     if (route.request().method() === "GET") {
       reads.count += 1;
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentWorldInfo()) });
       return;
     }
-    const command = route.request().postDataJSON() as { sourceHandle: string | null };
-    writes.push(command);
-    selected = command.sourceHandle !== null;
+    writes.push(route.request().postDataJSON());
+    selected = (route.request().postDataJSON() as { sourceHandle: string | null }).sourceHandle !== null;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentWorldInfo()) });
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-  await page.getByRole("button", { name: "World Info", exact: true }).click();
-  const surface = page.getByTestId("world-info-surface");
+  await page.getByRole("button", { name: "Characters", exact: true }).click();
+  const surface = page.getByTestId("characters-surface");
   await expect(surface).toBeVisible();
-  const binding = surface.locator("[data-world-info-binding]");
+  // The world book is a section of the Characters surface, and the World Info
+  // peer surface (with its own nav entry) no longer exists.
+  await expect(page.getByTestId("world-info-surface")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "World Info", exact: true })).toHaveCount(0);
+  const binding = surface.locator("[data-world-book]");
   await expect(binding.getByText("Pelican Town", { exact: true })).toBeVisible();
   expect(reads.count).toBe(1);
 
-  await binding.getByRole("button", { name: "Bind: Pelican Town" }).click();
+  await binding.getByRole("button", { name: "Attach: Pelican Town" }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toEqual({
     apiVersion: 1,
@@ -416,10 +233,10 @@ test("the product World Info surface binds through world-info.bind and shows the
     sourceHandle: worldInfoItemHandle,
   });
   // The service result is never applied locally: the panel re-reads the
-  // authoritative revision, which is what turns the control into Unbind.
-  await expect(binding.getByRole("button", { name: "Unbind: Pelican Town" })).toBeEnabled();
+  // authoritative revision, which is what turns the control into Detach.
+  await expect(binding.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
   expect(reads.count).toBe(2);
-  await expect(surface.getByRole("status")).toContainText("Saved successfully.");
+  await expect(binding.getByRole("status")).toContainText("Saved.");
 });
 
 /**
