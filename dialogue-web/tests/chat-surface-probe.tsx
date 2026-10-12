@@ -206,6 +206,26 @@ const chatProbe = {
       transitionDuration: style.transitionDuration,
     };
   },
+  /**
+   * The live caret's box against the bubble's own box. Where the caret sits in
+   * the markup proves nothing about where it is painted - a sibling of the bubble
+   * can still be laid out inside it - so this reads both rects and lets the spec
+   * assert containment.
+   */
+  caretGeometry(handle: string): {
+    caret: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+    bubble: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+  } | null {
+    const row = document.querySelector(`li[data-handle="${handle}"]`);
+    const bubble = row?.querySelector(".message-bubble") ?? null;
+    const caret = row?.querySelector(".message-caret") ?? null;
+    if (bubble === null || caret === null) return null;
+    const box = (element: Element) => {
+      const { top, right, bottom, left, width, height } = element.getBoundingClientRect();
+      return { top, right, bottom, left, width, height };
+    };
+    return { caret: box(caret), bubble: box(bubble) };
+  },
   /** The composer field's live value, so a newline can be told from a send. */
   composerValue(): string | null {
     return document.querySelector<HTMLTextAreaElement>("textarea.composer-textarea")?.value ?? null;

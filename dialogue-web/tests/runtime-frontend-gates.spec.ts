@@ -24,6 +24,8 @@
  *      would have caught the blank problem view the owner hit twice.
  *   6. Empty and loading states are distinguishable from a blank region, and the
  *      shell's loading state names what it is loading.
+ *  10. The live caret, read as a computed value: the caret's own rect inside its
+ *      bubble.
  *
  * The two contracts this file once pinned as `test.fixme` are met: `Escape`
  * returns focus to the conversation's composer, and a 250-character companion
@@ -963,3 +965,53 @@ test("gate 9: the app bar marks the current peer surface and moves the mark", as
   );
   expect(failures, "exactly one peer entry is marked current, and the mark follows the selection").toEqual([]);
 });
+
+/** The streaming preview the gate below drives, as the probe exposes it. */
+declare global {
+  interface Window {
+    chatProbe: {
+      setPreview(text: string | null): void;
+      caretGeometry(handle: string): {
+        caret: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+        bubble: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+      } | null;
+    };
+  }
+}
+
+/**
+ * Gate 10: the live caret is painted inside its bubble, not beside it.
+ *
+ * The failure this catches: a caret rendered as a sibling of the bubble. The
+ * markup looks harmless - it is still the live turn's cursor - but it is laid out
+ * as a sibling *outside* the bubble's box, so while the reply streams the caret
+ * hangs below (or beside) the bubble's edge instead of reading as a cursor at the
+ * end of the text. The probe mounts the real `Timeline` with a real streaming
+ * preview; the assertion is geometric, because markup position proves nothing
+ * about painted position.
+ */
+test("gate 10: the streaming caret is painted inside its bubble", async ({ page }) => {
+  await page.goto("/tests/chat-surface-probe.html");
+  await page.waitForFunction(() => window.chatProbe !== undefined);
+  await page.evaluate(() => window.chatProbe.setPreview("The reply is still arriving, token by token."));
+
+  const box = await page.evaluate(() => window.chatProbe.caretGeometry("T_preview"));
+  expect(box, "the streaming preview must carry a caret").not.toBeNull();
+  const { caret, bubble } = box!;
+  record(
+    "gate-10",
+    `caret ${caret.left.toFixed(1)},${caret.top.toFixed(1)} ${caret.width}x${caret.height}; bubble ${bubble.left.toFixed(1)},${bubble.top.toFixed(1)} ${bubble.width}x${bubble.height}`,
+  );
+
+  const tolerance = 1;
+  const failures: string[] = [];
+  if (caret.width <= 0 || caret.height <= 0) failures.push(`the caret is not painted (${caret.width}x${caret.height})`);
+  if (caret.top < bubble.top - tolerance) failures.push(`the caret starts ${(bubble.top - caret.top).toFixed(1)}px above the bubble`);
+  if (caret.bottom > bubble.bottom + tolerance)
+    failures.push(`the caret ends ${(caret.bottom - bubble.bottom).toFixed(1)}px below the bubble`);
+  if (caret.left < bubble.left - tolerance) failures.push(`the caret starts ${(bubble.left - caret.left).toFixed(1)}px left of the bubble`);
+  if (caret.right > bubble.right + tolerance)
+    failures.push(`the caret ends ${(caret.right - bubble.right).toFixed(1)}px right of the bubble`);
+  expect(failures, "the caret's box sits inside the bubble's box").toEqual([]);
+});
+

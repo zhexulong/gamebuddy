@@ -3254,10 +3254,11 @@ body {
 }
 
 /* The live turn's caret: streaming is shown by a moving cursor at the end of the
-   reply, not only by a disabled control. It is a sibling of the bubble, so the
-   preview's and the committed message's bytes stay identical. */
+   reply, not only by a disabled control. It is the bubble's own last child, so it
+   sits inside the bubble's box and its flow - not a sibling hanging below the
+   bubble's edge. */
 .message[data-streaming] .message-caret {
-  align-self: flex-start;
+  display: inline-block;
   width: 2px;
   height: 1em;
   margin-top: calc(var(--space-1) + 2px);

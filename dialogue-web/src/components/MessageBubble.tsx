@@ -4,6 +4,16 @@ import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 /**
+ * The live-streaming caret, as the companion bubble's own trailing child. The
+ * bubble is Markdown rendered through `dangerouslySetInnerHTML`, so the caret is
+ * appended to that sanitised HTML instead of being passed as a React child; and
+ * it is appended on every render, not only while streaming, so the preview's and
+ * the committed message's bytes stay identical. Only `[data-streaming]` styles
+ * it, so an idle bubble carries an inert, zero-size span.
+ */
+const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
+
+/**
  * Memoised so a streaming delta - which re-renders the conversation with a new
  * preview - cannot re-render a settled message and re-parse its Markdown. The
  * transcript's message objects are immutable and keep their identity across a
@@ -40,8 +50,9 @@ export const MessageBubble = memo(function MessageBubble({
   pending?: "swipe" | "regenerate" | "opening" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
-   * reading caret. It is a sibling of the bubble, never inside it, so the
-   * bytes of the preview and of the committed message stay identical.
+   * reading caret. The caret is the bubble's own last child on every render -
+   * only `[data-streaming]` styles it - so it never hangs outside the bubble's
+   * box and the preview's and the committed message's bytes stay identical.
    */
   streaming?: boolean;
   labels: Readonly<{
@@ -133,11 +144,13 @@ export const MessageBubble = memo(function MessageBubble({
         {isPlayer ? (
           // The player's own words are literal input, not model output: they stay
           // text, so the companion's narration treatment is never applied to them.
-          <div className="message-bubble">{message.text}</div>
+          <div className="message-bubble">
+            {message.text}
+            <span className="message-caret" aria-hidden="true" />
+          </div>
         ) : (
-          <MarkdownMessage className="message-bubble" text={message.text} />
+          <MarkdownMessage className="message-bubble" text={message.text} trailingHtml={CARET_MARKUP} />
         )}
-        {streaming && <span className="message-caret" aria-hidden="true" />}
         {!isPlayer && onRegenerate && (
           <div className="message-actions">
             <button

@@ -48,9 +48,24 @@ export function renderCompanionMarkdown(text: string): string {
   return DOMPurify.sanitize(html, SANITIZE_CONFIG);
 }
 
-export function MarkdownMessage({ text, className }: { text: string; className?: string }) {
+export function MarkdownMessage({
+  text,
+  className,
+  trailingHtml = "",
+}: {
+  text: string;
+  className?: string;
+  /**
+   * A static, trusted fragment appended after the sanitised Markdown - the
+   * streaming caret, and nothing else. It is not model output, and appending it
+   * here rather than rendering it as a React child is what puts it inside the
+   * bubble's own content flow (`children` and `dangerouslySetInnerHTML` cannot
+   * coexist).
+   */
+  trailingHtml?: string;
+}) {
   // The parse is memoised per text so a streaming preview delta elsewhere in the
   // surface never re-parses (or re-sanitises) a settled message.
   const html = useMemo(() => renderCompanionMarkdown(text), [text]);
-  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={className} dangerouslySetInnerHTML={{ __html: `${html}${trailingHtml}` }} />;
 }
