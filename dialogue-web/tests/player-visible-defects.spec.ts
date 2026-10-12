@@ -15,9 +15,11 @@ import { expect, test, type Page } from "@playwright/test";
  *      surface. The failure this catches: the block reads its own second
  *      catalogue with `locale ?? "en"` and no caller passes a locale.
  *   4. The installation panel answers "not found" on one visit and "still
- *      searching" on another. The failure this catches: the panel's answer is a
- *      mount-local default rather than one truthful answer per moment, and the
- *      surface shows a second, generic loading line beside it.
+ *      searching" on another, and a scan that does not settle leaves the panel
+ *      with no control that can end it. The failure this catches: the panel's
+ *      answer is a mount-local default rather than one truthful answer per
+ *      moment, and its one abandoning control is disabled exactly when the player
+ *      needs it.
  */
 
 const token = "A".repeat(43);
@@ -295,4 +297,30 @@ test("defect 1: a filled accent control and the current badge clear WCAG AA", as
   console.log(`[defect-1] with the pre-fix tokens: ${JSON.stringify([...beforePrimary, ...beforeBadge])}`);
   expect(beforePrimary[0]!.ratio, "the sampled primary action really was 2.88:1 before the fix").toBeLessThan(4.5);
   expect(beforeBadge[0]!.ratio, "the sampled badge really was 4.48:1 before the fix").toBeLessThan(4.5);
+});
+
+// --- defect 2 -----------------------------------------------------------------
+
+/**
+ * Defect 2. The Host serves cabin choices only while a Player Host instance it
+ * launched is awaiting attestation; with no instance the read fails with
+ * `stardew_cabin_handoff_unavailable` (host/src/stardew-production-lifecycle-coordinator.internal.ts).
+ * The shell folds that into `unavailable`, and the panel renders it as a fault
+ * with "reload the page" advice.
+ *
+ * The failure this catches: "you have not started a game yet" reads as "the read
+ * broke", so the third guide step is a scare where the prerequisite belongs.
+ */
+test("defect 2: a cabin read with no session reads as the prerequisite, not a fault", async ({ page }) => {
+  await mountShell(page, { cabinsUnavailable: true, root: composedRoot({ instanceStatus: "none" }) });
+  await openSurface(page, "游戏", "game-surface");
+  const handoff = page.locator(".stardew-cabin-handoff");
+  await expect(handoff).toBeVisible();
+  const text = (await handoff.innerText()) ?? "";
+  const tone = await handoff.locator("[data-tone]").first().getAttribute("data-tone");
+  console.log(`[defect-2] handoff tone=${tone} text=${JSON.stringify(text)}`);
+
+  expect(text, "the handoff says what has to happen first").toContain(ZH.cabinAwaitingSession);
+  expect(text, "the handoff does not advise reloading a page that is not broken").not.toContain(ZH.reloadAdvice);
+  expect(tone, "a state is not painted as a warning").toBe("info");
 });

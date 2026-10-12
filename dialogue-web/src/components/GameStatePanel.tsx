@@ -199,7 +199,18 @@ export function GameStatePanel({
   // affordance while the companion is on its way in, and stays the sibling
   // block below the groups once it is in the farm.
   const cabinHandoff = (
-    <CabinHandoff state={cabin} labels={labels} onConfirm={handlers.confirmCabin} />
+    <CabinHandoff
+      state={cabin}
+      labels={labels}
+      // The Host serves cabin choices only while a Player Host instance it
+      // launched is awaiting attestation; with no instance the read fails with
+      // `stardew_cabin_handoff_unavailable`. That is the first-run state - the
+      // player has not started a game - so the handoff reads it as the step it
+      // is waiting for, and reserves the read-failure sentence for a read that
+      // really failed.
+      awaitsSession={game !== null && game.game.instance.status === "none"}
+      onConfirm={handlers.confirmCabin}
+    />
   );
   return (
     // The panel scrolls once the projection is longer than the space the drawer
@@ -610,25 +621,37 @@ function GameFact({ label, dotTone, children }: { label: string; dotTone?: Statu
  * retry, and an uncertain one as the one thing a player must not repeat. The
  * outcomes render above the list, exactly where the confirm button does not
  * move when one appears.
+ *
+ * `awaitsSession` splits the one outcome the Host cannot type for itself: a
+ * cabin read that failed because no game session exists yet is the guide's own
+ * next step ("here is what has to happen first"), while a read that failed with
+ * a session in hand is a real failure and says so.
  */
 function CabinHandoff({
   state,
   labels,
+  awaitsSession,
   onConfirm,
 }: {
   state: CabinViewState;
   labels: Messages;
+  awaitsSession: boolean;
   onConfirm(choice: StardewCabinChoiceV1): void;
 }) {
   return (
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
       <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
       {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
-      {state.kind === "unavailable" && (
-        <p className="game-status" data-tone="warning" role="status">
-          {labels.stardewCabinsUnavailable}
-        </p>
-      )}
+      {state.kind === "unavailable" &&
+        (awaitsSession ? (
+          <p className="game-status" data-tone="info" role="status">
+            {labels.stardewCabinsAwaitingSession}
+          </p>
+        ) : (
+          <p className="game-status" data-tone="warning" role="status">
+            {labels.stardewCabinsUnavailable}
+          </p>
+        ))}
       {state.kind === "uncertain" && (
         <p className="game-status" data-tone="warning" role="status">
           {labels.stardewCabinConfirmationUncertain}
