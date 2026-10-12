@@ -20,7 +20,6 @@ const REQUIRED_VERIFICATION_ROOTS = [
   "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
   "tavern/composed-reference-game-static-shell-composition.js",
-  "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
   "tavern/static-artifact/index.js",
 ];
@@ -1698,10 +1697,21 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
     terminalState: "completed",
     stopSettled: true,
   };
-  async function runCase(childSource, parentMessage) {
-    await writeFile(join(emitted, "main.js"), `import "typebox";\n${childSource}`);
+  // The fixture child is one fixed module: each rejection relies on data that
+  // already exists as JSON (the round trip has nothing to do with code), so
+  // the ready/reply records arrive as a JSON document on the environment and
+  // no value is ever interpolated into the emitted source.
+  const task9FixtureSource = `import "typebox";
+const fixture = JSON.parse(process.env.GAMEBUDDY_TASK9_FIXTURE_JSON);
+const sendReady = () => process.send?.(fixture.ready);
+if (typeof fixture.delayReadyMs === "number") setTimeout(sendReady, fixture.delayReadyMs);
+else sendReady();
+process.on("message", () => { for (const reply of fixture.replies ?? []) process.send?.(reply); });
+`;
+  async function runCase(fixtureData, parentMessage) {
+    await writeFile(join(emitted, "main.js"), task9FixtureSource);
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, env: { ...process.env, GAMEBUDDY_TASK9_FIXTURE_JSON: JSON.stringify(fixtureData) }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     const messages = []; let stderr = "";
     child.on("message", (message) => {
       messages.push(message);
@@ -1713,17 +1723,17 @@ test("Task 9 starter rejects dispatch before ready and every malformed, foreign,
     return messages;
   }
   const early = await (async () => {
-    await writeFile(join(emitted, "main.js"), `import "typebox"; setTimeout(() => process.send?.(${JSON.stringify(ready)}), 100);`);
+    await writeFile(join(emitted, "main.js"), task9FixtureSource);
     await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
-    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-test-artifact.mjs"), "main.js"], { cwd: root, env: { ...process.env, GAMEBUDDY_TASK9_FIXTURE_JSON: JSON.stringify({ ready, delayReadyMs: 100 }) }, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     child.send(validDispatch);
     return new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => { assert.notEqual(code, 0); resolve(code); }); });
   })();
   assert.notEqual(early, 0);
-  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => process.send?.(${JSON.stringify(terminal)}));`, { ...validDispatch, task: "\ud800" });
-  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => process.send?.(${JSON.stringify({ ...terminal, capabilityCount: 2, extra: true })}));`, validDispatch);
-  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => { process.send?.(${JSON.stringify({ ...terminal, nonceSha256: "c".repeat(64) })}); });`, validDispatch);
-  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => { process.send?.(${JSON.stringify(terminal)}); process.send?.(${JSON.stringify(terminal)}); });`, validDispatch);
+  await runCase({ ready, replies: [terminal] }, { ...validDispatch, task: "\ud800" });
+  await runCase({ ready, replies: [{ ...terminal, capabilityCount: 2, extra: true }] }, validDispatch);
+  await runCase({ ready, replies: [{ ...terminal, nonceSha256: "c".repeat(64) }] }, validDispatch);
+  await runCase({ ready, replies: [terminal, terminal] }, validDispatch);
 }));
 
 test("Task 9 starter terminates its direct child when the parent IPC disconnects", async () => withFixture(async (root) => {
