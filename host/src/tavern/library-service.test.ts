@@ -333,13 +333,22 @@ test("Library companion enumeration and current companion fail closed for corrup
   }
 });
 
-test("New Chat fails closed for absent companion and unverified greeting selections", async () => {
+test("New Chat opens on a mounted companion with no library artifact, and refuses an unverified greeting", async () => {
   const { root, paths, service, threads } = await setup();
   try {
-    await assert.rejects(
-      service.createNewChat({ chatThreadId: "thread", chatSurfaceSessionId: "surface", opening: { kind: "blank" } }),
-      /tavern_artifact_unreadable/,
-    );
+    // No `companion.json`: this is the companion a deployment MOUNTS. The library
+    // only writes that artifact for a companion it created, so its absence is the
+    // ordinary case - the exact tavern namespace and the identity profile are the
+    // authority. This namespace carries no greeting set, so the Chat opens blank.
+    const state = await service.createNewChat({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      opening: { kind: "blank" },
+    });
+    assert.equal(state.messages.length, 0);
+    assert.equal(state.thread.companionId, "companion");
+    assert.equal(state.thread.continuityId, "continuity");
+
     await service.createNewCompanion({
       companionId: "companion",
       continuityId: "continuity",
@@ -351,8 +360,8 @@ test("New Chat fails closed for absent companion and unverified greeting selecti
     await writeSelections(root, paths);
     await assert.rejects(
       service.createNewChat({
-        chatThreadId: "thread",
-        chatSurfaceSessionId: "surface",
+        chatThreadId: "thread-two",
+        chatSurfaceSessionId: "surface-two",
         opening: { kind: "greeting", greetingSetId: "greetings", variantId: "missing" },
       }),
       /tavern_greeting_variant_not_found/,

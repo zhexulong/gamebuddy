@@ -129,9 +129,20 @@ export function createTavernLibraryService(
     },
 
     async createNewChat(input): Promise<ChatThreadState> {
-      const companion = await currentCompanion(store, companionPath);
-      if (companion.companionId !== paths.companionId || companion.continuityId !== paths.continuityId)
+      // The library companion artifact is written only when a companion is created
+      // THROUGH the library (direct `创建伙伴` or a reviewed card import). The
+      // companion a deployment mounts has its identity profile and its tavern
+      // namespace but no such artifact, so its absence is the normal case, not a
+      // failure: the exact namespace and the identity profile below are the
+      // authority. A present artifact is still cross-checked against the scope it
+      // claims, so a foreign companion can never be opened through this path.
+      const companion = await companionRepository(store, companionPath).readIfPresent();
+      if (
+        companion !== undefined &&
+        (companion.companionId !== paths.companionId || companion.continuityId !== paths.continuityId)
+      )
         throw new Error("tavern_companion_scope_mismatch");
+      const profile = await metadataReader.readExact();
       const persona =
         input.personaId === undefined
           ? undefined
@@ -184,20 +195,20 @@ export function createTavernLibraryService(
         );
       const opening =
         input.opening === undefined
-          ? ((await companionOwnOpening(store, paths.companionRoot, companion, scenario)) ?? "blank")
+          ? ((await companionOwnOpening(store, paths.companionRoot, profile.revision, scenario)) ?? "blank")
           : input.opening.kind === "blank"
             ? "blank"
             : await greetingOpening(
                 store,
                 join(paths.companionRoot, "greetings", input.opening.greetingSetId),
-                companion,
+                profile.revision,
                 scenario,
                 input.opening,
               );
       const request: CreateChatThreadRequest = {
         chatThreadId: input.chatThreadId,
-        companionId: companion.companionId,
-        continuityId: companion.continuityId,
+        companionId: paths.companionId,
+        continuityId: paths.continuityId,
         chatSurfaceSessionId: input.chatSurfaceSessionId,
         ...(persona === undefined ? {} : { personaId: persona.personaId }),
         ...(scenario === undefined ? {} : { scenarioId: scenario.scenarioId }),
@@ -374,7 +385,7 @@ async function stableBinding(
 async function companionOwnOpening(
   store: TavernArtifactStore,
   companionRoot: string,
-  companion: TavernCompanion,
+  profileRevision: number,
   scenario: Scenario | undefined,
 ): Promise<CreateChatThreadRequest["opening"] | undefined> {
   const record = await createGreetingManagementService(store, companionRoot).readExact();
@@ -385,7 +396,7 @@ async function companionOwnOpening(
     sourceRevision: record.revision,
     canonicalHash: record.canonicalHash,
     variantId: variant.variantId,
-    profileRevision: companion.profileRevision,
+    profileRevision,
     scenarioRevision: scenario?.revision ?? null,
   });
   return Object.freeze({ messageId: randomUUID(), text: variant.text, source });
@@ -393,7 +404,7 @@ async function companionOwnOpening(
 async function greetingOpening(
   store: TavernArtifactStore,
   directory: string,
-  companion: TavernCompanion,
+  profileRevision: number,
   scenario: Scenario | undefined,
   input: Extract<NewChatRequest["opening"], { kind: "greeting" }>,
 ): Promise<CreateChatThreadRequest["opening"]> {
@@ -406,7 +417,7 @@ async function greetingOpening(
     sourceRevision: greeting.revision,
     canonicalHash: greetingEnvelope.canonicalHash,
     variantId: variant.variantId,
-    profileRevision: companion.profileRevision,
+    profileRevision,
     scenarioRevision: scenario?.revision ?? null,
   });
   return Object.freeze({ messageId: input.messageId ?? randomUUID(), text: variant.text, source });

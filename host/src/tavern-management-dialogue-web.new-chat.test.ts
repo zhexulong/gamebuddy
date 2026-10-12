@@ -23,7 +23,10 @@ import {
   type CreateChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
 } from "./tavern/browser-contract/index.js";
-import { createChatThreadStore } from "./tavern/chat-thread-store.js";
+import {
+  createChatThreadStore,
+  createProfileAwareChatThreadCreationCapability,
+} from "./tavern/chat-thread-store.js";
 import { createGreetingManagementService } from "./tavern/greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./tavern/library-service.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
@@ -88,8 +91,17 @@ function managementProfile(withCreate: boolean) {
  * The durable fixture: one mounted companion with a reviewed greeting set, one
  * already-existing blank Chat, and the real library opening seam on top of the
  * same store the management list reads.
+ *
+ * `withCompanionArtifact: false` is the real mounted-companion condition: the
+ * companion the deployment manifest mounts carries an identity profile and a
+ * greeting set, but NO `tavern/v1/companions/<digest>/companion.json`, because
+ * that artifact is only written when a companion is created THROUGH the library
+ * (`创建伙伴`, card import). The product's own first Chat is created by the
+ * runtime's profile-aware creation capability, not by the library, so it exists
+ * without the artifact too.
  */
-async function fixture(withCreate: boolean) {
+async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArtifact?: boolean }> = {}) {
+  const withCompanionArtifact = options.withCompanionArtifact ?? true;
   const root = await canonicalTestRoot("tavern-new-chat-");
   const paths = resolveTavernPaths(
     {
@@ -105,19 +117,22 @@ async function fixture(withCreate: boolean) {
   );
   const artifacts = new TavernArtifactStore(root);
   const threads = createChatThreadStore(root, "b".repeat(64), () => 10);
-  const library = createTavernLibraryService(paths, artifacts, threads, {
+  const profileReader = {
     async readExact() {
       return { profileId: "profile", revision: 1, canonicalHash: HASH };
     },
-  });
-  await library.createNewCompanion({
-    companionId: identity.companionId,
-    continuityId: identity.continuityId,
-    name: "Mira",
-    profileId: "profile",
-    profileRevision: 1,
-    profileHash: HASH,
-  });
+  };
+  const library = createTavernLibraryService(paths, artifacts, threads, profileReader);
+  if (withCompanionArtifact) {
+    await library.createNewCompanion({
+      companionId: identity.companionId,
+      continuityId: identity.continuityId,
+      name: "Mira",
+      profileId: "profile",
+      profileRevision: 1,
+      profileHash: HASH,
+    });
+  }
   await createGreetingManagementService(artifacts, paths.companionRoot).create({
     label: "Initial Greeting",
     variants: [
@@ -132,11 +147,23 @@ async function fixture(withCreate: boolean) {
   // second one cannot be a re-read of the first.
   const firstChatThreadId = `chat-${"1".repeat(16)}`;
   const firstChatSurfaceSessionId = `surface-${"1".repeat(16)}`;
-  await library.createNewChat({
-    chatThreadId: firstChatThreadId,
-    chatSurfaceSessionId: firstChatSurfaceSessionId,
-    opening: { kind: "blank" },
-  });
+  if (withCompanionArtifact) {
+    await library.createNewChat({
+      chatThreadId: firstChatThreadId,
+      chatSurfaceSessionId: firstChatSurfaceSessionId,
+      opening: { kind: "blank" },
+    });
+  } else {
+    // The runtime's own opening Chat: created through the profile-aware creation
+    // capability the mount path uses, so no library companion artifact is read.
+    await createProfileAwareChatThreadCreationCapability(threads, profileReader).createExplicit({
+      chatThreadId: firstChatThreadId,
+      chatSurfaceSessionId: firstChatSurfaceSessionId,
+      companionId: identity.companionId,
+      continuityId: identity.continuityId,
+      opening: "blank",
+    });
+  }
 
   const created = {
     chatThreadId: "",
@@ -391,6 +418,55 @@ test("a profile that does not publish chat.create refuses the operation without 
     assert.equal(((await refused.json()) as { code: string }).code, "profile_operation_unavailable");
     // The route is unmounted, so the provisioner behind it was never reached.
     assert.equal(f.created.calls, 0);
+  } finally {
+    await f.page.close();
+  }
+});
+
+/**
+ * The real product's mounted companion is the one the deployment manifest names:
+ * it has an identity profile and (after a card was reviewed) a greeting set, but
+ * no library `companion.json`, because that artifact is only written when a
+ * companion is created through the library. New Chat must still work there - the
+ * capture of dd29319e answered `503 runtime_unavailable` for exactly this shape,
+ * because `createNewChat` read the absent library companion and collapsed the
+ * miss into a generic runtime failure.
+ */
+test("New Chat creates a second Chat on a mounted companion with no library companion artifact", async () => {
+  const f = await fixture(true, { withCompanionArtifact: false });
+  try {
+    const { origin } = f.page;
+    const { cookie, csrf } = await openSession(origin);
+    const authHeaders = { Origin: origin, Cookie: cookie, "X-CSRF-Token": csrf, "Content-Type": "application/json" };
+
+    const before = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
+      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(before.status, 200);
+    assert.equal(((await before.json()) as ChatListV1).chats.length, 1);
+
+    const create = await fetch(`${origin}/api/tavern/v1/chats`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1 }),
+    });
+    assert.equal(create.status, 200);
+    const result = (await create.json()) as ChatCreateResultV1;
+    // The mounted companion's own greeting is still the created Chat's message zero.
+    assert.equal(result.opening, GREETING_TEXT);
+    assert.equal(result.chat.isSelected, false);
+
+    const after = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
+      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(after.status, 200);
+    const listed = (await after.json()) as ChatListV1;
+    assert.equal(listed.chats.length, 2);
+    assert.equal(listed.chats.filter((chat) => chat.handle === result.chat.handle).length, 1);
+    assert.equal(listed.chats.filter((chat) => chat.isSelected).length, 1);
+
+    const durable = await f.threads.resumeThread(f.created.chatThreadId, f.created.chatSurfaceSessionId);
+    assert.equal(durable.messages.find((message) => message.kind === "opening")?.text, GREETING_TEXT);
   } finally {
     await f.page.close();
   }
