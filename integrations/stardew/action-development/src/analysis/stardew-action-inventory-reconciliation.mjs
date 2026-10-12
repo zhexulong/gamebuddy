@@ -64,8 +64,8 @@ export const CATEGORY_DEFAULTS = Object.freeze({
   },
   "menu-bound": {
     group: "explicit_exclusion",
-    boundary: "B1_menu_owned_transaction",
-    reason: "terminal is a game-owned menu; the transaction only exists inside the menu, so binding it would require menu-stack or input ingress",
+    boundary: "B1a_menu_owned_inline",
+    reason: "terminal is a game-owned menu. The pre-2026-10 phrasing - \"the transaction only exists inside the menu, so binding it would require menu-stack or input ingress\" - is retired as over-broad: it reads as a UI-stack claim while the real question is whether a callable settlement exists. Use the split forms (B1a/B1b/B1c) and carry the caller scan.",
     anchor: "gameplay-capability-expansion.md 7.4.1 / 8.1",
   },
   "warp-transition": {
@@ -87,12 +87,35 @@ export const CATEGORY_DEFAULTS = Object.freeze({
  * B5/B6 不是 UI 边界：B5 是「没有可绑定的世界效果」（空壳 / 仅音效），
  * B6 是「出货内容里根本没有该 action 的瓦片」，即 selector 无原生入口可绑。
  */
+// A boundary text that needs a sentence or two reads badly as one enormous object entry, so the split B1 vocabulary
+// (and the restated B2/B3) wrap theirs in this identity function purely for line length. It changes no value.
+const line = (text) => text;
 export const UI_INPUT_BOUNDARIES = Object.freeze({
-  B1_menu_owned_transaction:
-    "menu-owned transaction: the native settlement only exists inside a menu input handler (ShopMenu.tryToPurchaseItem, MuseumMenu, SpecialOrdersBoard/DropBox, MineElevatorMenu level pick, ActivateKitchen/CraftingPage, BobberBar reeling)",
+  // B1 is THREE different claims, and conflating them is what let this vocabulary over-refuse. Every example the
+  // single-form text used to name has since been built or overturned (ShopMenu -> shop_purchase, CraftingPage ->
+  // craft_item, MineElevatorMenu -> select_mine_elevator_floor, SpecialOrdersBoard/MuseumMenu -> the Basis rows a
+  // recon lane has re-tested; BobberBar was excluded by a PRODUCT ruling, not a seam one). A B1 verdict must now
+  // say WHICH form it is and carry the evidence for it.
+  B1a_menu_owned_inline:
+    line(
+      "B1a inline: the world write is a STATEMENT SEQUENCE inside a handler and no callable unit exists - reproduced by reading the code, not asserted (e.g. JojaCDMenu.cs:115 debits Money and then runs a five-case mail switch; there is no purchase method). Reproducing it means maintaining a copy of the game's own content table.",
+    ),
+  B1b_choice_in_ui:
+    line(
+      "B1b choice-in-UI: a callable unit EXISTS, but the CHOICE comes from UI-only state. This form is often BUILDABLE after all, because the choice is frequently re-derivable from public game state - select_mine_elevator_floor re-derives the floor domain from MineShaft.lowestLevelReached. Refusing on this form requires naming the exact unreachable fact.",
+    ),
+  B1c_private_only:
+    line(
+      "B1c private-only: the only callable path is private. NOT an absolute wall in this repo - ModEntry already reflects into Multiplayer.StartServer for the HostAutomation lane - so it is a per-case policy decision, not a refusal by itself.",
+    ),
+  B1_evidence_required:
+    line(
+      "every B1 verdict must carry the EXHAUSTIVE caller scan for the candidate settlement (the whole decompiled tree, callers listed verbatim), the public-member inventory at the write site, and the name of the form. A verdict without the scan is a hypothesis, not a boundary: the mine-elevator correction was caused by exactly such a scan finding public UI-free faces.",
+    ),
   B2_input_edge_gated_branch:
-    "input-edge gated branch: the native branch requires a real mouse/keyboard edge (Game1.didPlayerJustRightClick) that the companion cannot manufacture without input injection",
-  B3_subjective_text_input: "subjective text input (NamingMenu naming, free dialogue text)",
+    line("input-edge gated branch: the native SELECTOR only fires on a real mouse/keyboard edge (Game1.didPlayerJustRightClick) that the companion cannot manufacture. This is a boundary on driving the SELECTOR, not on the CAPABILITY: its one named example, BuildingToggleAnimalDoor, ships as toggle_animal_door by driving the public Building.ToggleAnimalDoor (Building.cs:915). So a B2 verdict must name the public settlement that was looked for and not found, or the row is really about input ingress rather than about the world write."),
+  B3_subjective_text_input:
+    line("subjective text input. Its named example, NamingMenu naming, was APPROVED by the owner as the name_entity capability (a name is saved state, not presentation, and the Basis already declares the primitive), so the row is a candidate rather than a boundary. What remains here is free-form dialogue text, where the input is the player's own words rather than a bounded choice."),
   B4_realtime_minigame: "real-time minigame / reeling contest (MiniGames, festival minigames, fishing reel)",
   B5_no_effect:
     "no bound effect (empty selector shell, sound-only selector, presentation/animation-only writes such as HoeDirt.shake's crop-shake state)",
