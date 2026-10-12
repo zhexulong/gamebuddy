@@ -279,6 +279,11 @@ public static class FarmhandActionCatalog
         // through the game's own chat egress (`Multiplayer.sendChatMessage`, Multiplayer.cs:1127). No body, no
         // geometry, no target, no world write - it takes exactly one string and its terminal proves the SEND.
         E("send_multiplayer_chat", "npc_social", FarmhandActionHandlerGroup.Expression, A(null, null, "chat_message_sent", ("text", "string")), FarmhandActionLifecycle.Experimental),
+        // Empties a built fish pond through `FishPond.ClearPond()` (Buildings/FishPond.cs:840) -
+        // public, no arguments, and reached in-game only through the pond menu's two-click
+        // confirmation, which is UI-only state with no game-logic fork. The body DROPS the fish as
+        // ground debris and resets the pond, which is the destructiveness the boundary card names.
+        E("clear_fish_pond", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fish_pond_cleared", "FishPond.ClearPond"), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);

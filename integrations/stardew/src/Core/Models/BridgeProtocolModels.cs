@@ -494,6 +494,9 @@ public sealed record BridgeSnapshot(
     // inserting anywhere earlier silently re-binds their existing positional arguments.
     IReadOnlyList<BridgeObeliskTarget>? ObeliskTargets = null,
     IReadOnlyList<BridgeAnimalDoorTarget>? AnimalDoorTargets = null,
+    // The ponds the actor could empty right now. Advertised only while the action is itself
+    // advertised, and never an empty pond: an empty one has nothing to clear.
+    IReadOnlyList<BridgeFishPondTarget>? FishPondTargets = null,
     // Defaulted and LAST for the same reason as its siblings above: the positional list is
     // already closed by the parameters before it.
     IReadOnlyList<BridgeBuildingChestTarget>? BuildingChestTargets = null
@@ -652,6 +655,13 @@ public sealed class BridgeExecutionArgs
 /// postcondition is that the state FLIPS, and a target whose identity ignores its state cannot be
 /// verified.</summary>
 public sealed record BridgeAnimalDoorTarget(string TargetId, string Location, int X, int Y, string BuildingType, bool IsOpen);
+
+/// <summary>A built fish pond that currently HOLDS fish, identified opaquely so the caller names the
+/// structure and never its internal state. `Occupants` is published because it is what the action would
+/// eject (the body spawns one fish item per occupant as ground debris, so the count is what the player
+/// recovers) - an EMPTY pond is never advertised, since it has nothing to clear.</summary>
+public sealed record BridgeFishPondTarget(string TargetId, string Location, int X, int Y, string BuildingType, int Occupants);
+
 
 /// <summary>One named inventory a BUILDING declares in its own data (Data/Buildings ->
 /// BuildingData.Chests), reached from a tile on the building's exterior. `ChestId` and `Branch`

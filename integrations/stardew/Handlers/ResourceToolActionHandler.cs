@@ -80,7 +80,13 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "set_sign_display" => this.executions.RequestLocalSetSignDisplay(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "deposit_silo_hay" => this.executions.RequestLocalDepositSiloHay(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "withdraw_silo_hay" => this.executions.RequestLocalWithdrawSiloHay(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
-                "toggle_animal_door" => this.executions.RequestLocalToggleAnimalDoor(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+                "clear_fish_pond" => this.executions.RequestLocalClearFishPond(
+                request.RequestId,
+                (int)request.Args.X!,
+                (int)request.Args.Y!,
+                request.Args.ExpectedTargetId!,
+                request.DeadlineMs),
+            "toggle_animal_door" => this.executions.RequestLocalToggleAnimalDoor(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "break_container_source" => this.executions.RequestLocalBreakContainerSource(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 

@@ -1941,6 +1941,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "collect_building_chest_output" => new[] { "x", "y", "expectedTargetId" },
         "use_obelisk" => new[] { "x", "y", "expectedTargetId" },
         "toggle_tool_light" => new[] { "slot", "x", "y" },
+        "clear_fish_pond" => new[] { "x", "y", "expectedTargetId" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },
         "express_emote" => new[] { "emote" },
