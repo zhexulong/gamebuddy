@@ -2,27 +2,37 @@
 /**
  * The Tavern frontend conformance gate.
  *
- * Authority: design/architecture/tavern-frontend-criteria.md.
+ * The corpus is the mounted journey directory - the same corpus the release
+ * lane's test:mounted zone runs, discovered by playwright's own config - so the
+ * gate judges journeys that exist instead of a hand-written file list. (Its
+ * previous contract named three suites that were deleted with their shells, so
+ * every run ended in ENOENT on a file nobody had.)
  *
  * A journey proves a screen works today. This gate makes the *criteria* those
  * journeys are instances of - accessibility baseline, keyboard reach, layout
  * floor, a quiet walk - into something a frontend change cannot quietly drop, and
- * it makes the corpus and the surface inventory part of the contract:
+ * it makes the corpus and the surface identity part of the contract:
  *
- *   - the surface list must equal the pane inventory derived from the shell entry,
- *     so a new pane has to be declared (with a suite and criteria, or a recorded
- *     deferral and a reason) before the gate can pass;
- *   - a declared suite that disappears, shrinks below its minimum, or loses a
- *     headline journey fails;
- *   - a test that was disabled (skipped) fails, except the declared non-Windows
- *     reason and - only with --allow-credentialless - the journeys whose declared
- *     prerequisite is the provider credential, reported as declared skips;
+ *   - the surface list must equal the identities the shell entry accepts, so a new
+ *     pane has to be declared (with criteria and its obligations) before the gate
+ *     can pass;
+ *   - every journey file in the corpus directory must appear in the run, the run
+ *     must hold no journey from outside it, and the corpus must not fall below the
+ *     body floor, so a suite cannot be dropped or silently excluded;
+ *   - a test that was disabled (skipped) fails, unless its own title declares the
+ *     prerequisite it is missing, or - only with --allow-credentialless and only
+ *     for the contract's declared credential journeys - the provider credential is
+ *     absent, reported as declared skips;
  *   - every declared criterion must actually be exercised, which the conformance
  *     tests themselves assert through the criteria ledger.
+ *
+ * Authority for the obligations: the surface declarations in
+ * tools/fixtures/tavern-frontend-conformance/required-suites.json, executed by
+ * dialogue-web/tests/frontend-criteria.ts.
  */
 import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,14 +48,16 @@ const contractPath = join(
 function usage() {
   return [
     "usage: node tools/run-tavern-frontend-conformance.mjs [options]",
-    "  --output-root <dir>     generation root holding current.json (default: env GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT or host/dist)",
     "  --report <path>         write the JSON report here",
     "  --allow-credentialless  downgrade the credential-dependent journeys to declared skips (local runs only; the release lane never passes this)",
+    "",
+    "Runs the mounted gate zone's own corpus (dialogue-web test:mounted), through",
+    "the zone's prerequisite probe, and judges the run against the contract fixture.",
   ].join("\n");
 }
 
 function parseArguments(argv) {
-  const options = { outputRoot: undefined, reportPath: undefined, allowCredentialless: false };
+  const options = { reportPath: undefined, allowCredentialless: false };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") return { help: true };
@@ -53,11 +65,10 @@ function parseArguments(argv) {
       options.allowCredentialless = true;
       continue;
     }
-    if (flag !== "--output-root" && flag !== "--report") throw new Error(usage());
+    if (flag !== "--report") throw new Error(usage());
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) throw new Error(usage());
-    if (flag === "--output-root") options.outputRoot = value;
-    else options.reportPath = value;
+    options.reportPath = value;
     index += 1;
   }
   return options;
@@ -110,15 +121,25 @@ function collectTests(document) {
 }
 
 /**
- * The pane inventory the shell itself declares: every `profile` branch in the
- * entry maps to the component it renders. Each branch is isolated first (up to the
- * next branch), because a component imported near the top of the file would
- * otherwise be attributed to whichever branch happens to come first.
+ * The surfaces the shell itself declares: the profile identities its entry
+ * accepts, each mapped to the pane it renders. Both shapes the entry has used are
+ * read here, because the gate's job is to make a *new* pane impossible to add
+ * without declaring it:
+ *
+ *   - a branch map (`else if (profile === "id")` ... a lazy import of the pane or
+ *     an eager `render(<Pane`); each branch is isolated first (up to the next
+ *     branch), because a component imported near the top of the file would
+ *     otherwise be attributed to whichever branch happens to come first;
+ *   - one fixed identity the entry compares against the URL fragment, with the
+ *     literal declared in that same file and one component rendered.
+ *
+ * A shape the derivation does not recognise yields no surfaces, so the contract
+ * fails as "the shell renders no such profile" instead of passing vacuously.
  */
 async function deriveShellSurfaces(relativeEntry) {
   const entry = await readFile(join(repositoryRoot, relativeEntry), "utf8");
-  const branches = entry.split(/\} else if \(profile === |if \(profile === /u).slice(1);
   const derived = [];
+  const branches = entry.split(/\} else if \(profile === |if \(profile === /u).slice(1);
   for (const branch of branches) {
     const segment = branch.split(/\} else/u)[0];
     const id = /^"([a-z0-9-]+)"/u.exec(segment)?.[1];
@@ -126,6 +147,13 @@ async function deriveShellSurfaces(relativeEntry) {
     const lazy = /import\("\.\/components\/([A-Za-z0-9_]+)"/u.exec(segment)?.[1];
     const eager = /render\(<([A-Za-z0-9_]+)/u.exec(segment)?.[1];
     derived.push({ id, pane: lazy ?? eager ?? "unknown" });
+  }
+  if (derived.length > 0) return derived;
+  const renderedPane = /render\(<([A-Za-z0-9_]+)/u.exec(entry)?.[1];
+  if (renderedPane === undefined) return derived;
+  for (const [, constant] of entry.matchAll(/get\("profile"\)\s*===\s*([A-Za-z0-9_]+)/gu)) {
+    const literal = new RegExp(`const\\s+${constant}\\s*=\\s*"([a-z0-9-]+)"`, "u").exec(entry)?.[1];
+    if (literal !== undefined) derived.push({ id: literal, pane: renderedPane });
   }
   return derived;
 }
@@ -137,28 +165,21 @@ if (options.help === true) {
 }
 
 const contract = JSON.parse(await readFile(contractPath, "utf8"));
-const outputRoot = resolve(
-  options.outputRoot ??
-    process.env.GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT ??
-    join(repositoryRoot, "host", "dist"),
-);
-if (!existsSync(join(outputRoot, "current.json")))
-  throw new Error(`no bootable generation at ${outputRoot} (current.json missing)`);
-
 const credential = process.env[contract.credentialEnvironment];
 const failures = [];
 const declaredSkips = [];
 
-// 1. Surface inventory: the contract must account for exactly the shell's panes,
-// and every declared suite must exist on disk (a deferral cannot name a suite
-// that was deleted).
+// 1. Surface identity and corpus membership. The contract must account for
+// exactly the identities the shell entry accepts, and the corpus is the journey
+// directory itself - the same corpus the mounted zone runs - so nothing here can
+// name a suite that was deleted.
 const declared = new Map(contract.surfaces.map((surface) => [surface.id, surface]));
 const derivedSurfaces = await deriveShellSurfaces(contract.surfaceInventory.derivedFrom);
 for (const surface of derivedSurfaces) {
   const entry = declared.get(surface.id);
   if (entry === undefined) {
     failures.push(
-      `the shell renders the ${surface.id} pane (${surface.pane}) but the contract does not declare it: declare its suite and criteria, or record a deferral with a reason`,
+      `the shell renders the ${surface.id} pane (${surface.pane}) but the contract does not declare it: declare its criteria and obligations`,
     );
     continue;
   }
@@ -173,28 +194,22 @@ for (const id of declared.keys()) {
       `the contract declares the ${id} surface but the shell renders no such profile: remove it, because a requirement for a surface that does not exist cannot be met`,
     );
 }
-const enforcedSuites = [];
-for (const surface of contract.surfaces) {
-  for (const suite of surface.suites ?? []) {
-    if (!existsSync(join(repositoryRoot, "dialogue-web", suite.file))) {
-      failures.push(`${surface.id}: the declared suite ${suite.file} does not exist`);
-      continue;
-    }
-    enforcedSuites.push({ surface, suite });
-  }
-  if (surface.deferredReason !== undefined)
-    declaredSkips.push(`${surface.id}: criteria deferred - ${surface.deferredReason}`);
-}
-const enforcedSurfaces = contract.surfaces.filter(
-  (surface) => surface.deferredReason === undefined && (surface.suites ?? []).length > 0,
-);
+const corpusRoot = join(repositoryRoot, contract.corpus.directory);
+const corpusPattern = new RegExp(contract.corpus.pattern, "u");
+const corpusFiles = readdirSync(corpusRoot)
+  .filter((entry) => corpusPattern.test(entry))
+  .sort();
+if (corpusFiles.length === 0)
+  failures.push(
+    `the corpus directory ${contract.corpus.directory} holds no journey the pattern ${contract.corpus.pattern} matches`,
+  );
 
 // A contract that disagrees with the shell is not a contract: stop here rather
 // than spending minutes proving things about a surface set nobody agreed on.
-if (failures.some((failure) => /^the (shell|contract) /u.test(failure))) {
+if (failures.some((failure) => /^the (shell|contract|corpus) /u.test(failure))) {
   const inventoryReport = Object.freeze({
     schema: "tavern_frontend_conformance/v1",
-    generation: outputRoot,
+    corpus: Object.freeze(corpusFiles),
     credentialPresent: credential !== undefined,
     shellSurfaces: Object.freeze(derivedSurfaces.map((surface) => surface.id)),
     failures: Object.freeze(failures),
@@ -203,16 +218,46 @@ if (failures.some((failure) => /^the (shell|contract) /u.test(failure))) {
   if (options.reportPath !== undefined)
     await writeFile(options.reportPath, `${JSON.stringify(inventoryReport, null, 2)}\n`, "utf8");
   process.stderr.write(
-    `[frontend-conformance] failed (surface inventory): the contract and the shell disagree, so no suite was run\n`,
+    `[frontend-conformance] failed (surface identity / corpus): the contract, the shell and the journey directory disagree, so no suite was run\n`,
   );
   for (const failure of failures) process.stderr.write(`  - ${failure}\n`);
   process.exit(2);
 }
 
-// 2. Run the enforced suites against the real generation.
-const files = enforcedSuites.map(({ suite }) => suite.file);
+// 2. Run the mounted zone's corpus. The zone's own prerequisite probe goes first,
+// so a missing Chromium or a missing dev-server port is refused by name instead
+// of surfacing as a runner error, and the corpus is whatever the zone's playwright
+// invocation discovers - no file list, so nothing here can name a suite that was
+// deleted.
+const prerequisite = await run(
+  "node",
+  ["dialogue-web/tests/gate-zone-prerequisite.mjs", "mounted"],
+  { cwd: repositoryRoot },
+);
+if (prerequisite.code !== 0) {
+  const refusal = `${prerequisite.stdout}${prerequisite.stderr}`.trim();
+  if (options.reportPath !== undefined)
+    await writeFile(
+      options.reportPath,
+      `${JSON.stringify(
+        Object.freeze({
+          schema: "tavern_frontend_conformance/v1",
+          corpus: Object.freeze(corpusFiles),
+          failures: Object.freeze([`the mounted zone refused: ${refusal}`]),
+          verdict: "failed",
+        }),
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  process.stderr.write(
+    `[frontend-conformance] failed (mounted zone prerequisite): the zone refused to run, so no suite was run\n${refusal}\n`,
+  );
+  process.exit(2);
+}
 process.stderr.write(
-  `[frontend-conformance] generation=${outputRoot} credential=${credential === undefined ? "absent" : "present"} surfaces=${derivedSurfaces.map((surface) => surface.id).join(",")}\n`,
+  `[frontend-conformance] corpus=${contract.corpus.directory} (${corpusFiles.length} journey file(s)) credential=${credential === undefined ? "absent" : "present"} surfaces=${derivedSurfaces.map((surface) => surface.id).join(",")}\n`,
 );
 const runResult = await run(
   "pnpm",
@@ -222,32 +267,22 @@ const runResult = await run(
     "exec",
     "playwright",
     "test",
-    ...files,
     "--project=chromium",
     "--workers=1",
     "--reporter=json",
   ],
-  {
-    cwd: repositoryRoot,
-    env: { ...process.env, GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: outputRoot },
-  },
+  { cwd: repositoryRoot },
 );
 let document;
 try {
   document = JSON.parse(runResult.stdout.slice(runResult.stdout.indexOf("{")));
 } catch {
   throw new Error(
-    `the suites produced no parseable report (exit ${runResult.code}): ${runResult.stderr.slice(-400)}`,
+    `the mounted zone produced no parseable report (exit ${runResult.code}): ${(runResult.stderr || runResult.stdout).slice(-400)}`,
   );
 }
 
 let observed = collectTests(document);
-const byFile = new Map();
-for (const row of observed) {
-  const list = byFile.get(row.file) ?? [];
-  list.push(row);
-  byFile.set(row.file, list);
-}
 
 // 2b. Retry pass: a file with a non-passing row is re-run on its own. Anything that passes
 // there was a timing artefact of running every suite together; anything that still fails is a
@@ -279,10 +314,7 @@ if (failedFiles.length > 0) {
         "--workers=1",
         "--reporter=json",
       ],
-    {
-      cwd: repositoryRoot,
-      env: { ...process.env, GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: outputRoot },
-    },
+    { cwd: repositoryRoot },
   );
   let retryDocument;
   try {
@@ -338,10 +370,7 @@ if (stillFailing.length > 0) {
       "--workers=1",
       "--reporter=json",
     ],
-    {
-      cwd: repositoryRoot,
-      env: { ...process.env, GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: outputRoot },
-    },
+    { cwd: repositoryRoot },
   );
   let soloDocument;
   try {
@@ -361,45 +390,59 @@ if (stillFailing.length > 0) {
   }
 }
 
-// 3. Per-suite: enough tests. Then per-surface: the declared criteria test
-// present and green, and nothing disabled anywhere.
-for (const { surface, suite } of enforcedSuites) {
-  const rows = byFile.get(basenameOf(suite.file)) ?? [];
-  if (rows.length < suite.minimumTests) {
-    failures.push(
-      `${suite.file}: ${rows.length} test(s) ran, the contract requires at least ${suite.minimumTests} (${suite.capability})`,
-    );
-  }
+// 3. The corpus: every journey file ran, nothing from outside the directory did,
+// and the corpus holds at least the body the contract requires. Then per surface:
+// the declared criteria test present. Then every row: nothing failing, nothing
+// disabled.
+const observedFiles = new Set(observed.map((row) => row.file));
+for (const file of corpusFiles) {
+  if (!observedFiles.has(file))
+    failures.push(`${contract.corpus.directory}/${file} is a journey the run held no test from`);
 }
-for (const surface of enforcedSurfaces) {
-  const rows = (surface.suites ?? []).flatMap((suite) => byFile.get(basenameOf(suite.file)) ?? []);
+for (const file of observedFiles) {
+  if (!corpusFiles.includes(file))
+    failures.push(`${file} ran but is not a journey in ${contract.corpus.directory}`);
+}
+if (observed.length < contract.corpus.minimumTests) {
+  failures.push(
+    `the corpus ran ${observed.length} test(s), the contract requires at least ${contract.corpus.minimumTests}`,
+  );
+}
+for (const surface of contract.surfaces) {
   if (
     surface.criteriaTitle !== undefined &&
-    !rows.some((row) => row.title.startsWith(surface.criteriaTitle))
+    !observed.some((row) => row.title.startsWith(surface.criteriaTitle))
   ) {
     failures.push(
       `${surface.id}: the declared criteria test is missing: ${surface.criteriaTitle}`,
     );
   }
-  for (const row of rows) {
-    if (row.status === "skipped" || row.lastResultStatus === "skipped") {
-      const isPlatform = /requires real Windows/u.test(row.title) || /win32/u.test(row.error ?? "");
-      const isCredential = contract.credentialTestTitles.some((title) => row.title.startsWith(title));
-      if (isPlatform) continue;
-      if (isCredential && credential === undefined && options.allowCredentialless) {
-        declaredSkips.push(`${row.file} :: ${row.title} (no ${contract.credentialEnvironment})`);
-        continue;
-      }
-      failures.push(
-        `${row.file} :: ${row.title} was skipped${isCredential && credential === undefined ? ` and ${contract.credentialEnvironment} is not set` : ""}`,
-      );
+}
+for (const row of observed) {
+  if (row.status === "skipped" || row.lastResultStatus === "skipped") {
+    // A skip is a disabled test unless it says what it is missing: the title
+    // carries the prerequisite ("requires real Windows", "requires the approved
+    // composed shell fixture; ..."), so a declared prerequisite is reported and
+    // anything else fails the gate.
+    const declaresPrerequisite = /^requires /u.test(row.title) || /win32/u.test(row.error ?? "");
+    const isCredential = contract.credentialTestTitles.some((title) => row.title.startsWith(title));
+    if (declaresPrerequisite) {
+      declaredSkips.push(`${row.file} :: ${row.title} (declared prerequisite)`);
       continue;
     }
-    if (row.status !== "expected" || row.lastResultStatus !== "passed") {
-      failures.push(
-        `${row.file} :: ${row.title} -> ${row.lastResultStatus ?? row.status}: ${row.error ?? ""}`,
-      );
+    if (isCredential && credential === undefined && options.allowCredentialless) {
+      declaredSkips.push(`${row.file} :: ${row.title} (no ${contract.credentialEnvironment})`);
+      continue;
     }
+    failures.push(
+      `${row.file} :: ${row.title} was skipped${isCredential && credential === undefined ? ` and ${contract.credentialEnvironment} is not set` : ""}`,
+    );
+    continue;
+  }
+  if (row.status !== "expected" || row.lastResultStatus !== "passed") {
+    failures.push(
+      `${row.file} :: ${row.title} -> ${row.lastResultStatus ?? row.status}: ${row.error ?? ""}`,
+    );
   }
 }
 
@@ -411,19 +454,23 @@ for (const title of contract.requiredTitles) {
 
 const report = Object.freeze({
   schema: "tavern_frontend_conformance/v1",
-  generation: outputRoot,
+  corpus: Object.freeze({
+    directory: contract.corpus.directory,
+    files: Object.freeze(corpusFiles),
+    observed: observed.length,
+    required: contract.corpus.minimumTests,
+  }),
   credentialPresent: credential !== undefined,
   shellSurfaces: Object.freeze(derivedSurfaces.map((surface) => surface.id)),
-  suites: contract.surfaces.flatMap((surface) =>
-    (surface.suites ?? []).map((suite) => ({
+  surfaces: Object.freeze(
+    contract.surfaces.map((surface) => ({
       id: surface.id,
       pane: surface.pane,
-      file: suite.file,
-      capability: suite.capability,
-      obligations: surface.obligations ?? [],
-      deferred: surface.deferredReason !== undefined,
-      observed: (byFile.get(basenameOf(suite.file)) ?? []).length,
-      required: suite.minimumTests,
+      criteriaTitle: surface.criteriaTitle ?? null,
+      obligations: Object.freeze(surface.obligations ?? []),
+      criteriaObserved:
+        surface.criteriaTitle !== undefined &&
+        observed.some((row) => row.title.startsWith(surface.criteriaTitle)),
     })),
   ),
   requiredTitles: contract.requiredTitles.length,
@@ -441,7 +488,7 @@ if (options.reportPath !== undefined)
   await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
 process.stderr.write(
-  `[frontend-conformance] ${report.verdict}: ${observed.length} test(s) observed, ${declaredSkips.length} declared deferral/skip(s), ${failures.length} failure(s)\n`,
+  `[frontend-conformance] ${report.verdict}: ${observed.length} test(s) observed in ${corpusFiles.length} journey file(s), ${declaredSkips.length} declared skip(s), ${failures.length} failure(s)\n`,
 );
 for (const failure of failures) process.stderr.write(`  - ${failure}\n`);
 for (const skip of declaredSkips) process.stderr.write(`  . declared: ${skip}\n`);

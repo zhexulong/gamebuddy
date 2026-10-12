@@ -125,15 +125,18 @@ jobs:
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
       - name: Tavern mounted browser journeys
         run: pnpm --filter @gamebuddy/dialogue-web test:mounted
-      # The frontend criteria, and the corpus itself, as one gate: the shipped
-      # suites must run (no silent skip, no shrunk corpus), and the criteria they
-      # are instances of - accessibility baseline, keyboard reach, layout floor,
-      # a quiet walk - must hold on the real generation. Authority:
-      # design/architecture/tavern-frontend-criteria.md.
+      # The frontend criteria, and the corpus itself, as one gate. It runs the
+      # mounted zone's own corpus again - the whole dialogue-web/tests journey
+      # directory, so no hand-written file list can name a suite that was deleted -
+      # and requires that no journey was silently skipped or excluded, that every
+      # declared criterion holds (accessibility baseline, keyboard reach, layout
+      # floor, a quiet walk), and that the headline journeys are still there.
+      # Authority for the obligations:
+      # tools/fixtures/tavern-frontend-conformance/required-suites.json, executed by
+      # dialogue-web/tests/frontend-criteria.ts.
       - name: Tavern frontend conformance gate
         run: node tools/run-tavern-frontend-conformance.mjs --report tavern-frontend-conformance.json
         env:
-          GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
           CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
       # The companion's long-term memory, end to end with real provider turns: a real fold seals a chapter
       # into m[0], and the historian's own output is judged against the obligations in
@@ -172,6 +175,7 @@ jobs:
             tavern-ui-outcomes.json
             tavern-operation-evidence.json
             tavern-operation-evidence.json.profile.json
+            tavern-frontend-conformance.json
             memory-fold-gate.json
             tavern-release-live-gate.json
       # Recovery cleanup is repository-owned and derives only this exact protected

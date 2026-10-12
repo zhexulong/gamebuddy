@@ -1,81 +1,48 @@
 {
-  "$comment": "The Tavern frontend gate's contract. Authority: design/architecture/tavern-frontend-criteria.md. This file is what makes a frontend requirement impossible to delete quietly: the surface list here must equal the pane inventory derived from the shell entry, every declared suite must exist and run at least its declared number of tests, every declared criterion must be exercised, and a disabled test fails the gate instead of reducing it.",
+  "$comment": "The Tavern frontend gate's contract. Authority for the obligations: the surface declarations below, executed by dialogue-web/tests/frontend-criteria.ts (the design document they used to cite, design/architecture/tavern-frontend-criteria.md, is not in the mounted design corpus - the citation was dropped rather than kept dangling). This file is what makes a frontend requirement impossible to delete quietly: the surface list here must equal the identities the shell entry accepts, the corpus is the mounted journey directory itself, the corpus must not fall below its floor, every declared criterion must be exercised, and a disabled test fails the gate instead of reducing it. No suite file is named here, so a deleted spec cannot be declared and a renamed, re-added or newly written one joins the gate on its own; the credential journey list is empty because the two provider journeys the removed companion-turn suite carried have no home yet (reported by the release lane, not silently dropped).",
   "profile": "tavern_frontend_conformance/v1",
   "surfaceInventory": {
     "derivedFrom": "dialogue-web/src/main.tsx",
-    "rule": "Every profile the shell can render is a surface: the gate derives them from the shell's own branch map and requires this file to declare exactly those, so adding a pane without declaring it fails, and so does declaring a pane that no longer exists."
+    "rule": "Every profile identity the shell entry accepts is a surface: the gate derives them from the entry itself and requires this file to declare exactly those, so adding a pane without declaring it fails, and so does declaring a pane that no longer exists."
+  },
+  "corpus": {
+    "directory": "dialogue-web/tests",
+    "pattern": "\\.spec\\.ts$",
+    "minimumTests": 100,
+    "rule": "The corpus is the whole mounted journey directory - the same corpus the release lane's test:mounted zone runs - so nothing here names a suite file and no file list can rot into suites that do not exist. The gate requires every journey file in the directory to appear in the run, the run to hold no journey from outside it, and the run to hold at least minimumTests rows; the floor is a body guard (the corpus holds 133 rows today) so gutting the corpus fails even while the criteria test and the headline journeys below still exist."
   },
   "surfaces": [
     {
-      "id": "reference",
-      "pane": "ReferenceApp",
-      "suites": [
-        {
-          "file": "tests/reference-pipeline-browser.spec.ts",
-          "minimumTests": 8,
-          "capability": "B5 Chat lifecycle in the browser: live SSE, durable cancellation, replay and recovery"
-        },
-        {
-          "file": "tests/companion-turn-browser.spec.ts",
-          "minimumTests": 4,
-          "capability": "B4/B5/B6 Chat surface: a real provider turn, the same conversation across an app restart, the operability floor"
-        }
-      ],
-      "criteriaTitle": "conformance: chat surface meets the frontend criteria",
+      "id": "composed-reference-game",
+      "pane": "ComposedReferenceGameApp",
+      "criteriaTitle": "conformance: the product surface meets the frontend criteria",
       "obligations": [
         "frontend-accessibility-baseline",
         "frontend-keyboard-reach",
         "frontend-layout-floor",
         "frontend-quiet-walk"
       ]
-    },
-    {
-      "id": "composed-reference-game",
-      "pane": "ComposedReferenceGameApp",
-      "suites": [
-        {
-          "file": "tests/composed-reference-game-browser.spec.ts",
-          "minimumTests": 27,
-          "capability": "Game surface composition, lifecycle and STOP/Resume projections"
-        },
-        {
-          "file": "tests/stardew-installation-discovery.spec.ts",
-          "minimumTests": 4,
-          "capability": "Installation discovery in the browser"
-        }
-      ],
-      "deferredReason": "The game pane's own criteria run needs a real Stardew installation and belongs to the game lane. This deferral names the suites that cover it today and the gate verifies they exist, so the deferral cannot hide a deleted suite."
-    },
-    {
-      "id": "management",
-      "pane": "ManagementApp",
-      "suites": [
-        {
-          "file": "tests/management-pipeline-browser.spec.ts",
-          "minimumTests": 13,
-          "capability": "B1-B3 P9 management surface: World Info, connections, characters, the reviewed card import and the companion language"
-        }
-      ],
-      "criteriaTitle": "conformance: management surface meets the frontend criteria",
-      "obligations": [
-        "frontend-accessibility-baseline",
-        "frontend-keyboard-reach",
-        "frontend-quiet-walk"
-      ]
     }
   ],
   "requiredTitles": [
-    "conformance: chat surface meets the frontend criteria",
-    "conformance: management surface meets the frontend criteria",
-    "management browser imports a reviewed character card and provisions the companion it names",
-    "management browser sets the companion language once, durably, and the runtime reads it",
-    "reference browser mounts the reference surface with live SSE and cookie reload",
-    "reference browser is keyboard operable and does not overflow at phone or desktop width",
-    "reference browser sends a message to the real provider and keeps the answer across a reload",
-    "reference browser keeps the conversation across an app restart on the same root"
+    "conformance: the product surface meets the frontend criteria",
+    "composed profile redeems once, renders nested Chat and redacted Game, then reloads from composed state",
+    "the mounted conversation stops an armed reply, keeps the stop durable across a reload, and sends again",
+    "the composed conversation opens the projected event stream, previews a delta, and recovers through authoritative state once per resync",
+    "choosing a character card file imports it in one action, and reports what the Host kept and could not use",
+    "the product Characters surface owns the world book and binds through world-info.bind with the authoritative revision",
+    "the product Chats surface renames through chat/title and moves the conversation heading from the composed state",
+    "the product Settings surface shows the real settings panels and moves both languages",
+    "the product Settings surface creates, tests and activates a connection whose API key never reaches the document",
+    "Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop",
+    "Game Resume is generation-bound and single-flight, rereads authoritative state, and renders no synthetic completion",
+    "Game endgame requires an explicit confirm before the POST and reaches the terminal route once",
+    "confirms a safe candidate and rereads authoritative state",
+    "gate 1: the shell is anchored to the viewport at seven sizes on every surface",
+    "gate 4: Tab reaches every AppBar entry, Enter opens a surface, Escape returns to the conversation",
+    "gate 5: no console error, page error or failed API response while opening every surface",
+    "the shipped shell fills the viewport in both axes, at every size"
   ],
   "credentialEnvironment": "CPA_OAI_API_KEY",
-  "credentialTestTitles": [
-    "reference browser sends a message to the real provider and keeps the answer across a reload"
-  ]
+  "credentialTestTitles": []
 }
