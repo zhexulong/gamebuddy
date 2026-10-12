@@ -39,12 +39,34 @@
  *     rule landed - including the generation the running product was installed
  *     from - over the product's own help text. A placeholder has no card and no
  *     data; a shipped card has a payload;
- *   - `untyped_card_payload`: a whole-file JSON object carrying the CCv2 core
- *     card fields (`name`, `description`, `personality`, `scenario`,
- *     `first_mes`, `mes_example`, all strings) without a `spec` member — a v1
- *     card under an arbitrary name;
+ *   - `encoded_card_payload`: the same card, base64-encoded so a plain-text scan
+ *     cannot read it. Every long base64 run in the bytes is decoded and the
+ *     decoded bytes are scanned by the same rules (a decoded card object or
+ *     array scores past the threshold; a decoded PNG with a `chara` chunk is
+ *     `embedded_card_png`). This closes the "encode it and the scanner sees
+ *     nothing" bypass;
+ *   - `untyped_card_payload`: a whole-file JSON value — an object OR a
+ *     top-level array of objects — whose weighted card score crosses
+ *     `CARD_SCORE_THRESHOLD` without a `spec` member: a v1 card, or a v2/v3
+ *     card whose spec was stripped, under an arbitrary name. The former rule
+ *     demanded all six CCv2 core fields, so a real card that simply omitted
+ *     `mes_example` sailed through;
  *   - `embedded_card_png`: a PNG whose text chunks use the `chara` / `ccv3` /
  *     `character` keyword, i.e. an embedded card payload.
+ *
+ * The weighted card score, and why its threshold is where it is:
+ *
+ *   name +2, description +3, personality +2, scenario +2, first_mes +3,
+ *   mes_example +2, a `spec` marker +3, and any prose field of
+ *   `MIN_CARD_CONTENT_CHARS` or more +3. The repository's own reviewed card
+ *   (`assets/tavern/presets/default-companion/card.json`) scores **20**:
+ *   3 (spec) + 14 (all six core fields present) + 3 (its `description` is 1658
+ *   characters of prose). The import box's placeholder scores **5**: 3 (spec) +
+ *   2 (a name that is one ellipsis) and no prose. `CARD_SCORE_THRESHOLD = 8`
+ *   therefore sits far above the placeholder and the help text around it, and
+ *   far below the reviewed card, while a real card that omits `mes_example`
+ *   still scores 12 and a v1 card with all six short fields scores 14 - so
+ *   "the card forgot one field" can no longer hide a card.
  *
  * The gate reads at most `MAX_SCANNED_BYTES` per file. Larger files are still
  * checked by NAME: the bundled runtime, the native helpers and the Mod bundle
@@ -53,9 +75,12 @@
  * a fact the release already verifies.
  *
  * Honest limits: a card whose every prose field is shorter than
- * `MIN_CARD_CONTENT_CHARS` is not read as a payload by bytes and is refused only
- * if it lands under a card-shaped file name; and the prose threshold is a
- * length, so it says nothing about what the prose is.
+ * `MIN_CARD_CONTENT_CHARS` scores on its field weights alone (14 for a full
+ * card), so it is still read - but a card that omits enough fields to score
+ * below 8 is refused only if it lands under a card-shaped file name. Base64
+ * detection reads the standard `+/` alphabet, not the URL-safe `-_` one, and
+ * decodes at most `MAX_BASE64_CANDIDATES` runs per file. The prose threshold is
+ * a length, so it says nothing about what the prose is.
  *
  * Wiring: `production-artifact.mjs` runs `assertReleasePersonaHygiene` over the
  * staging tree before that tree can become a generation, and over the selected
@@ -71,8 +96,24 @@ import { fileURLToPath } from "node:url";
 const COMPANION_SEED_FILE = /^(?:card|worldbook)\.json$|\.card\.json$|\.worldbook\.json$/iu;
 /** A card's spec value, written as a JSON member (a comparison literal has no `:`). */
 const CARD_SPEC_MEMBER = /"spec"\s*:\s*"(?:chara_card_v2|chara_card_v3|ccv3)"/u;
-/** The CCv2 core fields every card carries; presence of all six in one JSON object is a card. */
-const UNTYPED_CARD_FIELDS = ["name", "description", "personality", "scenario", "first_mes", "mes_example"];
+const CARD_SPEC_VALUES = new Set(["chara_card_v2", "chara_card_v3", "ccv3"]);
+/** The CCv2 core fields a card is scored on, and each field's weight. */
+const CARD_FIELD_WEIGHTS = Object.freeze({
+  name: 2,
+  description: 3,
+  personality: 2,
+  scenario: 2,
+  first_mes: 3,
+  mes_example: 2,
+});
+const CARD_SPEC_WEIGHT = 3;
+const CARD_PROSE_WEIGHT = 3;
+/**
+ * The score a JSON object or array must reach to be a card. The reviewed card
+ * scores 20 and the import-box placeholder scores 5 (see the docstring); 8 is
+ * the midpoint that admits a card missing any one field.
+ */
+export const CARD_SCORE_THRESHOLD = 8;
 const PNG_SIGNATURE = Object.freeze([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_CARD_KEYWORDS = new Set(["chara", "ccv3", "character"]);
 /**
@@ -108,6 +149,9 @@ const CARD_CONTENT_FIELDS = Object.freeze([
 const MIN_CARD_CONTENT_CHARS = 64;
 const MAX_SCANNED_BYTES = 8 * 1024 * 1024;
 const MAX_JSON_PARSE_BYTES = 1024 * 1024;
+/** A long run of base64 characters: long enough that prose never produces one. */
+const BASE64_CANDIDATE = /[A-Za-z0-9+/]{120,}={0,2}/gu;
+const MAX_BASE64_CANDIDATES = 64;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -161,12 +205,75 @@ function carriesCardPayload(text) {
   return hasSubstantiveContentField(text);
 }
 
-/** The CCv2 core card fields, present together as non-empty strings. */
-function isUntypedCard(value) {
+/** The weighted card score of one decoded object (see the docstring). */
+export function cardScore(value) {
+  if (!isRecord(value)) return 0;
+  let score = 0;
+  if (typeof value.spec === "string" && CARD_SPEC_VALUES.has(value.spec)) score += CARD_SPEC_WEIGHT;
   const data = isRecord(value.data) ? value.data : value;
-  return UNTYPED_CARD_FIELDS.every(
-    (field) => typeof data[field] === "string" && data[field].trim().length > 0,
-  );
+  if (isRecord(data)) {
+    for (const [field, weight] of Object.entries(CARD_FIELD_WEIGHTS))
+      if (typeof data[field] === "string" && data[field].trim().length > 0) score += weight;
+    if (
+      CARD_CONTENT_FIELDS.some(
+        (field) => typeof data[field] === "string" && data[field].length >= MIN_CARD_CONTENT_CHARS,
+      )
+    )
+      score += CARD_PROSE_WEIGHT;
+  }
+  return score;
+}
+
+/**
+ * The finding kind for a decoded JSON value, unwrapping a top-level array: a
+ * value that scores as a card is a typed card when it carries a spec member and
+ * an untyped one when it does not.
+ */
+function jsonCardKind(value) {
+  if (Array.isArray(value)) {
+    for (const element of value) {
+      const kind = jsonCardKind(element);
+      if (kind !== null) return kind;
+    }
+    return null;
+  }
+  if (!isRecord(value) || cardScore(value) < CARD_SCORE_THRESHOLD) return null;
+  return typeof value.spec === "string" && CARD_SPEC_VALUES.has(value.spec) ? "card_payload" : "untyped_card_payload";
+}
+
+/** Parse a JSON value that starts with `{` or `[`, or return null. */
+function parseJsonValue(text) {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decode every long base64 run in the bytes and report the first that carries a
+ * card: a decoded PNG with a card chunk, a decoded payload with a spec marker
+ * and prose, or a decoded object/array that scores past the threshold.
+ */
+function encodedCardKind(text) {
+  let seen = 0;
+  for (const match of text.matchAll(BASE64_CANDIDATE)) {
+    if (seen >= MAX_BASE64_CANDIDATES) return null;
+    seen += 1;
+    const decoded = Buffer.from(match[0], "base64");
+    if (decoded.length === 0) continue;
+    if (hasPngSignature(decoded) && hasEmbeddedCardChunk(decoded)) return "embedded_card_png";
+    const decodedText = decoded.toString("latin1");
+    if (carriesCardPayload(decodedText)) return "encoded_card_payload";
+    const value = parseJsonValue(decoded.toString("utf8"));
+    if (value !== null) {
+      const kind = jsonCardKind(value);
+      if (kind !== null) return "encoded_card_payload";
+    }
+  }
+  return null;
 }
 
 async function inspectFile(absolutePath, name, findings, prefix) {
@@ -188,12 +295,16 @@ async function inspectFile(absolutePath, name, findings, prefix) {
     findings.push(Object.freeze({ path, kind: "card_payload" }));
     return;
   }
-  if (state.size <= MAX_JSON_PARSE_BYTES && text.trimStart().startsWith("{")) {
-    try {
-      if (isUntypedCard(JSON.parse(bytes.toString("utf8"))))
-        findings.push(Object.freeze({ path, kind: "untyped_card_payload" }));
-    } catch {
-      // Not JSON: nothing more to say about it.
+  const encoded = encodedCardKind(text);
+  if (encoded !== null) {
+    findings.push(Object.freeze({ path, kind: encoded }));
+    return;
+  }
+  if (state.size <= MAX_JSON_PARSE_BYTES) {
+    const value = parseJsonValue(bytes.toString("utf8"));
+    if (value !== null) {
+      const kind = jsonCardKind(value);
+      if (kind !== null) findings.push(Object.freeze({ path, kind }));
     }
   }
 }

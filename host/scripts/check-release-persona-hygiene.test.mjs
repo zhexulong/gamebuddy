@@ -7,7 +7,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  CARD_SCORE_THRESHOLD,
   assertReleasePersonaHygiene,
+  cardScore,
   scanReleasePersonaHygiene,
 } from "./check-release-persona-hygiene.mjs";
 
@@ -52,6 +54,11 @@ import {
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const REPOSITORY_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)), "..");
 
+async function readFileUtf8(file) {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(file, "utf8");
+}
+
 function pngChunk(type, data) {
   const length = Buffer.alloc(4);
   length.writeUInt32BE(data.length);
@@ -90,7 +97,7 @@ test("the committed development seed is outside the artifact and stays legal", a
   // reviewed live-run card the product ships its own persona from.
   const seed = path.join(REPOSITORY_ROOT, "assets", "tavern", "presets", "default-companion", "card.json");
   assert.equal(existsSync(seed), true, "the reviewed dev seed must exist for this boundary to mean anything");
-  const seedBytes = await import("node:fs/promises").then(({ readFile }) => readFile(seed, "utf8"));
+  const seedBytes = await readFileUtf8(seed);
   assert.match(seedBytes, /"spec"\s*:\s*"chara_card_v2"/u, "the dev seed IS a card, by bytes");
   assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
 });
@@ -196,4 +203,97 @@ test("the failure names the nested asset path", async (t) => {
 
 test("a missing artifact root is refused", async () => {
   await assert.rejects(assertReleasePersonaHygiene({ artifactRoot: undefined }), /release_persona_hygiene_root_required/);
+});
+
+test("the weighted card score puts the reviewed card far above the placeholder", async () => {
+  // The threshold's own anchor: the reviewed card's score is stated as a fact,
+  // not as prose. 3 (spec) + 14 (all six core fields) + 3 (its 1658-char
+  // description) = 20; the import-box placeholder is 3 (spec) + 2 (a name that
+  // is one ellipsis) = 5.
+  const seed = path.join(REPOSITORY_ROOT, "assets", "tavern", "presets", "default-companion", "card.json");
+  const reviewed = JSON.parse(await readFileUtf8(seed));
+  assert.equal(cardScore(reviewed), 20, "the reviewed card scores 20");
+  assert.equal(cardScore({ spec: "chara_card_v3", data: { name: "…" } }), 5, "the placeholder scores 5");
+  assert.ok(cardScore(reviewed) > CARD_SCORE_THRESHOLD, "the reviewed card clears the threshold comfortably");
+  assert.ok(CARD_SCORE_THRESHOLD > cardScore({ spec: "chara_card_v3", data: { name: "…" } }), "the placeholder stays below it");
+});
+
+test("an untyped card that omits mes_example is still a card", async (t) => {
+  // The former rule demanded all six CCv2 core fields, so a real card without
+  // `mes_example` passed. Five fields score 12, well past the threshold.
+  const root = await generationRoot(t);
+  await writeFile(
+    path.join(root, "kohaku-no-example.json"),
+    JSON.stringify({ name: "Kohaku", description: "d", personality: "p", scenario: "s", first_mes: "hi" }),
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "kohaku-no-example.json", kind: "untyped_card_payload" },
+  ]);
+});
+
+test("a card wrapped in a top-level array fails", async (t) => {
+  const root = await generationRoot(t);
+  await writeFile(
+    path.join(root, "kohaku-export.json"),
+    JSON.stringify([
+      { name: "Kohaku", description: "d", personality: "p", scenario: "s", first_mes: "hi", mes_example: "e" },
+    ]),
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "kohaku-export.json", kind: "untyped_card_payload" },
+  ]);
+});
+
+test("a base64-encoded card in an admitted asset fails", async (t) => {
+  const root = await generationRoot(t);
+  const card = JSON.stringify({
+    spec: "chara_card_v2",
+    data: {
+      name: "Kohaku",
+      description:
+        "A rival farmhand from another valley who talks about the weather and never about herself, and who is not the companion this product reviewed.",
+      personality: "warm, guarded",
+    },
+  });
+  const encoded = Buffer.from(card, "utf8").toString("base64");
+  await writeFile(
+    path.join(root, "browser", "tavern", "v1", "assets", "preset-abcdef12.js"),
+    `export const bundled = "${encoded}";\n`,
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "browser/tavern/v1/assets/preset-abcdef12.js", kind: "encoded_card_payload" },
+  ]);
+});
+
+test("a base64-encoded card PNG fails", async (t) => {
+  const root = await generationRoot(t);
+  const png = Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk("tEXt", Buffer.concat([Buffer.from("comment\0", "utf8"), Buffer.alloc(400, 0x20)])),
+    pngChunk("tEXt", Buffer.from("chara\0eyJzcGVjIjoiY2hhcmFfY2FyZF92MiJ9", "utf8")),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+  const encoded = png.toString("base64");
+  await writeFile(
+    path.join(root, "browser", "tavern", "v1", "assets", "portrait-abcdef12.js"),
+    `export const portrait = "${encoded}";\n`,
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "browser/tavern/v1/assets/portrait-abcdef12.js", kind: "embedded_card_png" },
+  ]);
+});
+
+test("a base64 run that decodes to ordinary bytes is not a finding", async (t) => {
+  const root = await generationRoot(t);
+  const encoded = Buffer.from("the quick brown fox jumps over the lazy dog. ".repeat(20), "utf8").toString("base64");
+  await writeFile(
+    path.join(root, "browser", "tavern", "v1", "assets", "notes-abcdef12.js"),
+    `export const notes = "${encoded}";\n`,
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
 });
