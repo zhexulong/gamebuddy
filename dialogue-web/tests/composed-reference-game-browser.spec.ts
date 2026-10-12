@@ -3530,8 +3530,15 @@ test("a turn that never settles ends the poll with the composer usable and the f
   // immediately - and stays locked while the poll still has budget.
   await expect(composer).toBeDisabled();
   // Step the virtual clock one poll interval at a time, yielding to the real
-  // event loop between ticks so each mocked round trip can settle.
-  for (let tick = 0; tick < 200; tick += 1) {
+  // event loop between ticks so each mocked round trip can settle. A fixed yield
+  // races those round trips, and the race costs steps rather than answers: the
+  // poll arms its next interval only after the tick's own reads have landed, so
+  // a tick whose reads land after the next `runFor` has already advanced the
+  // clock arms its timer a whole interval in the future - one poll attempt then
+  // costs two loop steps. The step ceiling is therefore well above the attempt
+  // budget, and the loop stops at the poll's own unlock; the assertions below
+  // still pin that unlock, the notice, and the budget's length.
+  for (let step = 0; step < 600 && await composer.isDisabled(); step += 1) {
     await page.clock.runFor(1_000);
     await page.waitForTimeout(10);
   }
