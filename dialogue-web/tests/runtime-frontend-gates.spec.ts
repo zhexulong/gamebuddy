@@ -217,7 +217,7 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
       recommendedModels: [],
     }),
   );
-  await page.route("**/api/tavern/v1/companions", delayed(undefined, { apiVersion: 1, companions: [] }));
+  await page.route("**/api/tavern/v1/companions", delayed(undefined, { apiVersion: 1, companions: [{ handle: handleFor(0), name: "Mira", isCurrent: true }] }));
   await page.route(
     "**/api/tavern/v1/persona",
     delayed(undefined, { apiVersion: 1, present: false, revision: null, name: null, description: null }),
@@ -545,12 +545,24 @@ test("gate 3: every text tone clears WCAG AA on its effective background", async
         return (lighter! + 0.05) / (darker! + 0.05);
       };
       const root = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!;
+      // An element's own text nodes, not its subtree's: a button that carries an
+      // icon and a label keeps its label here, and the icon is not text.
+      const ownText = (element: Element): string =>
+        [...element.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent ?? "")
+          .join("")
+          .trim();
       const leaves = [...root.querySelectorAll<HTMLElement>("*")].filter((element) => {
-        if (element.children.length > 0) return false;
         if ((element.textContent ?? "").trim().length === 0) return false;
         if (element.getClientRects().length === 0) return false;
         const style = getComputedStyle(element);
         if (style.visibility === "hidden" || style.opacity === "0") return false;
+        // An element with children is still a text leaf when its own text nodes
+        // carry the words. Skipping every element with children is how a button
+        // that paints light text on a filled accent - with an icon beside the
+        // label - stayed under the floor while this gate was green.
+        if (element.children.length > 0 && ownText(element).length === 0) return false;
         return true;
       });
       return leaves.map((element) => {
@@ -560,7 +572,7 @@ test("gate 3: every text tone clears WCAG AA on its effective background", async
         const weight = Number.parseInt(style.fontWeight, 10) || 400;
         const large = size >= 24 || (size >= 18.66 && weight >= 700);
         return {
-          text: (element.textContent ?? "").trim().slice(0, 32),
+          text: (ownText(element).length > 0 ? ownText(element) : (element.textContent ?? "")).trim().slice(0, 32),
           color: style.color,
           size,
           large,

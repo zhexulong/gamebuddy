@@ -81,8 +81,10 @@
      literal. Two members have no semantic alias: the dark burgundy a monogram
      plate or a card gradient sits on, and the stronger glass edge a selected
      card carries (the same accent at the alpha the selection ring already
-     used). */
-  --palette-burgundy-dark: #3a2226;
+     used). The plate is deeper than it looks like it needs to be because the
+     accent is drawn *on* it as ink: at #3a2226 the 11 px `当前` badge and the
+     status tag's own label read 4.48:1, under the 4.5:1 floor. */
+  --palette-burgundy-dark: #2f1d22;
   --palette-burgundy-base: #c8787d;
   --palette-burgundy-border: rgba(200, 120, 125, 0.35);
   --palette-crimson-base: #d96565;
@@ -102,7 +104,14 @@
   --border-glass: rgba(200, 120, 125, 0.16);
 
   --accent: var(--palette-burgundy-base);
-  --accent-hover: #d07a7f;
+  /* The accent as a *filled control surface*. `--accent` is the accent as ink -
+     a word, an icon, a dot - drawn on the dark backgrounds; the same colour as
+     a fill under light text is 2.88:1, so every control that fills with the
+     accent and paints light ink on it reads this deeper member instead. One
+     declaration, so the four buttons and the app-bar mark cannot drift apart,
+     and a hover stays inside the same pair. */
+  --accent-solid: #9c4e55;
+  --accent-solid-hover: #8a4349;
   --selection: #533137;
   --focus-ring: var(--palette-gold-base);
 
@@ -361,7 +370,7 @@ body {
   width: 28px;
   height: 28px;
   border-radius: var(--radius-xs);
-  background-color: var(--accent);
+  background-color: var(--accent-solid);
   color: var(--palette-gray-100);
   font-size: 12px;
   font-weight: 700;
@@ -1081,12 +1090,12 @@ body {
 }
 
 .send-button {
-  background-color: var(--accent);
+  background-color: var(--accent-solid);
   color: var(--palette-gray-100);
 }
 
 .send-button:hover:not(:disabled) {
-  background-color: var(--accent-hover);
+  background-color: var(--accent-solid-hover);
 }
 
 .send-button:disabled {
@@ -1515,7 +1524,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background-color: var(--accent);
+  background-color: var(--accent-solid);
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
@@ -1526,7 +1535,7 @@ body {
 }
 
 .primary-button:hover:not(:disabled) {
-  background-color: var(--accent-hover);
+  background-color: var(--accent-solid-hover);
 }
 
 .primary-button:disabled {
@@ -1564,8 +1573,8 @@ body {
 }
 
 .small-button.primary {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--accent-solid);
+  border-color: var(--accent-solid);
   color: #fff;
 }
 
@@ -2271,14 +2280,14 @@ body {
 /* The single next action a ready state offers reads as the primary action; the
    same command offered twice keeps its second reading as a secondary. */
 .game-action.primary {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--accent-solid);
+  border-color: var(--accent-solid);
   color: var(--palette-gray-100);
 }
 
 .game-action.primary:hover:not(:disabled) {
-  background-color: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background-color: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 
 /* Sub-panels inside the Game panel (cabin handoff, installation setup). */
