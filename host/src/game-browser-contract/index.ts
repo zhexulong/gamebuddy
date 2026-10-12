@@ -241,8 +241,29 @@ const GamePrerequisitesReadCommandV1Schema = strictObject({
 
 /**
  * Reserved: no route on the reference shell produces it (see the reservation on
- * its id in `GAME_BROWSER_OPERATION_IDS_V1`); the composed state read's
- * `game.instance` projection is what the shell shows today.
+ * its id in `GAME_BROWSER_OPERATION_IDS_V1`).
+ *
+ * There is no honest body behind it. The lifecycle owns exactly ONE Player Host instance
+ * (`stardew-production-lifecycle-coordinator.internal.ts`: "This lifecycle owns one not-yet-launched
+ * Player Host instance", with `expectedPlayerHostInstanceGeneration` fixed at 1), and
+ * `game.state.read` already publishes that one slot whole: `game.instance`
+ * (status/gameTitle/generation), `game.attachment`, `game.connectionStatus`, `game.compatibility`
+ * and `game.latestOutcome` (`game-browser/game-browser-state-provider.ts`). A second route
+ * re-projecting one slot as a list is shape, not fact.
+ *
+ * The one multi-row durable list the coordinator does hold - the semantic game authority's
+ * `listResumableGameSessions()` - is a list of game SESSIONS (`ProductionGameSessionMetadata`:
+ * gameSessionId/integrationId/continuityIdentityId/status/revision), not launched instances, and
+ * those raw identity fields are exactly what this contract never exposes. It is also unreachable
+ * from here: the presentation admission is handed the redacted `GamePresentationProjection` only
+ * (`desktop-host-composition.ts`), never the semantic game authority.
+ *
+ * To serve it, one of these would have to exist first: (a) a decision that "instances" means the
+ * durable game-SESSION history - which needs a renamed/repurposed member, opaque handles minted per
+ * row, and a reader threaded from `SemanticGameProductionAuthority` through
+ * `GamePresentationProjection` (`integration-catalog.ts`) into the composed route; or (b) a real
+ * owned-instance registry, i.e. the lifecycle holding more than one Player Host at a time, which
+ * the one-instance invariant deliberately forbids.
  */
 const GameInstancesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -253,9 +274,23 @@ const GameStateReadCommandV1Schema = strictObject({
 });
 
 /**
- * Reserved: the reference shell publishes no route for this read, so no handler
- * produces it. It stays declared for a profile that does serve diagnostics; the
- * composed state route's own data disclosure is what the shell shows today.
+ * Reserved: the reference shell publishes no route for this read, so no handler produces it.
+ *
+ * `game.state.read` already publishes every redacted diagnostic it could carry: compatibility
+ * (`unchecked|compatible|incompatible|warning`), `connectionStatus`, `instance.status`/`generation`,
+ * `latestOutcome`; and the installation-discovery diagnostics ride their own admitted route
+ * (`GET .../installation/discovery`), which is the only place those strings are honestly scoped.
+ *
+ * Exactly one browser-safe diagnostic is unpublished today: the owned AI-client role slot's
+ * terminal stop outcome (`stardew-role-lifecycle-facade.ts`, `StardewAiClientSlot.lastStopOutcome`:
+ * `none | identity_unverified | termination_failed`). That is a fact about the COMPANION runtime
+ * rather than the game instance, and serving it would take, in addition to a result schema here: a
+ * `readDiagnostics` reader carried on `GamePresentationProjection` (a second file outside this
+ * contract), a mounted route in `composed-reference-game-browser.ts`, a client method in
+ * `dialogue-web/src/composed-reference-game-browser-api.ts`, and the disclosure's mount site in
+ * `dialogue-web/src/components/ComposedReferenceGameApp.tsx` - the last of which is not this lane's
+ * file. Without it the route would be served and rendered by nothing, while its body re-read 90% of
+ * what `game.state.read` already answers.
  */
 const GameDiagnosticsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -498,7 +533,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   /** Reserved: no route serves it; the composed state read publishes the prerequisites projection. */
   "game.prerequisites.read",
   "game.prerequisites.setup",
-  /** Reserved: no route serves it; the composed state read's `game.instance` projection is what the shell shows. */
+  /** Reserved: no honest body (one owned instance, already published by `game.state.read`; see the schema comment). */
   "game.instances.read",
   "game.state.read",
   "game.launch",
@@ -511,7 +546,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.disconnect",
   "game.create",
   "game.endgame",
-  /** Reserved: no route serves it; the composed state route's own data disclosure is what the shell shows. */
+  /** Reserved: no honest body (state.read already answers it; see the schema comment for the one unpublished fact). */
   "game.diagnostics.read",
   "game.installation.discovery.read",
   "game.installation.discovery.confirm",
