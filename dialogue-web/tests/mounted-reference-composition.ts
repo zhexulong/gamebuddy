@@ -9,6 +9,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { requirePublishedShell } from "./published-generation.ts";
+
+/** The browser shell this composition mounts out of the published generation. */
+const REFERENCE_SHELL_MODULE = "tavern/reference-pipeline-static-shell-composition.js";
 
 const dialogueRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repositoryRoot = resolve(dialogueRoot, "..");
@@ -52,6 +56,7 @@ export async function startMountedReferenceComposition(
 ) {
   if (process.platform !== "win32") throw new Error("reference_browser_mount_requires_windows");
   const { outputRoot, artifactOf } = resolveGenerationRoot();
+  requirePublishedShell(outputRoot, REFERENCE_SHELL_MODULE);
   const pointer = JSON.parse(await readFile(resolve(outputRoot, "current.json"), "utf8"));
   const artifactRoot = artifactOf(pointer.generation);
   const [chatFacade, deployment, contract, serviceModule, stateModule, eventStreamModule, composition, inspectorModule, reclaimerModule, pathLock, coordinator, runtimeIdentity] =
@@ -204,6 +209,7 @@ export async function startMountedReferenceComposition(
 }
 
 export async function startShippedReferenceComposition() {
+  requirePublishedShell(resolve(hostRoot, "dist"), REFERENCE_SHELL_MODULE);
   const pointer = JSON.parse(await readFile(resolve(hostRoot, "dist", "current.json"), "utf8"));
   if (!pointer || typeof pointer.generation !== "string" || !/^g-[a-z0-9-]+$/.test(pointer.generation))
     throw new Error("reference_test_production_generation_unavailable");

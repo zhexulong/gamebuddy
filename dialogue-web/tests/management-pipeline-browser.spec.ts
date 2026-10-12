@@ -19,6 +19,10 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium, expect, test } from "@playwright/test";
+import { requirePublishedShell } from "./published-generation.ts";
+
+/** The browser shell the mounted management composition serves out of the generation. */
+const MANAGEMENT_SHELL_MODULE = "tavern/tavern-management-static-shell-composition.js";
 
 const dialogueRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repositoryRoot = resolve(dialogueRoot, "..");
@@ -82,6 +86,7 @@ async function startMountedManagementComposition(
   const outputRoot = process.env.GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT
     ? resolve(process.env.GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT)
     : resolve(hostRoot, "dist");
+  requirePublishedShell(outputRoot, MANAGEMENT_SHELL_MODULE);
   const pointer = JSON.parse(await readFile(resolve(outputRoot, "current.json"), "utf8"));
   const artifactRoot = resolve(outputRoot, "generations", pointer.generation);
   const [
