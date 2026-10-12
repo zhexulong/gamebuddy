@@ -70,10 +70,13 @@ public sealed class LauncherProvisioningWiringTests
 
         // The completion fact is the acknowledged bootstrap handshake - not the process
         // starting and not the identity existing - so the clear sits after StartHostAsync
-        // returns and before the session is served, and it happens exactly once.
+        // returns and before the session is served, and it happens exactly once. The serve is
+        // the entry entering WaitForSessionEndAsync, which is where the admitted child's exit
+        // is awaited: that await lives in its own method declared above this entry, so the
+        // ordering is between these three call sites and cannot be read off their definitions.
         var start = productionPath.IndexOf("StartHostAsync(selection, runtime, layout, cancellationToken, hostOptions)", StringComparison.Ordinal);
         var clear = productionPath.IndexOf("FirstRunStaging.Clear(layout)", StringComparison.Ordinal);
-        var serve = productionPath.IndexOf("host.WaitForExitAsync(cancellationToken)", StringComparison.Ordinal);
+        var serve = productionPath.IndexOf("WaitForSessionEndAsync(host, quit.Token, cancellationToken)", StringComparison.Ordinal);
         Assert.True(start >= 0 && clear > start, $"expected start < clear, got start={start} clear={clear}");
         Assert.True(serve > clear, $"expected clear < serve, got clear={clear} serve={serve}");
         Assert.Equal(1, CountOccurrences(productionPath, "FirstRunStaging.Clear(layout)"));
@@ -198,6 +201,8 @@ public sealed class LauncherProvisioningWiringTests
         // The no-claim value stays the only silent one.
         Assert.Null(Program.OutcomeCode(DesktopLaunchResult.Unavailable));
 
+        var productionPath = ProductionEntry();
+
         // The three results only the testing entrypoints produce are not failures: they
         // deliberately fall through to the unattributed code, so they are out of scope
         // for the production failure vocabulary this test pins.
@@ -208,18 +213,35 @@ public sealed class LauncherProvisioningWiringTests
             DesktopLaunchResult.GuardianStarted,
         };
 
+        // The failure vocabulary is the enum itself, minus its no-claim member and minus the
+        // testing-only results above. Deriving it here - rather than stating how many failures
+        // exist today - keeps this test about the invariant it names: every named failure
+        // carries its own bounded code, and no two of them share one.
+        var failures = Enum.GetValues<DesktopLaunchResult>()
+            .Where(result => result != DesktopLaunchResult.Unavailable && !nonFailure.Contains(result))
+            .ToArray();
+
         var claimed = new Dictionary<string, DesktopLaunchResult>(StringComparer.Ordinal);
-        foreach (var result in Enum.GetValues<DesktopLaunchResult>())
+        foreach (var result in failures)
         {
-            if (result == DesktopLaunchResult.Unavailable || nonFailure.Contains(result)) continue;
             var code = Program.OutcomeCode(result);
             Assert.False(string.IsNullOrEmpty(code), $"{result} has no outcome code");
             Assert.Matches("^[a-z][a-z0-9_]*$", code!);
             Assert.True(claimed.TryAdd(code!, result), $"outcome code '{code}' is shared by {claimed[code!]} and {result}");
         }
 
-        // Every failure member is named, and no two share a code.
-        Assert.Equal(11, claimed.Count);
+        // Naming itself means not falling through to the launcher's single unattributed code,
+        // which is precisely what the testing-only results produce: a failure that lost its own
+        // arm would report that generic code while still looking boundedly named. HostStarted is
+        // one of those results, so its code is that unattributed code.
+        var unattributed = Program.OutcomeCode(DesktopLaunchResult.HostStarted);
+        foreach (var result in failures)
+            Assert.NotEqual(unattributed, Program.OutcomeCode(result));
+
+        // Every one of them is a failure the production entry actually reaches: a member named
+        // nowhere on the entry's failure paths would be a code no launch could ever emit.
+        foreach (var result in failures)
+            Assert.Contains($"DesktopLaunchResult.{result}", productionPath, StringComparison.Ordinal);
 
         // The codes this lane added, named for the event rather than borrowed.
         Assert.Equal("mutable_roots_unavailable", Program.OutcomeCode(DesktopLaunchResult.MutableRootsUnavailable));
