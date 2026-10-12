@@ -3258,6 +3258,102 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
 });
 
 /**
+ * The fallback poll's own budget, and the last thing it must do.
+ *
+ * `startPolling` is the only reader of a turn's terminal state when no event
+ * stream is open. When it spends `MAX_POLL_ATTEMPTS` without an authoritative
+ * settlement it used to just return, leaving `session.pending` set - and with it
+ * `submitAvailable` false, so the input stayed disabled forever with no message.
+ * The client's budget also expired before the Host's own 120 s admission
+ * ceiling, so it abandoned a turn the Host still believed was running.
+ *
+ * The fixture holds the turn running and keeps answering the submission status
+ * as non-terminal, so only the budget can end the poll. The clock is
+ * virtualized, because the subject is the budget's shape, not 130 real seconds.
+ */
+test("a turn that never settles ends the poll with the composer usable and the failure reported", async ({ page }) => {
+  test.setTimeout(120_000);
+  const operations = [
+    { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+  ];
+  const neverSettlingRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations,
+      chat: {
+        ...chat.chat,
+        transcript: [
+          { handle: regenerationPlayerHandle, role: "player", text: "Where are we?", locale: "und", order: 0, revision: 1 },
+          { handle: regenerationCompanionHandle, role: "companion", text: regenerationOldVariant, locale: "und", order: 1, revision: 1 },
+        ],
+        turn: { handle: regenerationTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
+      },
+    },
+  };
+  let statusReads = 0;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot) }),
+  );
+  await page.route("**/api/tavern/v1/messages/regenerate", (route) =>
+    route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: neverSettlingRoot.chat.chat.transcript[1],
+        turn: neverSettlingRoot.chat.chat.turn,
+      }),
+    }),
+  );
+  // "Never answers" in the only sense that matters here: the status route never
+  // reports a terminal disposition, so only the budget can end the poll.
+  await page.route("**/api/tavern/v1/message-submission-status", (route) => {
+    statusReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, disposition: "pending" }),
+    });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.clock.install();
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+  const composer = chatSurface.locator(".composer-textarea");
+  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
+  await expect(composer).toBeEnabled();
+
+  await bubble.getByRole("button", { name: "Regenerate" }).click();
+  // The pending record is published before the wire call, so the input locks
+  // immediately - and stays locked while the poll still has budget.
+  await expect(composer).toBeDisabled();
+  // Step the virtual clock one poll interval at a time, yielding to the real
+  // event loop between ticks so each mocked round trip can settle.
+  for (let tick = 0; tick < 200; tick += 1) {
+    await page.clock.runFor(1_000);
+    await page.waitForTimeout(10);
+  }
+  // Past the budget: the pending record is cleared, the failure is reported, and
+  // the player can try again. The budget itself must outlast the Host's 120 s
+  // ceiling, or the client would abandon a turn the Host still believes runs.
+  await expect(composer).toBeEnabled();
+  await expect(chatSurface).toContainText("The reply failed. You can try again.");
+  expect(statusReads, "the poll budget outlasts the Host's 120 s ceiling").toBeGreaterThanOrEqual(121);
+});
+/**
  * The first draft (owner's item C).
  *
  * The failure this catches: Save/Discard used to render only when the Host

@@ -52,10 +52,18 @@ import {
 
 
 
+/**
+ * The Host admits one provider invocation under a fixed 120 s ceiling
+ * (`PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS` in the production coordinator).
+ * The fallback poll must outlast that ceiling: a client budget that expires
+ * first abandons a turn the Host still believes is running and leaves the
+ * content-free pending record set, which locks the composer forever.
+ */
+const HOST_TURN_ADMISSION_CEILING_MS = 120_000;
 const POLL_FIRST_MS = 250;
 const POLL_INTERVAL_MS = 1_000;
 const POLL_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000] as const;
-const MAX_POLL_ATTEMPTS = 60;
+const MAX_POLL_ATTEMPTS = Math.ceil(HOST_TURN_ADMISSION_CEILING_MS / POLL_INTERVAL_MS) + 10;
 const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
 
 /**
@@ -153,6 +161,10 @@ export function ComposedReferenceGameApp() {
   // seeding effect below); what stays here is the closed outcome line its
   // Save/Discard report through.
   const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
+  // Set when the fallback poll spends its whole budget without an authoritative
+  // settlement: the pending record is then cleared and this line says the turn
+  // failed rather than silently leaving the composer disabled.
+  const [pollFailure, setPollFailure] = useState(false);
   // The durable revision the editor was last seeded from: what lets a later
   // authoritative revision replace the editor without ever discarding text the
   // player has typed past the last seed.
@@ -501,6 +513,11 @@ export function ComposedReferenceGameApp() {
       attempts += 1;
       if (attempts > MAX_POLL_ATTEMPTS) {
         pollActiveRef.current = false;
+        // No authoritative settlement arrived inside the budget. Drop the
+        // content-free pending record so the composer - and Stop, for a turn the
+        // snapshot still marks cancellable - work again, and report the failure.
+        commit({ ...current, session: current.session.withPending(null) });
+        setPollFailure(true);
         return;
       }
       const pending = current.session.pending;
@@ -524,8 +541,16 @@ export function ComposedReferenceGameApp() {
           session = session.withPending(applyStatus(session.pending, status).pending);
         }
         const next = { kind: "ready" as const, root, session, draft, locale: current.locale };
+        if (terminalTurn(root.chat.chat?.turn ?? null)) {
+          // The authoritative turn is settled; a pending record for it is spent
+          // whatever an out-of-date submission status still says, and keeping it
+          // is what would leave the composer disabled forever.
+          commit(session.pending === null ? next : { ...next, session: session.withPending(null) });
+          pollActiveRef.current = false;
+          return;
+        }
         commit(next);
-        if (terminalTurn(root.chat.chat?.turn ?? null) || session.pending === null) {
+        if (session.pending === null) {
           pollActiveRef.current = false;
           return;
         }
@@ -592,6 +617,7 @@ export function ComposedReferenceGameApp() {
     const idempotencyKey = newIdempotencyKey();
     const pending = beginTurnMutation(idempotencyKey, current);
     if (pending === null) return;
+    setPollFailure(false);
     setInputText("");
     inputTextRef.current = "";
     // Sending clears the field, and the empty field is the new seed: the
@@ -1714,7 +1740,11 @@ export function ComposedReferenceGameApp() {
                   onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                   onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
                 />
-                {terminalTurnNotice !== null && <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>}
+                {(pollFailure || terminalTurnNotice !== null) && (
+                  <p className="reference-turn-notice" role="status">
+                    {pollFailure ? labels().chatFailed : terminalTurnNotice}
+                  </p>
+                )}
                 {/* The conversation is the reading flow and the writing flow, and
                     nothing else: the transcript scrolls above a composer band.
                     This surface's model settings are a popout opened from the
