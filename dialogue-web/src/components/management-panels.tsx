@@ -1022,7 +1022,7 @@ export function MemoryPanel({
                   {correctingHandle === chapter.handle ? (
                     <div className="memory-chapter-correct">
                       <textarea
-                        className="memory-chapter-draft"
+                        className="form-textarea"
                         aria-label={labels.memoryChapterEdit}
                         value={chapterDraft}
                         onChange={(event) => setChapterDraft(event.target.value)}

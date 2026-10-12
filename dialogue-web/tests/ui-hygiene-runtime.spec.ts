@@ -188,3 +188,117 @@ test("gate 3 (touch floor): mounted buttons and inputs clear the 44 px target", 
   test.info().annotations.push({ type: "touch-floor", description: summary });
   console.log(`gate 3 touch floor: ${summary}`);
 });
+
+/**
+ * Theme tokens that name a *surface*: a control may paint itself with one of
+ * these, or leave its own background transparent so the themed surface behind it
+ * shows through. Anything else that is opaque is the browser's own control face.
+ */
+const THEME_SURFACE_TOKENS = [
+  "--surface-canvas",
+  "--surface-panel",
+  "--surface-card",
+  "--surface-elevated",
+  "--surface-raised",
+  "--surface-hover",
+  "--selection",
+  "--accent",
+  "--accent-solid",
+  "--accent-solid-hover",
+  "--success",
+  "--warning",
+  "--danger",
+];
+
+/**
+ * Every laid-out interactive control under a surface, with its computed
+ * background. A control is clean when its background is see-through (alpha < 1,
+ * so the themed surface underneath is what the player sees) or exactly one of
+ * the theme's own surface tokens. The defect this catches: the Chats row select
+ * control carried a class that set no background at all, so the browser painted
+ * its default near-white `ButtonFace` inside a dark card.
+ */
+async function controlSurfaceViolations(
+  page: Page,
+  testId: string,
+): Promise<{ checked: number; foreign: string[] }> {
+  const measured = await page
+    .locator(`[data-testid="${testId}"] button, [data-testid="${testId}"] input, [data-testid="${testId}"] select, [data-testid="${testId}"] textarea`)
+    .evaluateAll(
+      (nodes, tokens) => {
+        const probe = document.createElement("span");
+        probe.style.display = "none";
+        document.body.append(probe);
+        const themed = new Set();
+        for (const token of tokens) {
+          if (getComputedStyle(document.documentElement).getPropertyValue(token).trim() === "") continue;
+          probe.style.color = "";
+          probe.style.color = `var(${token})`;
+          themed.add(getComputedStyle(probe).color);
+        }
+        probe.remove();
+
+        const rgba = (value) => {
+          const match = /^rgba?\(([^)]+)\)$/u.exec(value);
+          if (match === null) return null;
+          const parts = match[1].split(",").map((part) => Number(part.trim()));
+          return { alpha: parts.length === 3 ? 1 : parts[3] };
+        };
+        return nodes
+          .filter((node) => node.getClientRects().length > 0)
+          .map((node) => {
+            const background = getComputedStyle(node).backgroundColor;
+            const parsed = rgba(background);
+            return {
+              tag: node.tagName.toLowerCase(),
+              className: node.getAttribute("class") ?? "",
+              label: node.getAttribute("aria-label") ?? (node.textContent ?? "").trim().slice(0, 30),
+              background,
+              // See-through: the themed surface behind the control is what shows.
+              seeThrough: parsed === null || parsed.alpha < 1,
+              themed: themed.has(background),
+            };
+          });
+      },
+      THEME_SURFACE_TOKENS,
+    );
+  const foreign = measured
+    .filter((control) => !control.seeThrough && !control.themed)
+    .map(
+      (control) =>
+        `${control.tag} "${control.label}" [${control.className}] background=${control.background} is not a theme surface token`,
+    );
+  return { checked: measured.length, foreign };
+}
+
+test("gate 3 (control surface): no control paints itself with the browser's own face", async ({ page }) => {
+  await page.route("**/api/tavern/v1/chats*", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [{ handle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/memory", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: handle, memories: [], chapters: [] })),
+  );
+  await mountBothPanels(page);
+
+  const summary: string[] = [];
+  for (const [label, testId] of [
+    ["Chats", "chats-surface"],
+    ["Characters", "characters-surface"],
+    ["Settings", "settings-surface"],
+    ["Memory", "memory-surface"],
+  ] as const) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await expect(page.getByTestId(testId)).toBeVisible();
+    const { checked, foreign } = await controlSurfaceViolations(page, testId);
+    expect(foreign, `controls on ${testId} painted by a background that is not a theme surface token`).toEqual([]);
+    summary.push(`${testId} ${checked} control(s)`);
+  }
+
+  test.info().annotations.push({ type: "control-surface", description: summary.join("; ") });
+  console.log(`gate 3 control surface: ${summary.join("; ")}; all controls see-through or theme-token painted`);
+});

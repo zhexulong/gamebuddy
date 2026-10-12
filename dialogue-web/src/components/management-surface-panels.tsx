@@ -404,7 +404,7 @@ export function ChatsSurfacePanel({
                   <div className="chat-item-main">
                     <button
                       type="button"
-                      className="chat-item-title chat-item-select"
+                      className="chat-item-title chat-select-btn"
                       data-testid="chat-select"
                       aria-current={isSelected ? "true" : undefined}
                       disabled={selectAvailable === false || selecting !== null}

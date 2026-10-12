@@ -296,3 +296,139 @@ test("gate 1.5: a panel's loading text is not another panel's copy", (t) => {
   assert.notDeepEqual(loading, opening, "the generic loading string must not be the chat-opening string");
   t.diagnostic(`gate 1.5: management-panels.tsx, ${failures.length} openingChat reuse(s); loading=${JSON.stringify(loading)} vs openingChat=${JSON.stringify(opening)}`);
 });
+
+/**
+ * Declarations style.css writes, keyed by every class token that appears in a
+ * selector. A class only has to be *somewhere* in a selector (including a
+ * descendant or state selector) for its declarations to count.
+ */
+function classDeclarations() {
+  const css = readFileSync(STYLESHEET, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
+  const byClass = new Map();
+  const stack = [];
+  let buffer = "";
+  for (const character of css) {
+    if (character === "{") {
+      stack.push(buffer.trim());
+      buffer = "";
+    } else if (character === "}") {
+      const selector = stack.pop() ?? "";
+      // At-rule blocks (`@media …`) hold their own inner rules, which were
+      // already recorded when their own closing brace was seen.
+      if (!selector.startsWith("@")) {
+        for (const token of selector.matchAll(/\.(-?[A-Za-z_][A-Za-z0-9_-]*)/gu)) {
+          const declarations = byClass.get(token[1]) ?? [];
+          declarations.push(buffer);
+          byClass.set(token[1], declarations);
+        }
+      }
+      buffer = "";
+    } else {
+      buffer += character;
+    }
+  }
+  return byClass;
+}
+
+const BARE_BACKGROUND_VALUES = new Set([
+  "transparent",
+  "none",
+  "inherit",
+  "unset",
+  "currentcolor",
+  "initial",
+  "revert",
+]);
+
+/** True when some declaration in the block paints a themed surface. */
+function blockPaintsThemedSurface(block) {
+  return block.split(";").some((declaration) => {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) return false;
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    if (property !== "background" && property !== "background-color") return false;
+    const value = declaration
+      .slice(separator + 1)
+      .replace(/!important/giu, "")
+      .trim()
+      .toLowerCase();
+    // A theme token, a deliberate see-through control, or a themed gradient.
+    return value.includes("var(--") || BARE_BACKGROUND_VALUES.has(value);
+  });
+}
+
+/** Controls the browser paints with its own surface when nothing styles them. */
+const INTERACTIVE_CONTROL_TAGS = new Set(["button", "select", "textarea"]);
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "submit",
+  "reset",
+  "checkbox",
+  "radio",
+  "range",
+  "color",
+  "file",
+  "image",
+  "date",
+  "datetime-local",
+  "month",
+  "week",
+  "time",
+]);
+
+function interactiveControlKind(node) {
+  const name = jsxTagName(node);
+  if (name === null || !ts.isIdentifier(name)) return null;
+  if (INTERACTIVE_CONTROL_TAGS.has(name.text)) return `<${name.text}>`;
+  if (name.text !== "input") return null;
+  const type = attributes(node).get("type");
+  if (type === undefined || !NON_TEXT_INPUT_TYPES.has(type)) return null;
+  return `<input type="${type}">`;
+}
+
+test("gate 1.6: an interactive control paints a themed surface, never the browser default", (t) => {
+  // The Chats row select control carried `chat-item-title chat-item-select`:
+  // `chat-item-title` only sets type, `chat-item-select` had no rule at all, so
+  // the browser painted its own near-white button face inside a dark card. A
+  // class that merely EXISTS is not styling; the control's own classes must
+  // declare a background that is a theme token or a deliberate transparent one.
+  const byClass = classDeclarations();
+  const failures = [];
+  let controls = 0;
+  let unjudged = 0;
+  const files = componentFiles();
+  for (const file of files) {
+    const sourceFile = parse(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return;
+      const kind = interactiveControlKind(node);
+      if (kind === null) return;
+      controls += 1;
+      if (classNameOf(node) === null && attributes(node).has("className")) {
+        // A dynamic `className={…}` cannot be resolved statically. The runtime
+        // assertion in `ui-hygiene-runtime.spec.ts` measures those controls'
+        // computed background on the real mounted surfaces instead.
+        unjudged += 1;
+        return;
+      }
+      const className = classNameOf(node);
+      const tokens = className === null ? [] : className.split(/\s+/u).filter(Boolean);
+      const declared = tokens.flatMap((token) => byClass.get(token) ?? []);
+      const unstyled = tokens.filter((token) => !byClass.has(token));
+      if (!declared.some(blockPaintsThemedSurface)) {
+        failures.push(
+          `${at(node, sourceFile)} ${kind} painted by the browser default (className=${JSON.stringify(className)})` +
+            (unstyled.length === 0 ? "" : `; no rule at all for: ${unstyled.join(", ")}`),
+        );
+      }
+    });
+  }
+  t.diagnostic(
+    `gate 1.6: ${files.length} files, ${controls} interactive control(s), ${unjudged} dynamic className(s) left to the runtime gate, ${failures.length} violation(s)`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "an interactive control must declare a theme-token or transparent background; the browser default reads as a foreign control",
+  );
+});
