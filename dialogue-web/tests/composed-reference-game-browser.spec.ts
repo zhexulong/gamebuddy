@@ -4133,3 +4133,97 @@ test("chips leave once a player message follows the companion's opening", async 
   await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
   expect(greetingReads, "a conversation the player has spoken in asks for no opening material").toBe(0);
 });
+
+
+/**
+ * The one terminal operation (`game.endgame`). It is deliberately not a routine
+ * session control: the player must confirm it, and only the confirm sends the
+ * command. This journey drives it the way a player would, over the real shell
+ * against the composed routes, and asserts both directions of the honesty:
+ * the confirm step happens before the POST, and the control is absent - not a
+ * disabled lookalike - when no live session can be ended.
+ */
+test("Game endgame requires an explicit confirm before the POST and reaches the terminal route once", async ({ page }) => {
+  const attachedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "connected_idle",
+    },
+  };
+  const endedGame = {
+    ...attachedGame,
+    game: {
+      ...attachedGame.game,
+      attachment: { status: "none", generation: 0 },
+      connectionStatus: "stopped",
+      actionAuthority: "unavailable",
+      latestOutcome: "succeeded",
+    },
+  };
+  let endgameRequests = 0;
+  let stateRequests = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk({ ...root, game: attachedGame })),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/endgame", async (route) => {
+    endgameRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      expectedAttachmentGeneration: 1,
+      confirm: true,
+    });
+    // A slow confirmation proves in-flight single-flight: the button stays
+    // disabled and a double activation is still one command.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await route.fulfill(jsonOk({ apiVersion: 1, status: "gameended" }));
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateRequests += 1;
+    return route.fulfill(jsonOk({ ...root, game: endedGame }));
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk(draft)),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const endgame = panel.getByTestId("game-endgame");
+  await expect(endgame).toBeVisible();
+
+  // Step one only arms the confirm: no command has been sent yet.
+  await endgame.getByTestId("game-endgame-open").click();
+  const confirm = panel.getByTestId("game-endgame-confirm");
+  await expect(confirm).toBeVisible();
+  expect(endgameRequests, "arming the confirm must not send the terminal command").toBe(0);
+
+  // The confirm is the one and only sender, and it is single-flight.
+  await confirm.getByTestId("game-endgame-confirm-yes").dblclick();
+  await expect.poll(() => endgameRequests).toBe(1);
+  await expect.poll(() => stateRequests).toBe(1);
+  await expect(endgame).toHaveCount(0);
+  await expect(panel).toContainText("ConnectionStopped");
+  await expect(panel).not.toContainText("The game could not be ended");
+});
+
+test("Game endgame control is absent when no live session can be ended", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk(root)),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  // The default root has no attachment, so there is nothing to end: absent
+  // rather than a disabled lookalike (design/26 §1).
+  await expect(panel.getByTestId("game-endgame")).toHaveCount(0);
+});

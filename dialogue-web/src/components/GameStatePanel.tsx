@@ -103,6 +103,12 @@ export type GameStatePanelProps = Readonly<{
   session: Readonly<{
     stop: Readonly<{ available: boolean; active: boolean; failed: boolean }>;
     disconnect: Readonly<{ available: boolean; active: boolean; failed: boolean }>;
+    /**
+     * The deliberate terminal operation (`game.endgame`). `confirmArmed` is the
+     * UI-level confirm step: the first click arms, only the confirm button sends.
+     * `available` false means the control is absent, never a disabled lookalike.
+     */
+    endgame: Readonly<{ available: boolean; active: boolean; failed: boolean; confirmArmed: boolean }>;
   }>;
   resume: Readonly<{
     available: boolean;
@@ -128,6 +134,9 @@ export type GameStatePanelProps = Readonly<{
     launch(): void;
     stop(): void;
     disconnect(): void;
+    endgame(): void;
+    armEndgame(): void;
+    cancelEndgame(): void;
     resume(): void;
     resumeCancel(): void;
     reopen(): void;
@@ -430,6 +439,63 @@ export function GameStatePanel({
               <p className="game-status" data-tone="danger" role="status">
                 {labels.gameDisconnectFailed}
               </p>
+            )}
+            {/* The one terminal operation, deliberately set apart from the
+                session's routine stop/disconnect row: it reads as its own block
+                with a confirm step (design/28 §5.2; design 102). Unavailable
+                means absent, never a disabled lookalike. */}
+            {session.endgame.available && (
+              <div className="game-endgame" data-testid="game-endgame">
+                {!session.endgame.confirmArmed ? (
+                  <button
+                    type="button"
+                    className="game-action danger"
+                    data-testid="game-endgame-open"
+                    onClick={handlers.armEndgame}
+                  >
+                    <Power size={16} aria-hidden="true" />
+                    {labels.gameEndgame}
+                  </button>
+                ) : (
+                  <div className="game-endgame-confirm" data-testid="game-endgame-confirm">
+                    <p className="game-status" data-tone="danger" role="status">
+                      {labels.gameEndgameConfirm}
+                    </p>
+                    <div className="game-actions">
+                      <button
+                        type="button"
+                        className="game-action danger"
+                        data-testid="game-endgame-confirm-yes"
+                        disabled={session.endgame.active}
+                        onClick={handlers.endgame}
+                      >
+                        <Power size={16} aria-hidden="true" />
+                        {labels.gameEndgameConfirmYes}
+                      </button>
+                      <button
+                        type="button"
+                        className="game-action"
+                        data-testid="game-endgame-confirm-no"
+                        disabled={session.endgame.active}
+                        onClick={handlers.cancelEndgame}
+                      >
+                        <X size={16} aria-hidden="true" />
+                        {labels.gameEndgameConfirmNo}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {session.endgame.active && (
+                  <p className="game-status" data-tone="progress" role="status">
+                    {labels.gameEndgameInProgress}
+                  </p>
+                )}
+                {session.endgame.failed && (
+                  <p className="game-status" data-tone="danger" role="status">
+                    {labels.gameEndgameFailed}
+                  </p>
+                )}
+              </div>
             )}
           </PanelGroup>
 

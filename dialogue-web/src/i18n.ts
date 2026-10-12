@@ -476,6 +476,17 @@ const en = {
     "This is not valid JSON. Check brackets, commas and quotes and try again. Nothing was written.",
   advancedPiSettingsInvalidShape:
     "This is not Pi's models.json: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
+
+  // --- endgame lane: the one deliberate complete-game-termination control ----
+  // The terminal operation is set apart from Stop/Disconnect: it reads as its
+  // own block, and its wording must not promise reversibility it does not have.
+  gameEndgame: "End the game",
+  gameEndgameConfirm:
+    "This ends and permanently closes the player's game world. This cannot be undone. Continue?",
+  gameEndgameConfirmYes: "End the game",
+  gameEndgameConfirmNo: "Keep playing",
+  gameEndgameInProgress: "Ending the game...",
+  gameEndgameFailed: "The game could not be ended. The latest authoritative game state is shown.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -930,6 +941,14 @@ const zh: Messages = {
   advancedPiSettingsNoRoute: "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
   advancedPiSettingsInvalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
   advancedPiSettingsInvalidShape: "这不是 Pi 的 models.json：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
+
+  // --- 终局操作 lane：唯一会彻底结束游戏世界的刻意控件 ---
+  gameEndgame: "结束游戏",
+  gameEndgameConfirm: "这会终止并永久关闭玩家的游戏世界，且无法撤销。确定继续吗？",
+  gameEndgameConfirmYes: "结束游戏",
+  gameEndgameConfirmNo: "继续游玩",
+  gameEndgameInProgress: "正在结束游戏...",
+  gameEndgameFailed: "无法结束游戏；当前显示的是最新权威游戏状态。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

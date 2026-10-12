@@ -271,6 +271,18 @@ export type GameResumeCancelResultV1 = Readonly<{
   status: "cancelled";
 }>;
 
+export type GameEndgameRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  expectedAttachmentGeneration: number;
+  confirm: true;
+}>;
+
+export type GameEndgameResultV1 = Readonly<{
+  apiVersion: 1;
+  status: "gameended" | "unavailable";
+}>;
+
 type StardewCabinConfirmationV1 = Readonly<{
   apiVersion: 1;
   status: "manifest_admitted";
@@ -288,6 +300,7 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   reopenGame(request: GameReopenRequestV1): Promise<GameReopenResultV1>;
   createGameSession(request: GameCreateRequestV1): Promise<GameCreateResultV1>;
   cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1>;
+  endgameGame(request: GameEndgameRequestV1): Promise<GameEndgameResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
   readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
   confirmStardewInstallation(candidateId: string): Promise<StardewInstallationMutationV1>;
@@ -460,6 +473,16 @@ function validateGameResumeCancelResult(value: unknown): GameResumeCancelResultV
     throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_result");
   }
   return Object.freeze({ apiVersion: 1, status: "cancelled" });
+}
+
+function validateGameEndgameResult(value: unknown): GameEndgameResultV1 {
+  if (!isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "status"]) ||
+      value.apiVersion !== 1 ||
+      (value.status !== "gameended" && value.status !== "unavailable")) {
+    throw new ComposedReferenceGameProtocolError("invalid_game_endgame_result");
+  }
+  return Object.freeze({ apiVersion: 1, status: value.status });
 }
 
 function isGameProjection(value: unknown): value is GameBrowserStateV1 {
@@ -820,6 +843,26 @@ export function createComposedReferenceGameBrowserApi(
           body: JSON.stringify(request),
         },
         validateGameCreateResult,
+      );
+    },
+    async endgameGame(request: GameEndgameRequestV1): Promise<GameEndgameResultV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
+        request.confirm !== true ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration", "confirm"])
+      ) throw new ComposedReferenceGameProtocolError("invalid_game_endgame_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/endgame",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateGameEndgameResult,
       );
     },
     async readStardewCabins(): Promise<StardewCabinChoicesV1> {

@@ -4057,3 +4057,41 @@ body {
 }
 
 } /* end @layer theme.polish */
+
+
+/* ==========================================================================
+   The game session's one terminal operation (`game.endgame`)
+
+   Set apart from the routine stop/disconnect row on purpose: its own block,
+   a danger-toned affordance, and a two-step confirm (arm, then confirm) so the
+   deliberate operation never reads like the controls that merely settle the
+   session. Appended block; the rules above are untouched.
+   ========================================================================== */
+
+@layer theme.polish {
+  .game-endgame {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .game-endgame-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .game-action.danger {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+    background-color: color-mix(in srgb, var(--danger) 10%, transparent);
+  }
+
+  .game-action.danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--danger) 18%, transparent);
+    border-color: var(--danger);
+  }
+}

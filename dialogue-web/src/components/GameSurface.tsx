@@ -114,6 +114,17 @@ export function GameSurface({
   const [gameCreateUnavailable, setGameCreateUnavailable] = useState(false);
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [continuityIdentityInput, setContinuityIdentityInput] = useState("");
+  const gameEndgameActiveRef = useRef(false);
+  const gameEndgameKeysRef = useRef(new Map<number, string>());
+  const [gameEndgameActive, setGameEndgameActive] = useState(false);
+  const [gameEndgameFailed, setGameEndgameFailed] = useState(false);
+  /**
+   * The UI-level confirm step for the terminal endgame operation: the first
+   * click only arms this, and the POST happens on the confirm button alone
+   * (design/28 §5.2). It is disarmed whenever the session it was armed against
+   * stops being endgame-available, so a stale confirm never lingers.
+   */
+  const [endgameConfirmArmed, setEndgameConfirmArmed] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const readCabins = useCallback(async (): Promise<void> => {
@@ -826,6 +837,65 @@ export function GameSurface({
     setGameCreateActive(false);
   };
 
+  /**
+   * The one terminal operation. It is offered only from a live attached session
+   * and is generation-bound exactly like stop/disconnect. The UI confirm step is
+   * the caller's: this is the method behind the confirm button, so it never runs
+   * on the ordinary click. `unavailable` is a refusal, never a completion, and
+   * a stale generation reconciles silently against the authoritative reread.
+   */
+  const handleGameEndgame = async (): Promise<void> => {
+    const current = readView();
+    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    if (
+      gameEndgameActiveRef.current ||
+      current.kind !== "ready" ||
+      gameProjection === null ||
+      gameProjection.game.attachment.status !== "attached" ||
+      gameProjection.game.attachment.generation < 1
+    ) return;
+    const generation = gameProjection.game.attachment.generation;
+    const existingKey = gameEndgameKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameEndgameKeysRef.current.set(generation, idempotencyKey);
+    gameEndgameActiveRef.current = true;
+    setGameEndgameActive(true);
+    setGameEndgameFailed(false);
+    setEndgameConfirmArmed(false);
+    try {
+      const outcome = await composedApi.endgameGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+        confirm: true,
+      });
+      if (outcome.status === "unavailable") {
+        // The world was not terminated and nothing was torn down: this is a
+        // refusal the player sees, with the exact key preserved for a retry.
+        setGameEndgameFailed(true);
+        return;
+      }
+      await rereadGame();
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await rereadGame();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = readView();
+      const staleGenerationReconciled =
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_attachment_conflict" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.generation !== generation;
+      setGameEndgameFailed(!staleGenerationReconciled);
+    } finally {
+      gameEndgameActiveRef.current = false;
+      setGameEndgameActive(false);
+    }
+  };
+
   const {
     activationAvailable: gameActivationAvailable,
     setupAvailable: gameSetupAvailable,
@@ -843,6 +913,23 @@ export function GameSurface({
     game !== null &&
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0;
+  // The terminal operation shares the live-attached precondition of disconnect:
+  // a Player world is running and this browser holds its attachment. It does not
+  // follow the routine controls' grouping in the panel, but its availability is
+  // derived the same way so the offered control can never be one the coordinator
+  // refuses for a reason it could have anticipated.
+  const gameEndgameAvailable = disconnectAvailable;
+  // A confirm step armed against one live attachment must not survive into a
+  // different one: whenever the endgame target generation or its availability
+  // changes, the UI confirm resets to unarmed and the ordinary click is needed
+  // again. Only the confirm button ever sends the command.
+  const endgameGeneration =
+    game !== null && game.game.attachment.status === "attached"
+      ? game.game.attachment.generation
+      : 0;
+  useEffect(() => {
+    setEndgameConfirmArmed(false);
+  }, [endgameGeneration, gameEndgameAvailable]);
   const resumeFailureSurface = ready &&
     game !== null &&
     game.game.attachment.status === "attached" &&
@@ -917,6 +1004,12 @@ export function GameSurface({
             active: disconnectActive,
             failed: disconnectFailed,
           },
+          endgame: {
+            available: gameEndgameAvailable,
+            active: gameEndgameActive,
+            failed: gameEndgameFailed,
+            confirmArmed: endgameConfirmArmed,
+          },
         }}
         resume={{
           available: gameResumeAvailable,
@@ -947,6 +1040,9 @@ export function GameSurface({
           launch: () => void handleGameLaunch(),
           stop: () => void handleGameStop(),
           disconnect: () => void handleDisconnect(),
+          endgame: () => void handleGameEndgame(),
+          armEndgame: () => setEndgameConfirmArmed(true),
+          cancelEndgame: () => setEndgameConfirmArmed(false),
           resume: () => void handleGameResume(),
           resumeCancel: () => void handleGameResumeCancel(),
           reopen: () => void handleGameReopen(),
