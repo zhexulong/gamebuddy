@@ -83,7 +83,7 @@ test("ST card application import persists hash-verified inert candidate/report a
     );
     assert.ok(
       result.report.artifact.dispositions.some(
-        (entry) => entry.field === "extensions" && entry.classification === "dropped_unsupported",
+        (entry) => entry.field === "extensions" && entry.classification === "accepted_typed",
       ),
     );
     assert.ok(

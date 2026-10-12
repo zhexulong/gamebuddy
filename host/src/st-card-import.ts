@@ -25,6 +25,20 @@ export type StCardImportCandidate = Readonly<{
   profileCandidate: StCardImportPreview["profileCandidate"];
   /** Candidate-only scenario retained for review/import reporting; never profile input. */
   scenario?: string;
+  /**
+   * The card's standard `system_prompt` (v2/v3), carried as bounded, inert
+   * candidate text. The Host NEVER injects a card-supplied system prompt — the
+   * runtime composes its own prompt from the profile (`buildCompanionSystemPrompt`)
+   * — so this lands as REVIEW-VISIBLE candidate data, not as a prompt source.
+   */
+  systemPrompt?: string;
+  /**
+   * The card's open-by-design `extensions` object, carried verbatim (bounded and
+   * deep-frozen) so a consumer can read `extensions.gamebuddy.stardew` — the
+   * companion's Stardew sprite mapping and stamina thresholds. Never interpreted
+   * as instructions and never executed.
+   */
+  extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
 }>;
 export type StCardImportReport = Readonly<{
@@ -50,6 +64,10 @@ export type StCardImportPreview = Readonly<{
   }>;
   /** Candidate-only scenario is deliberately outside the profile candidate. */
   scenario?: string;
+  /** The card's standard `system_prompt`, review-visible candidate data only. */
+  systemPrompt?: string;
+  /** The card's open-by-design `extensions` object, carried inert and verbatim. */
+  extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
   unsupportedFields: readonly string[];
   /** Soft hints for a frontend notice (never a gate): unusually long persona
@@ -159,12 +177,14 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
     "mes_example",
     "alternate_greetings",
     "character_book",
+    "system_prompt",
+    "extensions",
   ].filter((field) => data[field] !== undefined);
   const dispositions: StCardImportDisposition[] = accepted.map((field) =>
     disposition(field, "accepted_typed", "bounded_inert_candidate"),
   );
   for (const field of Object.keys(data).sort()) {
-    if (isUnsupported(field))
+    if (isExecutableControlField(field))
       dispositions.push(disposition(field, "dropped_unsupported", "executable_or_prompt_control_field"));
     else if (!accepted.includes(field) && field !== "spec")
       dispositions.push(disposition(field, "preserved_opaque", "not_interpreted"));
@@ -175,6 +195,8 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
     candidate: Object.freeze({
       profileCandidate: preview.profileCandidate,
       ...(preview.scenario === undefined ? {} : { scenario: preview.scenario }),
+      ...(preview.systemPrompt === undefined ? {} : { systemPrompt: preview.systemPrompt }),
+      ...(preview.extensions === undefined ? {} : { extensions: preview.extensions }),
       worldBookCandidates: preview.worldBookCandidates,
     }),
     softHints: preview.softHints,
@@ -217,7 +239,14 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           expressionStyle: "Use natural player-facing language; do not use system or tool language.",
         });
   const worldBookCandidates = extractCharacterBook(data.character_book, format, name);
-  const unsupportedFields = Object.keys(data).filter(isUnsupported).sort();
+  // `system_prompt` is a standard v2/v3 card field and `extensions` is open by
+  // design; neither is executable, so neither is dropped. `system_prompt`
+  // survives as review-visible candidate text (the Host composes its own prompt
+  // from the profile and never injects a card-supplied one); `extensions` rides
+  // through verbatim so a consumer can read `gamebuddy.stardew`.
+  const systemPrompt = boundedMultilineText(data.system_prompt, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const extensions = readInertExtensions(data.extensions);
+  const unsupportedFields = Object.keys(data).filter(isExecutableControlField).sort();
   // Product policy: limits only prevent physical blowup, never the player's
   // choices. Description text loads losslessly. A soft hint (not a gate) is
   // surfaced for unusually long persona fields so a frontend can show a brief
@@ -250,6 +279,8 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
     }),
     softHints: Object.freeze(longPersonaFields),
     ...(scenario === undefined ? {} : { scenario }),
+    ...(systemPrompt === undefined ? {} : { systemPrompt }),
+    ...(extensions === undefined ? {} : { extensions }),
     worldBookCandidates: Object.freeze(worldBookCandidates),
     unsupportedFields: Object.freeze(unsupportedFields),
   });
@@ -470,10 +501,43 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
       }),
   );
 }
-function isUnsupported(key: string): boolean {
-  return /^(?:system_prompt|post_history(?:_instructions)?|regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|extensions?|prompt_?order|creator_notes|presets?|remote(?:_resources?)?)$/iu.test(
-    key,
-  );
+/**
+ * Fields whose values are executable or prompt-placement controls: the Host
+ * never interprets them and a companion surface must never execute them. These
+ * are the only fields the decoder drops.
+ *
+ * `system_prompt` and `extensions` are deliberately NOT here: `system_prompt` is
+ * a standard card field carried as review-visible candidate text, `extensions`
+ * is open by design and carried verbatim, and any other field that maps nowhere
+ * is classified `preserved_opaque` rather than silently dropped.
+ */
+function isExecutableControlField(key: string): boolean {
+  return /^(?:regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|prompt_?order)$/iu.test(key);
+}
+
+/**
+ * Carries a card's open-by-design `extensions` object as bounded inert data.
+ *
+ * The value is JSON round-tripped and deep-frozen, so it is a private copy that
+ * cannot be mutated back into the import, and its text is bounded by the same
+ * 8192-character ceiling a reviewed candidate field carries.
+ */
+const MAX_INERT_EXTENSIONS_CHARS = 8_192;
+function readInertExtensions(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  if (!isRecord(value) || Object.keys(value).length === 0) return undefined;
+  let text: string;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (text.length === 0 || text.length > MAX_INERT_EXTENSIONS_CHARS) return undefined;
+  return deepFreezeInert(JSON.parse(text)) as Readonly<Record<string, unknown>>;
+}
+function deepFreezeInert(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreezeInert(child);
+  return Object.freeze(value);
 }
 function idFromName(name: string, fallback: string): string {
   const id = name

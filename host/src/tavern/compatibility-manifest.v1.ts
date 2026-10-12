@@ -87,11 +87,16 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
         first_mes: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.textBytes),
         first_message: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.textBytes),
         mes_example: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.examplesBytes),
-        creator_notes: entry("dropped_unsupported", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
-        system_prompt: entry("dropped_unsupported", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
-        post_history_instructions: entry("dropped_unsupported", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
+        creator_notes: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
+        // A standard v2/v3 field. It is carried as bounded, review-visible
+        // candidate text and never injected: the runtime composes its own prompt
+        // from the profile (`buildCompanionSystemPrompt`).
+        system_prompt: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.textBytes),
+        post_history_instructions: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
         character_book: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.characterBookBytes),
-        extensions: entry("dropped_unsupported", "never_runtime", 0),
+        // Open by design. Carried verbatim as bounded inert data (never executed);
+        // this is where a reviewed card's `extensions.gamebuddy.stardew` rides.
+        extensions: entry("accepted_typed", "candidate_only", 8_192),
         regex_scripts: entry("dropped_unsupported", "never_runtime", 0),
       }),
     }),

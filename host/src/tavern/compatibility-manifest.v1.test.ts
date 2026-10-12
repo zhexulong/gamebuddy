@@ -12,6 +12,14 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(fields.first_message.maxBytes, ST_CARD_DECODER_LIMITS_V1.textBytes);
   assert.equal(fields.mes_example.maxBytes, ST_CARD_DECODER_LIMITS_V1.examplesBytes);
   assert.equal(fields.character_book.maxBytes, ST_CARD_DECODER_LIMITS_V1.characterBookBytes);
+  // A standard field and an open-by-design field are carried in the reviewed
+  // candidate; only executable / prompt-control fields are dropped.
+  assert.equal(fields.system_prompt.decision, "accepted_typed");
+  assert.equal(fields.system_prompt.eligibility, "candidate_only");
+  assert.equal(fields.extensions.decision, "accepted_typed");
+  assert.equal(fields.creator_notes.decision, "preserved_opaque");
+  assert.equal(fields.post_history_instructions.decision, "preserved_opaque");
+  assert.equal(fields.regex_scripts.decision, "dropped_unsupported");
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesJson, 2_097_152);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesPng, 33_554_432);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inflateMaxOutputBytes, 67_108_864);

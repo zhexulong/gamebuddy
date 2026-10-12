@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/st-card-import.test.ts",
+    "src/tavern/st-card-import-service.test.ts",
+    "src/tavern/compatibility-manifest.v1.test.ts"
+  ]
+}

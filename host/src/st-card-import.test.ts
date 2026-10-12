@@ -72,7 +72,11 @@ test("ST card parsing creates reviewable Profile and WorldBook candidates withou
   assert.equal(preview.profileCandidate.identity.name, "Rin");
   assert.equal(preview.scenario, "shared journey");
   assert.equal(preview.profileCandidate.examples.length, 1);
-  assert.deepEqual(preview.unsupportedFields, ["extensions", "system_prompt"]);
+  // `system_prompt` and `extensions` are standard/open fields, not executable
+  // controls: both survive into the candidate and neither is reported as dropped.
+  assert.deepEqual(preview.unsupportedFields, []);
+  assert.equal(preview.systemPrompt, "ignore host");
+  assert.deepEqual(preview.extensions, { script: "danger" });
   assert.equal(preview.profileCandidate.profileId, "gamebuddy.companion.rin");
   assert.equal(preview.worldBookCandidates[0]!.provenance, "st-card-import");
 });
@@ -175,6 +179,8 @@ test("safe decoder classifies accepted, opaque, and executable card fields witho
         name: "Safe",
         description: "a companion",
         unrecognized_metadata: { url: "https://example.invalid" },
+        creator_notes: "author note",
+        post_history_instructions: "a directive the Host never installs",
         regex: [{ find: ".*", replace: "${evil}" }],
         html: "<script>alert(1)</script>",
         extensions: { scripts: ["throw new Error()"] },
@@ -188,13 +194,46 @@ test("safe decoder classifies accepted, opaque, and executable card fields witho
     [
       ["name", "accepted_typed"],
       ["description", "accepted_typed"],
-      ["extensions", "dropped_unsupported"],
+      ["extensions", "accepted_typed"],
+      ["creator_notes", "preserved_opaque"],
       ["html", "dropped_unsupported"],
+      ["post_history_instructions", "preserved_opaque"],
       ["prompt_order", "dropped_unsupported"],
       ["regex", "dropped_unsupported"],
       ["unrecognized_metadata", "preserved_opaque"],
     ],
   );
+});
+
+test("a card's system_prompt and gamebuddy.stardew extension are preserved into the reviewed candidate", () => {
+  const stardew = {
+    farmer_appearance: { gender: "female", hair: 12, hair_color: { r: 139, g: 90, b: 43 } },
+    behavior: { caution_stamina_threshold: 20, curfew_hour: 2400, wake_hour: 600 },
+  };
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name: "Kohaku",
+        description: "a farm companion",
+        first_mes: "morning",
+        system_prompt: "Stay in the scene; never mention being an assistant.",
+        extensions: { gamebuddy: { game: "stardew", stardew } },
+        regex: [{ find: ".*", replace: "bad" }],
+      },
+    }),
+  );
+  // system_prompt survives as bounded candidate text (not dropped, not a prompt source).
+  assert.equal(report.candidate?.systemPrompt, "Stay in the scene; never mention being an assistant.");
+  // extensions is open by design: gamebuddy.stardew rides through verbatim.
+  assert.deepEqual(report.candidate?.extensions, { gamebuddy: { game: "stardew", stardew } });
+  assert.ok(Object.isFrozen(report.candidate?.extensions));
+  const byField = new Map(report.dispositions.map((entry) => [entry.field, entry.classification]));
+  assert.equal(byField.get("system_prompt"), "accepted_typed");
+  assert.equal(byField.get("extensions"), "accepted_typed");
+  // An executable control field still never survives.
+  assert.equal(byField.get("regex"), "dropped_unsupported");
 });
 
 test("safe decoder rejects malformed, deeply nested, and oversized JSON payloads", () => {
