@@ -64,7 +64,7 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const isPlayer = message.role === "player";
   const authorName = isPlayer ? playerLabel : companionName;
-  const initial = authorName.slice(0, 1).toUpperCase();
+  const initial = (Array.from(authorName)[0] ?? "").toUpperCase();
   const swipeInfo = message.swipeInfo;
   const openingVariant = message.openingVariant;
   const busy = pending !== null;
@@ -141,16 +141,10 @@ export const MessageBubble = memo(function MessageBubble({
             </div>
           )}
         </div>
-        {isPlayer ? (
-          // The player's own words are literal input, not model output: they stay
-          // text, so the companion's narration treatment is never applied to them.
-          <div className="message-bubble">
-            {message.text}
-            <span className="message-caret" aria-hidden="true" />
-          </div>
-        ) : (
-          <MarkdownMessage className="message-bubble" text={message.text} trailingHtml={CARET_MARKUP} />
-        )}
+        {/* Both sides author text, and a `*beat*` is the same format on both:
+            the same sanitised Markdown renderer reads a person's words exactly as
+            it reads the companion's, so the identical beat cannot render two ways. */}
+        <MarkdownMessage className="message-bubble" text={message.text} trailingHtml={CARET_MARKUP} />
         {!isPlayer && onRegenerate && (
           <div className="message-actions">
             <button

@@ -19,9 +19,9 @@ import { useMemo } from "react";
  * dropped everything the model authored, so a fabricated `class=` can never
  * become the narration treatment.
  *
- * Player messages deliberately stay plain text (see `MessageBubble`): the
- * player's own words are not the model's output, and reinterpreting them as
- * Markdown would apply the companion's narration styling to a person.
+ * Player and companion messages both take this path: a `*beat*` is the same
+ * format on both sides, and reading a person's words through the companion's
+ * renderer is what keeps the identical beat from rendering two ways.
  */
 
 /** The class a `*beat*` (any `<em>`) gets so narration can read as narration. */
@@ -42,9 +42,20 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.nodeName === "EM") node.setAttribute("class", ACTION_BEAT_CLASS);
 });
 
-/** Parses untrusted companion Markdown to inert, sanitised HTML. */
+/**
+ * Both sides author beats, and CJK input arrives in full-width forms. A
+ * full-width `＊…＊` (or one wrapped in full-width parentheses) is the same beat
+ * as the ASCII form, so the delimiters are normalised before the parse: without
+ * it the identical beat renders as a stage direction on one side and as bare
+ * text on the other.
+ */
+function normalizeBeatDelimiters(text: string): string {
+  return text.replace(/＊/gu, "*").replace(/（/gu, "(").replace(/）/gu, ")");
+}
+
+/** Parses untrusted message Markdown to inert, sanitised HTML. */
 export function renderCompanionMarkdown(text: string): string {
-  const html = markdown.parse(text, { async: false });
+  const html = markdown.parse(normalizeBeatDelimiters(text), { async: false });
   return DOMPurify.sanitize(html, SANITIZE_CONFIG);
 }
 
