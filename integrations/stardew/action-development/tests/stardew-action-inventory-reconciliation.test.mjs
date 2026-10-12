@@ -167,7 +167,8 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // UPDATED 2026-10-11: 2 + the 9 the tier-B sweep found. The method layer's own two were already here (the
   // selector layer's were the ones the nine-predicate test could not see); the sweep added the nine menu units
   // that need a primitive, which is why the two numbers above and this one moved together.
-  assert.equal(a.counts.methodNewPrimitiveUnits, 11);
+  // 12 since the owner ruled that NamingMenu's capability is approved (name_entity joins the candidates).
+  assert.equal(a.counts.methodNewPrimitiveUnits, 12);
 
   // 但这些 primitive 全部已经登记为 action（本轮 loop-closure 波次把它们实现了），
   // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
@@ -189,19 +190,29 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
     "color_placed_object",
     "donate_bundle_item",
     "dye_item",
+    "name_entity",
     "purchase_joja_upgrade",
     "redeem_prize_ticket",
     "tailor_item",
   ]);
-  assert.equal(a.counts.newPrimitivesRequired, 9);
+  // 10 since the NamingMenu ruling: the approved naming capability is a candidate primitive, and this field is
+  // exactly the list of candidates.
+  assert.equal(a.counts.newPrimitivesRequired, 10);
   // SIX units the sweep deliberately did NOT decide, and the count is the point: a shared number widget whose
   // effect belongs to its callers, a naming box whose product question is whether the companion may name the
   // player's entities, a member with two lives (live dyeing versus new-game world generation), and THREE festival
   // mini-games that move saved counters - which is where the owner's `mini-game` example and the `has a world
   // write` test disagree. Grouping costs nothing: a pending row's question is machine-readable (see the shape
   // below), so the six can be handed over together.
-  assert.equal(a.counts.pendingAdjudicationItems, 6);
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 15);
+  // 4 since the owner's rulings answered two of the six: NamingMenu's capability is approved (a candidate now) and
+  // CharacterCustomization is ruled to be a capability WITHOUT an action (an exclusion now). The remaining four
+  // are the three festival mini-games and the shared number widget - the latter because the thing to rule is its
+  // CALLER, not the widget.
+  assert.equal(a.counts.pendingAdjudicationItems, 4);
+  // 14 = the 10 candidates plus the 4 remaining questions: the same arithmetic as before the rulings, restated
+  // rather than loosened - a pending question is an upper bound on ONE more primitive, never a claim that the
+  // primitive is needed.
+  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 14);
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
   const minecart = a.groups.selectorLayer.already_registered.find((r) =>
@@ -467,7 +478,9 @@ test("CLI：--remaining 与旧名 --candidates 指向同一输入槽位", async 
     // redeem_prize_ticket, clear_fish_pond, color_placed_object, accept_daily_quest); three are already
     // covered by registered actions, five are pending a product decision, and fourteen are excluded as
     // read-only or not-an-affordance.
-    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 9);
+    // 10 with the NamingMenu ruling; this test is about the two argument spellings producing the SAME artifact, so
+    // it names the current count rather than a floor.
+    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 10);
   } finally {
     await rm(tmp, { force: true });
   }

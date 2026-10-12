@@ -529,14 +529,18 @@ export const METHOD_VERDICTS = Object.freeze({
       "the OK branch runs a caller-supplied behaviourFunction (NumberSelectionMenu.cs:192) whose effects differ per caller (e.g. Event.cs:13284 buyStarTokens turns money into festivalScore). It is a shared widget, so the honest unit is the CALLER's transaction, not the widget: name the callers you want as actions before this row can be decided.",
       "Menus/NumberSelectionMenu.cs:192",
     ),
-  "NamingMenu.receiveLeftClick@152": pending(
-      "textBoxEnter -> doneNaming (NamingMenu.cs:158, :92) writes the name of an entity the game just created (pet, horse, animal, baby - the callers are Event.cs:13092, Horse.cs:637, QuestionEvent.cs:123, BirthingEvent). A name is saved state, so this is not pure UI; whether the companion should ever NAME a player's entity is a product call, not an implementation one.",
+  "NamingMenu.receiveLeftClick@152": newPrimitive(
+      "name_entity",
+      "RULED 2026-10-11 (owner): the capability is approved. textBoxEnter -> doneNaming (NamingMenu.cs:158, :92) writes the name of an entity the game just created (pet, horse, animal, baby - callers Event.cs:13092, Horse.cs:637, QuestionEvent.cs:123, BirthingEvent), and the Basis already names this primitive (`name_entity`). A name is SAVED state, so it is not pure UI, and the owner's answer settles the product question this row was holding.",
       "Menus/NamingMenu.cs:158",
     ),
-  "CharacterCustomization.receiveLeftClick@2018": pending(
-      "two different lives in one member: from DyePots it writes the worn garment's colour (CharacterCustomization.cs:2138), while optionButtonClick (:2127, defined :1565) writes new-game world-generation fields such as Game1.whichFarm (:1592). The first is a live-world write and the second only exists before the world exists, so one verdict cannot cover both - say which you want.",
-      "Menus/CharacterCustomization.cs:2138",
-    ),
+  "CharacterCustomization.receiveLeftClick@2018": {
+      group: "explicit_exclusion",
+      boundary: "B7_capability_without_an_action",
+      reason:
+        "RULED 2026-10-11 (owner): the capability should EXIST but must NOT be carried by an action, because it is being considered together with the character-card work. The native facts that put it outside ordinary action shape stand: from DyePots it writes the worn garment's colour (CharacterCustomization.cs:2138) while optionButtonClick (:2127, defined :1565) writes new-game world-generation fields such as Game1.whichFarm (:1592) - one member living two lives, one of them existing only before a world does. This is a boundary the action surface deliberately does not cross; it is not a missing primitive and not a pending question.",
+      anchor: "Menus/CharacterCustomization.cs:2138",
+    },
   "Slots.receiveLeftClick@238": pending(
       "the spin buttons debit Game1.player.clubCoins (Slots.cs:250, :261-262) and the payout credits them (:225). It is a MiniGames.IMinigame rather than a menu, so the owner's 'mini-game' example and its 'has a world write' test disagree here, and a gambling table is a product question besides.",
       "Minigames/Slots.cs:250",
