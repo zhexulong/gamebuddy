@@ -4,6 +4,7 @@ import { isComposedGameProfile } from "../../game-browser-contract/index.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceAttachmentReader,
+  StardewGameSurfaceInstallationReader,
   StardewGameSurfaceLaunchReadinessReader,
   StardewProductionLifecycleCoordinator,
 } from "../../stardew-production-lifecycle-coordinator.internal.js";
@@ -13,7 +14,7 @@ import { createStardewGamePresentationProjection } from "./provider.js";
 const csrfToken = "A".repeat(43);
 
 function fakeCoordinator() {
-  const calls = { lifecycle: 0, attachment: 0, launchReadiness: 0, actionAuthority: 0 };
+  const calls = { lifecycle: 0, attachment: 0, launchReadiness: 0, actionAuthority: 0, installation: 0 };
   const discoveryCalls: string[] = [];
   const discoveryReceivers: unknown[] = [];
   const rawCandidateId = "A".repeat(43);
@@ -36,6 +37,13 @@ function fakeCoordinator() {
       return { generation: 0, status: "none" };
     },
   } as unknown as StardewGameSurfaceLaunchReadinessReader;
+  const installation = { registered: false };
+  const installationReader = {
+    readInstallationView: async () => {
+      calls.installation += 1;
+      return installation.registered ? ("registered" as const) : ("absent" as const);
+    },
+  } as unknown as StardewGameSurfaceInstallationReader;
   const actionAuthorityReader = {
     readActionAuthorityView: () => {
       calls.actionAuthority += 1;
@@ -93,10 +101,12 @@ function fakeCoordinator() {
     discoveryCalls,
     discoveryReceivers,
     activationOwner,
+    installation,
     coordinator: {
       lifecycleReader,
       attachmentReader,
       launchReadinessReader,
+      installationReader,
       actionAuthorityReader,
       activationOwner,
       close: async () => undefined,
@@ -125,6 +135,7 @@ test("stardew presentation projection declares the game preview surface and bind
       "game.resume.cancel",
       "game.reopen",
       "game.disconnect",
+      "game.endgame",
       "game.create",
       "game.installation.discovery.read",
       "game.installation.discovery.confirm",
@@ -194,7 +205,7 @@ test("stardew presentation projection reads game state through the coordinator's
 
   // Verifier: the projection delegates to every coordinator reader and projects
   // the declared game profile identity, never a browser- or entry-supplied one.
-  assert.deepEqual(calls, { lifecycle: 1, attachment: 1, launchReadiness: 1, actionAuthority: 1 });
+  assert.deepEqual(calls, { lifecycle: 1, attachment: 1, launchReadiness: 1, actionAuthority: 1, installation: 1 });
   assert.equal(state.apiVersion, 1);
   assert.equal(state.build.browserContract, "game_browser_api/v1");
   assert.equal(state.build.profileId, "gamebuddy.game.preview");
@@ -203,4 +214,29 @@ test("stardew presentation projection reads game state through the coordinator's
   assert.equal(state.game.instance.status, "launching");
   assert.equal(state.game.connectionStatus, "none");
   assert.equal(state.game.actionAuthority, "unavailable");
+});
+
+/**
+ * Defect 3. The Game surface said "no Stardew Valley installation was found"
+ * while the Host held a `ready` registration for that same directory, because
+ * the surface derived "is the game installed" from launch readiness alone - a
+ * fact that only exists AFTER a launch was staged. The registration read is the
+ * authoritative one (the launch path gates on the same call), so both directions
+ * are pinned here: registered+ready => the surface does not claim it was not
+ * found, and genuinely unregistered => it does.
+ */
+test("the game surface's install state follows the Host registration in both directions", async () => {
+  const { coordinator, installation, calls } = fakeCoordinator();
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const context = { csrfToken, browserSessionExpiresAtMs: 1_900_000_000_000 };
+
+  const unregistered = await projection.readGame(context);
+  assert.equal(unregistered.game.prerequisites.status, "unknown");
+  assert.equal(unregistered.game.prerequisites.detectedGame, null);
+
+  installation.registered = true;
+  const registered = await projection.readGame(context);
+  assert.equal(registered.game.prerequisites.status, "met");
+  assert.equal(registered.game.prerequisites.detectedGame, "Stardew Valley");
+  assert.equal(calls.installation, 2);
 });

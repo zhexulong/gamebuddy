@@ -5,7 +5,7 @@ import {
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
-import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceInstallationReader, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -38,6 +38,7 @@ export function createGameBrowserStateProvider(
   attachment: StardewGameSurfaceAttachmentReader,
   launchReadiness: StardewGameSurfaceLaunchReadinessReader,
   actionAuthority?: StardewGameSurfaceActionAuthorityReader,
+  installation?: StardewGameSurfaceInstallationReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read"))
@@ -50,7 +51,12 @@ export function createGameBrowserStateProvider(
       const attachmentView = attachment.readAttachmentView();
       const launchReadinessView = launchReadiness.readLaunchReadinessView();
       const actionAuthorityView = actionAuthority?.readActionAuthorityView();
-      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView, actionAuthorityView);
+      // The bound installation is the ONE authoritative answer to "is the game
+      // installed": the same registration the launch path gates on. Without it a
+      // registered, ready installation still projected `prerequisites: unknown`
+      // until a launch happened to be staged.
+      const installationView = installation === undefined ? undefined : await installation.readInstallationView();
+      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView, actionAuthorityView, installationView);
     },
   });
 }
@@ -62,11 +68,12 @@ function projectGameBrowserState(
   attachment: StardewGameSurfaceAttachmentView,
   launchReadiness: StardewGameSurfaceLaunchReadinessView,
   actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
+  installation: "registered" | "absent" | undefined,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
   const launchFailed = launchReadiness.status === "failed";
-  const prerequisitesMet = playerHostStarted || launchReadiness.status === "ready" || launchFailed;
+  const prerequisitesMet = playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
   const instanceStatus = launchFailed
       ? "crashed" as const
       : lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"

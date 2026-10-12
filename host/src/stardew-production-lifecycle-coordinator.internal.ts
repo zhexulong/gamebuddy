@@ -255,6 +255,18 @@ export type StardewGameSurfaceLaunchReadinessReader = Readonly<{
 }>;
 
 /**
+ * The one authoritative fact about whether the player has BOUND an installation:
+ * the Host's own registration record at the deployment runtime root, read by the
+ * same function the launch path gates on. Without it the surface derived "is the
+ * game installed" from launch readiness alone, so a registered, ready
+ * installation still read as "no Stardew Valley installation was found" until a
+ * launch happened to be staged.
+ */
+export type StardewGameSurfaceInstallationReader = Readonly<{
+  readInstallationView(): Promise<"registered" | "absent">;
+}>;
+
+/**
  * Coordinator-owned redacted action authority projection. `active` means the
  * attached runtime can admit new Game instructions (only a fresh explicit Game
  * instruction reopens admission after a resume); `paused` is projected during
@@ -387,6 +399,7 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly lifecycleReader: StardewRoleLifecycleReader;
   readonly attachmentReader: StardewGameSurfaceAttachmentReader;
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
+  readonly installationReader: StardewGameSurfaceInstallationReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   readonly headlessOperationalGame: HeadlessOperationalGame;
@@ -1047,6 +1060,17 @@ function createCoordinator(
         return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
       }
       return Object.freeze({ generation: 0, status: "none" });
+    },
+  });
+  const installationReader: StardewGameSurfaceInstallationReader = Object.freeze({
+    async readInstallationView(): Promise<"registered" | "absent"> {
+      // Malformed storage propagates rather than being flattened to "absent": a
+      // registration the Product cannot read is never evidence that no
+      // installation is bound, and the launch path refuses on the same fact.
+      const registration = await readStardewInstallationRegistration(runtimeRoot);
+      return registration !== null && registration.state === "ready" && registration.locator !== null
+        ? "registered"
+        : "absent";
     },
   });
   const actionAuthorityReader: StardewGameSurfaceActionAuthorityReader = Object.freeze({
@@ -2885,6 +2909,7 @@ function createCoordinator(
     lifecycleReader,
     attachmentReader,
     launchReadinessReader,
+    installationReader,
     actionAuthorityReader,
     activationOwner,
     headlessOperationalGame,
