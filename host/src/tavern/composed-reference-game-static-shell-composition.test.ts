@@ -166,7 +166,7 @@ test("composed shell serves static artifact and composed broker on one origin", 
     inspector: inspector(),
   });
   try {
-    assert.match(server.launchUrl, new RegExp(`^${server.origin.replace(/[./:]/g, "\\$&")}/#profile=composed-reference-game&boot=${token}$`));
+    assert.match(server.launchUrl, new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/#profile=composed-reference-game&boot=${token}$`));
     // Static artifact serves the shell.
     const shell = await fetch(`${server.origin}/`);
     assert.equal(shell.status, 200);

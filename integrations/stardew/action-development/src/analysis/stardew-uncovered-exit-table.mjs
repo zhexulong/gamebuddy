@@ -36,6 +36,7 @@ const artifact = JSON.parse(await readFile(options.expansion, "utf8"));
 
 const esc = (s) =>
   String(s ?? "")
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/\n/g, " ");
 const trim = (s, n) => (String(s ?? "").length > n ? `${String(s).slice(0, n - 1)}…` : String(s ?? ""));

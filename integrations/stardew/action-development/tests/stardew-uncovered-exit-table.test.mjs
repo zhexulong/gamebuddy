@@ -181,3 +181,21 @@ test("声明文档必须提示裁定须由审查者填写", async () => {
     await rm(EXPANSION, { force: true });
   }
 });
+
+test("表单元格里的反斜杠必须转义,不能与管道符转义互相干扰", async () => {
+  // 旧实现只转义 `|` 与换行,路径性的 nativeMember(C:\\Foo\Bar)里
+  // 的反斜杠会参与 Markdown 转义,导致单元格内容被改写。
+  const fixture = JSON.parse(JSON.stringify(FIXTURE));
+  fixture.expansions[0].nativeMember = "C:\\Foo\\Bar|rotate";
+  fixture.expansions[0].units[0].class = "C\\Weird";
+  await writeFile(EXPANSION, JSON.stringify(fixture));
+  try {
+    const md = await render(EXPANSION);
+    assert.ok(md.includes("C:\\\\Foo\\\\Bar\\|rotate"), md.slice(0, 400));
+    assert.ok(md.includes("C\\\\Weird"), md.slice(0, 400));
+    // 反斜杠先转义、管道后转义,顺序必须固定,否则 `\\|` 变成 `\\|`。
+    assert.ok(md.includes("Foo\\\\Bar\\|rotate"), md.slice(0, 400));
+  } finally {
+    await rm(EXPANSION, { force: true });
+  }
+});
