@@ -167,7 +167,13 @@ export function releaseReservedChatRuntimeMaterialization(value: unknown): void 
   const lease = reservationRecords.get(value);
   if (!lease || lease.released) return;
   lease.released = true;
-  tokenRecords.get(lease.token)?.operations.delete(lease);
+  const record = tokenRecords.get(lease.token);
+  record?.operations.delete(lease);
+  // The materialization cycle ends here. Its outstanding-operation set is the
+  // mutual exclusion, so once nothing of it is live the token may be consumed
+  // again: that is what lets one in-process Chat switch mount a successor
+  // runtime without a second binding while never allowing two at once.
+  if (record !== undefined && record.operations.size === 0) record.consumed = false;
   lease.resolve();
 }
 
@@ -199,7 +205,6 @@ function createBoundChatRuntime(manifest: HostDeploymentManifest, ownerIdentity:
   tokenBrand.add(token);
   tokenRecords.set(token, record);
   executionLifetimeRecords.set(execution, Object.freeze({ token }));
-  let invoked = false;
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
@@ -222,10 +227,10 @@ function createBoundChatRuntime(manifest: HostDeploymentManifest, ownerIdentity:
   const executeWithBinding = async <T>(
     callback: (token: OpaqueChatRuntimeBindingToken) => Promise<T> | T,
   ): Promise<T> => {
-    if (invoked || !record.active || !record.acceptingMaterialization)
+    if (!record.active || record.operations.size !== 0 || record.consumed)
       throw new Error("chat_runtime_binding_unavailable");
     if (typeof callback !== "function") throw new Error("invalid_chat_runtime_binding_callback");
-    invoked = true;
+    record.acceptingMaterialization = true;
     try {
       return await callback(token);
     } finally {

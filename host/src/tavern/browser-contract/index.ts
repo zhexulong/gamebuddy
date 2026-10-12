@@ -204,6 +204,26 @@ export const MemoryItemV1Schema = strictObject({
   pinned: Type.Boolean(),
 });
 /**
+ * One narrative chapter of the companion's long-term memory: the stretch of time it covers, the body,
+ * and whether the player has touched it.
+ *
+ * A chapter is the same kind of thing as a Memory row - Magic Context produced it, the player reads it
+ * here - so it follows the same rule: the player may correct it or remove it. `status` names which text is
+ * shown (`sealed` is the fold's own, `edited` is the player's), and `deleted` is a tombstone the panel
+ * still lists, so a removal stays visible instead of quietly vanishing from a history the player is
+ * auditing.
+ */
+export const MemoryChapterV1Schema = strictObject({
+  handle: OpaqueHandle,
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+  /** The covered span, already rendered ("2026-10-01→2026-10-03") so no client formats dates. */
+  span: Type.String({ minLength: 1, maxLength: 128 }),
+  content: MemoryText,
+  status: Type.Union([Type.Literal("sealed"), Type.Literal("edited"), Type.Literal("deleted")]),
+  /** True when the player's own text or removal is what stands, so the panel can say whose words these are. */
+  editedByPlayer: Type.Boolean(),
+});
+/**
  * Read-only Memory projection for the exact mounted continuity (design/40 P8
  * item 4 / design/78 Task 6). `projectionRevision` is an opaque content
  * fingerprint of the projected rows so a client can detect a changed set;
@@ -213,6 +233,8 @@ export const MemoryReadV1Schema = strictObject({
   apiVersion: ApiVersion,
   projectionRevision: OpaqueHandle,
   memories: Type.Array(MemoryItemV1Schema),
+  /** The continuity's narrative chapters, oldest first. Continuity-scoped, like every other panel read. */
+  chapters: Type.Array(MemoryChapterV1Schema),
 });
 /**
  * Player-authored ordinary Memory CRUD. The browser provides only opaque
@@ -237,6 +259,21 @@ export const MemoryMutationCommandV1Schema = Type.Union([
   strictObject({
     apiVersion: ApiVersion,
     operation: Type.Literal("archive"),
+    expectedProjectionRevision: OpaqueHandle,
+    handle: OpaqueHandle,
+  }),
+  /** Replace a chapter's body with the player's words; the fold's own span and title do not move. */
+  strictObject({
+    apiVersion: ApiVersion,
+    operation: Type.Literal("update_chapter"),
+    expectedProjectionRevision: OpaqueHandle,
+    handle: OpaqueHandle,
+    content: MemoryText,
+  }),
+  /** Remove a chapter: a tombstone, so the span stays covered and a later fold cannot re-derive it. */
+  strictObject({
+    apiVersion: ApiVersion,
+    operation: Type.Literal("delete_chapter"),
     expectedProjectionRevision: OpaqueHandle,
     handle: OpaqueHandle,
   }),
@@ -567,7 +604,8 @@ const OperationId = Type.Union([
   Type.Literal("chat.opening"),
   // New Chat: creates a second conversation in the mounted companion/continuity.
   Type.Literal("chat.create"),
-  // Chat selection: chooses which existing Chat the next runtime start mounts.
+  // Chat selection: chooses which existing Chat the mounted conversation shows, in process when
+  // it is idle and at the next start when a turn is in flight.
   Type.Literal("chat.select"),
   Type.Literal("chat.archive"),
   Type.Literal("chat.restore"),
@@ -1049,10 +1087,11 @@ export const ChatCreateResultV1Schema = strictObject({
 });
 /**
  * Chat selection (ADR 0009). The browser names the exact Chat it read from `chat.list` and the
- * selection generation it read; the Host records a durable expectation. The selected Chat becomes
- * the mounted conversation at the next runtime start - `restart_required` is the honest product
- * answer, exactly as `requestChatSelection` documents - so this operation never claims a running
- * conversation switched.
+ * selection generation it read. Switching is turn-level: an idle runtime hot-swaps the mounted
+ * conversation inside the same process and answers `switched`; a runtime whose turn is still in
+ * flight answers `turn_in_flight` and the durable expectation settles at the next start instead.
+ * Either way the recorded selection is durable, so a later start still lands on the Chat the
+ * player chose.
  */
 export const SelectChatCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -1061,7 +1100,7 @@ export const SelectChatCommandV1Schema = strictObject({
 });
 export const ChatSelectResultV1Schema = strictObject({
   apiVersion: ApiVersion,
-  status: Type.Literal("restart_required"),
+  status: Type.Union([Type.Literal("switched"), Type.Literal("turn_in_flight")]),
 });
 export const SubmitResultV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -2037,6 +2076,7 @@ export type ChatListV1 = Static<typeof ChatListV1Schema>;
 export type RenameChatTitleCommandV1 = Static<typeof RenameChatTitleCommandV1Schema>;
 export type ChatTitleV1 = Static<typeof ChatTitleV1Schema>;
 export type MemoryItemV1 = Static<typeof MemoryItemV1Schema>;
+export type MemoryChapterV1 = Static<typeof MemoryChapterV1Schema>;
 export type MemoryMutationCommandV1 = Static<typeof MemoryMutationCommandV1Schema>;
 export type MemoryMutationResultV1 = Static<typeof MemoryMutationResultV1Schema>;
 export type WorldInfoStateV1 = Static<typeof WorldInfoStateV1Schema>;

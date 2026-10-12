@@ -154,7 +154,7 @@ export type SemanticChatRuntimeMountOptions = Readonly<{
 }>;
 /**
  * ADR 0009: the narrow production capability a player action uses to say which
- * Chat the next mount opens. `create` mints the new Chat's identity inside the
+ * Chat the runtime shows. `create` mints the new Chat's identity inside the
  * authority; `select` names an existing verified Chat the caller resolved from
  * its own safe projection. Neither form can name a durable vector or command.
  */
@@ -167,15 +167,16 @@ export type SemanticChatSelectionRequest =
       chatSurfaceSessionId: string;
     }>;
 /**
- * The recorded expectation. `restart_required` is the honest product answer:
- * the expectation is durable and settled by the next start's pre-mount phase,
- * because this process already minted its one runtime lease.
+ * The honest product answer to a selection request. Switching is turn-level,
+ * not process-level: an idle mounted runtime hot-swaps the Chat it serves
+ * inside this process (`switched`), and a runtime whose turn is still in flight
+ * refuses with `turn_in_flight` rather than tearing a generating conversation
+ * down. The recorded expectation is durable in both cases, so a later start
+ * still lands on the Chat the player chose.
  */
-export type SemanticChatSelectionOutcome = Readonly<{
-  status: "restart_required";
-  chatThreadId: string;
-  chatSurfaceSessionId: string;
-}>;
+export type SemanticChatSelectionOutcome =
+  | Readonly<{ status: "switched"; chatThreadId: string; chatSurfaceSessionId: string }>
+  | Readonly<{ status: "turn_in_flight"; chatThreadId: string; chatSurfaceSessionId: string }>;
 /** The slice of the Chat runtime authority a management surface may hold. */
 export type SemanticChatSelectionCapability = Readonly<{
   requestChatSelection(input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome>;
@@ -1836,6 +1837,12 @@ async function createFreshChatRuntimeAuthority(
   let startPromise: Promise<ProductionChatRuntimeReadback> | undefined;
   let mountedStartPromise: Promise<MountedChatRuntimeLease> | undefined;
   let mountedLease: MountedChatRuntimeLease | undefined;
+  /**
+   * Every lease this authority has minted, current or already superseded by an
+   * in-process turn-level switch. Its `close()` closes the authority's mounted
+   * Chat lane, so a stale lease must still be able to shut the lane down.
+   */
+  const issuedLeases = new WeakSet<object>();
   let closePromise: Promise<void> | undefined;
   let terminalError: unknown;
   let bindingClosed = false;
@@ -1899,6 +1906,107 @@ async function createFreshChatRuntimeAuthority(
     if (failure !== undefined) throw failure;
     return value as T;
   };
+
+  /**
+   * One mounted runtime's durable and physical teardown: prepare the teardown
+   * under the partition mutex, close every runtime resource in reverse order,
+   * then commit the terminal teardown that advances the vector the successor
+   * mount's select bridge consumes. Used both by the authority's terminal close
+   * and by an in-process turn-level Chat switch, which leaves the authority,
+   * its binding, store, mutex and broker open.
+   */
+  const tearDownChatRuntimeRecord = async (record: LiveChatRuntimeRecord): Promise<void> => {
+    if (!record.teardownPermit) {
+      const request: ProductionChatRuntimeTeardownRequest = Object.freeze({
+        principal: provision.principal,
+        operationId: `chat-teardown-${randomUUID().replaceAll("-", "")}`,
+        requestId: `chat-teardown-request-${randomUUID().replaceAll("-", "")}`,
+        bootstrapOperationId: record.bootstrapPermit.operationId,
+        chatThreadId: record.bootstrapPermit.chatThreadId,
+        chatSurfaceSessionId: record.bootstrapPermit.chatSurfaceSessionId,
+        runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
+        owner: record.bootstrapPermit.owner,
+        deadlineAtMs: Date.now() + 30_000,
+        expected: { ...record.vector },
+      });
+      const prepared = await locked(() => provision.store.prepareChatRuntimeTeardown(request));
+      if (prepared.outcome === "completed") {
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_runtime_record_mismatch");
+      }
+      if (prepared.outcome !== "effect_owned" || prepared.permit === null) {
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_effect_owned");
+      }
+      record.teardownPermit = prepared.permit;
+    }
+    if (!record.physicallyClosed) {
+      await record.runtime.close();
+      record.physicallyClosed = true;
+    }
+    if (!record.teardownReceipt) {
+      const permit = record.teardownPermit;
+      if (!permit) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_permit_missing");
+      record.teardownReceipt = Object.freeze({
+        kind: "chat_runtime_torn_down" as const,
+        operationId: permit.operationId,
+        requestId: permit.requestId,
+        bootstrapOperationId: permit.bootstrapOperationId,
+        chatThreadId: permit.chatThreadId,
+        chatSurfaceSessionId: permit.chatSurfaceSessionId,
+        runtimeBindingDigest: permit.runtimeBindingDigest,
+        owner: Object.freeze({ ...permit.owner }),
+        fenceToken: permit.fenceToken,
+        occurredAtMs: Date.now(),
+      });
+    }
+    const permit = record.teardownPermit;
+    const receipt = record.teardownReceipt;
+    if (!permit || !receipt)
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_evidence_missing");
+    const terminal = await locked(() =>
+      provision.store.commitChatRuntimeTeardown(
+        Object.freeze({ principal: provision.principal, permit, receipt }),
+      ),
+    );
+    if (terminal.status !== "terminal" || terminal.runtimeState !== "closed")
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_terminal");
+    liveByBootstrapOperation.delete(record.bootstrapPermit.operationId);
+  };
+
+  /** True while the mounted runtime serves a turn that has not reached a terminal ledger state. */
+  const mountedLeaseHasTurnInFlight = async (record: MountedChatRuntimeLeaseRecord): Promise<boolean> => {
+    if (record.activePrompt !== undefined) return true;
+    if (record.attemptBinding === undefined) return false;
+    const state = await record.store().resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+    return state.turnLedger !== null && !isTerminalTurnStatusForCoordinator(state.turnLedger.status);
+  };
+
+  /**
+   * Releases the one mounted runtime in process so a different Chat can be
+   * mounted by the same authority. The mounted lease is revoked synchronously
+   * first, so no new turn can be admitted while the teardown runs; a lease whose
+   * turn is still in flight is restored untouched and reported as
+   * `turn_in_flight`. Everything else the authority owns - binding, store, mutex,
+   * broker, semantic projection - stays open.
+   */
+  const releaseMountedChatRuntime = async (): Promise<"released" | "turn_in_flight"> => {
+    const lease = mountedLease;
+    const record = lease === undefined ? undefined : mountedChatRuntimeLeases.get(lease);
+    if (record !== undefined && record.active) {
+      record.active = false;
+      if (await mountedLeaseHasTurnInFlight(record)) {
+        record.active = true;
+        return "turn_in_flight";
+      }
+      record.transitionAuthority.revoke();
+    }
+    const live = [...liveByBootstrapOperation.values()][0];
+    if (live !== undefined) await tearDownChatRuntimeRecord(live);
+    mountedLease = undefined;
+    mountedStartPromise = undefined;
+    startPromise = undefined;
+    return "released";
+  };
+
   const startChatRuntime = (): Promise<ProductionChatRuntimeReadback> => {
     if (startPromise) return startPromise;
     startPromise = begin(async () => {
@@ -2024,16 +2132,28 @@ async function createFreshChatRuntimeAuthority(
       .digest("hex");
     return `chat-${kind}-${suffix.slice(0, 32)}`;
   }
+  /**
+   * ADR 0009 / turn-level switching. The recorded expectation is durable, and an
+   * idle runtime follows it immediately: the one mounted runtime is released and
+   * the successor mount for the requested Chat is committed in this same
+   * process. A turn that is still in flight is never torn down - the request is
+   * answered `turn_in_flight` and the durable expectation settles at the next
+   * start instead.
+   */
   const requestChatSelection = (input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome> =>
-    begin(() =>
-      locked(() => {
-        const target =
-          input?.kind === "select"
-            ? Object.freeze({
-                chatThreadId: input.chatThreadId,
-                chatSurfaceSessionId: input.chatSurfaceSessionId,
-              })
-            : mintChatSelectionIdentity();
+    begin(async () => {
+      const target =
+        input?.kind === "select"
+          ? Object.freeze({
+              chatThreadId: input.chatThreadId,
+              chatSurfaceSessionId: input.chatSurfaceSessionId,
+            })
+          : mintChatSelectionIdentity();
+      const mountedRecord =
+        mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
+      if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord)))
+        return Object.freeze({ status: "turn_in_flight" as const, ...target });
+      await locked(() => {
         const catalog = provision.store.readChatCatalog();
         if (
           (input?.kind !== "create" && input?.kind !== "select") ||
@@ -2061,9 +2181,20 @@ async function createFreshChatRuntimeAuthority(
             throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
           throw error;
         }
-        return Object.freeze({ status: "restart_required" as const, ...target });
-      }),
-    );
+      });
+      // The runtime already serves the requested Chat: there is nothing to
+      // release, and the recorded expectation is cleared by the next settlement.
+      if (
+        mountedRecord?.active === true &&
+        mountedRecord.chatThreadId === target.chatThreadId &&
+        mountedRecord.chatSurfaceSessionId === target.chatSurfaceSessionId
+      )
+        return Object.freeze({ status: "switched" as const, ...target });
+      if ((await releaseMountedChatRuntime()) === "turn_in_flight")
+        return Object.freeze({ status: "turn_in_flight" as const, ...target });
+      await startMountedChatRuntime();
+      return Object.freeze({ status: "switched" as const, ...target });
+    });
   /**
    * ADR 0009 pre-mount settlement. It runs under the same mutex as the runtime
    * start and reuses the ordinary register/verify/select commands: a Chat the
@@ -2185,11 +2316,13 @@ async function createFreshChatRuntimeAuthority(
       content.close();
     }
   }
-  authority = Object.freeze({
-    authority: "SEMANTIC" as const,
-    startChatRuntime,
-    requestChatSelection,
-    startMountedChatRuntime: () => {
+  /**
+   * Mints the mounted Chat runtime capability for the currently selected Chat.
+   * The memoization lives for the life of one mount: an in-process turn-level
+   * switch releases that mount and clears it, so the next call mints the
+   * successor capability for the Chat the player selected.
+   */
+  const startMountedChatRuntime = (): Promise<MountedChatRuntimeLease> => {
       // This is a synchronous acceptance boundary. Once close begins, neither a
       // previously-created start promise nor an already-active runtime may mint
       // or return a mounted capability.
@@ -2263,14 +2396,17 @@ async function createFreshChatRuntimeAuthority(
             return "aborted";
           },
           close(this: unknown): Promise<void> {
-            if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
+            if (this !== lease || !issuedLeases.has(lease as object))
               return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected"));
-            const leaseRecord = mountedChatRuntimeLeases.get(lease)!;
-            leaseRecord.active = false;
-            leaseRecord.transitionAuthority.revoke();
-            return leaseRecord.close();
+            const leaseRecord = mountedChatRuntimeLeases.get(lease);
+            if (leaseRecord !== undefined) {
+              leaseRecord.active = false;
+              leaseRecord.transitionAuthority.revoke();
+            }
+            return authority.close();
           },
         });
+        issuedLeases.add(lease as object);
         mountedChatRuntimeLeases.set(lease, {
           active: true,
           runtimeRoot: provision.runtimeCwd,
@@ -2296,7 +2432,12 @@ async function createFreshChatRuntimeAuthority(
         return lease;
       });
       return mountedStartPromise;
-    },
+  };
+  authority = Object.freeze({
+    authority: "SEMANTIC" as const,
+    startChatRuntime,
+    requestChatSelection,
+    startMountedChatRuntime,
     close: () => {
       if (closePromise !== undefined) return closePromise;
       closing = true;
@@ -2308,62 +2449,7 @@ async function createFreshChatRuntimeAuthority(
       const attempt = (async () => {
         await waitForDrain();
         const record = [...liveByBootstrapOperation.values()][0];
-        if (record) {
-          if (!record.teardownPermit) {
-            const request: ProductionChatRuntimeTeardownRequest = Object.freeze({
-              principal: provision.principal,
-              operationId: `chat-teardown-${randomUUID().replaceAll("-", "")}`,
-              requestId: `chat-teardown-request-${randomUUID().replaceAll("-", "")}`,
-              bootstrapOperationId: record.bootstrapPermit.operationId,
-              chatThreadId: record.bootstrapPermit.chatThreadId,
-              chatSurfaceSessionId: record.bootstrapPermit.chatSurfaceSessionId,
-              runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
-              owner: record.bootstrapPermit.owner,
-              deadlineAtMs: Date.now() + 30_000,
-              expected: { ...record.vector },
-            });
-            const prepared = await locked(() => provision.store.prepareChatRuntimeTeardown(request));
-            if (prepared.outcome === "completed") {
-              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_runtime_record_mismatch");
-            }
-            if (prepared.outcome !== "effect_owned" || prepared.permit === null) {
-              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_effect_owned");
-            }
-            record.teardownPermit = prepared.permit;
-          }
-          if (!record.physicallyClosed) {
-            await record.runtime.close();
-            record.physicallyClosed = true;
-          }
-          if (!record.teardownReceipt) {
-            const permit = record.teardownPermit;
-            if (!permit) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_permit_missing");
-            record.teardownReceipt = Object.freeze({
-              kind: "chat_runtime_torn_down" as const,
-              operationId: permit.operationId,
-              requestId: permit.requestId,
-              bootstrapOperationId: permit.bootstrapOperationId,
-              chatThreadId: permit.chatThreadId,
-              chatSurfaceSessionId: permit.chatSurfaceSessionId,
-              runtimeBindingDigest: permit.runtimeBindingDigest,
-              owner: Object.freeze({ ...permit.owner }),
-              fenceToken: permit.fenceToken,
-              occurredAtMs: Date.now(),
-            });
-          }
-          const permit = record.teardownPermit;
-          const receipt = record.teardownReceipt;
-          if (!permit || !receipt)
-            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_evidence_missing");
-          const terminal = await locked(() =>
-            provision.store.commitChatRuntimeTeardown(
-              Object.freeze({ principal: provision.principal, permit, receipt }),
-            ),
-          );
-          if (terminal.status !== "terminal" || terminal.runtimeState !== "closed")
-            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_terminal");
-          liveByBootstrapOperation.delete(record.bootstrapPermit.operationId);
-        }
+        if (record) await tearDownChatRuntimeRecord(record);
         // In a shared composition the mutex and broker stay open for the owner's
         // retryable close, but the Chat binding and the drain-only store semantic
         // projection are Chat-owned and must be closed by this projection.

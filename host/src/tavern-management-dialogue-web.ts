@@ -191,9 +191,9 @@ const MANAGEMENT_CHAT_OPENING_ROUTES = ["chat.opening"] as const;
  * advertises it without the bound Chat creator fails closed at composition. */
 const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
 /** Optional Chat selection extension (ADR 0009): only a profile that declares this route
- * mounts `PUT /api/tavern/v1/chat/select`; the selected Chat becomes the mounted
- * conversation at the next runtime start. A profile that advertises it without the bound
- * selection provisioner fails closed at composition. */
+ * mounts `PUT /api/tavern/v1/chat/select`; the runtime switches the mounted conversation in
+ * process while it is idle and reports `turn_in_flight` while a turn is generating. A profile
+ * that advertises it without the bound selection provisioner fails closed at composition. */
 const MANAGEMENT_CHAT_SELECT_ROUTES = ["chat.select"] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
@@ -328,9 +328,9 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   }>;
   /**
    * Host-owned Chat selection (ADR 0009). The browser names the exact Chat it read from
-   * `chat.list` and the generation it read; the provisioner records the durable selection
-   * expectation and reports the honest `restart_required` outcome (the selection becomes the
-   * mounted conversation at the next runtime start). Present only when the mounted profile
+   * `chat.list` and the generation it read; switching is turn-level, so the provisioner answers
+   * `switched` when the idle runtime hot-swapped the mounted conversation and `turn_in_flight`
+   * when a generating turn must not be torn down. Present only when the mounted profile
    * declares `chat.select`; the route stays unavailable otherwise.
    */
   chatSelectProvisioner?: Readonly<{
@@ -938,10 +938,10 @@ export function createTavernManagementDialogueWebRequestHandler(
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/select") {
         // chat.select (ADR 0009): the browser names the exact Chat it read and the
-        // generation it read; the Host records a durable selection expectation and
-        // answers the honest `restart_required`, because the selection becomes the
-        // mounted conversation at the next runtime start. Refusals are bounded: a
-        // stale generation or an unknown/non-active Chat is `selection_conflict`.
+        // generation it read. Switching is turn-level: an idle runtime hot-swaps the
+        // mounted conversation in process (`switched`), a generating one refuses with
+        // `turn_in_flight`. Refusals are bounded: a stale generation or an unknown/non-active
+        // Chat is `selection_conflict`.
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
