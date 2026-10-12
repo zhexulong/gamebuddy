@@ -338,6 +338,60 @@ function hasStardewCompletionEvidence(
               : e.before === e.expected),
         )
       );
+    case "send_multiplayer_chat":
+      // Evidence literal: farmhandexecutioncontroller.chatactions.cs — recipient;length;role;sent. The
+      // receipt proves the SEND and nothing more, so the rule asks for exactly that: the terminal code, the
+      // four keys, `sent=true`, a real role, and a positive length. It deliberately requires NO receiving-side
+      // fact, because the Mod cannot observe one (the chat box may not exist on a client at all).
+      return (
+        receipt.reasonCode === "chat_message_sent" &&
+        exactEvidence(detail, ["recipient", "length", "role", "sent"], (e) => {
+          const length = integerEvidenceValue(e.length);
+          return e.sent === "true" && e.recipient === "all_players" &&
+            (e.role === "client" || e.role === "server") && length !== null && length > 0;
+        })
+      );
+    case "clear_fish_pond":
+      // Evidence literal: farmhandexecutioncontroller.pondactions.cs — the identity, the fish type before and
+      // after, the occupant counts, the population gate, the spawn day, the golden-cracker flag and the
+      // ejected count. The native seam returns void, so the proof is the OBSERVED reset: BOTH halves of the
+      // card's postcondition (occupants 0 AND fish type none), an ejected count equal to what the pond held,
+      // and a pond that held something to begin with. The fish are dropped rather than destroyed, so nothing
+      // here claims a loss.
+      return (
+        receipt.reasonCode === "fish_pond_cleared" &&
+        exactEvidence(
+          detail,
+          [
+            "pond_id",
+            "location",
+            "tile_x",
+            "tile_y",
+            "fish_type_before",
+            "fish_type_after",
+            "occupants_before",
+            "occupants_after",
+            "population_gate_before",
+            "population_gate_after",
+            "days_since_spawn_before",
+            "days_since_spawn_after",
+            "golden_cracker_before",
+            "golden_cracker_after",
+            "fish_ejected",
+          ],
+          (e) => {
+            const occupantsBefore = integerEvidenceValue(e.occupants_before);
+            return (
+              occupantsBefore !== null &&
+              occupantsBefore > 0 &&
+              e.occupants_after === "0" &&
+              e.fish_type_after === "none" &&
+              integerEvidenceValue(e.fish_ejected) === occupantsBefore &&
+              integerEvidenceValue(e.population_gate_after) === 0
+            );
+          },
+        )
+      );
     case "toggle_animal_door":
       // Evidence literal: farmhandexecutioncontroller.animaldooractions.cs:194-197 —
       // target;tile;building_type;animal_door_open_before;animal_door_open_after;

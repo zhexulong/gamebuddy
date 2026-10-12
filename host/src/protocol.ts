@@ -593,6 +593,13 @@ activeExecution?: ActiveExecution | null;
   animalDoorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
     buildingType: string; isOpen: boolean }>[];
 
+  /** Built fish ponds that currently HOLD fish. `occupants` is how many fish the action would eject
+   * and `fishType` is what they are, because the fish land on the ground for the Agent to collect - a
+   * count alone does not say whether they are what the errand wanted. An empty pond is never published,
+   * since it has nothing to clear. */
+  fishPondTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
+    buildingType: string; occupants: number; fishType: string }>[];
+
   /** One object the world-object lane can act on at a world tile, plus the backpack slot that
    * acts. `kind` is what the live object IS for this lane ('placement_candidate',
    * 'removable_object', 'non_removable_object', 'breakable_container'); `slot` is the backpack
@@ -640,6 +647,8 @@ export type ExecutionRequest = Readonly<{
     | "break_container_source"
     | "use_obelisk"
     | "toggle_animal_door"
+    | "clear_fish_pond"
+    | "send_multiplayer_chat"
     | "use_warp_item"
     | "pan_ore"
     | "claim_mail_attachment"
@@ -1242,6 +1251,7 @@ const SNAPSHOT_KEYS = [
   "shopTargets",
   "mineElevatorFloorTargets",
   "animalDoorTargets",
+  "fishPondTargets",
   "buildingChestTargets",
   "obeliskTargets",
   "minecartTargets",
@@ -1260,6 +1270,7 @@ const SNAPSHOT_KEYS = [
    "minecartTargets",
     "mineElevatorFloorTargets",
     "animalDoorTargets",
+  "fishPondTargets",
     "obeliskTargets",
     "buildingChestTargets",
     "raftTargets",
@@ -1788,6 +1799,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "withdraw_silo_hay" &&
      value.action !== "use_obelisk" &&
      value.action !== "toggle_animal_door" &&
+     value.action !== "clear_fish_pond" &&
+     value.action !== "send_multiplayer_chat" &&
 
      value.action !== "place_owned_object" &&
      value.action !== "remove_placed_item" &&
@@ -1944,10 +1957,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (
     value.action === "withdraw_silo_hay" ||
     value.action === "use_obelisk" ||
+    value.action === "clear_fish_pond" ||
     value.action === "toggle_animal_door"
   ) {
     // All three take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "send_multiplayer_chat") {
+    // One string and nothing else, bounded by the SAME length the Mod enforces (its
+    // ChatMessageMaximumLength): an argument the wire accepts but the handler refuses would be a
+    // registered capability that cannot be invoked.
+    if (!hasExactKeys(value.args, ["text"])) return "invalid_execution_request";
+    if (typeof value.args.text !== "string" || value.args.text.trim().length === 0) return "invalid_execution_request";
+    if (value.args.text.length > 256) return "invalid_execution_request";
   } else if (value.action === "collect_building_chest_output") {
     // All four take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
@@ -2463,6 +2484,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.mailboxTargets.every(isMailboxTargetFact))
   )
     return "invalid_snapshot:mailboxTargets";
+  if (
+    value.fishPondTargets !== undefined &&
+    (!Array.isArray(value.fishPondTargets) ||
+      value.fishPondTargets.length > 16 ||
+      !value.fishPondTargets.every(isFishPondTargetFact))
+  )
+    return "invalid_snapshot:fishPondTargets";
   if (!Number.isSafeInteger(value.revision)) return "invalid_snapshot:revision";
   if (typeof value.location !== "string") return "invalid_snapshot:location";
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
@@ -2878,6 +2906,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.animalDoorTargets.every(isAnimalDoorTargetFact))
   )
     return "invalid_snapshot:animalDoorTargets";
+  if (
+    value.fishPondTargets !== undefined &&
+    (!Array.isArray(value.fishPondTargets) ||
+      value.fishPondTargets.length > 16 ||
+      !value.fishPondTargets.every(isFishPondTargetFact))
+  )
+    return "invalid_snapshot:fishPondTargets";
   if (
     value.obeliskTargets !== undefined &&
     (!Array.isArray(value.obeliskTargets) || value.obeliskTargets.length > 32 || !value.obeliskTargets.every(isObeliskTargetFact))
@@ -4625,6 +4660,25 @@ function isShopTargetFact(value: unknown): boolean {
     value.stockCount >= 0
     && isStringArray(value.stockItemIds)
     && (value.stockItemIds as readonly string[]).length <= 16
+  );
+}
+
+function isFishPondTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "buildingType", "occupants", "fishType"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.buildingType === "string" &&
+    typeof value.occupants === "number" &&
+    Number.isSafeInteger(value.occupants) &&
+    value.occupants >= 0 &&
+    typeof value.fishType === "string"
   );
 }
 

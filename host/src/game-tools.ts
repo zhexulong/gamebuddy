@@ -1455,6 +1455,29 @@ export function createStardewActionTools(
   }
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "send_multiplayer_chat",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("send_multiplayer_chat", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("send_multiplayer_chat", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.send_multiplayer_chat,
+          label: "Say one line to the lobby",
+          description:
+            "Send one chat line to the whole multiplayer lobby through the game own chat egress. It takes exactly one string (`text`), moves nobody, opens nothing and touches no inventory, and it is REFUSED when there is no lobby (chat_multiplayer_only), when the text is blank or longer than one native chat line (chat_message_invalid), or when you send again inside the minimum interval (chat_rate_limited, with retry_after_ms). The receipt proves the SEND only: it never claims that anyone read the line.",
+          parameters: schema,
+          action: "send_multiplayer_chat",
+          toArgs: (args) => ({ text: String(args.text ?? "") }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "express_emote",
     );
     if (
@@ -1677,6 +1700,29 @@ export function createStardewActionTools(
       );
     }
   }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "clear_fish_pond",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("clear_fish_pond", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("clear_fish_pond", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.clear_fish_pond,
+          label: "Empty a fish pond",
+          description:
+            "Empty a built fish pond of every occupant through the pond own clearing settlement. Read the opaque target id, its tile, the pond type, the occupant count and the fish type from the `fishPondTargets` projection. The fish are NOT destroyed: each one is put on the ground as debris for you to collect, and the pond itself is reset and must be restocked from scratch. An empty pond is never advertised, and one that was already emptied refuses by name (pond_already_empty) rather than clearing nothing and calling it a success.",
+          parameters: schema,
+          action: "clear_fish_pond",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
       (entry) => entry.actionId === "toggle_animal_door",

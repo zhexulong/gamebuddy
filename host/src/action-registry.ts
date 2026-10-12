@@ -319,6 +319,18 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["pan", "ore"],
   ),
   actionAdapter(
+    "clear_fish_pond",
+    "Empty a fish pond",
+    "Empty a built fish pond of every occupant through the pond own FishPond.ClearPond settlement. The fish are NOT destroyed: the native body spawns one fish item per occupant as ground debris, and the pond is reset. Read the opaque target id, its tile and the occupant count from the `fishPondTargets` projection, and expect everything in the pond to end up on the ground.",
+    ["fish_pond"],
+  ),
+  actionAdapter(
+    "send_multiplayer_chat",
+    "Say one line to the lobby",
+    "Send one chat line to the whole multiplayer lobby through the game own chat egress (Multiplayer.sendChatMessage), which owns the client/server branch and the receiving side word filter. It takes exactly one string, moves nobody and touches no inventory, and its receipt proves the SEND only - never that anyone read it.",
+    ["chat"],
+  ),
+  actionAdapter(
     "claim_mail_attachment",
     "Claim a mailbox attachment",
     "Claim whatever is waiting in a mailbox, completing a letter whose %item attachment has to be delivered rather than discarding it. The opaque target id binds the location, the tile and the pending letter.",
@@ -547,6 +559,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   toggle_fence_gate: "stardew_toggle_fence_gate",
   withdraw_silo_hay: "stardew_withdraw_silo_hay",
   toggle_animal_door: "stardew_toggle_animal_door",
+  clear_fish_pond: "stardew_clear_fish_pond",
+  send_multiplayer_chat: "stardew_send_multiplayer_chat",
 
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
@@ -590,10 +604,13 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
   ]),
   manage_animal: Object.freeze([
     "toggle_animal_door",
+    "clear_fish_pond",
     "purchase_animal",
     "sell_or_relocate_animal",
   ]),
   world_interact: Object.freeze(["execute_world_operation"]),
+  // The one SOCIAL act that is not about an NPC in front of the actor: a line to the whole lobby.
+  send_multiplayer_chat: Object.freeze(["send_multiplayer_chat"]),
   special_interact: Object.freeze(["execute_world_operation"]),
   festival_interact: Object.freeze([
     "submit_festival_entry",
@@ -694,6 +711,8 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "withdraw_silo_hay",
   "use_obelisk",
   "toggle_animal_door",
+  "clear_fish_pond",
+  "send_multiplayer_chat",
   "load_building_chest",
   "collect_building_chest_output",
   "use_warp_item",
@@ -916,6 +935,22 @@ export function isModDescriptorComplete(
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "silo_hay_taken") return false;
+    return true;
+  }
+  if (actionId === "clear_fish_pond") {
+    // The facility family's building shape: the pond's interaction tile plus the opaque pond
+    // selector, both mandatory. The Agent names the structure and never its internal state.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "fish_pond_cleared") return false;
+    return true;
+  }
+  if (actionId === "send_multiplayer_chat") {
+    // One string and nothing else: the action has no body, no geometry and no target, so any
+    // other argument name would mean the descriptor grew something the action cannot use.
+    if (!hasExactPublishedArgumentNames(descriptor, ["text"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "chat_message_sent") return false;
     return true;
   }
   if (actionId === "toggle_animal_door") {
