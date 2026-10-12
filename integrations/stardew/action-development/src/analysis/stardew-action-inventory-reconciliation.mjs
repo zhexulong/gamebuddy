@@ -386,6 +386,8 @@ export const METHOD_VERDICTS = Object.freeze({
   //   Cask.performToolAction@41 -> clear_cask · Horse.checkAction@599 -> mount_transport
   //   Lantern.DoFunction@36 -> toggle_tool_light · Mannequin.performObjectDropInAction@436 -> dress_mannequin
   //   Raft.DoFunction@29 -> use_raft · Sign.checkForAction@49 -> set_sign_display
+  //   NPC.checkAction@2464 -> talk_to_npc（该单元随 talk_to_npc 登记退出候选池；其送礼一半由
+  //     interact_npc_with_item 覆盖，聊天一半由新注册的 talk_to_npc 覆盖）
   //   BusStop.answerDialogue@132 -> ride_bus（该单元随 ride_bus 登记退出候选池；其
   //     Bus_Yes 分支的应答语义仍属 answer_dialogue，收钱 + 强制控制的编排由原生自己完成）
   "Game1.warpFarmer@9788": merge(["enter_exit"], "same Farmer.warpFarmer transition", "4.3"),
@@ -403,12 +405,6 @@ export const METHOD_VERDICTS = Object.freeze({
   // better, but the verdict vocabulary here is fixed (merge / newPrimitive / pending / implemented /
   // plainContent / contentFromSelector) and inventing a helper name silently breaks the module — so
   // the covered half is named in the reason instead, and nothing is lost.
-  "NPC.checkAction@2464": newPrimitive(
-    "talk_to_npc",
-    "the gifting half is covered by interact_npc_with_item (which mirrors tryToReceiveActiveObject and needs a held item), but the talk half has no caller: nothing invokes NPC.checkAction's talk branch (CurrentDialogue.Push + Game1.drawDialogue)",
-    "NPC.cs:2464 -> :2504-2506 (talk) / :1712 tryToReceiveActiveObject (gift)",
-    "4.3",
-  ),
   "ShippingBin.shipItem@158": merge(["ship_item"], "private shipItem is the shipping transaction; Farm.shipItem is registered", "4.3"),
   "ShippingBin.leftClicked@182": merge(["ship_item"], "menu-free shipping entry point", "4.3"),
   "HoeDirt.shake@367": {
@@ -448,6 +444,196 @@ export const METHOD_VERDICTS = Object.freeze({
     reason: "the whole map Action interpreter; its 155 selectors carry the verdict for this unit (see selectorLayer groups)",
     anchor: "GameLocation.cs:8695",
   },
+  // ---------------------------------------------------------------------------
+  // TIER-B SWEEP 2026-10-11 (owner ruling: read-only -> observation surface; physical change -> typed
+  // action). All 32 tier-B units were opened and read; every row quotes the native member it was decided
+  // from, and the checker is the acceptance test.
+  //
+  // A B-tier unit means no catalog intent matched by WORD FORM, not that no intent exists, so each had to
+  // be decided by asking whether the native member CHANGES WORLD STATE. Three of the owner example buckets
+  // had to give way to that test, and those rows say so: a colour picker that writes a saved Net field, a
+  // naming box whose callback saves an entity name, and three mini-games that move saved counters. Those,
+  // plus the two members that live two different lives, are `pending` instead of invented - a verdict is
+  // not the place to make a product decision the owner has not made.
+  // ---------------------------------------------------------------------------
+  "CarpenterMenu.receiveLeftClick@817": newPrimitive(
+      "build_farm_building",
+      "okButton branches into setUpForBuildingPlacement and the demolish/move/paint siblings (CarpenterMenu.cs:898, 858, 865, 872), which add, remove, relocate or recolour a Building on the farm - a permanent world structure plus the money for it. The menu is only where the player expresses it; the world write is the action.",
+      "CarpenterMenu.cs:898 -> setUpForBuildingPlacement",
+      "Menus/CarpenterMenu.cs:817",
+    ),
+  "JojaCDMenu.receiveLeftClick@98": newPrimitive(
+      "purchase_joja_upgrade",
+      "the checkbox branch debits Game1.player.Money (JojaCDMenu.cs:115) and then writes addMailForTomorrow to unlock the community upgrades - money out, several world switches in, in one transaction.",
+      "JojaCDMenu.cs:115 -> Game1.player.Money -=",
+      "Menus/JojaCDMenu.cs:98",
+    ),
+  "MineElevatorMenu.receiveLeftClick@69": merge(
+      ["select_mine_elevator_floor"],
+      "the elevator branch sets Farmer.ridingMineElevator and calls the public Game1.enterMine(level) (MineElevatorMenu.cs:94-95, 86), which is exactly the seam select_mine_elevator_floor already drives - so this unit is covered, not a new primitive.",
+      "Menus/MineElevatorMenu.cs:94",
+    ),
+  "JunimoNoteMenu.receiveLeftClick@430": newPrimitive(
+      "donate_bundle_item",
+      "HandlePartialDonation (JunimoNoteMenu.cs:459, defined :688) consumes the held item and credits the bundle, advancing a permanent community-centre chain. Nothing else in the surface can donate.",
+      "JunimoNoteMenu.cs:459 -> HandlePartialDonation",
+      "Menus/JunimoNoteMenu.cs:430",
+    ),
+  "CraftingPage.receiveLeftClick@376": merge(
+      ["craft_item"],
+      "the confirm path consumes ingredients and produces the item; craft_item is the registered action for exactly that transaction, so this menu is a route to it rather than a capability of its own.",
+      "Menus/CraftingPage.cs:376",
+    ),
+  "DyeMenu.receiveLeftClick@339": newPrimitive(
+      "dye_item",
+      "confirming consumes the dye item and writes the garment's colour - a two-sided inventory/equipment change with no existing action.",
+      "DyeMenu.cs:339",
+      "Menus/DyeMenu.cs:339",
+    ),
+  "TailoringMenu.receiveLeftClick@399": newPrimitive(
+      "tailor_item",
+      "confirming consumes cloth plus the input and grants the tailored item, changing equipment state and the inventory.",
+      "TailoringMenu.cs:399",
+      "Menus/TailoringMenu.cs:399",
+    ),
+  "PrizeTicketMenu.receiveLeftClick@145": newPrimitive(
+      "redeem_prize_ticket",
+      "the reward branch adds the prize to the inventory and reduces the PrizeTicket stack (PrizeTicketMenu.cs:180-185): a two-sided item exchange.",
+      "PrizeTicketMenu.cs:180 -> addItemToInventoryBool",
+      "Menus/PrizeTicketMenu.cs:145",
+    ),
+  "PondQueryMenu.receiveLeftClick@124": newPrimitive(
+      "clear_fish_pond",
+      "the confirm branch calls FishPond.ClearPond (PondQueryMenu.cs:135), emptying every fish in one irreversible step; the netting branch (:158) is the same pond's own state.",
+      "PondQueryMenu.cs:135 -> _pond.ClearPond()",
+      "Menus/PondQueryMenu.cs:124",
+    ),
+  "DiscreteColorPicker.receiveLeftClick@57": newPrimitive(
+      "color_placed_object",
+      "the picker writes the container's persistent Net field (DiscreteColorPicker.cs:77-78: chest.playerChoiceColor.Value plus resetLidFrame). Cosmetically small but a SAVED world write, so it is not pure UI - the weakest entry here, and the one whose bucket is most worth re-checking.",
+      "DiscreteColorPicker.cs:77 -> chest.playerChoiceColor.Value",
+      "Menus/DiscreteColorPicker.cs:57",
+    ),
+  "Billboard.receiveLeftClick@360": newPrimitive(
+      "accept_daily_quest",
+      "MIXED in one member: the board is mostly calendar/quest browsing, and the acceptQuestButton branch writes the quest log and acceptedDailyQuest (:371-372). The world-changing half is what an action would carry.",
+      "Billboard.cs:371 -> questLog.Add",
+      "Menus/Billboard.cs:360",
+    ),
+  "LetterViewerMenu.receiveLeftClick@699": merge(
+      ["claim_mail_attachment"],
+      "the itemsToGrab loop hands the letter's attachment into the inventory and clears it (LetterViewerMenu.cs:733-734) - the same transaction claim_mail_attachment performs; the rest of the member is reading.",
+      "Menus/LetterViewerMenu.cs:733",
+    ),
+  "NumberSelectionMenu.receiveLeftClick@159": pending(
+      "the OK branch runs a caller-supplied behaviourFunction (NumberSelectionMenu.cs:192) whose effects differ per caller (e.g. Event.cs:13284 buyStarTokens turns money into festivalScore). It is a shared widget, so the honest unit is the CALLER's transaction, not the widget: name the callers you want as actions before this row can be decided.",
+      "Menus/NumberSelectionMenu.cs:192",
+    ),
+  "NamingMenu.receiveLeftClick@152": pending(
+      "textBoxEnter -> doneNaming (NamingMenu.cs:158, :92) writes the name of an entity the game just created (pet, horse, animal, baby - the callers are Event.cs:13092, Horse.cs:637, QuestionEvent.cs:123, BirthingEvent). A name is saved state, so this is not pure UI; whether the companion should ever NAME a player's entity is a product call, not an implementation one.",
+      "Menus/NamingMenu.cs:158",
+    ),
+  "CharacterCustomization.receiveLeftClick@2018": pending(
+      "two different lives in one member: from DyePots it writes the worn garment's colour (CharacterCustomization.cs:2138), while optionButtonClick (:2127, defined :1565) writes new-game world-generation fields such as Game1.whichFarm (:1592). The first is a live-world write and the second only exists before the world exists, so one verdict cannot cover both - say which you want.",
+      "Menus/CharacterCustomization.cs:2138",
+    ),
+  "Slots.receiveLeftClick@238": pending(
+      "the spin buttons debit Game1.player.clubCoins (Slots.cs:250, :261-262) and the payout credits them (:225). It is a MiniGames.IMinigame rather than a menu, so the owner's 'mini-game' example and its 'has a world write' test disagree here, and a gambling table is a product question besides.",
+      "Minigames/Slots.cs:250",
+    ),
+  "StrengthGame.receiveLeftClick@35": pending(
+      "the member itself only sets CurrentToolIndex (StrengthGame.cs:40); the persistent write is Game1.player.festivalScore++ in update (:115). Same conflict as Slots: a festival mini-game that does move saved state.",
+      "Menus/StrengthGame.cs:115",
+    ),
+  "TargetGame.receiveLeftClick@352": pending(
+      "pressUseToolButton is called (:356) and the persistent write is festivalScore += starTokensWon (:303). Same conflict as Slots and StrengthGame - and the three should be decided together rather than one at a time.",
+      "Minigames/TargetGame.cs:303",
+    ),
+  "CollectionsPage.receiveLeftClick@510": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "the member only opens sub-readers (letterviewerSubMenu = new LetterViewerMenu(...), CollectionsPage.cs:561/576) and writes no player state; the facts it shows belong to the observation surface, so it needs no action.",
+      anchor: "Menus/CollectionsPage.cs:561",
+    },
+  "ProfileMenu.receiveLeftClick@549": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "page/character/scroll changes plus a hidden emote whose only effect is a local timer (ProfileMenu.cs:573-593, :601). Nothing persistent changes.",
+      anchor: "Menus/ProfileMenu.cs:573",
+    },
+  "ShippingMenu.receiveLeftClick@699": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "the class name says SHIPPING, but this member only closes the summary (okClicked sets outro and the music track, ShippingMenu.cs:690-695) and turns pages; it neither ships items nor advances the day - the shipping itself happened before the menu existed.",
+      anchor: "Menus/ShippingMenu.cs:690",
+    },
+  "AdvancedGameOptions.receiveLeftClick@544": {
+      group: "explicit_exclusion",
+      boundary: "B5_pre_world_configuration",
+      reason: "CloseAndApply only runs registered callbacks and closes (AdvancedGameOptions.cs:571, :235), and those callbacks write world-GENERATION fields; the screen is reachable only from the title/new-game flow, so it is pre-world configuration rather than a live-world capability.",
+      anchor: "Menus/AdvancedGameOptions.cs:571",
+    },
+  "DayTimeMoneyBox.receiveLeftClick@106": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "it opens the read-only quest log and changes the client's zoom preference (DayTimeMoneyBox.cs:110, :119/:128): a HUD, with no world write.",
+      anchor: "Menus/DayTimeMoneyBox.cs:110",
+    },
+  "GrandpaStory.receiveLeftClick@305": {
+      group: "explicit_exclusion",
+      boundary: "B2_input_edge",
+      reason: "an IMinigame whose writes are the intro cutscene's own staging (Position/currentEyes/jitterStrength, GrandpaStory.cs:309-312 and :92/:207/:216/:256) - the player does not control a world capability here.",
+      anchor: "Minigames/GrandpaStory.cs:309",
+    },
+  "OptionsCheckbox.receiveLeftClick@25": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "writes a game option (Game1.options.changeCheckBoxOption, OptionsCheckbox.cs:33) - client configuration, not world state.",
+      anchor: "Menus/OptionsCheckbox.cs:33",
+    },
+  "OptionsInputListener.receiveLeftClick@32": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "keybinding state (OptionsInputListener.cs:40, :56). Nothing in the world changes.",
+      anchor: "Menus/OptionsInputListener.cs:40",
+    },
+  "OptionsPage.receiveLeftClick@540": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "scroll plus forwarding to the option rows (OptionsPage.cs:572); it writes nothing itself.",
+      anchor: "Menus/OptionsPage.cs:572",
+    },
+  "OptionsPlusMinus.receiveLeftClick@62": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "a dropdown option write (OptionsPlusMinus.cs:89).",
+      anchor: "Menus/OptionsPlusMinus.cs:89",
+    },
+  "TitleMenu.receiveLeftClick@877": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "title-screen UI: mute, window mode and preference saves (TitleMenu.cs:881-891, :898/:904). There is no world to change yet.",
+      anchor: "Menus/TitleMenu.cs:881",
+    },
+  "TitleTextInputMenu.receiveLeftClick@49": {
+      group: "explicit_exclusion",
+      boundary: "B3_client_preference",
+      reason: "a text box that can paste from the clipboard (TitleTextInputMenu.cs:54-57); it feeds a title-screen flow, not the world.",
+      anchor: "Menus/TitleTextInputMenu.cs:54",
+    },
+  "Toolbar.receiveLeftClick@40": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "the LEFT-click unit only selects a slot (CurrentToolIndex, Toolbar.cs:50). NOTE the sibling: receiveRightClick (:86) drops the item on the ground (Items[num] = null plus createItemDebris) and would be its own unit with its own verdict - judged here only for the line this row names.",
+      anchor: "Menus/Toolbar.cs:50",
+    },
+  "TutorialMenu.receiveLeftClick@62": {
+      group: "explicit_exclusion",
+      boundary: "B4_read_only_surface",
+      reason: "an overlay that changes tabs and closes (TutorialMenu.cs:70, :84). It advances an event pointer at :87, but that is the script's own progress, not a capability the actor exercises.",
+      anchor: "Menus/TutorialMenu.cs:84",
+    },
+
 });
 
 // ---------------------------------------------------------------------------
