@@ -82,11 +82,12 @@ export const MessageBubble = memo(function MessageBubble({
       {...(busy ? { "aria-busy": "true" as const, "data-pending": pending } : {})}
       {...(streaming ? { "data-streaming": "true" as const } : {})}
     >
-      {!isPlayer && (
-        <div className="avatar avatar-small" aria-hidden="true">
-          {initial}
-        </div>
-      )}
+      {/* The avatar is the row's first child on both sides, and the player's
+          row is mirrored by `flex-direction: row-reverse` (style.css): the
+          monogram ends up outside the bubble, hugging the outer boundary. */}
+      <div className="avatar avatar-small" aria-hidden="true">
+        {initial}
+      </div>
       <div className="message-body">
         <div className="message-header">
           <span className="message-author">{authorName}</span>
@@ -166,11 +167,6 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
       </div>
-      {isPlayer && (
-        <div className="avatar avatar-small" aria-hidden="true">
-          {initial}
-        </div>
-      )}
     </li>
   );
 });
