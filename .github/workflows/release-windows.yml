@@ -140,6 +140,19 @@ jobs:
         env:
           GAMEBUDDY_TAVERN_BROWSER_OUTPUT_ROOT: ${{ github.workspace }}/host/dist
           CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+      # The companion's long-term memory, end to end with real provider turns: a real fold seals a chapter
+      # into m[0], and the historian's own output is judged against the obligations in
+      # design/architecture/historian-prompt-rubric.md (voice, no role labels, no transcript references, no
+      # internal markers). A compartment is MODEL OUTPUT, so no cheaper check can stand in for this one - a
+      # run without a provider call proves the plumbing, not the memory.
+      # Soft on the first landings, and deliberately so: a fold is paced by Magic Context's protected-tail
+      # drain budget, so its stability across releases is not yet known and this gate must not pretend it is.
+      # It exits 3 (blocked, not failed) when the credential is absent.
+      - name: Companion memory fold gate (soft)
+        continue-on-error: true
+        run: node tools/run-memory-fold-live-gate.mjs --report memory-fold-gate.json
+        env:
+          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
       # Screenshots, traces and the page snapshots of any failure, so a broken
       # journey is diagnosable from the run without a local reproduction.
       - name: Upload browser journey failures
@@ -164,6 +177,7 @@ jobs:
             tavern-ui-outcomes.json
             tavern-operation-evidence.json
             tavern-operation-evidence.json.profile.json
+            memory-fold-gate.json
             tavern-release-live-gate.json
       # Recovery cleanup is repository-owned and derives only this exact protected
       # workflow run root. It never accepts a path or scans TEMP. The native

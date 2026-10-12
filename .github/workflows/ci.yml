@@ -60,6 +60,12 @@ jobs:
       # has no authority to assemble a Host production generation.
       - run: pnpm --filter @gamebuddy/dialogue-web build
       - run: pnpm test
+      # The composed runtime's launch contract: the environment block the launcher hands the Host child
+      # (including the embedded-runtime declaration the background historian is gated on) and the session
+      # entry it publishes. `tools/*.test.mjs` are otherwise never run by CI - the contract could be deleted
+      # without anything noticing, which is exactly how a composed session silently lost its fold.
+      - name: Composed runtime contract gate
+        run: node --test tools/desktop-composition-launch.test.mjs
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: pnpm check:dependency-risk
