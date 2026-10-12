@@ -222,6 +222,11 @@ const GamePrerequisitesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
+/**
+ * Reserved: no route on the reference shell produces it (see the reservation on
+ * its id in `GAME_BROWSER_OPERATION_IDS_V1`); the composed state read's
+ * `game.instance` projection is what the shell shows today.
+ */
 const GameInstancesReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
@@ -464,12 +469,23 @@ const GameProblemV1Schema = strictObject({
 
 // ─── Profile composition ────────────────────────────────────────────────────
 
+/**
+ * The `game_browser_api/v1` operation vocabulary. A member is *produced* when a
+ * shipped (non-test) Host source names it - the composed route's mount checks and
+ * the Stardew profile's own capability list are those producers - and an entry no
+ * shipped source names carries a reservation marker, so a declared operation is
+ * never silent about having no route. `contract-producer-gate` enumerates this
+ * array, so an operation added here is checked without touching the gate.
+ */
 export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
+  /** Reserved: no route serves it; the composed state read publishes the prerequisites projection. */
   "game.prerequisites.read",
   "game.prerequisites.setup",
+  /** Reserved: no route serves it; the composed state read's `game.instance` projection is what the shell shows. */
   "game.instances.read",
   "game.state.read",
   "game.launch",
+  /** Reserved: no route serves it; the Stardew profile does not list it in its operationIds. */
   "game.attach",
   "game.stop",
   "game.resume",
@@ -478,6 +494,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.disconnect",
   "game.create",
   "game.endgame",
+  /** Reserved: no route serves it; the composed state route's own data disclosure is what the shell shows. */
   "game.diagnostics.read",
   "game.installation.discovery.read",
   "game.installation.discovery.confirm",
