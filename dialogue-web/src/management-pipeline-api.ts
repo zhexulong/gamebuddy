@@ -433,10 +433,26 @@ export type MemoryItemV1 = Readonly<{
   pinned: boolean;
 }>;
 
+/**
+ * One narrative chapter of the companion's long-term memory: the stretch of time it covers, the body, and
+ * whether the player has touched it. Same kind of thing as a Memory row, same rule: the player may correct
+ * it or remove it.
+ */
+export type MemoryChapterV1 = Readonly<{
+  handle: string;
+  title: string;
+  span: string;
+  content: string;
+  status: "sealed" | "edited" | "deleted";
+  editedByPlayer: boolean;
+}>;
+
 export type MemoryReadV1 = Readonly<{
   apiVersion: 1;
   projectionRevision: string;
   memories: readonly MemoryItemV1[];
+  /** The continuity's chapters, oldest first. */
+  chapters: readonly MemoryChapterV1[];
 }>;
 
 export type MemoryMutationCommandV1 =
@@ -448,7 +464,15 @@ export type MemoryMutationCommandV1 =
       handle: string;
       content: string;
     }>
-  | Readonly<{ apiVersion: 1; operation: "archive"; expectedProjectionRevision: string; handle: string }>;
+  | Readonly<{ apiVersion: 1; operation: "archive"; expectedProjectionRevision: string; handle: string }>
+  | Readonly<{
+      apiVersion: 1;
+      operation: "update_chapter";
+      expectedProjectionRevision: string;
+      handle: string;
+      content: string;
+    }>
+  | Readonly<{ apiVersion: 1; operation: "delete_chapter"; expectedProjectionRevision: string; handle: string }>;
 
 export type TavernProblemV1 = Readonly<{
   type: string;
@@ -851,7 +875,7 @@ const CHAT_COMPANION_KEYS = ["name"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
   const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
-const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories"] as const;
+const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories", "chapters"] as const;
 const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
 const MEMORY_MUTATION_UPDATE_KEYS = [
   "apiVersion",
@@ -865,6 +889,8 @@ const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
 const MEMORY_ORIGINS = ["player", "companion"] as const;
 const MAX_MEMORY_ITEMS = 200;
+const MEMORY_CHAPTER_STATUSES = ["sealed", "edited", "deleted"] as const;
+const MEMORY_CHAPTER_KEYS = ["handle", "title", "span", "content", "status", "editedByPlayer"] as const;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const SAVE_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "text"] as const;
 const DISCARD_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision"] as const;
@@ -1631,6 +1657,19 @@ function isMemoryItem(value: unknown): value is MemoryItemV1 {
   );
 }
 
+function isMemoryChapter(value: unknown): value is MemoryChapterV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MEMORY_CHAPTER_KEYS) &&
+    isOpaqueHandle(value.handle) &&
+    isBoundedText(value.title, 256) &&
+    isBoundedText(value.span, 128) &&
+    isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES) &&
+    isOneOf(value.status, MEMORY_CHAPTER_STATUSES) &&
+    typeof value.editedByPlayer === "boolean"
+  );
+}
+
 function isMemoryRead(value: unknown): value is MemoryReadV1 {
   return (
     isRecord(value) &&
@@ -1639,7 +1678,10 @@ function isMemoryRead(value: unknown): value is MemoryReadV1 {
     isOpaqueHandle(value.projectionRevision) &&
     Array.isArray(value.memories) &&
     value.memories.length <= MAX_MEMORY_ITEMS &&
-    value.memories.every(isMemoryItem)
+    value.memories.every(isMemoryItem) &&
+    Array.isArray(value.chapters) &&
+    value.chapters.length <= MAX_MEMORY_ITEMS &&
+    value.chapters.every(isMemoryChapter)
   );
 }
 

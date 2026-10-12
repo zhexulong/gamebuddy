@@ -127,6 +127,15 @@ const en = {
   // companion remembers, and can audit or correct either.
   originPlayer: "I told her this",
   originCompanion: "She remembers this",
+  memoryChapters: "Her long story",
+  memoryChaptersHint: "Stretches of your time together that she has already taken in. Hers to keep, yours to correct.",
+  memoryChapterSealed: "She wrote this",
+  memoryChapterEdited: "You corrected this",
+  memoryChapterDeleted: "Removed",
+  memoryChapterEdit: "Correct",
+  memoryChapterRemove: "Remove",
+  memoryChapterSave: "Save",
+  memoryChapterCancel: "Cancel",
   // The Memory panel's origin filter. One chip, one dimension, and the two
   // origin chips reuse the row labels above: the filter never needs its own
   // vocabulary for the same split.
@@ -621,6 +630,15 @@ const zh: Messages = {
   deleteMemory: "删除记忆",
   originPlayer: "我告诉她的",
   originCompanion: "她自己记得的",
+  memoryChapters: "她记得的长故事",
+  memoryChaptersHint: "你们一起经历过的段落，她已经记下了。她留着，你可以改。",
+  memoryChapterSealed: "她写的",
+  memoryChapterEdited: "你改过的",
+  memoryChapterDeleted: "已移除",
+  memoryChapterEdit: "修改",
+  memoryChapterRemove: "移除",
+  memoryChapterSave: "保存",
+  memoryChapterCancel: "取消",
   memoryFilterAll: "全部",
 
   // Composer

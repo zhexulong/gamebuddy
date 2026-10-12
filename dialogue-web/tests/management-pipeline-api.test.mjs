@@ -65,6 +65,17 @@ function memoryRead(overrides = {}) {
   return {
     apiVersion: 1,
     projectionRevision: HANDLE,
+    // Chapters are the continuity's narrative history, on the same panel and under the same revision.
+    chapters: [
+      {
+        handle: HANDLE,
+        title: "First days",
+        span: "2026-10-01\u21922026-10-03",
+        content: "We put up the shutters; you hated the colour.",
+        status: "edited",
+        editedByPlayer: true,
+      },
+    ],
     memories: [
       {
         handle: `${"C".repeat(42)}A`,

@@ -3,6 +3,7 @@ import { type Locale, messages } from "../i18n";
 import { memoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
+  type MemoryChapterV1,
   type MemoryItemV1,
   TavernProblemError,
   type TavernConnectionApiShapeV1,
@@ -87,8 +88,18 @@ export type MemoryView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "error" }>
-  | Readonly<{ kind: "empty"; projectionRevision: string }>
-  | Readonly<{ kind: "ready"; rows: readonly MemoryItemV1[]; projectionRevision: string }>;
+  | Readonly<{
+      kind: "empty";
+      projectionRevision: string;
+      /** The continuity's narrative chapters; they exist independently of the Memory rows. */
+      chapters: readonly MemoryChapterV1[];
+    }>
+  | Readonly<{
+      kind: "ready";
+      rows: readonly MemoryItemV1[];
+      projectionRevision: string;
+      chapters: readonly MemoryChapterV1[];
+    }>;
 export type ConnectionForm = Readonly<{
   providerId: string;
   apiKey: string;
@@ -907,7 +918,14 @@ export function MemoryPanel({
   locale: Locale;
   onRefresh: () => void;
   mutationAvailable: boolean;
-  onMutate: (input: { operation: "create"; content: string } | { operation: "update"; handle: string; content: string } | { operation: "archive"; handle: string }) => void;
+  onMutate: (
+    input:
+      | { operation: "create"; content: string }
+      | { operation: "update"; handle: string; content: string }
+      | { operation: "archive"; handle: string }
+      | { operation: "update_chapter"; handle: string; content: string }
+      | { operation: "delete_chapter"; handle: string },
+  ) => void;
 }>): ReactElement {
   const statusText = (status: string, pinned: boolean): string => {
     const base = MEMORY_STATUS_LABELS[status]?.[locale === "zh-CN" ? "zh" : "en"] ?? status;
@@ -921,7 +939,12 @@ export function MemoryPanel({
   // control a player has to open, so the surface reads as the companion's own
   // notebook rather than as a form the player fills.
   const [authoringOpen, setAuthoringOpen] = useState(false);
+  // Which chapter is being corrected, and the player's draft for it. The draft is
+  // per-open, so switching chapters never carries one draft into another.
+  const [correctingHandle, setCorrectingHandle] = useState<string | null>(null);
+  const [chapterDraft, setChapterDraft] = useState("");
   const rows = memoryView.kind === "ready" ? memoryView.rows : [];
+  const chapters = memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.chapters : [];
   const visibleRows = originFilter === "all" ? rows : rows.filter((item) => item.origin === originFilter);
   // The notebook's own words, selected by this mount's locale.
   const notebook = memoryNotebookLabels(locale);
@@ -975,6 +998,92 @@ export function MemoryPanel({
           {notebookText}
         </p>
       </aside>
+      {chapters.length > 0 && (
+        <section className="memory-chapters" aria-label={labels.memoryChapters} data-memory-chapters>
+          <h3 className="memory-chapters-title">{labels.memoryChapters}</h3>
+          <p className="memory-chapters-hint">{labels.memoryChaptersHint}</p>
+          <ul className="memory-chapter-list">
+            {chapters.map((chapter) => {
+              const badge =
+                chapter.status === "deleted"
+                  ? labels.memoryChapterDeleted
+                  : chapter.status === "edited"
+                    ? labels.memoryChapterEdited
+                    : labels.memoryChapterSealed;
+              return (
+                <li key={chapter.handle} className="memory-chapter" data-memory-chapter={chapter.status}>
+                  <div className="memory-chapter-head">
+                    <h4 className="memory-chapter-name">{chapter.title}</h4>
+                    <span className="memory-chapter-span">{chapter.span}</span>
+                    <span className="memory-chapter-badge" data-memory-chapter-badge={chapter.status}>
+                      {badge}
+                    </span>
+                  </div>
+                  {correctingHandle === chapter.handle ? (
+                    <div className="memory-chapter-correct">
+                      <textarea
+                        className="memory-chapter-draft"
+                        aria-label={labels.memoryChapterEdit}
+                        value={chapterDraft}
+                        onChange={(event) => setChapterDraft(event.target.value)}
+                        rows={3}
+                      />
+                      <div className="memory-chapter-actions">
+                        <button
+                          type="button"
+                          className="small-button"
+                          disabled={chapterDraft.trim().length === 0}
+                          onClick={() => {
+                            onMutate({ operation: "update_chapter", handle: chapter.handle, content: chapterDraft });
+                            setCorrectingHandle(null);
+                          }}
+                        >
+                          {labels.memoryChapterSave}
+                        </button>
+                        <button
+                          type="button"
+                          className="small-button"
+                          onClick={() => setCorrectingHandle(null)}
+                        >
+                          {labels.memoryChapterCancel}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="memory-chapter-body">{chapter.content}</p>
+                  )}
+                  {/*
+                    A removed chapter keeps its place and its body, so the removal is a fact the player can
+                    see rather than a row that quietly disappeared - and it offers no action, because bringing
+                    it back would be a new act, not an undo.
+                  */}
+                  {mutationAvailable && chapter.status !== "deleted" && correctingHandle !== chapter.handle && (
+                    <div className="memory-chapter-actions">
+                      <button
+                        type="button"
+                        className="small-button"
+                        onClick={() => {
+                          setChapterDraft(chapter.content);
+                          setCorrectingHandle(chapter.handle);
+                        }}
+                      >
+                        {labels.memoryChapterEdit}
+                      </button>
+                      <button
+                        type="button"
+                        className="small-button"
+                        onClick={() => onMutate({ operation: "delete_chapter", handle: chapter.handle })}
+                      >
+                        {labels.memoryChapterRemove}
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
       {memoryView.kind === "ready" && (
         // The group is named by the panel's own heading, so no string exists only
         // for the filter and the two origin chips keep the labels the rows

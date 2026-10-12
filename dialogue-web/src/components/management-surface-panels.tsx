@@ -305,7 +305,7 @@ export function ChatsSurfacePanel({
         }
         setBlocked(null);
         await reread();
-        onChatSwitched?.();
+
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });
       } catch {
         await reread();
