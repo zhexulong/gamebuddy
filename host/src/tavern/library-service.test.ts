@@ -333,21 +333,17 @@ test("Library companion enumeration and current companion fail closed for corrup
   }
 });
 
-test("New Chat opens on a mounted companion with no library artifact, and refuses an unverified greeting", async () => {
+test("New Chat requires the companion record the seed installs, and refuses an unverified greeting", async () => {
   const { root, paths, service, threads } = await setup();
   try {
-    // No `companion.json`: this is the companion a deployment MOUNTS. The library
-    // only writes that artifact for a companion it created, so its absence is the
-    // ordinary case - the exact tavern namespace and the identity profile are the
-    // authority. This namespace carries no greeting set, so the Chat opens blank.
-    const state = await service.createNewChat({
-      chatThreadId: "thread",
-      chatSurfaceSessionId: "surface",
-      opening: { kind: "blank" },
-    });
-    assert.equal(state.messages.length, 0);
-    assert.equal(state.thread.companionId, "companion");
-    assert.equal(state.thread.continuityId, "continuity");
+    // No `companion.json`: the seed installs that record through the library's
+    // own creation path, so its absence means the two producers of the record
+    // disagree. The library fails closed instead of opening a Chat on a record
+    // it never wrote - a missing artifact is never the ordinary case.
+    await assert.rejects(
+      service.createNewChat({ chatThreadId: "thread", chatSurfaceSessionId: "surface", opening: { kind: "blank" } }),
+      /tavern_artifact_unreadable/,
+    );
 
     await service.createNewCompanion({
       companionId: "companion",
@@ -357,6 +353,15 @@ test("New Chat opens on a mounted companion with no library artifact, and refuse
       profileRevision: 1,
       profileHash: hash,
     });
+    const state = await service.createNewChat({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      opening: { kind: "blank" },
+    });
+    assert.equal(state.messages.length, 0);
+    assert.equal(state.thread.companionId, "companion");
+    assert.equal(state.thread.continuityId, "continuity");
+
     await writeSelections(root, paths);
     await assert.rejects(
       service.createNewChat({

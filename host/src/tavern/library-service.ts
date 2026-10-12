@@ -129,18 +129,14 @@ export function createTavernLibraryService(
     },
 
     async createNewChat(input): Promise<ChatThreadState> {
-      // The library companion artifact is written only when a companion is created
-      // THROUGH the library (direct `创建伙伴` or a reviewed card import). The
-      // companion a deployment mounts has its identity profile and its tavern
-      // namespace but no such artifact, so its absence is the normal case, not a
-      // failure: the exact namespace and the identity profile below are the
-      // authority. A present artifact is still cross-checked against the scope it
-      // claims, so a foreign companion can never be opened through this path.
-      const companion = await companionRepository(store, companionPath).readIfPresent();
-      if (
-        companion !== undefined &&
-        (companion.companionId !== paths.companionId || companion.continuityId !== paths.continuityId)
-      )
+      // The seeded/mounted companion and every library-created companion carries
+      // this record: the seed installs it through the library's own creation
+      // path, so a companion without one is a producer disagreement, not an
+      // ordinary case. It fails closed rather than opening a Chat on a record
+      // the library never wrote, and a present artifact is cross-checked against
+      // the scope it claims, so a foreign companion can never be opened here.
+      const companion = await currentCompanion(store, companionPath);
+      if (companion.companionId !== paths.companionId || companion.continuityId !== paths.continuityId)
         throw new Error("tavern_companion_scope_mismatch");
       const profile = await metadataReader.readExact();
       const persona =
@@ -460,4 +456,21 @@ function isCompanion(value: unknown): value is TavernCompanion {
 }
 function isGreetingSet(value: unknown): value is GreetingSet {
   return typeof value === "object" && value !== null && "greetingSetId" in value && "variants" in value;
+}
+
+/**
+ * The one bounded vocabulary for "the durable record cannot be read": a present
+ * but corrupt/incomplete artifact (`invalid_tavern_artifact`), or the artifact
+ * the library itself writes when it is absent (`tavern_artifact_unreadable`).
+ * Every caller must surface this as the bounded, non-retryable data-integrity
+ * fact it is - never collapse it into a `..._service_unavailable` runtime outage,
+ * which would tell the player to retry something that cannot succeed.
+ */
+export function isTavernArtifactUnreadable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message === "tavern_artifact_unreadable" ||
+    error.message === "invalid_tavern_artifact" ||
+    error.message === "invalid_tavern_companion"
+  );
 }

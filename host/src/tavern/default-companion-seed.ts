@@ -1,12 +1,20 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { type IdentityProfile, validateIdentityProfile, writeIdentityProfile } from "../identity-profile.js";
-import { type CompanionIdentity, resolveRuntimePaths } from "../runtime-identity.js";
+import {
+  identityProfileHash,
+  identityProfileMetadata,
+  type IdentityProfile,
+  validateIdentityProfile,
+  writeIdentityProfile,
+} from "../identity-profile.js";
+import { identityKey, type CompanionIdentity, resolveRuntimePaths } from "../runtime-identity.js";
 import { type WorldBook, validateWorldBook, writeWorldBook } from "../worldbook.js";
 import { TavernArtifactStore } from "./artifact-store.js";
+import { createChatThreadStore } from "./chat-thread-store.js";
 import { DEFAULT_COMPANION_PRESET, type DefaultCompanionPreset } from "./default-companion-preset.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { createTavernLibraryService } from "./library-service.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
 /**
@@ -67,13 +75,35 @@ export async function seedDefaultCompanionIntoFreshRuntimeRoot(
   const worldBookPath = join(paths.runtimeCwd, "worldbook.json");
   if (!existsSync(worldBookPath)) await writeWorldBook(worldBookPath, worldBook);
   const tavernPaths = resolveTavernPaths(paths, identity);
-  const greetings = createGreetingManagementService(
-    new TavernArtifactStore(paths.root),
-    tavernPaths.companionRoot,
-  );
+  const artifacts = new TavernArtifactStore(paths.root);
+  const greetings = createGreetingManagementService(artifacts, tavernPaths.companionRoot);
   // A resumed root keeps its record; the default variant is what the initial
   // Chat draws its opening from (`initial-chat-exact-content-port.ts`).
   if ((await greetings.readExact()) === null && preset.greetings.length > 0)
     await greetings.create({ label: "Initial Greeting", variants: preset.greetings });
+  // A seeded companion must be exactly a companion the library created. The
+  // library's chat selector reads `companion.json`, and this is the only place a
+  // fresh root's companion comes from, so the record is installed through the
+  // library's OWN creation path: one producer of that record, never a second
+  // copy of the shape that could drift from it. Without this the library would
+  // have to accept a companion whose record it never wrote, which is the
+  // two-producer disagreement - not a missing file to tolerate.
+  const threads = createChatThreadStore(paths.runtimeCwd, identityKey(identity));
+  try {
+    await createTavernLibraryService(tavernPaths, artifacts, threads, {
+      async readExact() {
+        return identityProfileMetadata(profile);
+      },
+    }).createNewCompanion({
+      companionId: identity.companionId,
+      continuityId: identity.continuityId!,
+      name: profile.identity.name,
+      profileId: profile.profileId,
+      profileRevision: profile.revision,
+      profileHash: identityProfileHash(profile),
+    });
+  } finally {
+    threads.close?.();
+  }
   return outcome(true);
 }
