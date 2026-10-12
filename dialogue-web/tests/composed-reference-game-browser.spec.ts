@@ -4313,3 +4313,99 @@ test("Chats surface selects another chat durably, no-ops the current one, and re
   await expect.poll(() => listReads).toBeGreaterThan(readsBefore);
 });
 
+
+
+/**
+ * The optimistic send (design/26 §6): the input cleared and then nothing happened for the seconds
+ * the Host spends thinking - the "anxiety wait". The sent text must be visible in the reading flow
+ * immediately, marked pending, and must collapse into the Host's authoritative message for the same
+ * idempotency key. It must never duplicate, and a re-read that no longer carries the key must leave
+ * no ghost.
+ */
+test("sending shows the player's text immediately with a pending marker, then collapses into the authoritative message", async ({ page }) => {
+  const playerText = "Meet me at the mine entrance.";
+  const playerHandle = "P".repeat(42) + "A";
+  const turnHandle = "T".repeat(42) + "A";
+  let submitted = false;
+  const submittable = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+      ],
+      chat: { ...chat.chat, draft: { revision: 0, present: false } },
+    },
+  };
+  const projection = () => ({
+    ...submittable,
+    chat: {
+      ...submittable.chat,
+      chat: {
+        ...submittable.chat.chat,
+        transcript: submitted
+          ? [
+              ...chat.chat.transcript,
+              { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 1, revision: 1 },
+            ]
+          : chat.chat.transcript,
+        turn: submitted ? { handle: turnHandle, state: "completed", projectionRevision: 1, canCancel: false } : null,
+      },
+    },
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["idempotency-key"]).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    // Hold the submit so the optimistic entry is observable before the Host answers.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    submitted = true;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 1, revision: 1 },
+        turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, disposition: "terminal" })),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await surface.locator(".composer-textarea").fill(playerText);
+  await surface.getByRole("button", { name: "Send", exact: true }).click();
+
+  // Before any Host response: the sent text is visible and marked pending, while the authoritative
+  // transcript does not yet carry it.
+  const optimistic = surface.getByTestId("optimistic-player-message");
+  await expect(optimistic).toBeVisible();
+  await expect(optimistic).toHaveAttribute("data-pending", "true");
+  await expect(optimistic).toContainText(playerText);
+  await expect(surface.locator(".message-list > li", { hasText: playerText })).toHaveCount(0);
+
+  // The authoritative message lands: the pair collapses to exactly one message and the optimistic
+  // entry is gone (never a duplicate).
+  await expect(optimistic).toHaveCount(0);
+  await expect(surface.locator(".message-list > li", { hasText: playerText })).toHaveCount(1);
+
+  // A reload re-reads the authoritative transcript and leaves no optimistic ghost.
+  await page.reload();
+  const reloaded = page.getByTestId("chat-surface");
+  await expect(reloaded).toBeVisible();
+  await expect(reloaded.getByTestId("optimistic-player-message")).toHaveCount(0);
+  await expect(reloaded.locator(".message-list > li", { hasText: playerText })).toHaveCount(1);
+});

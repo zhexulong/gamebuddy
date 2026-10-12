@@ -28,6 +28,7 @@ export function ChatSurface({
   chatTitle,
   labels,
   pending,
+  pendingPlayerMessage,
   notice,
   onSwipe,
   onRegenerate,
@@ -50,6 +51,14 @@ export function ChatSurface({
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
   pending: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
+  /**
+   * The optimistic player message: the text just sent, shown until the authoritative one lands.
+   * It is rendered here rather than inside the transcript because the transcript list and its
+   * bubble are owned by the conversation-rendering lane; the hook to fold it into the list is a
+   * `pendingPlayerMessage` prop on `Timeline` that renders a final player bubble with
+   * `data-pending` (see the note below the Timeline).
+   */
+  pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
   /** The one turn-failure line the surface reports, or null for none. */
   notice: string | null;
   onSwipe: (messageHandle: string, direction: "prev" | "next") => void;
@@ -84,6 +93,20 @@ export function ChatSurface({
         onRegenerate={onRegenerate}
         onOpeningVariant={onOpeningVariant}
       />
+      {/* The optimistic player message. It is the newest line in the reading flow, but its
+          permanent home is the transcript list; folding it into `Timeline` needs a
+          `pendingPlayerMessage` prop there that appends a final player bubble marked
+          `data-pending` (the conversation-rendering lane owns that file). Until then it renders
+          directly under the transcript so the sent text is visible before the Host answers,
+          and `data-pending` is the marker the shell clears the moment the authoritative
+          message for the same key appears. */}
+      {pendingPlayerMessage != null && (
+        <div className="message-optimistic" data-pending="true" data-testid="optimistic-player-message">
+          <span className="message-optimistic-role">{labels.you}</span>
+          <span className="message-optimistic-text">{pendingPlayerMessage.text}</span>
+          <span className="message-optimistic-state">{labels.chatSending}</span>
+        </div>
+      )}
       {notice !== null && (
         <p className="reference-turn-notice" role="status">
           {notice}

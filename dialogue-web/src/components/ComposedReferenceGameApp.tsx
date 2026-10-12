@@ -144,6 +144,13 @@ export function ComposedReferenceGameApp() {
   // settlement: the pending record is then cleared and this line says the turn
   // failed rather than silently leaving the composer disabled.
   const [pollFailure, setPollFailure] = useState(false);
+  /**
+   * The optimistic player message: the text the player just sent, keyed by the idempotency key
+   * the send already minted. It is shown until the Host's authoritative transcript for that key
+   * lands and is never replayed on a reconnect or re-read (a fresh mount starts with none), so a
+   * settled turn leaves no ghost and the pair collapses to the one authoritative message.
+   */
+  const [optimistic, setOptimistic] = useState<Readonly<{ idempotencyKey: string; text: string }> | null>(null);
   // The durable revision the editor was last seeded from: what lets a later
   // authoritative revision replace the editor without ever discarding text the
   // player has typed past the last seed.
@@ -534,6 +541,7 @@ export function ComposedReferenceGameApp() {
     const idempotencyKey = newIdempotencyKey();
     const pending = beginTurnMutation(idempotencyKey, current);
     if (pending === null) return;
+    setOptimistic(Object.freeze({ idempotencyKey: pending.idempotencyKey, text }));
     setPollFailure(false);
     setInputText("");
     inputTextRef.current = "";
@@ -896,6 +904,19 @@ export function ComposedReferenceGameApp() {
   };
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
+  // The optimistic entry is visible only while the pending record carries its exact key and the
+  // authoritative transcript has not yet carried the same player line. A settled/failed turn
+  // clears the pending record, so the pair collapses to one message and no ghost survives a
+  // re-read or a reload.
+  const pendingOptimisticMessage =
+    view.kind === "ready" &&
+    optimistic !== null &&
+    view.session.pending?.idempotencyKey === optimistic.idempotencyKey &&
+    !(view.session.snapshot.chat?.transcript ?? []).some(
+      (message) => message.role === "player" && message.text === optimistic.text,
+    )
+      ? optimistic
+      : null;
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
   const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
     ? labels().chatStopped
@@ -977,6 +998,7 @@ export function ComposedReferenceGameApp() {
                 chatTitle={view.session.snapshot.chat.title}
                 labels={labels()}
                 pending={chatMutation}
+                pendingPlayerMessage={pendingOptimisticMessage}
                 notice={pollFailure ? labels().chatFailed : terminalTurnNotice}
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}

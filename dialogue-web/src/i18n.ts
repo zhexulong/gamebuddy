@@ -492,6 +492,9 @@ const en = {
   chatSelectNextStart: "Next start",
   chatSelectChosenNotice:
     "Chat selected. It becomes the active conversation the next time GameBuddy starts.",
+
+  // --- optimistic send lane: the sent text is visible before the Host answers ---
+  chatSending: "Sending...",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -958,6 +961,9 @@ const zh: Messages = {
   // --- 会话选择 lane：选择下次启动时挂载的已有会话 ---
   chatSelectNextStart: "下次启动",
   chatSelectChosenNotice: "已选择该会话。下次启动 GameBuddy 时它会成为当前会话。",
+
+  // --- 乐观发送 lane：在 Host 回应前先显示已发送文本 ---
+  chatSending: "发送中...",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
