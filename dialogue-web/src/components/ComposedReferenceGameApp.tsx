@@ -5,6 +5,7 @@ import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../
 import {
   type BrowserDraftV1,
   type BrowserEventV1,
+  type BrowserMessageV1,
   type BrowserTurnV1,
   createReferencePipelineApi,
   TavernProblemError,
@@ -125,6 +126,28 @@ function newIdempotencyKey(): string {
 
 function terminalTurn(turn: BrowserTurnV1 | null): boolean {
   return turn !== null && TERMINAL_TURN_STATES.has(turn.state);
+}
+
+/**
+ * Whether the conversation still shows its first screen: nothing has been said
+ * yet, or the only thing on it is the companion's own committed opening.
+ *
+ * The product's initial-Chat saga draws message zero from the greeting record
+ * whenever the companion was provisioned from a card
+ * (`host/src/tavern/initial-chat-exact-content-port.ts` `companionOwnOpening`,
+ * invoked by `continuity-semantic-production-coordinator.internal.ts`
+ * `materializeExpectedChatContent`), so a card-provisioned first screen already
+ * carries one message - and a gate on "no messages at all" can never be true for
+ * it. The opening is exactly the one message the Host projects with
+ * `openingVariant`, so it is the only message a not-yet-started conversation is
+ * allowed to show; a player line, a companion reply after the opening, or an
+ * opening the Host could not describe (no `openingVariant`) ends the first
+ * screen.
+ */
+function firstScreenOpen(transcript: readonly BrowserMessageV1[]): boolean {
+  return transcript.every(
+    (message) => message.role === "companion" && message.openingVariant !== undefined,
+  );
 }
 
 function delay(ms: number): Promise<void> {
@@ -718,14 +741,17 @@ export function ComposedReferenceGameApp() {
   /**
    * The first screen's break-ice chips are the card's own openings, so they are
    * read from the companion's greeting record rather than authored here. Only a
-   * conversation with no messages has a first thing to say, so the record is read
-   * once per empty conversation and dropped as soon as a message exists. A record
-   * that cannot be read, or that carries no variant, yields no chip at all - this
-   * surface never fabricates an opening the card does not carry.
+   * conversation that has not started yet has a first thing to say - which
+   * includes the companion's committed opening message, the state a
+   * card-provisioned Chat actually opens in (`firstScreenOpen`) - so the record
+   * is read once per such conversation and dropped as soon as the first screen
+   * ends. A record that cannot be read, or that carries no variant, yields no
+   * chip at all - this surface never fabricates an opening the card does not
+   * carry.
    */
   useEffect(() => {
     if (view.kind !== "ready") return;
-    if ((view.session.snapshot.chat?.transcript.length ?? 0) > 0) {
+    if (!firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])) {
       icebreakerReadRef.current = false;
       setIcebreakers(null);
       return;
@@ -1853,12 +1879,15 @@ export function ComposedReferenceGameApp() {
                   }}
                   chips={
                     // The card's own openings, and only where a first thing to say
-                    // still exists: a started conversation, an unread record, a card
-                    // with no opening material and a locked composer all render none.
+                    // still exists: a conversation that has started (the player has
+                    // spoken, or the Host committed a reply after the opening), an
+                    // unread record, a card with no opening material and a locked
+                    // composer all render none. The companion's own committed
+                    // opening is still the first screen, not a started conversation.
                     submitAvailable &&
                     icebreakers !== null &&
                     icebreakers.length > 0 &&
-                    (view.session.snapshot.chat?.transcript.length ?? 0) === 0
+                    firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])
                       ? {
                           label: labels().openingChipsLabel,
                           items: icebreakers.map((chip) => ({

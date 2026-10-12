@@ -3979,3 +3979,157 @@ test("a card with no opening material shows no chip and invents none", async ({ 
   // The first screen is still the conversation's own, with a usable composer.
   await expect(surface.locator(".composer-textarea")).toBeEnabled();
 });
+
+/**
+ * The first screen of a card-provisioned Chat is NOT an empty transcript.
+ *
+ * The product's own initial-Chat saga draws message zero from the greeting record
+ * whenever the companion was provisioned from a card
+ * (`initial-chat-exact-content-port.ts` `companionOwnOpening`, invoked from
+ * `continuity-semantic-production-coordinator.internal.ts`
+ * `materializeExpectedChatContent`), so by the time a player looks at the first
+ * screen it already carries the companion's committed opening, projected with
+ * `openingVariant`. The chips must be offered THERE - the card's own openings are
+ * exactly what a player needs to know what to say - and must leave once the player
+ * speaks.
+ *
+ * The failure this catches: chips gated on `transcript.length === 0`. That state
+ * holds only for a Chat that opened on a *blank* opening, and a blank opening has
+ * no greeting material to offer, so the state the gate required and the state that
+ * can supply a chip were mutually exclusive - the chips could never appear in a
+ * real product, which is what the acceptance run measured (`chipCount: 0` with the
+ * card's opening on screen).
+ */
+test("the first screen offers the card's openings when the companion's own opening is already message zero", async ({ page }) => {
+  const openings = [
+    { label: "Default", text: "The lantern over the porch is still lit." },
+    { label: "Alternate 1", text: "Rain has been falling since dawn." },
+  ];
+  const openingVariantId = "V".repeat(42) + "A";
+  const openedMessageHandle = "W".repeat(42) + "A";
+  let greetingReads = 0;
+
+  const firstScreenRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+      chat: {
+        ...chat.chat,
+        transcript: [
+          {
+            handle: openedMessageHandle,
+            role: "companion",
+            text: openings[0]!.text,
+            locale: "und",
+            order: 0,
+            revision: 1,
+            openingVariant: { variantId: openingVariantId, index: 0, count: 2, label: openings[0]!.label, locked: false },
+          },
+        ],
+        draft: { revision: 0, present: false },
+      },
+    },
+  };
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(firstScreenRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(firstScreenRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) => {
+    greetingReads += 1;
+    return route.fulfill(
+      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
+    );
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+
+  // The companion's committed opening is on screen ...
+  await expect(surface.locator(".message-list > li")).toHaveCount(1);
+  await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
+
+  // ... and the chips are the greeting record's own variants, still offered.
+  const chips = surface.locator(".composer-chip");
+  await expect(chips).toHaveCount(2);
+  await expect(chips.nth(0)).toHaveText(openings[0]!.text);
+  await expect(chips.nth(1)).toHaveText(openings[1]!.text);
+  await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
+  expect(greetingReads, "the card's opening record is read for the not-yet-started conversation").toBeGreaterThan(0);
+});
+
+/**
+ * Once the player has spoken, the opening is no longer the whole first screen and
+ * the chips leave - the shell does not even read the card's record for it.
+ *
+ * The failure this catches: chips that survive the first player message, and a
+ * first-screen predicate that treats the companion's opening as "nothing has
+ * happened yet" forever.
+ */
+test("chips leave once a player message follows the companion's opening", async ({ page }) => {
+  const openings = [
+    { label: "Default", text: "The lantern over the porch is still lit." },
+    { label: "Alternate 1", text: "Rain has been falling since dawn." },
+  ];
+  const startedRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+      chat: {
+        ...chat.chat,
+        transcript: [
+          {
+            handle: "W".repeat(42) + "A",
+            role: "companion",
+            text: openings[0]!.text,
+            locale: "und",
+            order: 0,
+            revision: 1,
+            openingVariant: { variantId: "V".repeat(42) + "A", index: 0, count: 2, label: openings[0]!.label, locked: true },
+          },
+          { handle: "X".repeat(42) + "A", role: "player", text: "I'll be right out.", locale: "und", order: 1, revision: 1 },
+        ],
+        draft: { revision: 0, present: false },
+      },
+    },
+  };
+  let greetingReads = 0;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(startedRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(startedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) => {
+    greetingReads += 1;
+    return route.fulfill(
+      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
+    );
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".message-list > li")).toHaveCount(2);
+  await expect(surface.locator(".composer-chip")).toHaveCount(0);
+  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  expect(greetingReads, "a conversation the player has spoken in asks for no opening material").toBe(0);
+});
