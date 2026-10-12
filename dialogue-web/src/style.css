@@ -3647,4 +3647,20 @@ body {
   color: var(--success);
 }
 
+/* Motion off is not state off: the skip link still appears, the progress dot
+   still carries its tone and its state, the chevron still states the open panel.
+   The universal escape is a `*` selector in `theme.interactions`, so a class rule
+   beats it on specificity and a later layer beats it on order - each of those
+   four sites is named here, with the selector the site itself uses, rather than
+   making the universal escape `!important`. */
+@media (prefers-reduced-motion: reduce) {
+  .skip-link,
+  .status-dot[data-tone="progress"],
+  .game-status[data-tone="progress"]::before,
+  .custom-disclosure > summary > svg {
+    animation: none;
+    transition: none;
+  }
+}
+
 } /* end @layer theme.polish */

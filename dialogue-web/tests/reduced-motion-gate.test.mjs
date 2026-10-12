@@ -33,9 +33,11 @@
  * Everything else in a transition - including anything this list does not name -
  * is treated as motion.
  *
- * The three findings below are real and are reported to the owner rather than
- * fixed here, because `dialogue-web/src/style.css` is another lane's file. The
- * gate asserts each still reproduces, so an entry cannot outlive its fix.
+ * The four sites this gate once reported to the owner - the skip link's slide, the
+ * two progress pulses and the disclosure chevron - now carry their own named
+ * reduce rules in `style.css`, so the sheet is read below with no exemptions
+ * left: a new motion site has to bring its own escape, because the universal `*`
+ * reset cannot be relied on and this file's own reasoning above says why.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -92,36 +94,6 @@ const INHERENT_MOTION_PROPERTIES = new Set([
   "left",
   "inset",
 ]);
-
-/**
- * Real findings this lane cannot fix (style.css belongs to another lane). Each is
- * `{ selector, kind, reason }`; the gate fails if one stops reproducing.
- */
-const REPORTED_UNMUTED_MOTION = [
-  {
-    selector: ".skip-link",
-    kind: "transition",
-    reason:
-      "the skip link slides in on focus (`top: -100px` -> `top: 0`) and no reduce rule names it; the universal reduce rule is lower-specificity and lives in the same layer",
-  },
-  {
-    selector: '.status-dot[data-tone="progress"]',
-    kind: "animation",
-    reason:
-      "a progress dot keeps pulsing under prefers-reduced-motion: the universal reduce rule is lower-specificity than this class rule, and no explicit reduce rule names it",
-  },
-  {
-    selector: '.game-status[data-tone="progress"]::before',
-    kind: "animation",
-    reason: "same shape as the progress dot: the pulsing status dot has no explicit reduce rule",
-  },
-  {
-    selector: ".custom-disclosure > summary > svg",
-    kind: "transition",
-    reason:
-      "the disclosure chevron keeps its 150ms transform transition; the only reduce rules for transforms live in lower layers",
-  },
-];
 
 /** Comments blanked with spaces so offsets and line numbers stay true. */
 function blankComments(css) {
@@ -382,39 +354,15 @@ export function unmutedMotion(css) {
   return failures;
 }
 
-/** The reported findings, matched by selector and kind. */
-function isReported(failure) {
-  return REPORTED_UNMUTED_MOTION.some(
-    (entry) => entry.selector === failure.selector && entry.kind === failure.kind,
-  );
-}
-
 test("motion.1: every animation and moving transition has a reduced-motion escape that wins", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
-  const failures = [];
-  for (const failure of unmutedMotion(css)) {
-    if (isReported(failure)) continue;
-    failures.push(
+  const sites = motionSites(css);
+  const failures = unmutedMotion(css).map(
+    (failure) =>
       `src/style.css:${failure.line} ${failure.kind} "${failure.properties.join(", ")}" on ${failure.selector} survives prefers-reduced-motion`,
-    );
-  }
-  const reported = unmutedMotion(css).filter(isReported).length;
-  t.diagnostic(
-    `motion.1: ${motionSites(css).length} motion site(s), ${reported} reported finding(s), ${failures.length} unreported`,
   );
+  t.diagnostic(`motion.1: ${sites.length} motion site(s), ${failures.length} without a winning escape`);
   assert.deepEqual(failures, [], "motion that ignores prefers-reduced-motion is an accessibility defect");
-});
-
-test("motion.2: every reported finding still reproduces", (t) => {
-  const css = readFileSync(STYLESHEET, "utf8");
-  const found = unmutedMotion(css);
-  for (const entry of REPORTED_UNMUTED_MOTION) {
-    assert.ok(
-      found.some((failure) => failure.selector === entry.selector && failure.kind === entry.kind),
-      `${entry.selector} no longer survives prefers-reduced-motion; remove the reported entry`,
-    );
-  }
-  t.diagnostic(`motion.2: ${REPORTED_UNMUTED_MOTION.length} reported finding(s) still reproduce`);
 });
 
 test("motion.3: the paint-only sites are recognised and not reported", (t) => {

@@ -24,8 +24,9 @@
  *      would have caught the blank problem view the owner hit twice.
  *   6. Empty and loading states are distinguishable from a blank region, and the
  *      shell's loading state names what it is loading.
- *  10. The live caret, read as a computed value: the caret's own rect inside its
- *      bubble.
+ *  10. The live caret and the reduced-motion escape, both read as computed values:
+ *      the caret's own rect inside its bubble, and the pulse and the skip link
+ *      under `prefers-reduced-motion: reduce`.
  *
  * The two contracts this file once pinned as `test.fixme` are met: `Escape`
  * returns focus to the conversation's composer, and a 250-character companion
@@ -1015,3 +1016,66 @@ test("gate 10: the streaming caret is painted inside its bubble", async ({ page 
   expect(failures, "the caret's box sits inside the bubble's box").toEqual([]);
 });
 
+/**
+ * Gate 11: `prefers-reduced-motion: reduce` stops the two sites the universal
+ * reset cannot reach.
+ *
+ * The failure this catches: the reduce escape handled only by the universal
+ * `*, *::before, *::after` block. That block sits in `theme.interactions` with
+ * the lowest possible specificity - and in an earlier layer than the class rules
+ * it is meant to silence - so a class-keyed `animation:` (the app bar's progress
+ * dot) and a class-keyed `transition:` (the skip link's slide) both beat it, and
+ * a player who asked for no motion keeps watching a pulse and a slide. Both
+ * directions are asserted, so the gate cannot pass by the motion having been
+ * deleted outright.
+ */
+test("gate 11: the progress pulse and the skip link stop under reduced motion", async ({ page }) => {
+  await mountShell(page);
+  await page.evaluate(() => {
+    // The app bar's own dot while a turn is in flight. No mounted surface holds
+    // that state on demand, so the marker is built from the markup contract the
+    // app bar renders (`<span class="status-dot" data-tone="progress">`) and
+    // measured against the same stylesheet.
+    const dot = document.createElement("span");
+    dot.id = "gate-11-progress-dot";
+    dot.className = "status-dot";
+    dot.setAttribute("data-tone", "progress");
+    document.body.appendChild(dot);
+  });
+  const read = () =>
+    page.evaluate(() => {
+      const motion = (element: Element | null) => {
+        if (element === null) return null;
+        const style = getComputedStyle(element);
+        return {
+          animationName: style.animationName,
+          animationDuration: style.animationDuration,
+          transitionProperty: style.transitionProperty,
+          transitionDuration: style.transitionDuration,
+        };
+      };
+      return {
+        dot: motion(document.getElementById("gate-11-progress-dot")),
+        skip: motion(document.querySelector(".skip-link")),
+      };
+    });
+
+  const motion = await read();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await read();
+  record(
+    "gate-11",
+    `progress dot ${JSON.stringify(motion.dot)} -> ${JSON.stringify(reduced.dot)}; skip link ${JSON.stringify(motion.skip)} -> ${JSON.stringify(reduced.skip)}`,
+  );
+
+  const failures: string[] = [];
+  if (motion.dot?.animationName !== "game-status-pulse")
+    failures.push(`the progress dot does not pulse by default (${motion.dot?.animationName})`);
+  if (reduced.dot?.animationName !== "none")
+    failures.push(`the progress dot keeps animating under reduced motion (${reduced.dot?.animationName} ${reduced.dot?.animationDuration})`);
+  if (motion.skip?.transitionProperty !== "top")
+    failures.push(`the skip link does not slide by default (${motion.skip?.transitionProperty})`);
+  if (reduced.skip?.transitionProperty !== "none")
+    failures.push(`the skip link keeps its transition under reduced motion (${reduced.skip?.transitionProperty} ${reduced.skip?.transitionDuration})`);
+  expect(failures, "the motion is real by default and gone when the player asks for none").toEqual([]);
+});
