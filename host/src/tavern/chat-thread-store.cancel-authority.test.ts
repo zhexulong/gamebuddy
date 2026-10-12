@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
@@ -15,7 +17,7 @@ import {
 import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
 /**
- * P6 durable cancel authority prerequisite — characterization only.
+ * P6 durable cancel authority prerequisite - characterization.
  *
  * This suite pins the exact fail-closed behavior of the existing durable
  * state machine for queued (`accepted_queued`/`attempt_starting`) cancel
@@ -25,14 +27,18 @@ import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounte
  *    derive from `RunningTurn`, which requires an attempt plus a durable
  *    `running` observation written solely by the source-owned
  *    `after_provider_response` observer) leave NO legal durable artifact
- *    shape for a queued-source cancel. Every queued claim_cancel attempt
- *    fails closed with zero durable mutation, and the rejection never
+ *    shape for a queued-source P5 `claim_cancel`. Every queued claim_cancel
+ *    attempt fails closed with zero durable mutation, and the rejection never
  *    poisons the later P4c start/presentation path.
  * 2. The existing acceptance `idempotency` record family cannot host a
  *    cancel result; a cancel-specific record would be a new artifact family
  *    outside the current v2 store boundary (an owner decision, not a seam).
  *
- * No production file is modified by this suite.
+ * It then pins the one ordinary exit a pre-invocation attempt does have: the
+ * P4c provider-start `cancel` accepts a durable `not_started` source and writes
+ * the same `cancelled` terminal the armed source writes, preserving the
+ * attempt and the observation, while the validator keeps rejecting the rows
+ * that would make that shape dishonest.
  */
 
 const testTransitionAuthority = createMountedTurnTransitionAuthority();
@@ -388,6 +394,109 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
       closeSecond?.();
       await rm(secondRoot, { recursive: true, force: true });
     }
+  } finally {
+    closeStore?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel authority: a not_started attempt has an ordinary turn-level cancel exit that preserves its pre-invocation proof", async () => {
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-not-started-exit-");
+  let closeStore: (() => void) | undefined;
+  try {
+    const { store, attemptId } = await prepare(root, "not_started");
+    closeStore = () => store.close?.();
+    const before = await store.resumeThread("thread_01", "surface_01");
+    assert.equal(before.turnLedger?.status, "attempt_starting");
+    assert.equal(before.turnLedger?.observation?.phase, "not_started");
+    const base = before.thread.updatedAtMs;
+
+    // The exit reuses the armed-cancel terminal vocabulary: `cancelled`, keeping
+    // the exact attempt and the `not_started` observation with its own reason.
+    const cancelled = await transitionMountedProviderStart(
+      { ...bindingFor(root), attemptId },
+      { operation: "cancel", observedAtMs: base + 1, cancelledAtMs: base + 2 },
+    );
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(cancelled.attempt.attemptId, attemptId);
+    assert.equal(cancelled.observation.phase, "not_started");
+    assert.equal(cancelled.observation.reasonCode, "admission_revoked");
+    assert.equal(cancelled.presentation, null);
+
+    // The durable row is terminal, not just the returned value.
+    const durable = await store.resumeThread("thread_01", "surface_01");
+    assert.equal(durable.turnLedger?.status, "cancelled");
+    assert.equal(durable.turnLedger?.observation?.phase, "not_started");
+    assert.equal(durable.turnLedger?.attempt.attemptId, attemptId);
+    assert.equal(durable.turnLedger?.presentation, null);
+    // No provider saw this turn, so no companion message was invented for it.
+    assert.equal(durable.messages.filter((message) => message.kind === "response").length, 0);
+  } finally {
+    closeStore?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancel authority: the widened not_started exit still rejects the fabricated and impossible rows", async () => {
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-not-started-honest-");
+  let closeStore: (() => void) | undefined;
+  try {
+    const { store, attemptId } = await prepare(root, "not_started");
+    closeStore = () => store.close?.();
+    const before = await store.resumeThread("thread_01", "surface_01");
+
+    // An `armed` observation can never be fabricated for a turn that durably
+    // recorded it never armed: the exit may cancel this shape, never re-arm it.
+    await assert.rejects(
+      () =>
+        transitionMountedProviderStart(
+          { ...bindingFor(root), attemptId },
+          { operation: "arm", observedAtMs: before.thread.updatedAtMs + 1 },
+        ),
+      /provider_start_observation_conflict/,
+    );
+    assert.deepEqual(await store.resumeThread("thread_01", "surface_01"), before);
+
+    // Plant a genuinely impossible durable row directly: a `cancelled` terminal
+    // whose observation is the pre-invocation `not_started` proof, yet whose
+    // presentation row claims a committed response bubble. A turn that never
+    // reached `running` could never have committed one.
+    const dbPath = join(root, "tavern", "v3", "continuities", continuityKey, "tavern.sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      const turnId = before.turnLedger?.turnId;
+      assert.ok(turnId);
+      const at = before.thread.updatedAtMs;
+      db.prepare("UPDATE tavern_turns SET status = 'cancelled' WHERE turn_id = ?").run(turnId);
+      db.prepare(
+        "INSERT INTO tavern_messages (thread_id, message_id, append_ordinal, role, kind, text, occurred_at_ms, parent_id, active_swipe_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run("thread_01", "response_planted_01", 1, "companion", "response", "Impossible.", at + 3, null, 0);
+      db.prepare("INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)").run(
+        "thread_01",
+        "response_planted_01",
+        0,
+        "Impossible.",
+      );
+      db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(
+        turnId,
+        "response_planted_01",
+        "response_planted_01",
+        0,
+        at + 3,
+      );
+      db.prepare("INSERT OR REPLACE INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+        turnId,
+        null,
+        null,
+        at + 1,
+        at + 2,
+        null,
+        null,
+      );
+    } finally {
+      db.close();
+    }
+    await assert.rejects(() => store.resumeThread("thread_01", "surface_01"), /invalid_chat_thread_turn_ledger/);
   } finally {
     closeStore?.();
     await rm(root, { recursive: true, force: true });

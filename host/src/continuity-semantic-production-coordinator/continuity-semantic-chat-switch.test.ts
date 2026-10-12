@@ -18,7 +18,10 @@
  *   nothing was ever scheduled for it) is aborted the same way instead of being
  *   answered with the fail-closed `turn_in_flight`: the mounted authority claims
  *   and arms the turn exactly as its own start would have, the one cancel path
- *   terminalizes it, and the switch happens in this same process.
+ * - a durable attempt that recorded its own pre-invocation `not_started` proof
+ *   (admission revoked or deadline expired before the single Host invocation) is
+ *   terminalized by the same ordinary turn-level cancel directly, without
+ *   fabricating an `armed` observation, and the switch still happens.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -210,6 +213,72 @@ const switchScript = `
     const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
     out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
+  } else if (scenario === "durable-not-started") {
+    // A durable attempt that recorded its own pre-invocation not_started proof:
+    // the admission was revoked before the single Host invocation, so nothing is
+    // generating and no prompt is held. This is the shape with no outgoing store
+    // transition before the turn-level cancel exit was added.
+    const accepted = await createPlayerTurnAcceptor(manifest, first).accept({
+      text: "Never began.",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+    });
+    await createProviderAttemptClaimer(manifest, first).claim();
+    const startTask = internal.startMountedAttempt(manifest, first, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
+        await sleep(4);
+        return scope.transitionStore({
+          operation: "not_started",
+          reasonCode: "admission_revoked",
+          observedAtMs: Date.now(),
+        });
+      }),
+    );
+    await startTask;
+    const notStarted = await store.resumeThread(firstThread, firstSurface);
+    out.notStartedLedgerStatus = notStarted.turnLedger === null ? null : notStarted.turnLedger.status;
+    out.notStartedLedgerObservation =
+      notStarted.turnLedger !== null &&
+      "observation" in notStarted.turnLedger &&
+      notStarted.turnLedger.observation !== undefined
+        ? notStarted.turnLedger.observation.phase
+        : null;
+
+    const outcome = await authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
+    out.outcomeStatus = outcome.status;
+    out.outcomeThread = outcome.chatThreadId;
+    out.outcomeSurface = outcome.chatSurfaceSessionId;
+    out.firstSuperseded = isCurrentMountedChatRuntimeLease(first);
+    const second = await authority.startMountedChatRuntime();
+    out.secondThread = second.chatThreadId;
+    out.secondSurface = second.chatSurfaceSessionId;
+    out.secondCurrent = isCurrentMountedChatRuntimeLease(second);
+    out.acceptedTurnId = accepted.turnId;
+
+    // The pre-invocation turn is terminal in the conversation switched away
+    // from, keeping its own observation; nothing a poll could keep waiting on.
+    const firstState = await store.resumeThread(firstThread, firstSurface);
+    out.firstThreadStillReadable = firstState.thread.chatThreadId === firstThread;
+    out.interruptedTurnId = firstState.turnLedger === null ? null : firstState.turnLedger.turnId;
+    out.interruptedLedgerStatus = firstState.turnLedger === null ? null : firstState.turnLedger.status;
+    out.interruptedLedgerObservation =
+      firstState.turnLedger !== null && firstState.turnLedger.status === "cancelled"
+        ? firstState.turnLedger.observation.phase
+        : null;
+    out.interruptedLedgerPresentation =
+      firstState.turnLedger !== null && firstState.turnLedger.status === "cancelled"
+        ? firstState.turnLedger.presentation !== null
+        : null;
+    out.interruptedKeptPlayerText = firstState.messages.some(
+      (message) => message.kind === "player" && message.text === "Never began.",
+    );
+    out.interruptedMessageCount = firstState.messages.length;
+
+    const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
+    out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
+    out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
   } else {
     const outcome = await authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
     out.outcomeStatus = outcome.status;
@@ -236,7 +305,7 @@ const switchScript = `
 
 async function runSwitchScenario(
   root: string,
-  scenario: "switch" | "in-flight" | "durable-unstarted",
+  scenario: "switch" | "in-flight" | "durable-unstarted" | "durable-not-started",
 ): Promise<Record<string, unknown>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -382,6 +451,50 @@ test(
       assert.equal(observed.interruptedLedgerPresentation, false);
       // Nothing the player wrote was lost, and no companion message was invented
       // for a turn no provider ever saw.
+      assert.equal(observed.interruptedKeptPlayerText, true);
+      assert.ok(Number(observed.interruptedMessageCount) >= 1);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The last residual of the same ruling: a durable attempt that recorded its own
+ * pre-invocation `not_started` proof. Before this edge existed the shape had no
+ * outgoing store transition at all - `arm` conflicted with the recorded
+ * observation, and `cancel`/`fail` required a durable `armed` one - so the same
+ * chat switch answered `turn_in_flight` and left an `attempt_starting` row
+ * nothing could terminalize. The fix reuses the ordinary `cancelled` terminal the
+ * armed-cancel path writes, so this test fails on the old reading at
+ * `outcomeStatus` and at `interruptedLedgerStatus`/`interruptedLedgerObservation`.
+ */
+test(
+  "a durable pre-invocation not_started attempt is aborted and the switch happens in process",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-turn-level-not-started-");
+    try {
+      const observed = await runSwitchScenario(root, "durable-not-started");
+      // The turn really was durable with nothing running: an attempt whose own
+      // observation proves the prompt never began.
+      assert.equal(observed.notStartedLedgerStatus, "attempt_starting");
+      assert.equal(observed.notStartedLedgerObservation, "not_started");
+      // The player gets the switch, never a refusal and never a wait.
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.firstSuperseded, false);
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.successorThreadReadable, true);
+      // The pre-invocation turn is terminal in the conversation switched away
+      // from, keeping its own observation and no dangling claim.
+      assert.equal(observed.firstThreadStillReadable, true);
+      assert.equal(observed.interruptedTurnId, observed.acceptedTurnId);
+      assert.equal(observed.interruptedLedgerStatus, "cancelled");
+      assert.equal(observed.interruptedLedgerObservation, "not_started");
+      assert.equal(observed.interruptedLedgerPresentation, false);
+      // Nothing the player wrote was lost, and no companion message was invented
+      // for a prompt the provider never saw.
       assert.equal(observed.interruptedKeptPlayerText, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 1);
     } finally {

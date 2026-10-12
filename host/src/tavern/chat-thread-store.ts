@@ -427,10 +427,11 @@ export type CancelClaimedTurn = Omit<RunningTurn, "status"> &
     cancelClaimedAtMs: number;
   }>;
 /**
- * A STOP can terminalize either a durable P5 cancel claim (after `running`) or
- * an already-invoked P4 attempt that is still merely `armed`. In both cases it
- * preserves the exact attempt and has no visible presentation unless one was
- * durably committed before the P5 claim.
+ * An ordinary turn-level cancel terminalizes either a durable P5 cancel claim
+ * (after `running`) or a pre-invocation P4 attempt that is merely `armed` or that
+ * recorded its own `not_started` proof. In every case it preserves the exact
+ * attempt and the observation that was durable at the cancel, and has no visible
+ * presentation unless one was durably committed before the P5 claim.
  */
 export type CancelledTurn = Readonly<{
   turnId: string;
@@ -439,7 +440,7 @@ export type CancelledTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
   attempt: AttemptClaimV1;
-  observation: AttemptObservationV1 & { phase: "armed" | "running" };
+  observation: AttemptObservationV1 & { phase: "armed" | "not_started" | "running" };
   presentation: PresentationCommitV1 | null;
   cancelClaimedAtMs: number;
   cancelledAtMs: number;
@@ -705,7 +706,14 @@ export function countMountedRouteRegistrations(root: string, continuityKey: stri
   return count;
 }
 
-/** P4c's three frozen store transitions: arm, local pre-invocation not_started, running. */
+/**
+ * P4c's frozen store transitions. `arm` precedes the single Host invocation;
+ * `not_started` is the surviving-process local pre-invocation proof and is only
+ * reachable from a durable `armed` observation; `running` is written solely by
+ * the source-owned one-shot `after_provider_response` observer. `fail` and
+ * `cancel` are the terminal exits: `cancel` also accepts a `not_started` source
+ * so a pre-invocation turn can be abandoned without fabricating an `arm`.
+ */
 export type ProviderStartTransition =
   | Readonly<{ operation: "arm"; observedAtMs: number }>
   | Readonly<{
@@ -2143,7 +2151,15 @@ export function createChatThreadStore(
           failedAtMs: command.failedAtMs,
         });
       } else {
-        if (observation === undefined || observation.phase !== "armed" || command.cancelledAtMs < observedAtMs)
+        // `armed` is an invoked prompt that may already be generating; `not_started`
+        // is a pre-invocation turn the surviving process proved never began. Both
+        // are abandoned by the same ordinary turn-level cancel and keep their own
+        // observation; neither can have a presentation yet, so it stays null.
+        if (
+          observation === undefined ||
+          (observation.phase !== "armed" && observation.phase !== "not_started") ||
+          command.cancelledAtMs < observedAtMs
+        )
           throw new Error("provider_start_observation_conflict");
         nextLedger = freezeCancelledTurn({
           ...ledger,
@@ -2963,7 +2979,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         messageId: value.messageId as string,
         acceptedAtMs: value.acceptedAtMs as number,
         attempt: value.attempt as AttemptClaimV1,
-        observation: common.observation as AttemptObservationV1 & { phase: "armed" | "running" },
+        observation: common.observation as AttemptObservationV1 & { phase: "armed" | "not_started" | "running" },
         presentation: common.presentation ?? null,
         cancelClaimedAtMs: common.cancelClaimedAtMs!,
         cancelledAtMs: common.cancelledAtMs!,
@@ -3048,9 +3064,21 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
   const observation = validateAttemptObservation(value.observation);
   if (status !== "failed" && status !== "cancelled" && observation.phase !== "running")
     throw new Error("invalid_chat_thread_turn_ledger");
-  if ((status === "failed" || status === "cancelled") && observation.phase !== "armed" && observation.phase !== "running")
+  // `cancelled` is the one terminal that may carry a pre-invocation observation:
+  // an `armed` prompt or a `not_started` proof. `failed` never follows not_started.
+  if (
+    (status === "failed" && observation.phase !== "armed" && observation.phase !== "running") ||
+    (status === "cancelled" &&
+      observation.phase !== "armed" &&
+      observation.phase !== "not_started" &&
+      observation.phase !== "running")
+  )
     throw new Error("invalid_chat_thread_turn_ledger");
   const presentation = value.presentation === null ? null : validatePresentationCommit(value.presentation);
+  // A presentation is committed only from `running`, so a cancelled turn whose own
+  // observation is pre-invocation can never legitimately carry one.
+  if (status === "cancelled" && observation.phase !== "running" && presentation !== null)
+    throw new Error("invalid_chat_thread_turn_ledger");
   if (status === "completion_claimed" || status === "completed") {
     if (presentation === null || !isTimestamp(value.completionClaimedAtMs))
       throw new Error("invalid_chat_thread_turn_ledger");
@@ -3199,7 +3227,7 @@ function freezeCancelledTurn(value: CancelledTurn): CancelledTurn {
     acceptedAtMs: value.acceptedAtMs,
   });
   const observation = validateAttemptObservation(value.observation);
-  if (observation.phase !== "armed" && observation.phase !== "running")
+  if (observation.phase !== "armed" && observation.phase !== "not_started" && observation.phase !== "running")
     throw new Error("invalid_chat_thread_turn_ledger");
   if (
     !isTimestamp(value.cancelClaimedAtMs) ||
@@ -3648,7 +3676,7 @@ function assertProviderStartReadBack(
     if (
       ledger.status !== "cancelled" ||
       ledger.attempt.attemptId !== input.attemptId ||
-      ledger.observation.phase !== "armed" ||
+      (ledger.observation.phase !== "armed" && ledger.observation.phase !== "not_started") ||
       ledger.cancelledAtMs !== command.cancelledAtMs
     )
       throw new Error("chat_provider_start_readback_mismatch");

@@ -177,12 +177,15 @@ export type SemanticChatSelectionRequest =
  *
  * A mounted turn with nothing running is aborted through that same path: a turn
  * whose attempt had not started yet is prepared to the armed state the cancel
- * seam terminalizes, so it becomes the ordinary interrupted turn instead of
- * holding the mount (see `prepareMountedTurnForChatSelection`). `turn_in_flight`
+ * seam terminalizes, and one that recorded a pre-invocation `not_started` proof
+ * is terminalized directly, so each becomes the ordinary interrupted turn instead
+ * of holding the mount (see `prepareMountedTurnForChatSelection`). `turn_in_flight`
  * survives only as the fail-closed answer for the mounted turn this authority
- * cannot reach with that path - the runtime then stays where it is rather than
- * being torn down under the turn. The recorded expectation is durable in both
- * cases, so a later start still lands on the Chat the player chose.
+ * cannot reach with that path - a turn already past the cancel seam into
+ * `cancel_claimed`/`completion_claimed` whose runner cannot settle (a crashed or
+ * stranded prompt) - and the runtime then stays where it is rather than being torn
+ * down under the turn. The recorded expectation is durable in both cases, so a
+ * later start still lands on the Chat the player chose.
  */
 export type SemanticChatSelectionOutcome =
   | Readonly<{ status: "switched"; chatThreadId: string; chatSurfaceSessionId: string }>
@@ -2016,7 +2019,9 @@ async function createFreshChatRuntimeAuthority(
    * whose attempt never reached an observation are not cancellable as they
    * stand - the seam's exact-attempt CAS needs a durable `armed` observation -
    * so a focus transfer prepares those two to `armed` first instead of leaving
-   * the mount held by a turn with nothing running.
+   * the mount held by a turn with nothing running. A claim that recorded a
+   * pre-invocation `not_started` is not cancellable here either, but it is
+   * already terminalized directly by the same preparation.
    */
   const isMountedTurnCancellable = async (record: MountedChatRuntimeLeaseRecord): Promise<boolean> => {
     const ledger = (await record.store().resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
@@ -2027,23 +2032,23 @@ async function createFreshChatRuntimeAuthority(
 
   /**
    * ADR-0010. A durable mounted turn with nothing running must not hold the
-   * mount, and exactly two shapes reach that state: a turn the player's message
-   * made durable but that was never scheduled (no attempt at all), and a durable
+   * mount, and exactly three shapes reach that state: a turn the player's message
+   * made durable but that was never scheduled (no attempt at all), a durable
    * claim whose attempt never reached an observation (the arm step never landed
-   * because the process died there, or its start reservation was released).
+   * because the process died there, or its start reservation was released), and a
+   * claim whose attempt recorded `not_started` (the pre-invocation linearization
+   * revoked its admission or expired its deadline, so no prompt ever began).
    *
-   * Neither has a Pi prompt, and neither can reach the cancel seam as it stands,
-   * whose exact-attempt CAS needs a durable `armed` observation. Both are driven
-   * to exactly that state through the mounted authority's own transitions: the
-   * claim the start itself would have made, then the last durable step before
-   * the single Host invocation. Arming a turn whose live start runner is also
-   * arming only decides that race in favour of the player's switch: the abort
-   * below stays the ordinary one, so a prompt that was invoked anyway is aborted
-   * by the durable cancel winner and the mounted session, never killed silently.
-   *
-   * The third durable non-terminal shape - an attempt that recorded
-   * `not_started` - has no outgoing store transition at all, so it is left to
-   * the bounded residual answer.
+   * None has a running Pi prompt. The first two are driven to the cancel seam's
+   * exact `armed` source through the mounted authority's own transitions: the
+   * claim the start itself would have made, then the last durable step before the
+   * single Host invocation. The third already carries its own pre-invocation
+   * proof, so it is terminalized by the same ordinary turn-level cancel directly
+   * - re-arming it would fabricate an `armed` observation for a turn that proved
+   * it never armed. Arming a turn whose live start runner is also arming only
+   * decides that race in favour of the player's switch: the abort below stays the
+   * ordinary one, so a prompt that was invoked anyway is aborted by the durable
+   * cancel winner and the mounted session, never killed silently.
    */
   const prepareMountedTurnForChatSelection = async (record: MountedChatRuntimeLeaseRecord): Promise<void> => {
     const lease = mountedLease;
@@ -2064,9 +2069,11 @@ async function createFreshChatRuntimeAuthority(
       }
       turn = await readTurnLedger();
     }
-    if (turn === null || turn.status !== "attempt_starting" || turn.observation !== undefined) return;
+    if (turn === null || turn.status !== "attempt_starting") return;
+    if (turn.observation !== undefined && turn.observation.phase !== "not_started") return;
     const operationAuthority = record.transitionAuthority.mintOperation();
     try {
+      const atMs = Date.now();
       await transitionMountedProviderStart(
         Object.freeze({
           authority: record.transitionAuthority.authority,
@@ -2082,7 +2089,9 @@ async function createFreshChatRuntimeAuthority(
           runtimeOwner: turn.attempt.runtimeOwner,
           attemptId: turn.attempt.attemptId,
         }),
-        Object.freeze({ operation: "arm", observedAtMs: Date.now() }),
+        turn.observation === undefined
+          ? Object.freeze({ operation: "arm", observedAtMs: atMs })
+          : Object.freeze({ operation: "cancel", observedAtMs: atMs, cancelledAtMs: atMs }),
       );
     } finally {
       operationAuthority.revoke();
@@ -2122,8 +2131,8 @@ async function createFreshChatRuntimeAuthority(
    * first, so no new turn can be admitted while the teardown runs. A caller that
    * is switching Chat (ADR-0010) has already prepared and aborted any durable
    * turn through the cancel seam and waited for it to settle, so the lease is
-   * releasable; a turn that seam could not reach is restored untouched and
-   * reported as the bounded residual `turn_in_flight`.
+   * releasable; a turn this seam cannot reach is restored untouched and reported
+   * as the bounded residual `turn_in_flight`.
    */
   const releaseMountedChatRuntime = async (): Promise<"released" | "turn_in_flight"> => {
     const lease = mountedLease;
