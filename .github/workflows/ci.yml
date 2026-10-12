@@ -64,10 +64,8 @@ jobs:
       # (including the embedded-runtime declaration the background historian is gated on) and the session
       # entry it publishes. `tools/*.test.mjs` are otherwise never run by CI - the contract could be deleted
       # without anything noticing, which is exactly how a composed session silently lost its fold.
-      # `--test-force-exit` because this file leaves one handle open after its last test (pre-existing: all
-      # eleven assertions pass, then the process waits forever), and a gate that hangs is worse than no gate.
       - name: Composed runtime contract gate
-        run: node --test --test-force-exit tools/desktop-composition-launch.test.mjs
+        run: node --test tools/desktop-composition-launch.test.mjs
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: pnpm check:dependency-risk

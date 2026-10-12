@@ -438,6 +438,7 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
 
     const layout = createDesktopCompositionRootLayout(root, generation);
     let spawned;
+    let launched;
     // Stub only the OS process: the launcher's own admission, install and path
     // selection all run for real, and the captured spawn is what gets asserted.
     // The stub child then exits so the launch settles instead of waiting.
@@ -474,6 +475,12 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
                   inventoryDigest: frame.inventoryDigest,
                   runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
                   rootLayoutSchema: frame.rootLayout.schema,
+                  sessionEntry: {
+                    kind: "http",
+                    method: "POST",
+                    route: "/api/composed-reference-game/v1/bootstrap",
+                    bodyKeys: ["apiVersion", "bootstrapToken"],
+                  },
                 })}\n`,
               );
               // The launcher awaits the guardian hello before returning, so the
@@ -506,18 +513,29 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
         return fake;
       },
     }).then(
-      () => undefined,
+      (value) => {
+        launched = value;
+        return undefined;
+      },
       (error) => error,
     );
 
-    assert.ok(spawned !== undefined, `spawn must happen (launch settled as ${String(launch?.message ?? "resolved")})`);
-    assert.equal(spawned.cwd, layout.generationRoot);
-    // The decisive assertion: both runtime and entry come from the installed
-    // generation, never from the artifact tree.
-    assert.equal(spawned.command, join(layout.generationRoot, "runtime", "node.exe"));
-    assert.deepEqual(spawned.args, [
-      join(layout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"),
-    ]);
-    assert.equal(spawned.command.startsWith(artifactRoot), false);
-    assert.equal(spawned.args[0].startsWith(artifactRoot), false);
+    try {
+      assert.ok(spawned !== undefined, `spawn must happen (launch settled as ${String(launch?.message ?? "resolved")})`);
+      assert.equal(spawned.cwd, layout.generationRoot);
+      // The decisive assertion: both runtime and entry come from the installed
+      // generation, never from the artifact tree.
+      assert.equal(spawned.command, join(layout.generationRoot, "runtime", "node.exe"));
+      assert.deepEqual(spawned.args, [
+        join(layout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"),
+      ]);
+      assert.equal(spawned.command.startsWith(artifactRoot), false);
+      assert.equal(spawned.args[0].startsWith(artifactRoot), false);
+    } finally {
+      // The launch opens a real guardian-session named-pipe server that the stub
+      // answers over a real client socket. Both are live event-loop handles: an
+      // undisposed peer is what kept this process alive after the last
+      // assertion, so the launch is torn down even when an assertion fails.
+      launched?.dispose();
+    }
   }));
