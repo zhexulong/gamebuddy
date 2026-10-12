@@ -31,14 +31,14 @@ const EVIDENCE = {
   fish_ejected: "3",
 };
 
-const debrisOf = (count) => Array.from({ length: count }, () => ({ itemId: "(O)142" }));
+const debrisOf = (count) => Array.from({ length: count }, () => ({ qualifiedItemId: "(O)142" }));
 
 test("the honest happy path passes every check", () => {
   const checks = assertClearFishPondPostconditions({
     target: TARGET,
     evidence: EVIDENCE,
     survivors: [],
-    debris: debrisOf(3),
+    groundItems: debrisOf(3),
   });
   assert.deepEqual(checks, {
     pondNoLongerAdvertised: true,
@@ -53,7 +53,7 @@ test("a pond still advertised after the clear fails: the published fact must cha
     target: TARGET,
     evidence: EVIDENCE,
     survivors: [{ targetId: TARGET.targetId, occupants: 3 }],
-    debris: debrisOf(3),
+    groundItems: debrisOf(3),
   });
   assert.equal(checks.pondNoLongerAdvertised, false);
 });
@@ -63,7 +63,7 @@ test("a receipt claiming a clear that did not happen fails", () => {
     target: TARGET,
     evidence: { ...EVIDENCE, occupants_after: "2", fish_type_after: "(O)142" },
     survivors: [],
-    debris: debrisOf(3),
+    groundItems: debrisOf(3),
   });
   assert.equal(checks.receiptSaysEmpty, false);
 });
@@ -73,7 +73,7 @@ test("counts that name a different pond fail", () => {
     target: TARGET,
     evidence: { ...EVIDENCE, occupants_before: "1", fish_ejected: "1" },
     survivors: [],
-    debris: debrisOf(3),
+    groundItems: debrisOf(3),
   });
   assert.equal(checks.evidenceCountsMatch, false);
 });
@@ -83,7 +83,7 @@ test("ejecting fewer fish than the pond held fails", () => {
     target: TARGET,
     evidence: EVIDENCE,
     survivors: [],
-    debris: debrisOf(2),
+    groundItems: debrisOf(2),
   });
   assert.equal(checks.fishEjected, false);
 });
@@ -105,7 +105,7 @@ test("debris of a DIFFERENT fish does not count as this pond's ejection", () => 
     target: TARGET,
     evidence: EVIDENCE,
     survivors: [],
-    debris: debrisOf(3).map(() => ({ itemId: "(O)999" })),
+    groundItems: debrisOf(3).map(() => ({ qualifiedItemId: "(O)999" })),
   });
   assert.equal(checks.fishEjected, false);
 });

@@ -72,17 +72,17 @@ export async function runClearFishPondSmoke(client, receipts, _config, { termina
   // The ejection is corroborated ONLY when the observation surface actually carries ground debris. When it does not,
   // the check is reported as `not_checked` - never as a pass - because "I could not look" and "the fish were not
   // ejected" must not read the same, and a silently skipped assertion is the vacuity this repo keeps removing.
-  const debris = groundDebris(after);
-  const debrisObservable = debris !== null;
+  const ground = groundItems(after);
+  const debrisObservable = ground !== null;
   const ejected = debrisObservable
-    ? debris.filter((entry) => entry?.itemId === target.fishType || entry?.item?.itemId === target.fishType).length
+    ? ground.filter((entry) => isPondFish(entry?.qualifiedItemId, target.fishType)).length
     : null;
 
   const checks = assertClearFishPondPostconditions({
     target,
     evidence,
     survivors,
-    debris,
+    groundItems: ground,
   });
   trace.push({ step: "observed", debrisObservable, ejected, fishType: target.fishType, survivors: survivors.length, evidence, checks });
   // 4. the negative case: the stale id is refused by name and the world does not move.
@@ -117,9 +117,11 @@ export async function runClearFishPondSmoke(client, receipts, _config, { termina
  * `fishEjected` is `not_checked` - not `true` - when the surface cannot show debris, because "I could not look"
  * and "the fish were not ejected" must never read the same, and the caller treats `not_checked` as a failure.
  */
-export function assertClearFishPondPostconditions({ target, evidence, survivors, debris }) {
-  const observable = Array.isArray(debris);
-  const ejected = observable ? debris.filter((entry) => entry?.itemId === target.fishType || entry?.item?.itemId === target.fishType).length : null;
+export function assertClearFishPondPostconditions({ target, evidence, survivors, groundItems }) {
+  const observable = Array.isArray(groundItems);
+  const ejected = observable
+    ? groundItems.filter((entry) => isPondFish(entry?.qualifiedItemId, target.fishType)).length
+    : null;
   return {
     // The published fact changed: the cleared pond is gone from discovery, because an empty pond is never advertised.
     pondNoLongerAdvertised: survivors.length === 0,
@@ -145,12 +147,27 @@ function fishPondTargets(snapshot) {
 }
 
 /**
- * Ground debris in a fresh snapshot, or null when the observation surface does not carry it at all - which is a
- * reported finding rather than a silent skip.
+ * The ground items a fresh snapshot publishes, or null when the surface does not carry them at all.
+ *
+ * `itemTargets` is the field: the protocol documents it as "Nearby native item drops available through
+ * Debris.collect", which is exactly what the ejected fish become. My first version looked for a `debris` array
+ * that does not exist, so it reported `not_checked` on a run where the action had worked perfectly.
  */
-function groundDebris(snapshot) {
-  const debris = snapshot?.debris ?? snapshot?.location?.debris;
-  return Array.isArray(debris) ? debris : null;
+function groundItems(snapshot) {
+  const items = snapshot?.itemTargets;
+  return Array.isArray(items) ? items : null;
+}
+
+/**
+ * Whether a published ground item is the pond's fish.
+ *
+ * The Mod publishes the pond's `fishType` UNQUALIFIED (`"128"`) while `itemTargets` carries qualified ids
+ * (`"(O)128"`), so an exact comparison would match nothing and report a false failure. Both forms are accepted,
+ * and only those two - a substring test would let `1280` pass for `128`.
+ */
+function isPondFish(qualifiedItemId, fishType) {
+  if (typeof qualifiedItemId !== "string" || typeof fishType !== "string") return false;
+  return qualifiedItemId === fishType || qualifiedItemId === `(O)${fishType}`;
 }
 
 /** `key=value;key=value` — the Mod's evidence shape. */
