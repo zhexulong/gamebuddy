@@ -113,6 +113,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.rename"
     | "tavern.operation.chat.opening"
     | "tavern.operation.chat.create"
+    | "tavern.operation.chat.select"
     | "tavern.operation.memory.mutate"
     | "tavern.operation.world-info.bind"
     | "tavern.operation.settings.voice.read"
@@ -736,6 +737,7 @@ const LABEL_KEYS = [
   "tavern.operation.rename",
   "tavern.operation.chat.opening",
   "tavern.operation.chat.create",
+  "tavern.operation.chat.select",
   "tavern.operation.memory.mutate",
   "tavern.operation.world-info.bind",
   "tavern.operation.settings.voice.read",

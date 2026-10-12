@@ -305,7 +305,9 @@ export function ChatsSurfacePanel({
         }
         setBlocked(null);
         await reread();
-
+        // The mounted identity itself changed, so the shell must replace its session from the new
+        // snapshot and restart its live cursor on the target conversation.
+        onChatSwitched?.();
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });
       } catch {
         await reread();
