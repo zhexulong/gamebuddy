@@ -1079,3 +1079,198 @@ test("gate 11: the progress pulse and the skip link stop under reduced motion", 
     failures.push(`the skip link keeps its transition under reduced motion (${reduced.skip?.transitionProperty} ${reduced.skip?.transitionDuration})`);
   expect(failures, "the motion is real by default and gone when the player asks for none").toEqual([]);
 });
+
+/**
+ * The Game surface reads as a companion capability board rather than a status
+ * dump: the board leads with what the companion can do with the player, the
+ * machine facts are demoted last, and while nothing is connected the surface
+ * reads as "here is how we get going".
+ *
+ * The three assertions below are what keeps that true:
+ *
+ *   game.1 - with capabilities published, the board renders the published fact
+ *            as player-readable text and nothing internal reaches the surface.
+ *            Fails if the board stops reading the projection (a hardcoded
+ *            list), if the published summary stops being rendered, or if a raw
+ *            contract member, operation id or ability id is rendered.
+ *   game.2 - with nothing published, the board says so and names what it is
+ *            waiting for. Fails if a static ability list is invented to fill
+ *            the empty state, and if the empty state renders nothing at all.
+ *   game.3 - while disconnected the three-step guide is present and its
+ *            affordances are the *existing* lifecycle and cabin controls (one
+ *            each, by their frozen test ids), never a second set of them.
+ */
+function gameRootWith(overrides: Record<string, unknown>) {
+  const base = composedRoot();
+  return { ...base, game: { ...base.game, game: { ...base.game.game, ...overrides } } };
+}
+
+test("game.1: a published capability surface renders as readable board cards, never as a raw id", async ({ page }) => {
+  await mountShell(page, { root: gameRootWith({ capabilitySummary: { available: true, count: 7 } }) });
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+
+  const panel = page.getByTestId("game-state-panel");
+  const board = panel.getByTestId("game-capability-board");
+  await expect(board).toHaveAttribute("data-capability-state", "published");
+  // The published summary is what a player reads: the count, in a sentence.
+  await expect(board).toContainText("7");
+
+  const cards = board.locator("[data-capability-card]");
+  expect(await cards.count(), "the board renders a card per published fact").toBe(3);
+  for (const card of await cards.all()) {
+    const text = (await card.innerText()).trim();
+    expect(text.length, "every board card reads as text, not as a bare value").toBeGreaterThan(0);
+  }
+
+  const text = await panel.innerText();
+  const leaked = text.match(/\b(connected_idle|not_configured|unchecked|capabilitySummary|move_to_tile|game\.state\.read)\b/g) ?? [];
+  record("game-1", `board="${(await board.innerText()).replace(/\s+/gu, " ").slice(0, 120)}"`);
+  expect(leaked, "no raw enum, operation id or ability id may reach the surface").toEqual([]);
+});
+
+test("game.2: with nothing published the board states what it waits for instead of a static ability list", async ({ page }) => {
+  await mountShell(page, { root: composedRoot() });
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+
+  const panel = page.getByTestId("game-state-panel");
+  const board = panel.getByTestId("game-capability-board");
+  await expect(board).toHaveAttribute("data-capability-state", "unpublished");
+  await expect(board).toContainText("has not published what your companion can do with you yet");
+  await expect(board).toContainText("come from the game itself");
+
+  const text = await panel.innerText();
+  const invented = text.match(/watering|harvest|backpack|weather|mine sound/gi) ?? [];
+  record("game-2", `unpublished board="${(await board.innerText()).replace(/\s+/gu, " ").slice(0, 120)}"`);
+  expect(invented, "the empty state invents no ability the game never published").toEqual([]);
+});
+
+test("game.3: while disconnected the start guide presents the existing controls in three steps", async ({ page }) => {
+  await mountShell(page, { root: composedRoot() });
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+
+  const panel = page.getByTestId("game-state-panel");
+  const guide = panel.getByTestId("game-start-guide");
+  await expect(guide).toBeVisible();
+  await expect(guide.locator("[data-guide-step]")).toHaveCount(3);
+
+  // The pre-activation shape offers activation and setup, and the guide is
+  // where they live: exactly one of each in the whole panel, inside step 1.
+  await expect(guide.locator('[data-guide-step="1"]').getByTestId("game-activate")).toHaveCount(1);
+  await expect(guide.locator('[data-guide-step="1"]').getByTestId("game-setup")).toHaveCount(1);
+  await expect(panel.getByTestId("game-activate")).toHaveCount(1);
+  await expect(panel.getByTestId("game-setup")).toHaveCount(1);
+  // The cabin choice is step 3's affordance, and the frozen list anchor is the
+  // same block that was already there.
+  await expect(guide.locator('[data-guide-step="3"] .stardew-cabin-handoff')).toHaveCount(1);
+
+  // The activated-but-not-launched shape puts the launch affordance in step 2.
+  const staged = composedRoot();
+  await mountShell(page, {
+    root: {
+      ...staged,
+      game: {
+        ...staged.game,
+        game: {
+          ...staged.game.game,
+          prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+          instance: { status: "none", gameTitle: "Stardew Valley", generation: 1 },
+        },
+      },
+    },
+  });
+  await page.goto(`/?staged=1#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  const stagedPanel = page.getByTestId("game-state-panel");
+  await expect(stagedPanel.getByTestId("game-start-guide")).toBeVisible();
+  await expect(stagedPanel.locator('[data-guide-step="2"]').getByTestId("game-launch")).toHaveCount(1);
+  await expect(stagedPanel.getByTestId("game-launch")).toHaveCount(1);
+  record("game-3", "guide: 3 steps, activation/setup in step 1, launch in step 2, cabin handoff in step 3");
+});
+
+/**
+ * Gate 12: the monogram is a whole character, whatever the name starts with.
+ *
+ * The failure this catches: `.slice(0, 1)` cuts a UTF-16 code unit, so a name
+ * starting with an astral character (an emoji, an extension-area glyph) renders
+ * half a surrogate pair as a replacement glyph in both the AppBar and the
+ * transcript avatar.
+ */
+test("gate 12: the monogram is one whole character for an astral name", async ({ page }) => {
+  await mountShell(page, {
+    root: composedRoot({ companionName: "🌙 Luna", transcript: [{ role: "companion", text: "Hello." }] }),
+  });
+  const barMonogram = await page.locator(".app-bar-companion .avatar").innerText();
+  const bubbleInitial = await page.locator("li.message.companion .avatar").innerText();
+  record(
+    "gate-12",
+    `AppBar monogram ${JSON.stringify(barMonogram)} (${Array.from(barMonogram).length} code point(s)); bubble initial ${JSON.stringify(bubbleInitial)}`,
+  );
+  expect(Array.from(barMonogram).length, "the AppBar monogram is a single code point").toBe(1);
+  expect(barMonogram, "the AppBar monogram is the whole first character").toBe("🌙");
+  expect(Array.from(bubbleInitial).length, "the transcript initial is a single code point").toBe(1);
+  expect(bubbleInitial).toBe("🌙");
+});
+
+/**
+ * Gate 13: a CJK action beat is de-emphasised, not mechanically slanted.
+ *
+ * CJK type has no true italic; the browser synthesises a slant that reads as
+ * smeared. The failure this catches: `em.message-action` keeps the browser's
+ * faux italic and the beat looks broken in the product's own language.
+ */
+test("gate 13: a CJK action beat is de-emphasised without a faux italic", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  await mountShell(page, {
+    root: composedRoot({ transcript: [{ role: "companion", text: "*轻轻点头*\n她抬起头。" }] }),
+  });
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  const fontStyle = await page
+    .locator("li.message.companion em.message-action")
+    .evaluate((node) => getComputedStyle(node).fontStyle);
+  record("gate-13", `CJK action-beat font-style: ${fontStyle}`);
+  expect(fontStyle, "a CJK beat is not mechanically slanted").toBe("normal");
+});
+
+/**
+ * Gate 14: the same `*beat*` reads the same on both sides.
+ *
+ * The failure this catches: the companion's `*action*` rendered as a stage
+ * direction while the player's identical text stayed literal, so one format read
+ * two ways depending on who wrote it.
+ */
+test("gate 14: the same action markup renders the same beat on both sides", async ({ page }) => {
+  const action = "*nods slowly*\nShe looks up.";
+  await mountShell(page, {
+    root: composedRoot({
+      transcript: [
+        { role: "companion", text: action },
+        { role: "player", text: action },
+      ],
+    }),
+  });
+  const companionBeat = page.locator("li.message.companion em.message-action");
+  const playerBeat = page.locator("li.message.player em.message-action");
+  await expect(companionBeat).toHaveCount(1);
+  await expect(playerBeat).toHaveCount(1);
+  const companionClass = await companionBeat.getAttribute("class");
+  const playerClass = await playerBeat.getAttribute("class");
+  record("gate-14", `companion class ${companionClass}; player class ${playerClass}`);
+  expect(playerClass, "the player's beat carries the companion beat's own class").toBe(companionClass);
+  expect(await playerBeat.innerText()).toBe(await companionBeat.innerText());
+});
+
+/**
+ * Gate 15: the viewport meta asks the on-screen keyboard to resize the visual
+ * viewport.
+ *
+ * The failure this catches: without `interactive-widget=resizes-content` a soft
+ * keyboard overlays the visual viewport and buries the composer behind it.
+ */
+test("gate 15: the viewport meta resizes the visual viewport for the on-screen keyboard", async ({ page }) => {
+  const html = await (await page.request.get("/")).text();
+  const content = html.match(/<meta name="viewport" content="([^"]*)"/u)?.[1] ?? "";
+  record("gate-15", `viewport content="${content}"`);
+  expect(content, "the soft keyboard compresses the visual viewport instead of burying the composer").toContain(
+    "interactive-widget=resizes-content",
+  );
+});

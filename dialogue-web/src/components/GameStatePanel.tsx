@@ -1,5 +1,6 @@
 import {
   Check,
+  Hand,
   Play,
   Plug,
   Plus,
@@ -7,19 +8,22 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  Sparkles,
   Square,
   Unplug,
+  Users,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
 import {
-  authorityLabel,
-  capabilitiesLabel,
   compatibilityLabel,
   connectionLabel,
+  deriveCapabilityBoard,
   instanceLabel,
   outcomeLabel,
+  type CapabilityBoard,
+  type CapabilityBoardCard,
 } from "../game-presentation";
 import type { Messages } from "../i18n";
 
@@ -27,21 +31,28 @@ import type { Messages } from "../i18n";
  * The Game panel: one presentation component for every state the composed Game
  * surface models, so the shell owns behaviour and this owns reading order.
  *
- * Reading order is deliberate and identical in every state: four groups, each
- * one player question (design/26 §4.2, design/28 §2, design/104 §2):
+ * Reading order is deliberate and identical in every state. The board leads,
+ * because the first question a player has is what the companion can actually do
+ * with them; then the groups each answer one player question (design/26 §4.2,
+ * design/28 §2, design/104 §2):
  *
- *   Connection - what is true about the connection to my game?
- *   Next step  - what can I do next, and what happened when I did it?
+ *   Board      - what can my companion do with me?
+ *   Next step  - how do we get going (or: resume the actions)?
  *   Session    - what is running now, and how do I stop or disconnect it?
  *   Recovery   - the connection could not be restored; what now?
+ *   Facts      - the machine facts, compact and last.
  *
- * Each group renders its controls first and the feedback those controls produce
- * directly below them, so a player reads "what is true, what can I do, what
- * happened when I did it" top to bottom, and the button they just pressed never
- * moves out from under the pointer when its own feedback appears (design/26
- * §6.4: interaction feedback must not shift surrounding layout). A group with
- * nothing to offer renders nothing at all: design/26 §1 fixes a control as
- * absent rather than a disabled lookalike.
+ * The board is derived from the capability surface the composed game
+ * projection publishes - it is never a hand-written ability list, and it says
+ * what it is waiting for when the session has published none.
+ *
+ * Each step of the guide carries its controls first and the feedback those
+ * controls produce directly below them, so a player reads "what is true, what
+ * can I do, what happened when I did it" top to bottom, and the button they
+ * just pressed never moves out from under the pointer when its own feedback
+ * appears (design/26 §6.4: interaction feedback must not shift surrounding
+ * layout). A group with nothing to offer renders nothing at all: design/26 §1
+ * fixes a control as absent rather than a disabled lookalike.
  *
  * Every typed Host value is rendered through `../game-presentation`, which maps
  * the frozen `game_browser_api/v1` union to localized player outcomes. A raw
@@ -54,10 +65,18 @@ import type { Messages } from "../i18n";
  *   `data-testid="game-state-panel"` + `data-game-state="available" | "null"`;
  * - the cabin confirm button keeps `aria-label={labels.stardewCabinConfirm}` and
  *   the cabin list keeps `data-testid="cabin-choice-list"`;
+ * - the lifecycle controls keep the exact accessible names they had, and the
+ *   guide presents those same controls (as `game-activate`, `game-setup`,
+ *   `game-launch`, `game-reopen`, `game-stop`, `game-disconnect`,
+ *   `game-resume`, `game-resume-cancel`, `game-create`) rather than a second
+ *   set of them;
+ * - the board keeps `data-testid="game-capability-board"` (on the board region,
+ *   so its lead and its waiting sentence read with its cards) with
+ *   `data-capability-state="published" | "unpublished"`, and the guide keeps
+ *   `data-testid="game-start-guide"`;
  * - every fact row keeps its `dt`/`dd` text adjacency (a label and its value are
  *   never separated by anything, so the row still reads `ConnectionConnected`);
- * - every control keeps the exact accessible name it had, and every status
- *   sentence is still the `role="status"` line it was.
+ * - every status sentence is still the `role="status"` line it was.
  */
 
 export type CabinViewState =
@@ -131,10 +150,25 @@ function connectionDotTone(status: string): StatusDotTone | undefined {
 }
 
 /** One labelled group of the panel. The heading is the group's accessible name. */
-function PanelGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+function PanelGroup({
+  id,
+  title,
+  className,
+  children,
+}: {
+  id: string;
+  title: string;
+  /** Extra class for a group that is deliberately not a peer of the others. */
+  className?: string;
+  children: ReactNode;
+}) {
   const headingId = `${id}-heading`;
   return (
-    <section className="game-group" id={id} aria-labelledby={headingId}>
+    <section
+      className={className === undefined ? "game-group" : `game-group ${className}`}
+      id={id}
+      aria-labelledby={headingId}
+    >
       <h3 className="game-group-title" id={headingId}>
         {title}
       </h3>
@@ -156,6 +190,17 @@ export function GameStatePanel({
   cabin,
   handlers,
 }: GameStatePanelProps) {
+  // The companion is in the farm once the Host publishes an attachment for it.
+  // While it is not, the surface's job is "here is how we get going": the same
+  // lifecycle controls, presented inside the three-step guide's affordances
+  // (never a second set of them).
+  const companionInFarm = game !== null && game.game.attachment.status === "attached";
+  // One mount site per state, never two: the cabin handoff is the third step's
+  // affordance while the companion is on its way in, and stays the sibling
+  // block below the groups once it is in the farm.
+  const cabinHandoff = (
+    <CabinHandoff state={cabin} labels={labels} onConfirm={handlers.confirmCabin} />
+  );
   return (
     // The panel scrolls once the projection is longer than the space the drawer
     // gives it. A scrollable region that cannot take focus is unreachable for a
@@ -173,66 +218,136 @@ export function GameStatePanel({
         <p className="game-panel-empty">{labels.gameStateUnavailable}</p>
       ) : (
         <>
-          <PanelGroup id="game-group-connection" title={labels.gameGroupConnection}>
-            <ConnectionFacts game={game} labels={labels} />
-          </PanelGroup>
+          {/* What the companion can do with the player, derived from the
+              capability surface the composed game projection publishes: the
+              published summary, the embodied role and the action authority.
+              Nothing here is a hand-written ability list. */}
+          <CapabilityBoardView board={deriveCapabilityBoard(labels, game.game)} />
 
-          {/* The first-run chain into play. The controls are ordered by the
-              documented chain, not by weight: the required staging step
-              (`Enable companion play`) leads, the optional prerequisite repair
-              (SMAPI/Mod setup through the Host's own picker) follows as a real
-              but secondary action, and `Play with companion` is the single
-              primary action once the Host publishes the staged shape
-              (design/104 §7: the player sees one primary action). */}
+          {/* Getting going. The three steps are the reading order of the first
+              run (start Stardew, load the farm, the companion moves in), and
+              each step carries the affordance that belongs to it: the setup and
+              activation chain in step 1, the launch in step 2, the cabin choice
+              in step 3. Once the companion is in the farm the same group holds
+              the actions-resume affordance it held before. */}
           <PanelGroup id="game-group-next-step" title={labels.gameGroupNextStep}>
-            <div className="game-actions">
-              {lifecycle.activation.available && (
-                <button
-                  type="button"
-                  className="game-action primary"
-                  disabled={lifecycle.activation.active}
-                  aria-label={labels.gameActivation}
-                  onClick={handlers.activate}
-                >
-                  <Power size={16} aria-hidden="true" />
-                  {labels.gameActivation}
-                </button>
-              )}
-              {lifecycle.setup.available && (
-                <button
-                  type="button"
-                  className="game-action"
-                  disabled={lifecycle.setup.active}
-                  onClick={handlers.setup}
-                >
-                  <Settings size={16} aria-hidden="true" />
-                  {labels.gameSetup}
-                </button>
-              )}
-              {lifecycle.launch.available && (
-                <button
-                  type="button"
-                  className="game-action primary"
-                  disabled={lifecycle.launch.active}
-                  aria-label={labels.gameLaunch}
-                  onClick={handlers.launch}
-                >
-                  <Play size={16} aria-hidden="true" />
-                  {labels.gameLaunch}
-                </button>
-              )}
-              {reopen.available && (
-                <button
-                  type="button"
-                  className="game-action primary"
-                  disabled={reopen.active}
-                  onClick={handlers.reopen}
-                >
-                  <RotateCcw size={16} aria-hidden="true" />
-                  {labels.gameReopen}
-                </button>
-              )}
-            </div>
+            {companionInFarm ? (
+              <div className="game-actions">
+                {reopen.available && (
+                  <button
+                    type="button"
+                    className="game-action primary"
+                    data-testid="game-reopen"
+                    disabled={reopen.active}
+                    onClick={handlers.reopen}
+                  >
+                    <RotateCcw size={16} aria-hidden="true" />
+                    {labels.gameReopen}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <ol
+                className="game-guide-steps"
+                data-testid="game-start-guide"
+                aria-label={labels.gameStartGuide}
+              >
+                <li className="game-guide-step" data-guide-step="1">
+                  <h4 className="game-guide-step-title">{labels.gameGuideStepOneTitle}</h4>
+                  <p className="game-guide-step-detail">{labels.gameGuideStepOneDetail}</p>
+                  <div className="game-actions">
+                    {lifecycle.activation.available && (
+                      <button
+                        type="button"
+                        className="game-action primary"
+                        data-testid="game-activate"
+                        disabled={lifecycle.activation.active}
+                        aria-label={labels.gameActivation}
+                        onClick={handlers.activate}
+                      >
+                        <Power size={16} aria-hidden="true" />
+                        {labels.gameActivation}
+                      </button>
+                    )}
+                    {lifecycle.setup.available && (
+                      <button
+                        type="button"
+                        className="game-action"
+                        data-testid="game-setup"
+                        disabled={lifecycle.setup.active}
+                        onClick={handlers.setup}
+                      >
+                        <Settings size={16} aria-hidden="true" />
+                        {labels.gameSetup}
+                      </button>
+                    )}
+                  </div>
+                  {lifecycle.activation.active && (
+                    <p className="game-status" data-tone="progress" role="status">
+                      {labels.gameActivationInProgress}
+                    </p>
+                  )}
+                  {lifecycle.activation.failed && (
+                    <p className="game-status" data-tone="danger" role="status">
+                      {labels.gameActivationFailed}
+                    </p>
+                  )}
+                  {lifecycle.activation.unavailable && (
+                    <p className="game-status" data-tone="info" role="status">
+                      {labels.gameActivationUnavailable}
+                    </p>
+                  )}
+                  {lifecycle.setup.notStaged ? (
+                    <p className="game-status" data-tone="info" role="status">
+                      {labels.gameActivationRequired}
+                    </p>
+                  ) : (
+                    lifecycle.setup.failed && (
+                      <p className="game-status" data-tone="danger" role="status">
+                        {labels.gameSetupFailed}
+                      </p>
+                    )
+                  )}
+                </li>
+
+                <li className="game-guide-step" data-guide-step="2">
+                  <h4 className="game-guide-step-title">{labels.gameGuideStepTwoTitle}</h4>
+                  <p className="game-guide-step-detail">{labels.gameGuideStepTwoDetail}</p>
+                  <div className="game-actions">
+                    {lifecycle.launch.available && (
+                      <button
+                        type="button"
+                        className="game-action primary"
+                        data-testid="game-launch"
+                        disabled={lifecycle.launch.active}
+                        aria-label={labels.gameLaunch}
+                        onClick={handlers.launch}
+                      >
+                        <Play size={16} aria-hidden="true" />
+                        {labels.gameLaunch}
+                      </button>
+                    )}
+                  </div>
+                  {lifecycle.launch.notStaged ? (
+                    <p className="game-status" data-tone="info" role="status">
+                      {labels.gameActivationRequired}
+                    </p>
+                  ) : (
+                    lifecycle.launch.failed && (
+                      <p className="game-status" data-tone="warning" role="status">
+                        {labels.gameLaunchFailed}
+                      </p>
+                    )
+                  )}
+                </li>
+
+                <li className="game-guide-step" data-guide-step="3">
+                  <h4 className="game-guide-step-title">{labels.gameGuideStepThreeTitle}</h4>
+                  <p className="game-guide-step-detail">{labels.gameGuideStepThreeDetail}</p>
+                  {cabinHandoff}
+                </li>
+              </ol>
+            )}
             {reopen.available && (
               <p className="game-status" data-tone="warning" role="status">
                 {labels.gameActionsPaused}
@@ -242,43 +357,6 @@ export function GameStatePanel({
               <p className="game-status" data-tone="progress" role="status">
                 {labels.gameSyncing}
               </p>
-            )}
-            {lifecycle.activation.active && (
-              <p className="game-status" data-tone="progress" role="status">
-                {labels.gameActivationInProgress}
-              </p>
-            )}
-            {lifecycle.activation.failed && (
-              <p className="game-status" data-tone="danger" role="status">
-                {labels.gameActivationFailed}
-              </p>
-            )}
-            {lifecycle.activation.unavailable && (
-              <p className="game-status" data-tone="info" role="status">
-                {labels.gameActivationUnavailable}
-              </p>
-            )}
-            {lifecycle.setup.notStaged ? (
-              <p className="game-status" data-tone="info" role="status">
-                {labels.gameActivationRequired}
-              </p>
-            ) : (
-              lifecycle.setup.failed && (
-                <p className="game-status" data-tone="danger" role="status">
-                  {labels.gameSetupFailed}
-                </p>
-              )
-            )}
-            {lifecycle.launch.notStaged ? (
-              <p className="game-status" data-tone="info" role="status">
-                {labels.gameActivationRequired}
-              </p>
-            ) : (
-              lifecycle.launch.failed && (
-                <p className="game-status" data-tone="warning" role="status">
-                  {labels.gameLaunchFailed}
-                </p>
-              )
             )}
             {reopen.active && (
               <p className="game-status" data-tone="progress" role="status">
@@ -298,20 +376,23 @@ export function GameStatePanel({
           </PanelGroup>
 
           {/* What is running now, and the controls that settle it. Offering zero
-              of these on a projection that admits none leaves the group as the
-              two facts alone. */}
+              of these on a projection that admits none leaves the group as its
+              latest outcome alone: the acting authority is the board's card. */}
           <PanelGroup id="game-group-session" title={labels.gameGroupSession}>
             <dl className="game-facts">
-              <GameFact label={labels.gameFactExecution}>
-                {authorityLabel(labels, game.game.actionAuthority)}
-              </GameFact>
               <GameFact label={labels.gameFactOutcome}>
                 {outcomeLabel(labels, game.game.latestOutcome)}
               </GameFact>
             </dl>
             <div className="game-actions">
               {session.stop.available && (
-                <button type="button" className="game-action" disabled={session.stop.active} onClick={handlers.stop}>
+                <button
+                  type="button"
+                  className="game-action"
+                  data-testid="game-stop"
+                  disabled={session.stop.active}
+                  onClick={handlers.stop}
+                >
                   <Square size={16} aria-hidden="true" />
                   {labels.gameStop}
                 </button>
@@ -320,6 +401,7 @@ export function GameStatePanel({
                 <button
                   type="button"
                   className="game-action"
+                  data-testid="game-disconnect"
                   disabled={session.disconnect.active}
                   onClick={handlers.disconnect}
                 >
@@ -353,6 +435,7 @@ export function GameStatePanel({
                   <button
                     type="button"
                     className="game-action primary"
+                    data-testid="game-resume"
                     disabled={resume.active}
                     onClick={handlers.resume}
                   >
@@ -365,6 +448,7 @@ export function GameStatePanel({
                     <button
                       type="button"
                       className="game-action primary"
+                      data-testid="game-resume"
                       disabled={resume.active}
                       onClick={handlers.resume}
                     >
@@ -374,6 +458,7 @@ export function GameStatePanel({
                     <button
                       type="button"
                       className="game-action"
+                      data-testid="game-resume-cancel"
                       disabled={resume.cancelActive}
                       onClick={handlers.resumeCancel}
                     >
@@ -383,6 +468,7 @@ export function GameStatePanel({
                     <button
                       type="button"
                       className="game-action"
+                      data-testid="game-create"
                       disabled={create.active}
                       onClick={handlers.toggleCreateForm}
                     >
@@ -464,7 +550,18 @@ export function GameStatePanel({
             </form>
           )}
 
-          <CabinHandoff state={cabin} labels={labels} onConfirm={handlers.confirmCabin} />
+          {companionInFarm && cabinHandoff}
+
+          {/* The machine facts, demoted below the board: true and useful, but
+              not what the surface is about. The capability summary is not here
+              - the board above is its presentation. */}
+          <PanelGroup
+            id="game-group-connection"
+            title={labels.gameGroupConnection}
+            className="game-group-secondary"
+          >
+            <ConnectionFacts game={game} labels={labels} />
+          </PanelGroup>
         </>
       )}
     </section>
@@ -472,9 +569,11 @@ export function GameStatePanel({
 }
 
 /**
- * The typed connection/surface facts, the published capability summary and the
- * current execution included (design/26 §4.2). Each row is one label plus its
- * value, with the value's own status dot as decoration inside the value.
+ * The typed connection and surface facts, demoted below the board: true and
+ * useful, but not what the surface is about (design/26 §4.2). Each row is one
+ * label plus its value, with the value's own status dot as decoration inside
+ * the value. The capability summary is not a row here - the board is its
+ * presentation - and the acting authority is the board's own card.
  */
 function ConnectionFacts({ game, labels }: { game: GameBrowserStateV1; labels: Messages }) {
   const projection = game.game;
@@ -488,9 +587,6 @@ function ConnectionFacts({ game, labels }: { game: GameBrowserStateV1; labels: M
       <GameFact label={labels.gameFactSave}>{projection.selectedSave ?? labels.gameValueNone}</GameFact>
       <GameFact label={labels.gameFactCompatibility}>
         {compatibilityLabel(labels, projection.compatibility)}
-      </GameFact>
-      <GameFact label={labels.gameFactCapabilities}>
-        {capabilitiesLabel(labels, projection.capabilitySummary)}
       </GameFact>
     </dl>
   );
@@ -565,6 +661,51 @@ function CabinHandoff({
             ))}
           </ul>
         ))}
+    </section>
+  );
+}
+
+/** The icon that decorates a board card. One declared icon family (lucide). */
+function capabilityCardIcon(icon: CapabilityBoardCard["icon"]) {
+  if (icon === "companion") return <Users size={16} aria-hidden="true" />;
+  if (icon === "abilities") return <Sparkles size={16} aria-hidden="true" />;
+  return <Hand size={16} aria-hidden="true" />;
+}
+
+/**
+ * The companion capability board: what the companion can do with the player,
+ * derived from the capability surface the composed game projection publishes.
+ *
+ * It renders exactly the cards `deriveCapabilityBoard` produced from that
+ * projection, and nothing else. While the session has published no capability,
+ * the board carries the sentence naming what it is waiting for instead of a
+ * static list it cannot attest (design/26 §1: absent beats a disabled lookalike,
+ * and an invented list is worse than either).
+ */
+function CapabilityBoardView({ board }: { board: CapabilityBoard }) {
+  return (
+    <section
+      className="game-capability-board"
+      aria-labelledby="game-capability-board-heading"
+      data-testid="game-capability-board"
+      data-capability-state={board.waiting === null ? "published" : "unpublished"}
+    >
+      <h3 className="game-group-title" id="game-capability-board-heading">
+        {board.title}
+      </h3>
+      <p className="game-capability-lead">{board.lead}</p>
+      <ul className="game-capability-cards">
+        {board.cards.map((card) => (
+          <li className="game-capability-card" data-capability-card={card.key} key={card.key}>
+            <span className="game-capability-card-icon" aria-hidden="true">
+              {capabilityCardIcon(card.icon)}
+            </span>
+            <h4 className="game-capability-card-title">{card.title}</h4>
+            <p className="game-capability-card-detail">{card.detail}</p>
+          </li>
+        ))}
+      </ul>
+      {board.waiting !== null && <p className="game-capability-waiting">{board.waiting}</p>}
     </section>
   );
 }

@@ -3133,6 +3133,14 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* CJK type has no true italic: a slanted CJK beat renders as a mechanically
+   smeared face. The beat is de-emphasised by colour (the base rule) and weight
+   instead. Latin keeps the italic the base rule leaves in place. */
+.message-bubble em.message-action:lang(zh) {
+  font-style: normal;
+  font-weight: 600;
+}
+
 .message-bubble :is(p, blockquote, pre, ul, ol, hr) {
   margin: 0;
 }
@@ -3802,6 +3810,241 @@ body {
 .composer-chip:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* --- game-surface lane: the companion capability board and the start guide ---
+   The board leads the panel and the machine facts are demoted last, so the
+   surface reads as what the companion can do with the player. Nothing here owns
+   behaviour: every card is derived from the published game projection. */
+
+.game-capability-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.game-capability-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.game-capability-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-capability-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.game-capability-card-icon {
+  display: flex;
+  color: var(--accent);
+}
+
+.game-capability-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.game-capability-card-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.game-capability-waiting {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-disabled);
+  overflow-wrap: anywhere;
+}
+
+/* The three-step guide. The step number is the list's own counter, so it is
+   graphic rather than text the screen reader has to read twice. */
+.game-guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: game-guide-step;
+}
+
+.game-guide-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-areas:
+    "number title"
+    "number detail"
+    ".      body";
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: start;
+  padding: 12px 14px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.game-guide-step::before {
+  grid-area: number;
+  counter-increment: game-guide-step;
+  content: counter(game-guide-step);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--surface-elevated);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.game-guide-step-title {
+  grid-area: title;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.game-guide-step-detail {
+  grid-area: detail;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Everything else a step carries - its controls, its own feedback, the cabin
+   handoff - spans the body column, so no control sits under the step number. */
+.game-guide-step > .game-actions,
+.game-guide-step > .game-status,
+.game-guide-step > .stardew-cabin-handoff {
+  grid-column: 2;
+}
+
+/* The demoted machine facts: the same rows, quieter than the board above. */
+.game-group-secondary {
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.game-group-secondary .game-facts {
+  padding: 0 2px;
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.game-group-secondary .game-fact dt {
+  font-size: 11px;
+  color: var(--text-disabled);
+}
+
+
+/* ==========================================================================
+   The app bar's trailing peers fold behind one `More` on a 400 px strip
+   (conversation-surface lane block)
+
+   Owner report: at 400 px the six peer entries take about 300 px of a 400 px
+   bar, and the companion block - the one thing that says who the player is
+   talking to - is squeezed to a bare "(" . The strip is where GameBuddy actually
+   lives (beside Stardew Valley), so what the bar gives up is not the companion
+   but the rail: everything past the first two peers moves into one `More`
+   disclosure, and the width that frees goes back to the name.
+
+   Wide bars are unchanged, and not by a duplicated rule: the wrapper is
+   `display: contents`, so its children *are* the action row's own flex items,
+   in the same order with the same gaps, and the trigger does not exist. Only the
+   480 px media query gives the wrapper a box at all. Appended block; the rules
+   above are untouched.
+   ========================================================================== */
+
+.app-bar-more,
+.app-bar-more-menu {
+  display: contents;
+}
+
+.app-bar-more-trigger {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .app-bar-more {
+    display: block;
+    position: relative;
+  }
+
+  .app-bar-more-trigger {
+    display: inline-flex;
+  }
+
+  .app-bar-more-menu {
+    display: none;
+  }
+
+  .app-bar-more-menu[data-open] {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    right: 0;
+    z-index: 30;
+    min-width: 176px;
+    padding: var(--space-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-panel);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Inside the panel an entry is a named row again: the icon-only treatment
+     belongs to the bar's own rail, not to a list the player is choosing from. */
+  .app-bar-more-menu .nav-button {
+    width: auto;
+    height: auto;
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-2);
+    justify-content: flex-start;
+  }
+
+  .app-bar-more-menu .nav-button .nav-label {
+    display: inline;
+  }
+
+  /* The bar's own air is already at its floor; the companion block's inner gap
+     is what is left to give back to the name. */
+  .app-bar-companion {
+    gap: var(--space-1);
+  }
 }
 
 } /* end @layer theme.polish */

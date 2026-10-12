@@ -175,3 +175,97 @@ export function installationStateLabel(labels: Messages, state: string): string 
       return labels.gameInstallationError;
   }
 }
+
+/**
+ * The companion capability board: what the composed Game projection publishes
+ * about the companion, as readable cards.
+ *
+ * It is a derivation over the published projection and deliberately *not* a
+ * list of abilities. `game_browser_api/v1` publishes the capability surface as
+ * a summary (`capabilitySummary`), the embodied role (`role`/`companionName`)
+ * and the action authority the Host grants right now (`actionAuthority`); what
+ * the companion can actually do is Mod-owned and described by the game side, so
+ * the board renders the published facts and says plainly what it is waiting for
+ * when nothing has been published, instead of inventing a static list
+ * (design/104 §8 requires a safe capability summary; §10 forbids rendering a
+ * raw enum, an operation id or an internal name as player text).
+ *
+ * This is the one place that turns those facts into player text, so no
+ * component ever renders the projection's own vocabulary.
+ */
+export type CapabilityCardIcon = "companion" | "abilities" | "action";
+
+export type CapabilityBoardCard = Readonly<{
+  /** The published fact this card states; never rendered. */
+  key: CapabilityCardIcon;
+  icon: CapabilityCardIcon;
+  title: string;
+  detail: string;
+}>;
+
+export type CapabilityBoard = Readonly<{
+  title: string;
+  lead: string;
+  cards: readonly CapabilityBoardCard[];
+  /**
+   * Present exactly while the session has published no capability at all: what
+   * the board is waiting for. Never a fallback list.
+   */
+  waiting: string | null;
+}>;
+
+function withCount(template: string, count: number): string {
+  return template.replace("{{count}}", String(count));
+}
+
+/** The companion's own acting authority, as player language. */
+function actingDetail(labels: Messages, authority: GameProjection["actionAuthority"]): string {
+  switch (authority) {
+    case "active":
+      return labels.gameBoardActingActive;
+    case "paused":
+      return labels.gameBoardActingPaused;
+    case "unavailable":
+      return labels.gameBoardActingUnavailable;
+    default:
+      return exhaustive(authority);
+  }
+}
+
+export function deriveCapabilityBoard(labels: Messages, projection: GameProjection): CapabilityBoard {
+  const summary = projection.capabilitySummary;
+  const companionName = projection.companionName ?? labels.gameBoardCompanionTitle;
+  return Object.freeze({
+    title: labels.gameBoardTitle,
+    lead: summary.available
+      ? withCount(labels.gameBoardPublishedLead, summary.count)
+      : labels.gameBoardUnpublishedLead,
+    cards: Object.freeze([
+      Object.freeze({
+        key: "companion" as const,
+        icon: "companion" as const,
+        title: companionName,
+        detail: projection.role === "companion"
+          ? labels.gameBoardCompanionPresent.replace("{{name}}", companionName)
+          : labels.gameBoardCompanionAbsent,
+      }),
+      Object.freeze({
+        key: "abilities" as const,
+        icon: "abilities" as const,
+        title: summary.available
+          ? withCount(labels.gameBoardAbilitiesPublished, summary.count)
+          : labels.gameBoardAbilitiesUnpublished,
+        detail: summary.available
+          ? labels.gameBoardAbilitiesPublishedDetail
+          : labels.gameBoardAbilitiesUnpublishedDetail,
+      }),
+      Object.freeze({
+        key: "action" as const,
+        icon: "action" as const,
+        title: authorityLabel(labels, projection.actionAuthority),
+        detail: actingDetail(labels, projection.actionAuthority),
+      }),
+    ]),
+    waiting: summary.available ? null : labels.gameBoardWaiting,
+  });
+}
