@@ -54,10 +54,10 @@ import { CharactersSurfacePanel } from "./CharactersSurfacePanel";
 import {
   ChatsSurfacePanel,
   createManagementPipelineApi,
-  MemorySurfacePanel,
-  SettingsSurfacePanel,
   type WorldInfoSurfaceSource,
 } from "./management-surface-panels";
+import { MemorySurface } from "./MemorySurface";
+import { SettingsSurface } from "./SettingsSurface";
 
 
 
@@ -1998,35 +1998,23 @@ export function ComposedReferenceGameApp() {
               </SurfaceView>
             )}
             {shownSurface === SETTINGS_PANEL && (
-              <SurfaceView
-                title={labels().settingsPanel}
-                testId="settings-surface"
-                icon={Settings}
+              <SettingsSurface
+                api={managementPipelineApiRef.current}
+                csrfToken={view.session.snapshot.csrfToken}
+                labels={labels()}
+                uiLocale={view.locale}
+                onSelectUiLocale={handleUiLocale}
                 restoreFocusTo={settingsEntryRef}
-              >
-                <SettingsSurfacePanel
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  uiLocale={view.locale}
-                  onSelectUiLocale={handleUiLocale}
-                />
-              </SurfaceView>
+              />
             )}
             {shownSurface === MEMORY_PANEL && (
-              <SurfaceView
-                title={labels().memoryPanel}
-                testId="memory-surface"
-                icon={Brain}
+              <MemorySurface
+                api={managementPipelineApiRef.current}
+                csrfToken={view.session.snapshot.csrfToken}
+                labels={labels()}
+                locale={view.locale}
                 restoreFocusTo={memoryEntryRef}
-              >
-                <MemorySurfacePanel
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  locale={view.locale}
-                />
-              </SurfaceView>
+              />
             )}
           </main>
           {/* This surface's own model settings, over the conversation rather than
