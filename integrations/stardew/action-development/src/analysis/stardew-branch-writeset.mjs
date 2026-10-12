@@ -63,30 +63,22 @@ const DEFERRED_FIELD = /^(finishEvent|lastUser|endFunction|_?finish)$/;
 const HELD_SLOT = /^(Game1\.player|who)\.(ActiveObject|CurrentTool)$/;
 
 /**
- * 编译器临时量条件：仅由 `flagN` / `numN` / `IL_xxxx` 这类变量构成。
- * 出现在新版 ILSpy 对复杂方法（含 try/finally、大 switch）的降级输出里。
+ * 编译器临时量条件:仅由 `flagN` / `numN` / `IL_xxxx` 这类变量构成。
+ * 出现在新版 ILSpy 对复杂方法(含 try/finally、大 switch)的降级输出里。
+ *
+ * 语言定义(供人工核对):一个或多个单元串接,每个单元为可选的 `(`、空白、
+ * 任意个 `!`/`||`/`&&`/`(`、空白、一个 flag|num|text|array|list|bool + 数字标识符、
+ * 空白、可选的 `)`、空白、可选的 `||`/`&&`、空白。至少需要一个标识符。
+ *
+ * Linear recognizer: a token scan never backtracks, so runtime is linear in the
+ * condition length (production caps conditions at 96 chars, but the predicate
+ * is linear for unbounded input too). Operator/whitespace-only strings are
+ * false exactly like the regex `+` unit; no other letter sequences are allowed.
+ * The old nested-quantifier regex form backtracked exponentially (12 `flag0`
+ * tokens + a tail already took >8s in Node 24) and has been removed.
  */
-// The regex below is the documentation form; execution uses the linear
-// isCompilerTemporaryCondition scanner below it, whose language is proven
-// equivalent by differential test. The regex itself is kept only as the
-// human-readable spec (and would backtrack exponentially if executed).
-const COMPILER_TEMPORARY_CONDITION =
-  /^(?:\(?\s*(?:!|\|\||&&|\()*\s*(?:flag|num|text|array|list|bool)\d*\s*\)?\s*(?:\|\||&&)?\s*)+$/;
-
 const COMPILER_TEMPORARY_IDENTIFIER = /^(?:flag|num|text|array|list|bool)\d*/;
 
-/**
- * Linear recognizer for the same language as COMPILER_TEMPORARY_CONDITION.
- *
- * The regex form nests a quantified operator group inside a quantified outer
- * group and backtracked exponentially on inputs such as `flag0 flag0 ... x`
- * (12 tokens were already >8s in Node 24). A token scan never backtracks:
- * every iteration consumes at least one character, so runtime is linear in
- * the condition length. Production caps conditions at 96 chars, but the
- * predicate is linear for unbounded input too. The language requires at
- * least one identifier: operator/whitespace-only strings are false, exactly
- * like the regex `+` unit, and no other letter sequences are allowed.
- */
 export function isCompilerTemporaryCondition(value) {
   let at = 0;
   let sawIdentifier = false;
