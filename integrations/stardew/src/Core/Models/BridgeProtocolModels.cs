@@ -621,6 +621,9 @@ public sealed class BridgeExecutionArgs
     public string? Emote { get; init; }
     public string? Direction { get; init; }
     public string? ResponseKey { get; init; }
+    /// <summary>One chat line's text (send_multiplayer_chat). The native ingress is a single
+    /// 896-px line, so the value is bounded by the Mod's own maximum rather than by this type.</summary>
+    public string? Text { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

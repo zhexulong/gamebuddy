@@ -1134,6 +1134,12 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                  || (action.GetString() == "navigate_to_destination"
                      && (!args.TryGetProperty("destination", out JsonElement destination)
                          || !IsExactNavigationDestinationSelector(destination)))
+                 || (action.GetString() == "send_multiplayer_chat"
+                     && (!args.TryGetProperty("text", out JsonElement chatText)
+                         || chatText.ValueKind != JsonValueKind.String
+                         || chatText.GetString() is not { } chatTextValue
+                         || string.IsNullOrWhiteSpace(chatTextValue)
+                         || chatTextValue.Length > FarmhandActionCatalog.ChatMessageMaximumLength))
                  || (action.GetString() == "express_emote"
                     && (!args.TryGetProperty("emote", out JsonElement emote)
                         || emote.ValueKind != JsonValueKind.String
@@ -1938,6 +1944,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },
         "express_emote" => new[] { "emote" },
+        "send_multiplayer_chat" => new[] { "text" },
         "face_direction" => new[] { "direction" },
         // Loop-closure W0a registrations (FarmhandActionCatalog): the wire list
         // must cover every registered action, otherwise the parser rejects the

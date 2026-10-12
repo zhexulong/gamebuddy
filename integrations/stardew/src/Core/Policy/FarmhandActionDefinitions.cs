@@ -39,6 +39,15 @@ public static class FarmhandActionHandlerGroupWire
 
 public static class FarmhandActionCatalog
 {
+    /// <summary>
+    /// One native chat line's worth of text. The native ingress is a single 896-px line (ChatBox.cs:91) that stops
+    /// accepting input once the text would overrun it (ChatTextBox.cs:39), so a longer payload is not a chat line at
+    /// all. It lives HERE, on the Core side, because both the wire validator and the Mod handler must read the same
+    /// number - an argument the wire accepts but the handler refuses (or the reverse) is a registered capability that
+    /// cannot be invoked, which is the defect `quantity` once was.
+    /// </summary>
+    public const int ChatMessageMaximumLength = 256;
+
     public static readonly IReadOnlyList<string> EmoteEnum = Array.AsReadOnly(new[]
     {
         "happy", "sad", "heart", "exclamation", "note", "sleep", "game", "question",
@@ -266,6 +275,10 @@ public static class FarmhandActionCatalog
         // terminal (requires_other_player) is traceable rather than a second
         // receipt authority.
         E("advance_day", "world_lifecycle", FarmhandActionHandlerGroup.WorldLifecycle, Lifecycle(), FarmhandActionLifecycle.LiveVerified),
+        // The one SOCIAL act that is not about an NPC in front of the actor: say a line to the whole lobby
+        // through the game's own chat egress (`Multiplayer.sendChatMessage`, Multiplayer.cs:1127). No body, no
+        // geometry, no target, no world write - it takes exactly one string and its terminal proves the SEND.
+        E("send_multiplayer_chat", "npc_social", FarmhandActionHandlerGroup.Expression, A(null, null, "chat_message_sent", ("text", "string")), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);

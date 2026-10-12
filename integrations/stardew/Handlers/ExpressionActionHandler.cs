@@ -20,6 +20,10 @@ internal sealed class ExpressionActionHandler : IFarmhandActionHandler
         return request.Action switch
         {
             "express_emote" => this.executions.RequestLocalExpressEmote(request, ledger),
+            "send_multiplayer_chat" => this.executions.RequestLocalSendMultiplayerChat(
+                request.RequestId,
+                request.Args.Text ?? string.Empty,
+                request.DeadlineMs),
             _ => new LocalExecutionReceipt(
                 Guid.NewGuid().ToString("N"),
                 request.RequestId,
