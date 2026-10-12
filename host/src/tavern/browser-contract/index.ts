@@ -118,6 +118,10 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_opening_locked"),
   Type.Literal("chat_opening_not_greeting"),
   Type.Literal("chat_opening_variant_not_found"),
+  // A durable companion record that is absent, incomplete or unreadable is a data-integrity
+  // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
+  // to retry something that cannot succeed by retrying.
+  Type.Literal("companion_record_unreadable"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({

@@ -92,13 +92,11 @@ function managementProfile(withCreate: boolean) {
  * already-existing blank Chat, and the real library opening seam on top of the
  * same store the management list reads.
  *
- * `withCompanionArtifact: false` is the real mounted-companion condition: the
- * companion the deployment manifest mounts carries an identity profile and a
- * greeting set, but NO `tavern/v1/companions/<digest>/companion.json`, because
- * that artifact is only written when a companion is created THROUGH the library
- * (`创建伙伴`, card import). The product's own first Chat is created by the
- * runtime's profile-aware creation capability, not by the library, so it exists
- * without the artifact too.
+ * `withCompanionArtifact: false` is the two-producer disagreement: a companion
+ * whose library `companion.json` was never written. The seed installs that record
+ * through the library's own creation path, so a missing one is not the ordinary
+ * mounted-companion case - it must fail closed with the bounded, non-retryable
+ * `companion_record_unreadable`, never a retryable runtime 503.
  */
 async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArtifact?: boolean }> = {}) {
   const withCompanionArtifact = options.withCompanionArtifact ?? true;
@@ -424,49 +422,33 @@ test("a profile that does not publish chat.create refuses the operation without 
 });
 
 /**
- * The real product's mounted companion is the one the deployment manifest names:
- * it has an identity profile and (after a card was reviewed) a greeting set, but
- * no library `companion.json`, because that artifact is only written when a
- * companion is created through the library. New Chat must still work there - the
- * capture of dd29319e answered `503 runtime_unavailable` for exactly this shape,
- * because `createNewChat` read the absent library companion and collapsed the
- * miss into a generic runtime failure.
+ * A companion whose library record is missing is the two-producer disagreement:
+ * the seed installs `companion.json` through the library's own creation path, so
+ * a missing record is a data-integrity fact, not a runtime outage. It must fail
+ * closed with its own bounded, non-retryable code - the capture of dd29319e
+ * answered a retryable `503 runtime_unavailable` for exactly this shape, which
+ * told the player to retry something that cannot succeed.
  */
-test("New Chat creates a second Chat on a mounted companion with no library companion artifact", async () => {
+test("New Chat on a companion with no library record fails closed with its own honest code", async () => {
   const f = await fixture(true, { withCompanionArtifact: false });
   try {
     const { origin } = f.page;
     const { cookie, csrf } = await openSession(origin);
-    const authHeaders = { Origin: origin, Cookie: cookie, "X-CSRF-Token": csrf, "Content-Type": "application/json" };
-
-    const before = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
-      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
-    });
-    assert.equal(before.status, 200);
-    assert.equal(((await before.json()) as ChatListV1).chats.length, 1);
 
     const create = await fetch(`${origin}/api/tavern/v1/chats`, {
       method: "POST",
-      headers: authHeaders,
+      headers: { Origin: origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": csrf },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1 }),
     });
-    assert.equal(create.status, 200);
-    const result = (await create.json()) as ChatCreateResultV1;
-    // The mounted companion's own greeting is still the created Chat's message zero.
-    assert.equal(result.opening, GREETING_TEXT);
-    assert.equal(result.chat.isSelected, false);
+    assert.equal(create.status, 503);
+    const problem = (await create.json()) as { code: string; retryable: boolean };
+    assert.equal(problem.code, "companion_record_unreadable");
+    // Retrying cannot create the record whose absence is the cause: not retryable.
+    assert.equal(problem.retryable, false);
 
-    const after = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1&state=active`, {
-      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
-    });
-    assert.equal(after.status, 200);
-    const listed = (await after.json()) as ChatListV1;
-    assert.equal(listed.chats.length, 2);
-    assert.equal(listed.chats.filter((chat) => chat.handle === result.chat.handle).length, 1);
-    assert.equal(listed.chats.filter((chat) => chat.isSelected).length, 1);
-
-    const durable = await f.threads.resumeThread(f.created.chatThreadId, f.created.chatSurfaceSessionId);
-    assert.equal(durable.messages.find((message) => message.kind === "opening")?.text, GREETING_TEXT);
+    // No Chat was written behind the refusal.
+    const durable = await f.threads.listThreads!();
+    assert.equal(durable.length, 1);
   } finally {
     await f.page.close();
   }

@@ -77,7 +77,7 @@ export type BrowserEventV1 = Readonly<{
   epoch: string;
   sequence: number;
   selectionGeneration: number;
-  eventType: "companion.delta" | "message.committed" | "draft.changed" | "turn.state_changed" | "memory.changed" | "stream.resync_required";
+  eventType: "companion.delta" | "message.committed" | "draft.changed" | "turn.state_changed" | "stream.resync_required";
   payload: unknown;
 }>;
 
@@ -186,7 +186,6 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
     "message.committed",
     "draft.changed",
     "turn.state_changed",
-    "memory.changed",
     "stream.resync_required",
   ].includes(value.eventType);
 }

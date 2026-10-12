@@ -37,7 +37,7 @@ export type ChatRetentionServiceCommand = Readonly<{
 import { type ChatThread, createChatThreadStore } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
 import { TavernArtifactStore } from "../artifact-store.js";
-import { commitGreetingOpeningVariant } from "../library-service.js";
+import { commitGreetingOpeningVariant, isTavernArtifactUnreadable } from "../library-service.js";
 import { resolveTavernPaths } from "../tavern-paths.js";
 
 /**
@@ -350,6 +350,7 @@ function rethrowOpeningError(error: unknown): Error {
     return error;
   if (error.message === "invalid_chat_opening_request") return new Error("invalid_request");
   if (error.message === "tavern_chat_scope_mismatch") return selectionConflict();
+  if (isTavernArtifactUnreadable(error)) return companionUnreadable();
   if (isStorageError(error)) return storageUnavailable();
   return unavailable();
 }
@@ -420,6 +421,7 @@ function rethrowRetentionError(error: unknown): Error {
 }
 
 function rethrowReadError(error: unknown): Error {
+  if (isTavernArtifactUnreadable(error)) return companionUnreadable();
   if (isStorageError(error)) return storageUnavailable();
   return unavailable();
 }
@@ -492,4 +494,7 @@ function selectionConflict(): Error {
 }
 function storageUnavailable(): Error {
   return new Error("chat_management_storage_unavailable");
+}
+function companionUnreadable(): Error {
+  return new Error("chat_management_companion_unreadable");
 }

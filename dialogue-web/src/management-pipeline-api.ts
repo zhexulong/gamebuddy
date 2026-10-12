@@ -825,6 +825,9 @@ const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  // A companion record that is absent, incomplete or unreadable: a data-integrity fact, not a
+  // retryable runtime outage.
+  "companion_record_unreadable",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;

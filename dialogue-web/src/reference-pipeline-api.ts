@@ -119,20 +119,6 @@ export type BrowserEventV1 =
       epoch: string;
       sequence: number;
       selectionGeneration: number;
-      eventType: "memory.changed";
-      payload: Readonly<{
-        readAvailable: boolean;
-        mutationAvailable: boolean;
-        revision: number | null;
-        summaries: readonly Readonly<{ handle: string; title: string; pinned: boolean }>[];
-        lastOutcome?: "committed" | "conflict" | "unavailable";
-      }>;
-    }>
-  | Readonly<{
-      apiVersion: 1;
-      epoch: string;
-      sequence: number;
-      selectionGeneration: number;
       eventType: "stream.resync_required";
       payload: Readonly<{ reason: "gap" | "epoch_changed" | "restart" | "ambiguous_cursor" }>;
     }>;
@@ -623,32 +609,6 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
       hasExactKeys(value.payload, ["reason"]) &&
       isOneOf(value.payload.reason, ["gap", "epoch_changed", "restart", "ambiguous_cursor"])
     );
-  if (value.eventType === "memory.changed") {
-    if (
-      !isRecord(value.payload) ||
-      !Object.keys(value.payload).every((key) =>
-        ["readAvailable", "mutationAvailable", "revision", "summaries", "lastOutcome"].includes(key),
-      )
-    )
-      return false;
-    return (
-      typeof value.payload.readAvailable === "boolean" &&
-      typeof value.payload.mutationAvailable === "boolean" &&
-      (value.payload.revision === null || isNonNegativeSafeInteger(value.payload.revision)) &&
-      Array.isArray(value.payload.summaries) &&
-      value.payload.summaries.length <= 200 &&
-      value.payload.summaries.every(
-        (summary) =>
-          isRecord(summary) &&
-          hasExactKeys(summary, ["handle", "title", "pinned"]) &&
-          isOpaqueHandle(summary.handle) &&
-          isLengthBoundedString(summary.title, 1, 256) &&
-          typeof summary.pinned === "boolean",
-      ) &&
-      (!Object.hasOwn(value.payload, "lastOutcome") ||
-        isOneOf(value.payload.lastOutcome, ["committed", "conflict", "unavailable"]))
-    );
-  }
   return false;
 }
 
@@ -1045,7 +1005,6 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
         "message.committed",
         "draft.changed",
         "turn.state_changed",
-        "memory.changed",
         "stream.resync_required",
       ] as const;
       const handle = (raw: Event): void => {

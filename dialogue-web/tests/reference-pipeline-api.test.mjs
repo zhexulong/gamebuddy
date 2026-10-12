@@ -159,6 +159,18 @@ test("validateEvent accepts only the bounded opaque companion delta DTO", () => 
     () => validateEvent({ ...base, eventType: "message.preview", payload: { handle: HANDLE, text: "Hi", locale: "und" } }),
     TavernProtocolError,
   );
+  // The Host declares five event types (BrowserEventV1Schema) and never emits
+  // `memory.changed`. The client once carried a validator for it; it must reject
+  // it now, so a dead event cannot be reintroduced without a Host producer.
+  assert.throws(
+    () =>
+      validateEvent({
+        ...base,
+        eventType: "memory.changed",
+        payload: { readAvailable: true, mutationAvailable: true, revision: null, summaries: [] },
+      }),
+    TavernProtocolError,
+  );
 });
 
 test("bootstrap posts the exact body to the frozen route and validates the snapshot", async () => {

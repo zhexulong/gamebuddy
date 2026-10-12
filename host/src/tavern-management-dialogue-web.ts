@@ -1999,6 +1999,17 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "world_info_binding_storage_unavailable") return { status: 503, code: "storage_unavailable" };
   if (message === "chat_management_service_unavailable" || message === "chat_management_service_closed")
     return { status: 503, code: "runtime_unavailable" };
+  // An absent/incomplete/unreadable companion record is a durable data-integrity fact, not a
+  // runtime outage. It gets its own bounded code and is never retryable, so the surface cannot
+  // answer a retryable 503 for something retrying cannot fix. The raw library vocabulary is
+  // recognised here too, so no intermediate layer can re-collapse it on the way out.
+  if (
+    message === "chat_management_companion_unreadable" ||
+    message === "tavern_artifact_unreadable" ||
+    message === "invalid_tavern_artifact" ||
+    message === "invalid_tavern_companion"
+  )
+    return { status: 503, code: "companion_record_unreadable" };
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "memory_read_storage_unavailable") return { status: 503, code: "storage_unavailable" };

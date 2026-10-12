@@ -26,7 +26,7 @@ import { createChatManagementService } from "../tavern/chat-management/chat-mana
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { createGreetingManagementService } from "../tavern/greeting-management/greeting-management.js";
-import { createTavernLibraryService } from "../tavern/library-service.js";
+import { createTavernLibraryService, isTavernArtifactUnreadable } from "../tavern/library-service.js";
 import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/new-companion-service.js";
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
 import { createScenarioManagementService } from "../tavern/scenario-management/scenario-management.js";
@@ -929,6 +929,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
  */
 function chatCreationFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  // A companion record the library itself writes, but cannot read back, is a
+  // data-integrity fact with its own bounded code. Mapping it to the runtime
+  // outage code would answer a retryable 503 for something retrying cannot fix.
+  if (isTavernArtifactUnreadable(error)) return "chat_management_companion_unreadable";
   if (/storage|sqlite|eio|enoent/i.test(message)) return "chat_management_storage_unavailable";
   return "chat_management_service_unavailable";
 }
