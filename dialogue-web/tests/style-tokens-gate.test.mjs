@@ -9,9 +9,11 @@
  *
  * The layer contract: the stylesheet declares an explicit cascade order at the
  * top and writes every rule into a named `@layer`. A component rule that leaks
- * out of its layer wins for the wrong reason; the spot-check below is one named
- * rule in each direction (inside its layer, absent from the unlayered remainder)
- * so the structure is asserted, not assumed.
+ * out of its layer wins for the wrong reason - an unlayered rule beats every
+ * layered rule no matter how specific the layered one is - so the gate asserts
+ * the whole structure twice: the audit's own named rules sit in `theme.polish`
+ * and nowhere else, and the unlayered remainder holds nothing but the order
+ * statement and the token roots (`:root`), which compete with no rule.
  *
  * This file is the reviewer's Gate 2. The token assertion overlaps the earlier
  * `style-tokens.test.mjs`; both parse the same stylesheet and both must stay
@@ -86,6 +88,33 @@ function unlayeredText(css) {
   return result + text.slice(cursor);
 }
 
+/**
+ * The top-level items of the unlayered remainder: `@layer a, b;` statements
+ * (order declarations, not rules) and, if any leaked, rulesets. Each item is
+ * `{ prelude, ruleset }`, where a ruleset's prelude is its selector list.
+ */
+export function unlayeredItems(css) {
+  const text = unlayeredText(css);
+  const items = [];
+  const depth = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "{") {
+      if (depth.length === 0) items.push({ prelude: text.slice(start, index).trim().replace(/\s+/gu, " "), ruleset: true });
+      depth.push(index);
+    } else if (character === "}") {
+      depth.pop();
+      start = index + 1;
+    } else if (character === ";" && depth.length === 0) {
+      const prelude = text.slice(start, index).trim().replace(/\s+/gu, " ");
+      if (prelude.length > 0) items.push({ prelude, ruleset: false });
+      start = index + 1;
+    }
+  }
+  return items;
+}
+
 test("gate 2.1: every custom property the stylesheet reads is declared in it", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const { declared } = customProperties(css);
@@ -122,4 +151,37 @@ test("gate 2.2: a named component rule sits inside its declared layer, not unlay
 
   assert.doesNotMatch(unlayered, /\.stop-button\b/u, ".stop-button must not be unlayered");
   assert.doesNotMatch(unlayered, /\.composer-container\b/u, ".composer-container must not be unlayered");
+
+  // The rules authored after `theme.polish` was named - the disclosure, the two
+  // data lists, the voice status and the three banners. Each one is the highest
+  // layer's business: at `theme.legacy` the banner loses to a panel paragraph,
+  // and unlayered it beats the layer its own author wrote it into.
+  for (const selector of [
+    ".custom-disclosure",
+    "[data-world-book-list]",
+    "[data-import-history-entries]",
+    "[data-import-history-counts]",
+    ".voice-status",
+    ".error-banner",
+    ".warning-banner",
+    ".success-banner",
+  ]) {
+    const pattern = new RegExp(`${selector.replace(/[[\]]/gu, (character) => `\\${character}`)}(?![\\w-])`, "u");
+    assert.match(layers.get("theme.polish"), pattern, `${selector} must live in theme.polish`);
+    assert.doesNotMatch(unlayered, pattern, `${selector} must not be unlayered`);
+  }
+});
+
+test("gate 2.3: the unlayered remainder is the order statement and the token roots only", (t) => {
+  const css = readFileSync(STYLESHEET, "utf8");
+  const items = unlayeredItems(css);
+  const leaked = items.filter(
+    (item) => item.ruleset ? item.prelude !== ":root" : !item.prelude.startsWith("@layer "),
+  );
+  t.diagnostic(`gate 2.3: ${items.length} unlayered top-level item(s): ${items.map((item) => item.prelude).join(", ")}`);
+  assert.deepEqual(
+    leaked.map((item) => item.prelude),
+    [],
+    "an unlayered rule wins over every layered rule regardless of specificity; a component rule must name its layer, and only the token roots stay unlayered",
+  );
 });

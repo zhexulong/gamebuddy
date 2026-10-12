@@ -3415,8 +3415,6 @@ body {
   }
 }
 
-} /* end @layer theme.polish */
-
 /* ==========================================================================
    The disclosure (`<details>`)
 
@@ -3647,3 +3645,5 @@ body {
   border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
   color: var(--success);
 }
+
+} /* end @layer theme.polish */
