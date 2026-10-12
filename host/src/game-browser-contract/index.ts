@@ -557,6 +557,61 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.stardew.cabins.confirm",
 ] as const);
 
+/**
+ * The `game_browser_api/v1` reservation ledger: every declared operation no shipped
+ * source can produce, with the shipped source that serves the shell in its place
+ * (`servedBy`), the declared-and-produced member that answers the request instead
+ * (`instead`), and why the reservation is deliberate (`reason`).
+ *
+ * It is exported from the contract rather than kept in the gate because
+ * `contract-producer-gate` consumes this ledger: a gate that can be satisfied by
+ * editing the gate is the same self-certification the ledger exists to stop. The
+ * guarantee it buys is the one the tavern ledger states - a shipped source NAMES the
+ * member, which is not proof that a live request is answered end to end.
+ */
+export type GameBrowserContractReservationV1 = Readonly<{
+  readonly kind: "game-operation";
+  readonly member: string;
+  readonly servedBy: string;
+  readonly instead: string;
+  readonly reason: string;
+}>;
+
+export const GAME_BROWSER_CONTRACT_RESERVATIONS_V1: readonly GameBrowserContractReservationV1[] = Object.freeze([
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.prerequisites.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason:
+      "by design: the composed state read already publishes the prerequisites projection, so no separate prerequisites operation is planned",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.instances.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason:
+      "by design: the lifecycle owns exactly one Player Host instance (`expectedPlayerHostInstanceGeneration` is fixed at 1) and `game.state.read` already publishes that whole slot, so a multi-row instances read has nothing honest to return; multi-instance support is not planned",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.attach",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason:
+      "no route serves it; the Stardew profile does not list it in its operationIds, and the composed state read publishes the attachment slot",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.diagnostics.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason:
+      "by design: `game.state.read` already publishes the whole slot (compatibility, connectionStatus, instance status/generation, latestOutcome) and the lifecycle owns exactly one Player Host instance (`expectedPlayerHostInstanceGeneration` fixed at 1), so neither a second diagnostics read nor multi-instance support is planned",
+  }),
+]);
+
 const contractDeclaredOperationIds = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
 const contractDeclaredNavigationItemIds = new Set<string>(["game"]);
 

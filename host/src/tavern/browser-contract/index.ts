@@ -2159,6 +2159,49 @@ export function isComposedTavernProfile(value: unknown): value is ComposedTavern
   return typeof value === "object" && value !== null && composedTavernProfiles.has(value);
 }
 
+/**
+ * The `tavern_browser_api/v1` reservation ledger: every declared member of this contract
+ * that no producer can emit, with the shipped source that serves the shell in its place
+ * (`servedBy`), the declared-and-produced member that answers the request instead
+ * (`instead`), and why the reservation is deliberate (`reason`).
+ *
+ * It is exported from the contract rather than kept in the gate because
+ * `contract-producer-gate` consumes this ledger: a gate that can be satisfied by editing
+ * the gate is the same self-certification the ledger exists to stop.
+ *
+ * Two honest limits, so this is not mistaken for a live-request check. (1) The tavern
+ * producer rule proves a member is NAMED by a module the composed shell mounts as a
+ * route server - not that a request to that member is answered end to end. (2) The
+ * turn/memory/card-import members use a value-position rule, because a strict write rule
+ * would leave every one of them bare; the game operations are checked the same way.
+ */
+export type TavernBrowserReservationKindV1 =
+  | "tavern-operation"
+  | "voice-state"
+  | "turn-state"
+  | "memory-status"
+  | "memory-category"
+  | "card-import-classification"
+  | "card-import-eligibility";
+export type TavernBrowserContractReservationV1 = Readonly<{
+  readonly kind: TavernBrowserReservationKindV1;
+  readonly member: string;
+  readonly servedBy: string;
+  readonly instead: string;
+  readonly reason: string;
+}>;
+
+export const TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1: readonly TavernBrowserContractReservationV1[] = Object.freeze([
+  Object.freeze({
+    kind: "voice-state",
+    member: "unavailable",
+    servedBy: "host/src/voice-gateway-client.ts",
+    instead: "ready",
+    reason:
+      "audio capture is out of scope by design: no production path captures audio (no `MediaRecorder`, no `getUserMedia`, no speech-to-text, no audio upload; the Desktop Voice lane is output only), and opening this member would first need all four of a capture component, a bounded Host route carrying audio, a Host speech-to-text action and durable capture state - none of which is built",
+  }),
+]);
+
 export const TavernBrowserValidatorsV1: Readonly<Record<keyof typeof TavernBrowserContractV1.schemas, Validator>> =
   Object.freeze(
     Object.fromEntries(

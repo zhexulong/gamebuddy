@@ -39,25 +39,31 @@
  *    named (`turn`, `memor`, `import`), and the type-position exclusion still
  *    applies.
  *
- * Reservations are the ONLY escape hatch, and they are not free text: they live in
- * the frozen `CONTRACT_RESERVATIONS` ledger below, one structured entry per
- * reserved member, each carrying a `servedBy` path that must resolve to a shipped
- * source on disk and an `instead` member that must be declared by the same
- * contract and itself produced. A gate reports how many members are reserved; a
- * comment in the product can no longer silence it, because no comment is read.
+ * Reservations are the ONLY escape hatch, and they are not free text: each contract
+ * exports its own frozen ledger (`TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1` in
+ * tavern/browser-contract, `GAME_BROWSER_CONTRACT_RESERVATIONS_V1` in
+ * game-browser-contract), one structured entry per reserved member, each carrying a
+ * `servedBy` path that must resolve to a shipped source on disk and an `instead`
+ * member that must be declared by the same contract and itself produced. This file holds
+ * no entry of its own - it imports both ledgers and consumes them as
+ * `CONTRACT_RESERVATIONS` below - which is the point: a gate satisfied by editing the
+ * gate is the self-certification the ledger exists to stop, and a comment in the product
+ * can no longer silence it, because no comment is read.
  *
  * Why value position matters: a union declaration repeats its members as a type
  * (`state: "unavailable" | "ready" | "speaking"`), and counting that as a producer
  * would let the gate pass on the very file that proves nothing produces the member.
  *
- * What this cannot express honestly, and therefore does not claim: "produced" here
- * means *some* shipped source names that literal in a scope naming its owner;
- * for the game and state members that is not a proof that a live Host path emits
+ * What this cannot express honestly, and therefore does not claim (the tavern contract's
+ * ledger header states the same two limits, where a future reader looks first):
+ * "produced" here means *some* shipped source names that literal in a scope naming its
+ * owner; for the game and state members that is not a proof that a live Host path emits
  * it, and a member whose producer is reached only from a test fixture would still
  * pass. For the tavern operations it is stronger - the naming source must be a
  * mounted route server - but still a name in a served module, not a request that
- * the dispatcher actually answers. The gate states that limit rather than guessing
- * a stronger rule.
+ * the dispatcher actually answers. The turn/memory/card-import members use the
+ * value-position rule because a strict write rule would leave every one of them bare.
+ * The gate states that limit rather than guessing a stronger rule.
  *
  * False positives, and how each is handled:
  *  - test files, `*.test.ts`, `test-fixtures/` and `test-support/` are excluded, so
@@ -78,6 +84,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { GAME_BROWSER_CONTRACT_RESERVATIONS_V1 } from "../../host/src/game-browser-contract/index.ts";
+import { TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1 } from "../../host/src/tavern/browser-contract/index.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOST = join(REPO, "host", "src");
@@ -186,58 +194,23 @@ export function tavernMountProducers(member, servers = TAVERN_ROUTE_SERVERS) {
 }
 
 /**
- * The reservation ledger. Each entry is a structured, verifiable fact about a
- * member no producer can emit: which shipped source serves the shell in its place
- * (`servedBy`) and which declared, produced member answers the request instead
- * (`instead`). Nothing else reserves a member, and a comment never can.
+ * The reservation ledger, read from the contracts that own it. This file carries no
+ * entry of its own: it concatenates the two exported ledgers, which is what makes
+ * "reserve a member" a contract edit rather than a gate edit. Each entry is a
+ * structured, verifiable fact about a member no producer can emit: which shipped source
+ * serves the shell in its place (`servedBy`) and which declared, produced member answers
+ * the request instead (`instead`). Nothing else reserves a member, and a comment never
+ * can.
  *
- * What is reserved is the structured `(kind, member)` key alone; `reason` is prose
- * for the next reader and can be reworded freely without reserving or unfreezing
- * anything. A reason that reads like "this would have to exist first" turns a
- * deliberate architectural choice into a backlog item, so a structural
- * reservation says WHY it is not planned instead.
+ * What is reserved is the structured `(kind, member)` key alone; `reason` is prose for
+ * the next reader and can be reworded freely without reserving or unfreezing anything. A
+ * reason that reads like "this would have to exist first" turns a deliberate
+ * architectural choice into a backlog item, so a structural reservation says WHY it is
+ * not planned instead.
  */
 export const CONTRACT_RESERVATIONS = Object.freeze([
-  Object.freeze({
-    kind: "game-operation",
-    member: "game.prerequisites.read",
-    servedBy: "host/src/composed-reference-game-browser.ts",
-    instead: "game.state.read",
-    reason:
-      "by design: the composed state read already publishes the prerequisites projection, so no separate prerequisites operation is planned",
-  }),
-  Object.freeze({
-    kind: "game-operation",
-    member: "game.instances.read",
-    servedBy: "host/src/composed-reference-game-browser.ts",
-    instead: "game.state.read",
-    reason:
-      "by design: the lifecycle owns exactly one Player Host instance (expectedPlayerHostInstanceGeneration is fixed at 1) and the state read publishes that whole slot, so a multi-row instances read has nothing honest to return",
-  }),
-  Object.freeze({
-    kind: "game-operation",
-    member: "game.attach",
-    servedBy: "host/src/composed-reference-game-browser.ts",
-    instead: "game.state.read",
-    reason:
-      "no route serves it; the Stardew profile does not list it in its operationIds, and the composed state read publishes the attachment slot",
-  }),
-  Object.freeze({
-    kind: "game-operation",
-    member: "game.diagnostics.read",
-    servedBy: "host/src/composed-reference-game-browser.ts",
-    instead: "game.state.read",
-    reason:
-      "by design: it would duplicate what the state read already publishes except aiClient.lastOutcome, so no separate diagnostics operation is planned",
-  }),
-  Object.freeze({
-    kind: "voice-state",
-    member: "unavailable",
-    servedBy: "host/src/voice-gateway-client.ts",
-    instead: "ready",
-    reason:
-      "audio capture is out of scope by design; the voice union stays closed at unavailable | ready | speaking, and opening it would first need the four documented capture steps (browser/native capture, a bounded Host audio route, a Host speech-to-text action and durable capture state)",
-  }),
+  ...GAME_BROWSER_CONTRACT_RESERVATIONS_V1,
+  ...TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1,
 ]);
 
 /**
@@ -628,6 +601,19 @@ test("producer.5 (mutation): a planted declaration is enumerated, and only the l
 });
 
 test("producer.6: the reservation ledger is counted and every entry names a real substitute", (t) => {
+  // The ledger is the contracts' own frozen export, imported rather than copied, so a
+  // gate edit cannot reserve a member and the contracts cannot be silent about one.
+  assert.ok(
+    Object.isFrozen(GAME_BROWSER_CONTRACT_RESERVATIONS_V1) &&
+      Object.isFrozen(TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1) &&
+      Object.isFrozen(CONTRACT_RESERVATIONS),
+    "the reservation ledgers are frozen",
+  );
+  assert.equal(
+    CONTRACT_RESERVATIONS.length,
+    GAME_BROWSER_CONTRACT_RESERVATIONS_V1.length + TAVERN_BROWSER_CONTRACT_RESERVATIONS_V1.length,
+    "the gate consumes the contract ledgers instead of carrying its own copy",
+  );
   const files = producerFiles();
   const shipped = new Set(files);
   const problems = [];
