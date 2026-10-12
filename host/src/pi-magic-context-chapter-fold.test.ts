@@ -107,6 +107,7 @@ import test from "node:test";
 import { createCompanionRuntime, resolveRuntimePaths, type CompanionIdentity } from "./runtime.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
+import { createGameBuddyPlayerMemoryCrudFacade } from "@cortexkit/pi-magic-context/memory";
 
 const apiKey = process.env.CPA_OAI_API_KEY;
 const identity: CompanionIdentity = Object.freeze({
@@ -320,6 +321,64 @@ test(
       for (const [revision, seen] of perRevision) {
         assert.equal(seen.size, 1, `revision ${revision} rendered ${seen.size} different m[0] byte images`);
       }
+
+      // The panel's OWN path against this real fold: the same read the management surface calls, then the
+      // player's two corrections. This is what makes the fold gate evidence for the feature a player sees,
+      // instead of evidence that a database table was written.
+      const profileBinding = {
+        continuityId: identity.continuityId,
+        // The runtime's OWN working directory, which is what the panel resolves its continuity path
+        // from: passing the temp root resolved a different project and read an empty history.
+        runtimeCwd: resolveRuntimePaths(identity, root).runtimeCwd,
+        profileId: "chat",
+        profileRevision: 1,
+      };
+      const facade = createGameBuddyPlayerMemoryCrudFacade(profileBinding);
+      const panelSees = await facade.listChapters({
+        continuityId: identity.continuityId,
+        profileId: "chat",
+        profileRevision: 1,
+      });
+      assert.ok(panelSees.length >= 1, "the panel's read returned no chapter after a real fold sealed one");
+      const folded = panelSees[0];
+      if (folded === undefined) throw new Error("unreachable: asserted above");
+      assert.equal(folded.status, "sealed", "a freshly folded chapter must read as the fold's own text");
+
+      const corrected = await facade.updateChapter({
+        continuityId: identity.continuityId,
+        profileId: "chat",
+        profileRevision: 1,
+        chapterId: folded.chapterId,
+        content: "What I remember of those first days.",
+      });
+      assert.equal(corrected.status, "edited", "the player's correction must persist as theirs");
+      assert.equal(corrected.content, "What I remember of those first days.");
+
+      const removed = await facade.deleteChapter({
+        continuityId: identity.continuityId,
+        profileId: "chat",
+        profileRevision: 1,
+        chapterId: folded.chapterId,
+      });
+      assert.equal(removed.status, "deleted", "a removal must tombstone the chapter");
+      assert.equal(
+        removed.content,
+        "What I remember of those first days.",
+        "the tombstone keeps the body, so a removal stays auditable",
+      );
+      const afterRemoval = await facade.listChapters({
+        continuityId: identity.continuityId,
+        profileId: "chat",
+        profileRevision: 1,
+      });
+      assert.equal(
+        afterRemoval.filter((chapter) => chapter.status !== "deleted").length,
+        0,
+        "a removed chapter must not be shown as live history",
+      );
+      process.stderr.write(
+        `[chapter-fold-fixture] panel path: folded=${folded.status} corrected=${corrected.status} removed=${removed.status} listed=${afterRemoval.length}\n`,
+      );
     } catch (error) {
       bodyFailed = true;
       throw error;
