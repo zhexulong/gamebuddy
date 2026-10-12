@@ -52,8 +52,13 @@ export function AppBar({
   entries,
 }: AppBarProps) {
   // The monogram is derived from the name, never a decorative symbol
-  // (design/26 §4.1); an unnamed companion falls back to the brand mark.
-  const monogram = (companionName.trim().slice(0, 1) || brandMark.slice(0, 1)).toUpperCase();
+  // (design/26 §4.1); an unnamed companion falls back to the brand mark. The
+  // first character is taken by code point, not by UTF-16 unit: a name starting
+  // with an emoji or an extension-area character must not render half a
+  // surrogate pair as a replacement glyph.
+  const monogram = (
+    (Array.from(companionName.trim())[0] ?? "") || (Array.from(brandMark)[0] ?? "")
+  ).toUpperCase();
 
   return (
     <header className="app-bar">
