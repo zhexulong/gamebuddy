@@ -205,3 +205,40 @@ test("defect 1: the player avatar hugs the right outer boundary, outside the bub
     measured.companion!.bubble!.left + 1,
   );
 });
+
+// --- defect 2 ----------------------------------------------------------------
+
+test("defect 2: the player's own line is not repeated above the bubble", async ({ page }) => {
+  await mountShell(page, {
+    root: composedRoot({
+      transcript: [
+        { role: "companion", text: "The morning light comes over the ridge." },
+        { role: "player", text: "你好" },
+      ],
+    }),
+  });
+
+  const measured = await page.evaluate(() => {
+    const read = (selector: string) => {
+      const row = document.querySelector<HTMLElement>(selector);
+      return {
+        authors: [...row!.querySelectorAll<HTMLElement>(".message-author")].map((node) => node.textContent),
+        avatars: [...row!.querySelectorAll<HTMLElement>(".avatar")].map((node) => node.textContent),
+        bubbleTop: Math.round(row!.querySelector<HTMLElement>(".message-bubble")!.getBoundingClientRect().top),
+        bodyTop: Math.round(row!.querySelector<HTMLElement>(".message-body")!.getBoundingClientRect().top),
+      };
+    };
+    return { player: read("li.message.player"), companion: read("li.message.companion") };
+  });
+  console.log(`[defect-2] measured: ${JSON.stringify(measured)}`);
+
+  expect(measured.player.avatars, "the player keeps the right-edge monogram").toEqual(["你"]);
+  expect(measured.player.authors, "the player line is not printed twice").toEqual([]);
+  expect(measured.companion.authors, "the companion keeps its author line").toEqual(["Mira"]);
+  // The companion's author line is real content in its header; the player's
+  // bubble starts at the top of its body, with no empty header keeping a gap.
+  expect(
+    measured.player.bubbleTop,
+    `the player's bubble starts at the top of its body (bubble ${measured.player.bubbleTop}, body ${measured.player.bodyTop})`,
+  ).toBe(measured.player.bodyTop);
+});

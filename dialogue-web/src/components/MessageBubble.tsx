@@ -89,59 +89,68 @@ export const MessageBubble = memo(function MessageBubble({
         {initial}
       </div>
       <div className="message-body">
-        <div className="message-header">
-          <span className="message-author">{authorName}</span>
-          {openingChoice && (
-            <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-              <button
-                type="button"
-                className="swipe-btn"
-                disabled={busy || openingChoice.index <= 0}
-                onClick={() => onOpeningVariant?.(message.handle, "prev")}
-                aria-label={labels.swipePrevious}
-                title={labels.swipePrevious}
-              >
-                <ChevronLeft size={14} aria-hidden="true" />
-              </button>
-              <span className="swipe-indicator">{`${openingChoice.index + 1}/${openingChoice.count}`}</span>
-              <button
-                type="button"
-                className="swipe-btn"
-                disabled={busy || openingChoice.index >= openingChoice.count - 1}
-                onClick={() => onOpeningVariant?.(message.handle, "next")}
-                aria-label={labels.swipeNext}
-                title={labels.swipeNext}
-              >
-                <ChevronRight size={14} aria-hidden="true" />
-              </button>
-            </div>
-          )}
-          {!isPlayer && swipeInfo && swipeInfo.totalSwipes > 1 && (
-            <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-              <button
-                type="button"
-                className="swipe-btn"
-                disabled={busy || !swipeInfo.hasPrevious}
-                onClick={() => onSwipe?.(message.handle, "prev")}
-                aria-label={labels.swipePrevious}
-                title={labels.swipePrevious}
-              >
-                <ChevronLeft size={14} aria-hidden="true" />
-              </button>
-              <span className="swipe-indicator">{swipeInfo.label}</span>
-              <button
-                type="button"
-                className="swipe-btn"
-                disabled={busy || !swipeInfo.hasNext}
-                onClick={() => onSwipe?.(message.handle, "next")}
-                aria-label={labels.swipeNext}
-                title={labels.swipeNext}
-              >
-                <ChevronRight size={14} aria-hidden="true" />
-              </button>
-            </div>
-          )}
-        </div>
+        {/* The author line belongs to the companion only. The player's own
+            monogram already sits at the row's edge, so printing the same name
+            again above the bubble reads as "[你] 你: 你好" - the line is a
+            duplicate of the avatar, not an attribution. The header also owns
+            only companion controls, so it does not exist on the player's side
+            at all; an empty box would still add the body column's gap above
+            the bubble. */}
+        {!isPlayer && (
+          <div className="message-header">
+            <span className="message-author">{authorName}</span>
+            {openingChoice && (
+              <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                <button
+                  type="button"
+                  className="swipe-btn"
+                  disabled={busy || openingChoice.index <= 0}
+                  onClick={() => onOpeningVariant?.(message.handle, "prev")}
+                  aria-label={labels.swipePrevious}
+                  title={labels.swipePrevious}
+                >
+                  <ChevronLeft size={14} aria-hidden="true" />
+                </button>
+                <span className="swipe-indicator">{`${openingChoice.index + 1}/${openingChoice.count}`}</span>
+                <button
+                  type="button"
+                  className="swipe-btn"
+                  disabled={busy || openingChoice.index >= openingChoice.count - 1}
+                  onClick={() => onOpeningVariant?.(message.handle, "next")}
+                  aria-label={labels.swipeNext}
+                  title={labels.swipeNext}
+                >
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+            {swipeInfo && swipeInfo.totalSwipes > 1 && (
+              <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                <button
+                  type="button"
+                  className="swipe-btn"
+                  disabled={busy || !swipeInfo.hasPrevious}
+                  onClick={() => onSwipe?.(message.handle, "prev")}
+                  aria-label={labels.swipePrevious}
+                  title={labels.swipePrevious}
+                >
+                  <ChevronLeft size={14} aria-hidden="true" />
+                </button>
+                <span className="swipe-indicator">{swipeInfo.label}</span>
+                <button
+                  type="button"
+                  className="swipe-btn"
+                  disabled={busy || !swipeInfo.hasNext}
+                  onClick={() => onSwipe?.(message.handle, "next")}
+                  aria-label={labels.swipeNext}
+                  title={labels.swipeNext}
+                >
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {/* Both sides author text, and a `*beat*` is the same format on both:
             the same sanitised Markdown renderer reads a person's words exactly as
             it reads the companion's, so the identical beat cannot render two ways. */}
