@@ -209,7 +209,8 @@
     "test:stardew-admission-hold-codes": "node --test tools/lib/stardew-admission-hold-codes.test.mjs",
     "test:stardew-dialogue-stream-runner": "node --test tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs",
     "test:stardew-dialogue-autonomy": "node --test tools/check-stardew-dialogue-autonomy.test.mjs",
-    "test:stardew-completion-evidence": "cd host && bun test src/stardew-completion-evidence-coverage.test.ts"
+    "test:stardew-completion-evidence": "cd host && bun test src/stardew-completion-evidence-coverage.test.ts",
+    "test:stardew-native-local-runner-entry": "node --test tools/stardew-native-local-runner-entry.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
