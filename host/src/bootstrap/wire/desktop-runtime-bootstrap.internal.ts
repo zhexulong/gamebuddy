@@ -826,22 +826,17 @@ async function writeStatus(stage: string, waitingForPlayerInput?: string): Promi
 }
 
 /**
- * The session entry this surface actually offers, published in the acknowledgement.
  *
- * A launched surface has exactly one way in, and it is not the same way for every surface: a standalone
- * management or chat-only mount exchanges its one-time token at its own HTTP route, while the composed
- * reference game owns bootstrap/session/CSRF itself and hands the token out in a launch fragment, so an
- * HTTP client that POSTs the shared route reaches a delegated mount that refuses it by design
- * (`profile_operation_unavailable`). Publishing which of the two applies turns that refusal from a 404 a
- * caller cannot explain into a fact it can read before it tries.
+ * The composed root owns the process's single session, cookie and CSRF authority, and a delegated Tavern
+ * mount refuses a second bootstrap chain by design - so every launched surface exchanges its one-time token
+ * at the composed route, and the cookie it returns carries the /api/tavern/v1/* routes. Publishing that
+ * here is what stops a client from reconstructing a route it merely used to know.
  */
-function sessionEntryForSurface(surface: string | undefined): Readonly<Record<string, unknown>> {
-  if (surface === "composed-reference-game")
-    return Object.freeze({ kind: "browser", launchPath: "/", bootFragmentKey: "boot" });
+function sessionEntryForSurface(_surface: string | undefined): Readonly<Record<string, unknown>> {
   return Object.freeze({
     kind: "http",
     method: "POST",
-    route: "/api/tavern/v1/bootstrap",
+    route: "/api/composed-reference-game/v1/bootstrap",
     bodyKeys: Object.freeze(["apiVersion", "bootstrapToken"]),
   });
 }

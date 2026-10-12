@@ -134,7 +134,7 @@ async function bootstrap(origin, token, sessionEntry) {
     throw new Error(
       `session_entry_unusable:${sessionEntry?.kind ?? "unpublished"}: the launched surface's session entry is not an HTTP token exchange`,
     );
-  const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
+  const response = await deadlineFetch(`${origin}${sessionEntry.route}`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
     body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
