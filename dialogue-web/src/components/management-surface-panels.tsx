@@ -296,7 +296,7 @@ export function ChatsSurfacePanel({
       <SurfaceNotice notice={inline} />
       {createAvailable !== false && (
         <div className="button-group">
-          <button type="button" className="small-button primary" onClick={createChat} disabled={creating}>
+          <button type="button" className="small-button" onClick={createChat} disabled={creating}>
             {labels.newChat}
           </button>
         </div>
