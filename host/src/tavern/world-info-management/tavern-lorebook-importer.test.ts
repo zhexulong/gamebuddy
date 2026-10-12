@@ -35,6 +35,43 @@ test("cleanLorebookText strips scripts, comments, and unwraps formatting tags wh
   assert.ok(cleaned.includes("\n\n")); // Preserves multiline paragraphs
 });
 
+test("cleanLorebookText cannot be bypassed into tag or comment morphology", () => {
+  // Shapes that defeat regex-based strip chains: the fragments recombine across
+  // replacement boundaries (`<scr<script>ipt>`), a closer may carry whitespace
+  // (`</script >`), and a comment may sit inside what a regex sees as a tag.
+  const bypassShapes = [
+    "<scr<script>ipt>",
+    "<scr<script>ipt>alert(\"xss\")",
+    "</script >",
+    "<scr<!-- -->ipt>",
+    "<scr<!-- -->ipt",
+    '<span title=">">x</span>',
+    "<div onclick='x'>y</div>",
+    "<!-- unterminated comment ",
+  ];
+  for (const input of bypassShapes) {
+    const cleaned = cleanLorebookText(input);
+    assert.ok(
+      !cleaned.includes("<"),
+      `no bare '<' may survive a surgical strip: ${JSON.stringify(input)} -> ${JSON.stringify(cleaned)}`,
+    );
+    assert.ok(
+      !cleaned.includes("-->") && !cleaned.includes("comment"),
+      `no comment fragment may survive: ${JSON.stringify(input)} -> ${JSON.stringify(cleaned)}`,
+    );
+  }
+  // The script element content itself must be dropped, not just its tags.
+  const scripted = cleanLorebookText('<script>alert("xss")</script >');
+  assert.equal(scripted, "");
+});
+
+test("cleanLorebookText preserves block-break newlines and strips event attributes", () => {
+  const cleaned = cleanLorebookText("one<br>two<p>three</p>four");
+  assert.equal(cleaned, "one\ntwothree\nfour");
+  const div = cleanLorebookText("<div onclick='drop'>payload</div>");
+  assert.ok(!div.includes("onclick") && !div.includes("<"), JSON.stringify(div));
+});
+
 test("importTavernLorebook converts SillyTavern object dictionary entries to valid CreateWorldInfoRequest", async () => {
   const root = await canonicalTestRoot("tavern-importer-test-");
   try {

@@ -24,24 +24,104 @@ export function keysFromTitle(title: string): readonly string[] {
 }
 
 /**
- * Sanitizes lorebook text by stripping script/style blocks, unwrapping HTML formatting tags,
- * normalizing line endings to Unix newlines (\n), and removing non-printable control characters.
+ * Block-level break tags that become a newline when unwrapped.
+ */
+const BLOCK_BREAK_NAMES = new Set(["br", "hr", "p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6"]);
+
+/**
+ * Elements whose entire content is dropped, not just unwrapped.
+ */
+const ELEMENT_DROP_NAMES = new Set(["script", "style"]);
+
+/**
+ * Strips markup with a single forward pass instead of regexes over HTML.
+ *
+ * Why not regexes: tag matching cannot be written as a regular language - a crafted
+ * string such as `<scr<script>ipt>` or an unterminated quote recombines fragments across
+ * replacement boundaries (each `replace` re-scans the previous output). A single pass
+ * that consumes each verified `<...>`/`<!--...-->` region exactly once cannot be bypassed.
+ *
+ * Guarantees on the returned text:
+ *  - every region that starts at a `<` tag/comment marker is consumed until its matching
+ *    `>`/`-->` (quoted attribute values cannot close a tag, so `title=">"` cannot leak);
+ *  - `script`/`style` elements drop their whole content (a closing `</script >` with
+ *    whitespace still closes, and an element left unclosed drops the rest of the text
+ *    fail-closed);
+ *  - block break tags (`<br>`, `</p>`, ...) become a newline;
+ *  - every other tag is unwrapped to its bare text;
+ *  - a `<` that does not open a tag (e.g. `x < y`) or that opens an unterminated tag
+ *    region is dropped, so no surviving `<` can pair with a later `>` to re-form a tag,
+ *    and stray `>` is inert on its own.
+ */
+function stripMarkup(value: string): string {
+  const isTagStart = (char: string | undefined): boolean =>
+    char !== undefined && /[A-Za-z/!?]/.test(char);
+
+  /** Normalizes a raw tag body (` div class=...`, `/p`, `script `) to its name + closer flag. */
+  const tagName = (raw: string): { name: string; closing: boolean } => {
+    const trimmed = raw.trim();
+    const closing = trimmed.startsWith("/");
+    const body = closing ? trimmed.slice(1) : trimmed;
+    const match = /^[A-Za-z][A-Za-z0-9]*/.exec(body);
+    return { name: (match?.[0] ?? "").toLowerCase(), closing };
+  };
+
+  let out = "";
+  let at = 0;
+  while (at < value.length) {
+    if (value[at] !== "<") {
+      out += value[at];
+      at += 1;
+      continue;
+    }
+    if (value.startsWith("<!--", at)) {
+      const end = value.indexOf("-->", at + 4);
+      if (end === -1) return out; // Unterminated comment: drop the rest of the text fail-closed.
+      at = end + 3;
+      continue;
+    }
+    if (!isTagStart(value[at + 1])) {
+      at += 1; // A `<` that cannot open a tag is dropped: it must never survive to pair with a `>`.
+      continue;
+    }
+    // Scan the tag region; quoted attribute values cannot close it.
+    let quote: string | null = null;
+    let close = at + 1;
+    for (; close < value.length; close += 1) {
+      const char = value[close];
+      if (quote !== null) { if (char === quote) quote = null; }
+      else if (char === '"' || char === "'") quote = char;
+      else if (char === ">") break;
+    }
+    if (close >= value.length) {
+      at += 1; // Unterminated tag: drop the bare `<`, keep the remaining characters as literal text.
+      continue;
+    }
+    const rawTag = value.slice(at + 1, close);
+    const { name, closing } = tagName(rawTag);
+    if (ELEMENT_DROP_NAMES.has(name)) {
+      const closer = name === "script" ? /<\/script\s*>/gi : /<\/style\s*>/gi;
+      closer.lastIndex = close + 1;
+      const matched = closer.exec(value);
+      if (!matched) return out; // Unclosed script/style: drop the rest of the text fail-closed.
+      at = matched.index + matched[0].length;
+      continue;
+    }
+    if (BLOCK_BREAK_NAMES.has(name)) {
+      if (name === "br" || name === "hr" || closing) out += "\n";
+    }
+    at = close + 1;
+  }
+  return out;
+}
+
+/**
+ * Sanitizes lorebook text by stripping markup, normalizing line endings to Unix newlines (\n),
+ * and removing non-printable control characters.
  */
 export function cleanLorebookText(value: unknown, maxLen = MAX_SUMMARY): string {
   if (typeof value !== "string") return "";
-  let text = value.normalize("NFC");
-
-  // Remove script and style elements
-  text = text.replace(/<(?:script|style)\b[\s\S]*?<\/(?:script|style)>/gi, "");
-
-  // Remove HTML comments
-  text = text.replace(/<!--[\s\S]*?-->/g, "");
-
-  // Convert block break tags to newlines
-  text = text.replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|hr)\s*\/?>/gi, "\n");
-
-  // Strip remaining HTML tags
-  text = text.replace(/<[^>]+>/g, "");
+  let text = stripMarkup(value.normalize("NFC"));
 
   // Normalize Windows/Mac line endings to standard Unix newlines
   text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
