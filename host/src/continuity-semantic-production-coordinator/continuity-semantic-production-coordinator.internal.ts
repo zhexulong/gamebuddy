@@ -61,6 +61,7 @@ import {
   type MountedTurnTransitionAuthorityLease,
   type MountedTurnTransitionOperationAuthorityLease,
 } from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";
+import { seedDefaultCompanionIntoFreshRuntimeRoot } from "../tavern/default-companion-seed.js";
 import {
   createManifestDerivedInitialChatExactContentPort,
   type InitialChatExactContentPort,
@@ -1474,6 +1475,26 @@ function brand(holder: DialogueSagaHolder): Brand {
 }
 
 /**
+ * Installs the reviewed default companion (琥珀 / Kohaku) on the FIRST creation
+ * of a fresh runtime root, before any surface reads `identity-profile.json` or
+ * creates its initial Chat thread.
+ *
+ * Only the `fresh` provisioning branch calls this: a `known` open means the root
+ * already exists, so the seed is a no-op there by construction and a player's
+ * later edits are never overwritten (see `default-companion-seed.ts`).
+ */
+async function seedDefaultCompanionForFreshRoot(manifest: HostDeploymentManifest): Promise<void> {
+  await seedDefaultCompanionIntoFreshRuntimeRoot(
+    Object.freeze({
+      continuityId: manifest.principal.continuityId,
+      companionId: manifest.principal.companionId,
+      playerId: manifest.principal.playerId,
+    }),
+    manifest.runtimeRoot,
+  );
+}
+
+/**
  * The sole production constructor. It owns the genuine Windows broker and
  * root adapter; callers can provide only a deployment manifest already parsed
  * by the deployment boundary, never a mutex, store, provision, or holder.
@@ -1511,6 +1532,7 @@ export async function createFreshSemanticChatRuntimeProductionAuthorityFromDeplo
       admission.authorityRootIdentity,
       mutex,
     );
+    await seedDefaultCompanionForFreshRoot(manifest);
     semantic = create(provision, mutex);
     await initializeInitialChatAndCloseContentPort(semantic, manifest);
     binding = await createChatRuntimeBinding(manifest);
@@ -1686,6 +1708,7 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     semantic = create(provision, mutex, undefined, true);
     game = createKnownGameAuthority(provision, mutex, undefined, createWindowsOwnerDeathVerifier(), true);
     if (mode === "fresh") {
+      await seedDefaultCompanionForFreshRoot(manifest);
       await initializeInitialChatAndCloseContentPort(semantic, manifest);
       binding = await createChatRuntimeBinding(manifest);
     } else {
@@ -2475,6 +2498,7 @@ async function createSemanticProductionAuthorityFromDeploymentManifest(
       admission.authorityRootIdentity,
       mutex,
     );
+    if (mode === "fresh") await seedDefaultCompanionForFreshRoot(manifest);
     const authority = create(provision, mutex);
     if (mode === "known") {
       try {

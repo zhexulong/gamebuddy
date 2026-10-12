@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/tavern/default-companion-seed.test.ts",
+    "src/tavern/default-companion-preset.test.ts"
+  ]
+}

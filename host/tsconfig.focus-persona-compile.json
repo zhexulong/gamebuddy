@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": ".tmp-persona-compile"
+  },
+  "include": [],
+  "files": [
+    "src/st-card-import.ts",
+    "src/identity-profile.ts",
+    "src/worldbook.ts"
+  ]
+}
