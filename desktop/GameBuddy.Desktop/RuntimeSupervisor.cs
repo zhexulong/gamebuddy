@@ -400,6 +400,13 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             ["GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST"] = manifestPath,
             ["GAMEBUDDY_HOST_GAME_SESSION_MODE"] = options.GameSessionMode,
             ["GAMEBUDDY_HOST_SURFACE"] = options.Surface,
+            // The launched Host is the embedded long-lived process by architecture: it never spawns the
+            // `pi` CLI, and the Magic Context fork gates its background historian on exactly this flag
+            // (`pi-background-run-lifetime.ts`). Omitting it here - with the Host runtime restoring it
+            // after construction - means the composed child's historian stays closed for the whole
+            // session, so a production player would never get a fold. Declared unconditionally, like the
+            // launcher's own composition.
+            ["GAMEBUDDY_EMBEDDED_RUNTIME"] = "1",
         };
         foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "CPA_OAI_API_KEY" })
             if (values[optional].Length == 0) values.Remove(optional);

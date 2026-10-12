@@ -187,6 +187,14 @@ export function composeDesktopChildEnvironment({ base, localAppDataRoot, manifes
     LOCALAPPDATA: localAppDataRoot,
     GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
     GAMEBUDDY_HOST_GAME_SESSION_MODE: gameSessionMode,
+    // The launched Host is the embedded long-lived process by architecture: it never spawns the `pi`
+    // CLI, and the Magic Context fork gates its background historian on exactly this flag
+    // (`pi-background-run-lifetime.ts`: a headless process with no UI may only run the historian when it
+    // declares that it outlives background runs). Omitting it here means the composed child's own
+    // runtime deletes it after construction and every later historian trigger fails closed - so a
+    // production player would never get a fold either. It is a contract fact, not a test lever, so it is
+    // declared unconditionally.
+    GAMEBUDDY_EMBEDDED_RUNTIME: "1",
     ...(surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: surface }),
     ...(nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: nonceSha256 }),
   });

@@ -18,6 +18,7 @@ public sealed class RuntimeSupervisorEnvironmentTests
         "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST",
         "GAMEBUDDY_HOST_GAME_SESSION_MODE",
         "GAMEBUDDY_HOST_SURFACE",
+        "GAMEBUDDY_EMBEDDED_RUNTIME",
         "LOCALAPPDATA",
         "OS",
         "PATH",

@@ -123,6 +123,9 @@ test("composition launch validates the child IPC ready fact and composes the chi
   assert.equal(env.GAMEBUDDY_HOST_SURFACE, "chat-only");
   assert.equal(env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256, hex);
   assert.equal(env.SystemRoot, "C:/Windows");
+  // The launched Host is the embedded long-lived process by architecture; the flag is a contract
+  // fact, not a test lever (declared omitting it made the composed child's historian gate fail).
+  assert.equal(env.GAMEBUDDY_EMBEDDED_RUNTIME, "1");
   const minimal = composeDesktopChildEnvironment({ base, localAppDataRoot: "C:/fresh", manifestPath: "C:/fresh/dialogue.json" });
   assert.equal(Object.hasOwn(minimal, "GAMEBUDDY_HOST_SURFACE"), false);
   assert.equal(Object.hasOwn(minimal, "GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256"), false);
