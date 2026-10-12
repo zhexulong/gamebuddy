@@ -190,6 +190,12 @@ export function tavernMountProducers(member, servers = TAVERN_ROUTE_SERVERS) {
  * member no producer can emit: which shipped source serves the shell in its place
  * (`servedBy`) and which declared, produced member answers the request instead
  * (`instead`). Nothing else reserves a member, and a comment never can.
+ *
+ * What is reserved is the structured `(kind, member)` key alone; `reason` is prose
+ * for the next reader and can be reworded freely without reserving or unfreezing
+ * anything. A reason that reads like "this would have to exist first" turns a
+ * deliberate architectural choice into a backlog item, so a structural
+ * reservation says WHY it is not planned instead.
  */
 export const CONTRACT_RESERVATIONS = Object.freeze([
   Object.freeze({
@@ -197,35 +203,40 @@ export const CONTRACT_RESERVATIONS = Object.freeze([
     member: "game.prerequisites.read",
     servedBy: "host/src/composed-reference-game-browser.ts",
     instead: "game.state.read",
-    reason: "no route serves it; the composed state read publishes the prerequisites projection",
+    reason:
+      "by design: the composed state read already publishes the prerequisites projection, so no separate prerequisites operation is planned",
   }),
   Object.freeze({
     kind: "game-operation",
     member: "game.instances.read",
     servedBy: "host/src/composed-reference-game-browser.ts",
     instead: "game.state.read",
-    reason: "no honest body; the one owned instance is already published by the state read",
+    reason:
+      "by design: the lifecycle owns exactly one Player Host instance (expectedPlayerHostInstanceGeneration is fixed at 1) and the state read publishes that whole slot, so a multi-row instances read has nothing honest to return",
   }),
   Object.freeze({
     kind: "game-operation",
     member: "game.attach",
     servedBy: "host/src/composed-reference-game-browser.ts",
     instead: "game.state.read",
-    reason: "no route serves it; the Stardew profile does not list it in its operationIds",
+    reason:
+      "no route serves it; the Stardew profile does not list it in its operationIds, and the composed state read publishes the attachment slot",
   }),
   Object.freeze({
     kind: "game-operation",
     member: "game.diagnostics.read",
     servedBy: "host/src/composed-reference-game-browser.ts",
     instead: "game.state.read",
-    reason: "no honest body; the state read already answers the one published diagnostics fact",
+    reason:
+      "by design: it would duplicate what the state read already publishes except aiClient.lastOutcome, so no separate diagnostics operation is planned",
   }),
   Object.freeze({
     kind: "voice-state",
     member: "unavailable",
     servedBy: "host/src/voice-gateway-client.ts",
     instead: "ready",
-    reason: "the one production reader emits ready/speaking; no captured-input path can produce unavailable",
+    reason:
+      "audio capture is out of scope by design; the voice union stays closed at unavailable | ready | speaking, and opening it would first need the four documented capture steps (browser/native capture, a bounded Host audio route, a Host speech-to-text action and durable capture state)",
   }),
 ]);
 
