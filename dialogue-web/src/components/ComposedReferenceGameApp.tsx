@@ -40,14 +40,13 @@ import {
   type ViewState,
 } from "./composed-reference-game-view";
 import { AppBar } from "./AppBar";
-import { Composer } from "./Composer";
+import { ChatSurface } from "./ChatSurface";
 import { ContextDrawer } from "./ContextDrawer";
 import { SurfaceView } from "./SurfaceView";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
-import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { CharactersSurface } from "./CharactersSurface";
@@ -1786,84 +1785,64 @@ export function ComposedReferenceGameApp() {
                 (design/104 §2). The URL names the selected surface, so Back
                 returns to the previous one and a reload restores it. */}
             {shownSurface === CHAT_PANEL && (
-              <SurfaceView
-                title={labels().chatPanel}
-                testId="chat-surface"
-                icon={MessagesSquare}
-                className="surface-conversation"
-              >
-                <Timeline
-                  transcript={view.session.snapshot.chat.transcript}
-                  preview={preview}
-                  companionName={view.session.snapshot.chat.companion.name}
-                  chatTitle={view.session.snapshot.chat.title}
-                  labels={labels()}
-                  pending={chatMutation}
-                  onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
-                  onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
-                  onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
-                />
-                {(pollFailure || terminalTurnNotice !== null) && (
-                  <p className="reference-turn-notice" role="status">
-                    {pollFailure ? labels().chatFailed : terminalTurnNotice}
-                  </p>
-                )}
-                {/* The conversation is the reading flow and the writing flow, and
-                    nothing else: the transcript scrolls above a composer band.
-                    This surface's model settings are a popout opened from the
-                    composer's action row (`modelPopoutOpen` below), and the
-                    durable draft is the composer's own field (the seeding effect
-                    fills it), so neither is a resident block between the two. */}
-                <Composer
-                  value={inputText}
-                  onChange={writeInput}
-                  onSend={() => void handleSend()}
-                  onStop={() => void handleStop()}
-                  isGenerating={stopAvailable}
-                  disabled={!submitAvailable}
-                  labels={labels()}
-                  voice={view.session.snapshot.voice}
-                  settingsAction={{
-                    label: labels().chatModelSettings,
-                    expanded: modelPopoutOpen,
-                    onClick: () => setModelPopoutOpen(true),
-                    ref: modelPopoutEntryRef,
-                  }}
-                  draftActions={{
-                    onSave: () => void handleDraftMutation("save"),
-                    onDiscard: () => void handleDraftMutation("discard"),
-                    // The row's own visibility is the composer's: it shows while a
-                    // durable draft exists, while there is fresh text to keep as
-                    // a first draft, or while a failed attempt has nothing else to
-                    // report it. `durable` is what keeps Discard (and the "saved"
-                    // wording) honest - the first draft is saved through this
-                    // same command, under the same revision CAS.
-                    durable: view.draft.text !== null,
-                    notice: draftNotice,
-                  }}
-                  chips={
-                    // The card's own openings, and only where a first thing to say
-                    // still exists: a conversation that has started (the player has
-                    // spoken, or the Host committed a reply after the opening), an
-                    // unread record, a card with no opening material and a locked
-                    // composer all render none. The companion's own committed
-                    // opening is still the first screen, not a started conversation.
-                    submitAvailable &&
-                    icebreakers !== null &&
-                    icebreakers.length > 0 &&
-                    firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])
-                      ? {
-                          label: labels().openingChipsLabel,
-                          items: icebreakers.map((chip) => ({
-                            id: `opening-${chip.index}`,
-                            text: chip.text,
-                            onClick: () => handleIcebreaker(chip),
-                          })),
-                        }
-                      : undefined
-                  }
-                />
-              </SurfaceView>
+              <ChatSurface
+                transcript={view.session.snapshot.chat.transcript}
+                preview={preview}
+                companionName={view.session.snapshot.chat.companion.name}
+                chatTitle={view.session.snapshot.chat.title}
+                labels={labels()}
+                pending={chatMutation}
+                notice={pollFailure ? labels().chatFailed : terminalTurnNotice}
+                onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
+                onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
+                onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
+                value={inputText}
+                onChange={writeInput}
+                onSend={() => void handleSend()}
+                onStop={() => void handleStop()}
+                isGenerating={stopAvailable}
+                disabled={!submitAvailable}
+                voice={view.session.snapshot.voice}
+                settingsAction={{
+                  label: labels().chatModelSettings,
+                  expanded: modelPopoutOpen,
+                  onClick: () => setModelPopoutOpen(true),
+                  ref: modelPopoutEntryRef,
+                }}
+                draftActions={{
+                  onSave: () => void handleDraftMutation("save"),
+                  onDiscard: () => void handleDraftMutation("discard"),
+                  // The row's own visibility is the composer's: it shows while a
+                  // durable draft exists, while there is fresh text to keep as
+                  // a first draft, or while a failed attempt has nothing else to
+                  // report it. `durable` is what keeps Discard (and the "saved"
+                  // wording) honest - the first draft is saved through this
+                  // same command, under the same revision CAS.
+                  durable: view.draft.text !== null,
+                  notice: draftNotice,
+                }}
+                chips={
+                  // The card's own openings, and only where a first thing to say
+                  // still exists: a conversation that has started (the player has
+                  // spoken, or the Host committed a reply after the opening), an
+                  // unread record, a card with no opening material and a locked
+                  // composer all render none. The companion's own committed
+                  // opening is still the first screen, not a started conversation.
+                  submitAvailable &&
+                  icebreakers !== null &&
+                  icebreakers.length > 0 &&
+                  firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])
+                    ? {
+                        label: labels().openingChipsLabel,
+                        items: icebreakers.map((chip) => ({
+                          id: `opening-${chip.index}`,
+                          text: chip.text,
+                          onClick: () => handleIcebreaker(chip),
+                        })),
+                      }
+                    : undefined
+                }
+              />
             )}
             {shownSurface === GAME_PANEL && (
               <SurfaceView
