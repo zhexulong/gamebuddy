@@ -208,11 +208,15 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // CharacterCustomization is ruled to be a capability WITHOUT an action (an exclusion now). The remaining four
   // are the three festival mini-games and the shared number widget - the latter because the thing to rule is its
   // CALLER, not the widget.
-  assert.equal(a.counts.pendingAdjudicationItems, 4);
+  // 3 since NumberSelectionMenu was ruled not_an_affordance (a generic shared control, so the affordance belongs to
+  // its CALLERS). The three that remain are the festival mini-games the owner DEFERRED: they stay questions because a
+  // deferral is not a ruling, and calling them excluded would read as 'the game cannot do this'.
+  assert.equal(a.counts.pendingAdjudicationItems, 3);
   // 14 = the 10 candidates plus the 4 remaining questions: the same arithmetic as before the rulings, restated
   // rather than loosened - a pending question is an upper bound on ONE more primitive, never a claim that the
   // primitive is needed.
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 14);
+  // 13 = the 10 candidates plus the 3 deferred questions: the same arithmetic, restated.
+  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 13);
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
   const minecart = a.groups.selectorLayer.already_registered.find((r) =>

@@ -525,10 +525,13 @@ export const METHOD_VERDICTS = Object.freeze({
       "the itemsToGrab loop hands the letter's attachment into the inventory and clears it (LetterViewerMenu.cs:733-734) - the same transaction claim_mail_attachment performs; the rest of the member is reading.",
       "Menus/LetterViewerMenu.cs:733",
     ),
-  "NumberSelectionMenu.receiveLeftClick@159": pending(
-      "the OK branch runs a caller-supplied behaviourFunction (NumberSelectionMenu.cs:192) whose effects differ per caller (e.g. Event.cs:13284 buyStarTokens turns money into festivalScore). It is a shared widget, so the honest unit is the CALLER's transaction, not the widget: name the callers you want as actions before this row can be decided.",
-      "Menus/NumberSelectionMenu.cs:192",
-    ),
+  "NumberSelectionMenu.receiveLeftClick@159": {
+      group: "explicit_exclusion",
+      boundary: "B5_no_effect",
+      reason:
+        "RULED 2026-10-11: not_an_affordance. The OK branch runs a CALLER-SUPPLIED behaviourFunction (NumberSelectionMenu.cs:192), so this member has no physical semantics of its own - its writes are the widget's presentation while the world effect belongs to whoever drives it (e.g. Event.cs:13284 buyStarTokens turns money into festivalScore). A generic shared control is not an action, and the affordance a caller creates is the caller's own business: the candidates are the CALLERS, and each would be its own row if one is ever wanted.",
+      anchor: "Menus/NumberSelectionMenu.cs:192",
+    },
   "NamingMenu.receiveLeftClick@152": newPrimitive(
       "name_entity",
       "RULED 2026-10-11 (owner): the capability is approved. textBoxEnter -> doneNaming (NamingMenu.cs:158, :92) writes the name of an entity the game just created (pet, horse, animal, baby - callers Event.cs:13092, Horse.cs:637, QuestionEvent.cs:123, BirthingEvent), and the Basis already names this primitive (`name_entity`). A name is SAVED state, so it is not pure UI, and the owner's answer settles the product question this row was holding.",
@@ -542,15 +545,15 @@ export const METHOD_VERDICTS = Object.freeze({
       anchor: "Menus/CharacterCustomization.cs:2138",
     },
   "Slots.receiveLeftClick@238": pending(
-      "the spin buttons debit Game1.player.clubCoins (Slots.cs:250, :261-262) and the payout credits them (:225). It is a MiniGames.IMinigame rather than a menu, so the owner's 'mini-game' example and its 'has a world write' test disagree here, and a gambling table is a product question besides.",
+      "DEFERRED 2026-10-11 (owner: not now) - deferred, NOT excluded, so the question stays open instead of being filed as 'the game cannot do this'. The facts that make it a question are unchanged: the spin buttons debit Game1.player.clubCoins (Slots.cs:250, :261-262) and the payout credits them (:225), so it moves SAVED state - the owner's 'mini-game' bucket and the 'has a world write' test still disagree here, and a gambling table is a product question besides. Revisit with the two other festival mini-games, as the TargetGame row argues.",
       "Minigames/Slots.cs:250",
     ),
   "StrengthGame.receiveLeftClick@35": pending(
-      "the member itself only sets CurrentToolIndex (StrengthGame.cs:40); the persistent write is Game1.player.festivalScore++ in update (:115). Same conflict as Slots: a festival mini-game that does move saved state.",
+      "DEFERRED 2026-10-11 (owner: not now) - deferred, NOT excluded. The member itself only sets CurrentToolIndex (StrengthGame.cs:40) while the persistent write is Game1.player.festivalScore++ in update (:115), so this is a festival mini-game that does move saved state - the same conflict as Slots, and the three belong in one decision rather than three.",
       "Menus/StrengthGame.cs:115",
     ),
   "TargetGame.receiveLeftClick@352": pending(
-      "pressUseToolButton is called (:356) and the persistent write is festivalScore += starTokensWon (:303). Same conflict as Slots and StrengthGame - and the three should be decided together rather than one at a time.",
+      "DEFERRED 2026-10-11 (owner: not now) - deferred, NOT excluded. pressUseToolButton is called (:356) and the persistent write is festivalScore += starTokensWon (:303): the same conflict as Slots and StrengthGame, and the three should be decided together rather than one at a time.",
       "Minigames/TargetGame.cs:303",
     ),
   "CollectionsPage.receiveLeftClick@510": {
