@@ -70,6 +70,11 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // The pond runner drives the action whose fixture it uses, so this table names that action: the fixture
   // library keys the scenario on it.
   "run-stardew-native-local-player-clear-fish-pond-smoke.mjs": "clear_fish_pond",
+  // The chat deed is NOT a native-local fixture: it lives on the farmhand lane of the
+  // two-process launcher (a true client of the host), so the native-local fixture
+  // library has no send_multiplayer_chat mapping - the policy-check subtest skipping
+  // it is the honest outcome, and the runner itself refuses any non-farmhand topology.
+  "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs": "send_multiplayer_chat",
   "run-stardew-native-local-player-dialogue-stream-smoke.mjs": "dialogue_stream",
   // A read-only reachability probe: no gate entry either, declared for the same reason. It belongs to the L3
   // scene-reachability lane; declared here because this completeness invariant was red with it uncovered.
@@ -303,7 +308,16 @@ test("every native-local runner accepts the policy block the fixture writes", as
     "these runners refuse the config the fixture writes, so their live gate can never open:\n" +
       rejections.join("\n"),
   );
-  assert.deepEqual(skipped, [], `runners the fixture could not describe:\n${skipped.join("\n")}`);
+  // The chat deed runs on the FARMHAND lane, not a native-local fixture, so `fixtureActions`
+  // cannot describe it - and it must be a DECLARED, named exemption rather than a silently
+  // skipped runner, so any OTHER runner that becomes undescribable still fails this test.
+  const FIXTURE_UNOWNED_RUNNERS = new Set(["send-multiplayer-chat"]);
+  assert.deepEqual(
+    skipped.filter((entry) => !FIXTURE_UNOWNED_RUNNERS.has(entry.split(":")[0].trim())),
+    [],
+    `runners the fixture could not describe which are not the declared farmhand-lane exemption:\n` +
+      skipped.join("\n"),
+  );
 });
 
 test("the fixture's own policy block carries no retired field", () => {
