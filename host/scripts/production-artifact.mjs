@@ -1436,10 +1436,12 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
       : (await createBrowserArtifactSnapshot({ artifactRoot: stagingRoot, descriptor: config.browserArtifact })).snapshot;
     // Third-party / fan-made character content is refused before the tree can become a generation: a
     // card-shaped file or a card payload inside an otherwise admitted asset fails the build by name,
-    // rather than shipping under the artifact allowlist (which admits any reachable module).
-    await assertReleasePersonaHygiene({ artifactRoot: stagingRoot });
+    // rather than shipping under the artifact allowlist (which admits any reachable module). The gate
+    // reads exactly the file set the inventory just written declares, so its surface is that
+    // generation's own statement of what it ships rather than whatever happens to be reachable.
     const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
     await writeFile(resolve(stagingRoot, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
+    await assertReleasePersonaHygiene({ artifactRoot: stagingRoot });
     await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot, runtimeDescriptor, closureHostRoot: stagingRoot });
     if (process.platform === "win32" && config.windowsBootstrapGuardian !== undefined)
       await emitGuardianAdmission({ stagingRoot, inventory, descriptor: config.windowsBootstrapGuardian });

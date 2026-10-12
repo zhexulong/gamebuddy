@@ -91,15 +91,50 @@
  *
  * Scan surface - what this gate reads, and what it deliberately does not:
  *
- * The surface is the WHOLE packaged tree given as `artifactRoot`: every byte
- * reachable from it, at every path the artifact reaches it by. Concretely, the
- * browser artifact (`browser/tavern/v1/**`), the emitted Host modules and the
- * generation's own manifests, the packaged Mod (`native/stardew-mod/**`), the
- * allowlisted resources, the voice gateway, the native helper pairs, the bundled
- * Node distribution (`runtime/**`, whose own `node_modules/npm/**` is npm's), and
- * the declared external runtime closure (`node_modules/**`).
+ * The surface is the PACKAGED GENERATION ARTIFACT and nothing outside it, and
+ * inside it exactly what that generation declares it ships. The declaration is
+ * the generation's own `production-inventory.json` - the inventory the builder
+ * writes for that generation (`production-artifact.mjs`, `createInventory`) -
+ * and the gate reads exactly the paths in its `entries`, at the declared path: no
+ * more, because a path the artifact does not declare is not part of the artifact,
+ * and no less, because a declared path that is missing, dangling or not a file is
+ * an inconsistency this gate refuses rather than quietly skips.
  *
- * No path is excluded. Dependency trees are in scope ON PURPOSE:
+ * Concretely that is whatever that generation declared: the browser artifact
+ * (`browser/tavern/v1/**`), the emitted Host modules and the generation's own
+ * manifests, the packaged Mod (`native/stardew-mod/**`), the allowlisted
+ * resources, the voice gateway, the native helper pairs, the bundled Node
+ * distribution (`runtime/**`, whose own `node_modules/npm/**` is npm's), and the
+ * declared external runtime closure (`node_modules/**`).
+ *
+ * Deliberately NOT read:
+ *
+ *   - anything outside the generation root. Sibling generations, the
+ *     `current.json` pointer, the publisher lock and pre-rename staging leftovers
+ *     are not part of any one generation, and reading them made this gate's
+ *     verdict a property of the checkout rather than of the artifact: two
+ *     invocations of the same gate could inspect different sets. The CLI walked
+ *     `host/dist` - the whole output root - for exactly that reason; it now takes
+ *     a generation and refuses anything else with a bounded code
+ *     (`release_persona_hygiene_inventory_required`). A directory that declares no
+ *     inventory is not a generation and is never walked;
+ *   - anything inside the generation root that the inventory does not declare.
+ *     The artifact's own statement of what it ships is the authority; this gate
+ *     does not fall back to "whatever is reachable from the root". Bytes that are
+ *     inside the generation but outside its declaration are not read, so they
+ *     cannot change this gate's verdict;
+ *   - the inventory itself and the three admission sidecars
+ *     (`guardian-admission.json`, `host-runtime-admission.json`,
+ *     `voice-gateway-admission.json`). The builder writes those four beside the
+ *     inventory and excludes all four from `entries` by construction, and none of
+ *     them is free-standing content: the inventory is compared WHOLE
+ *     (`production_inventory_mismatch_or_orphan`) and each admission sidecar is
+ *     re-derived byte-for-byte by its own verifier, so a sidecar that is not the
+ *     canonical one is refused before this gate is reached. This is the one
+ *     subtree inside a generation this gate deliberately does not read, named
+ *     here rather than left implicit.
+ *
+ * Dependency trees inside the generation are in scope ON PURPOSE:
  *
  *   - those bytes ship. They are the generation the player runs, which is this
  *     gate's own premise, and nothing about being third-party changes what a
@@ -130,17 +165,18 @@
  * returns a `surface` census and the CLI prints it), so what was read is visible
  * in the CI log instead of inferred.
  *
- * Links, and why the walk is deterministic: the file set is a function of the
- * packaged tree, never of how the local filesystem happens to represent it. A
- * link - Windows junction, directory symlink, file symlink - is RESOLVED and its
- * target's bytes are inspected exactly as if the bytes sat at that path; the
- * reported path is the path the artifact reaches them by, so the same tree in two
- * link representations reports the same findings. A hardlink is an ordinary file
- * at each path it appears at and is inspected at each, as it always was. Each
- * real directory is inspected once per tree, which makes a link back to an
- * already-visited directory a cycle rather than a second scan, and a dangling
- * link fails the gate (`release_persona_hygiene_unresolvable_link:<path>`) rather
- * than being silently dropped. This is measured, not theorized: deciding by
+ * Links, and why the read is deterministic: a declared path is read by resolving
+ * the PATH, never by re-deriving a file set from how the local filesystem happens
+ * to represent it. A link - Windows junction, directory symlink, file symlink -
+ * is RESOLVED and its target's bytes are inspected exactly as if the bytes sat at
+ * the declared path, which is the path reported; so the same declared files in
+ * two link representations report the same findings. A hardlink is an ordinary
+ * file and is read at each declared path it appears at, as it always was. Two
+ * declared paths that resolve to one real file are the same bytes: the second is
+ * skipped, and the finding is reported once, at the first path in lexicographic
+ * order. A dangling declared link fails the gate
+ * (`release_persona_hygiene_unresolvable_link:<path>`) rather than being silently
+ * dropped. This is measured, not theorized: deciding by
  * `readdir`'s entry type instead - which is what this gate did - sent a linked
  * dependency directory to `inspectFile`, whose link guard threw
  * `release_persona_hygiene_non_regular_entry`, so identical dependency bytes were
@@ -156,14 +192,16 @@
  * decodes at most `MAX_BASE64_CANDIDATES` runs per file. The prose threshold is
  * a length, so it says nothing about what the prose is.
  *
- * Wiring: `production-artifact.mjs` runs `assertReleasePersonaHygiene` over the
- * staging tree before that tree can become a generation, and over the selected
- * generation in `assertCompleteProductionArtifact`. Both call sites fail the
- * build/recheck with `release_persona_hygiene_violation:<path>:<kind>`.
+ * Wiring: `production-artifact.mjs` writes the generation's own inventory and
+ * only then runs `assertReleasePersonaHygiene` over that staging tree, so the gate
+ * reads the same declared file set the generation is about to ship with, and
+ * `assertCompleteProductionArtifact` runs it over the generation selected by
+ * `current.json`. Both call sites fail the build/recheck with
+ * `release_persona_hygiene_violation:<path>:<kind>`.
  */
 
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The companion seed pair's file names, and the card-shaped variants of them. */
@@ -426,52 +464,9 @@ async function inspectFile({ absolute, path, name, size, findings, surface }) {
   }
 }
 
-/** What the walk covered, so the scan surface is reported rather than inferred. */
+/** What the read covered, so the scan surface is reported rather than inferred. */
 function emptySurface() {
-  return { filesInspected: 0, filesNameCheckedOnly: 0, linksResolved: 0, duplicateDirectoriesSkipped: 0 };
-}
-
-/**
- * The one walk. Returns the findings in deterministic (lexicographic, depth-first)
- * order and fills `surface` with what it covered. See the scan-surface docstring:
- * links are resolved, hardlinks are files, every real directory is visited once.
- */
-async function walkArtifact({ root, surface }) {
-  const findings = [];
-  const inspected = new Set();
-  const walk = async (absolute, prefix) => {
-    const entries = await readdir(absolute, { withFileTypes: true });
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name, "en"))) {
-      const child = join(absolute, entry.name);
-      const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-      const entryState = await lstat(child);
-      const link = entryState.isSymbolicLink();
-      let target = entryState;
-      if (link) {
-        surface.linksResolved += 1;
-        try {
-          target = await stat(child);
-        } catch {
-          throw new Error(`release_persona_hygiene_unresolvable_link:${path}`);
-        }
-      }
-      if (target.isDirectory()) {
-        const identity = await realpath(child);
-        if (inspected.has(identity)) {
-          surface.duplicateDirectoriesSkipped += 1;
-          continue;
-        }
-        inspected.add(identity);
-        await walk(child, path);
-        continue;
-      }
-      if (!target.isFile()) throw new Error(`release_persona_hygiene_non_regular_entry:${path}`);
-      await inspectFile({ absolute: child, path, name: entry.name, size: target.size, findings, surface });
-    }
-  };
-  inspected.add(await realpath(root));
-  await walk(root, "");
-  return findings;
+  return { declaredFiles: 0, filesInspected: 0, filesNameCheckedOnly: 0, linksResolved: 0, duplicateTargetsSkipped: 0 };
 }
 
 function requireArtifactRoot(artifactRoot) {
@@ -480,30 +475,128 @@ function requireArtifactRoot(artifactRoot) {
   return resolve(artifactRoot);
 }
 
+/** A generation-relative artifact path: no drive, no backslash, no `.` or `..`. */
+function isArtifactPath(path) {
+  return typeof path === "string" && path.length > 0 && !isAbsolute(path) && !path.includes("\\")
+    && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+/** Windows resolves `C:\\X` and `c:\\x` to one file; POSIX does not fold case. */
+const samePath = (left, right) => (process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right);
+
 /**
- * Every character-card finding in one packaged generation, in deterministic
- * (lexicographic) order. `artifactRoot` is the generation root — the exact bytes
- * that would ship — never the repository, whose dev seeds and test fixtures are
- * deliberately out of scope.
+ * The generation's own declared file set: every path its
+ * `production-inventory.json` - the inventory the builder writes for that
+ * generation - states it ships, in lexicographic order. A directory without that
+ * inventory is not a generation and is refused
+ * (`release_persona_hygiene_inventory_required`) rather than walked.
+ */
+export async function readDeclaredArtifactFiles({ artifactRoot }) {
+  const root = requireArtifactRoot(artifactRoot);
+  let text;
+  try {
+    text = await readFile(resolve(root, "production-inventory.json"), "utf8");
+  } catch {
+    throw new Error("release_persona_hygiene_inventory_required");
+  }
+  let inventory;
+  try {
+    inventory = JSON.parse(text);
+  } catch {
+    throw new Error("release_persona_hygiene_inventory_invalid");
+  }
+  if (!isRecord(inventory) || !Array.isArray(inventory.entries))
+    throw new Error("release_persona_hygiene_inventory_invalid");
+  const declared = new Set();
+  for (const entry of inventory.entries) {
+    const path = isRecord(entry) ? entry.path : undefined;
+    if (!isArtifactPath(path))
+      throw new Error(`release_persona_hygiene_inventory_invalid:${typeof path === "string" ? path : ""}`);
+    declared.add(path);
+  }
+  return Object.freeze([...declared].sort((left, right) => left.localeCompare(right, "en")));
+}
+
+/**
+ * Reads one declared path, resolving it: a link at or above the path is followed
+ * and the bytes at its target are what that path ships. A declared path that is
+ * absent, dangling, or not a file refuses the generation. Two declared paths that
+ * resolve to one real file are the same bytes, read once at the first of them.
+ */
+async function inspectDeclaredFile({ root, path, findings, surface, seen, rootReal }) {
+  const absolute = resolve(root, path);
+  let state;
+  try {
+    state = await lstat(absolute);
+  } catch {
+    throw new Error(`release_persona_hygiene_declared_file_missing:${path}`);
+  }
+  if (state.isSymbolicLink()) {
+    try {
+      state = await stat(absolute);
+    } catch {
+      throw new Error(`release_persona_hygiene_unresolvable_link:${path}`);
+    }
+  }
+  if (!state.isFile()) throw new Error(`release_persona_hygiene_non_regular_entry:${path}`);
+  const canonical = await realpath(absolute);
+  // Measured against the generation's own canonical root, so how the root itself
+  // is reached does not read as a link inside the generation.
+  if (!samePath(canonical, resolve(rootReal, path))) surface.linksResolved += 1;
+  if (seen.has(canonical)) {
+    surface.duplicateTargetsSkipped += 1;
+    return;
+  }
+  seen.add(canonical);
+  await inspectFile({ absolute, path, name: basename(path), size: state.size, findings, surface });
+}
+
+/**
+ * The one read pass: every path the generation declared, in lexicographic order,
+ * and nothing else. Returns the findings in that order and fills `surface` with
+ * what it covered. See the scan-surface docstring.
+ */
+async function inspectDeclaredFiles({ root, declared, surface }) {
+  const findings = [];
+  const seen = new Set();
+  const rootReal = await realpath(root);
+  surface.declaredFiles = declared.length;
+  for (const path of declared) await inspectDeclaredFile({ root, path, findings, surface, seen, rootReal });
+  return findings;
+}
+
+/**
+ * Every character-card finding in one packaged generation, over that generation's
+ * own declared file set, in deterministic (lexicographic) order. `artifactRoot`
+ * is the generation root — the exact bytes that would ship — never the output root
+ * that holds generations, and never the repository, whose dev seeds and test
+ * fixtures are deliberately out of scope.
  */
 export async function scanReleasePersonaHygiene({ artifactRoot }) {
   const root = requireArtifactRoot(artifactRoot);
-  return Object.freeze(await walkArtifact({ root, surface: emptySurface() }));
+  const declared = await readDeclaredArtifactFiles({ artifactRoot: root });
+  return Object.freeze(await inspectDeclaredFiles({ root, declared, surface: emptySurface() }));
 }
 
 /**
  * Fails the build with a bounded message naming the first offending asset. One
  * finding is enough to refuse the generation; the message stays a single line so
- * the CI log's reason is the reason. On success it returns the covered surface
- * census alongside the (empty) findings.
+ * the CI log's reason is the reason. On success it returns the declared file set
+ * it read and the covered surface census alongside the (empty) findings.
  */
 export async function assertReleasePersonaHygiene({ artifactRoot }) {
   const root = requireArtifactRoot(artifactRoot);
   const surface = emptySurface();
-  const findings = await walkArtifact({ root, surface });
+  const declared = await readDeclaredArtifactFiles({ artifactRoot: root });
+  const findings = await inspectDeclaredFiles({ root, declared, surface });
   if (findings.length > 0)
     throw new Error(`release_persona_hygiene_violation:${findings[0].path}:${findings[0].kind}`);
-  return Object.freeze({ findings: Object.freeze(findings), artifactRoot: root, surface: Object.freeze(surface) });
+  return Object.freeze({
+    findings: Object.freeze(findings),
+    artifactRoot: root,
+    declaredFiles: declared,
+    surface: Object.freeze(surface),
+  });
 }
 
 /** Human-readable report for the CLI; the assertion above stays the machine gate. */
@@ -511,18 +604,31 @@ export function describePersonaHygieneFindings(findings) {
   return findings.map((finding) => `${finding.kind}\t${finding.path}`).join("\n");
 }
 
+/**
+ * The CLI takes a generation. With no argument it names the fixed output root,
+ * which declares no inventory and is therefore refused with the bounded code
+ * rather than walked - the whole-output-root default is what let the same gate
+ * scan different sets on two invocations.
+ */
 const scriptPath = fileURLToPath(import.meta.url);
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {
   const target = resolve(process.argv[2] ?? resolve(scriptPath, "..", "..", "dist"));
-  const surface = emptySurface();
-  const findings = await walkArtifact({ root: requireArtifactRoot(target), surface });
-  const censused = `files=${surface.filesInspected}	name-only=${surface.filesNameCheckedOnly}\tlinks=${surface.linksResolved}\tduplicate-directories=${surface.duplicateDirectoriesSkipped}`;
-  if (findings.length === 0) {
-    console.log(`release_persona_hygiene_ok\t${target.split(sep).join("/")}\t${censused}`);
-  } else {
-    console.error(`release_persona_hygiene_violation:${findings[0].path}:${findings[0].kind}`);
-    console.error(describePersonaHygieneFindings(findings));
-    console.error(censused);
+  try {
+    const root = requireArtifactRoot(target);
+    const surface = emptySurface();
+    const declared = await readDeclaredArtifactFiles({ artifactRoot: root });
+    const findings = await inspectDeclaredFiles({ root, declared, surface });
+    const censused = `declared=${surface.declaredFiles}\tfiles=${surface.filesInspected}\tname-only=${surface.filesNameCheckedOnly}\tlinks=${surface.linksResolved}\tduplicate-targets=${surface.duplicateTargetsSkipped}`;
+    if (findings.length === 0) {
+      console.log(`release_persona_hygiene_ok\t${root.split(sep).join("/")}\t${censused}`);
+    } else {
+      console.error(`release_persona_hygiene_violation:${findings[0].path}:${findings[0].kind}`);
+      console.error(describePersonaHygieneFindings(findings));
+      console.error(censused);
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }
 }
