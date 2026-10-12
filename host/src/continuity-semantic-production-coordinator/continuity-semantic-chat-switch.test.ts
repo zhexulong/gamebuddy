@@ -13,9 +13,12 @@
  * - a runtime whose turn is still generating is not refused (ADR-0010):
  *   `chat.select` aborts that turn through the same cancel seam an authenticated
  *   browser Stop uses, keeps the text the interrupted turn had already committed,
- *   and only then releases the old mount and mounts the target. `turn_in_flight`
- *   is reserved for a durable turn whose attempt has not started, where there is
- *   nothing to abort.
+ *   and only then releases the old mount and mounts the target;
+ * - a durable turn with no attempt at all (the player's message is committed and
+ *   nothing was ever scheduled for it) is aborted the same way instead of being
+ *   answered with the fail-closed `turn_in_flight`: the mounted authority claims
+ *   and arms the turn exactly as its own start would have, the one cancel path
+ *   terminalizes it, and the switch happens in this same process.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -159,6 +162,54 @@ const switchScript = `
     out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
     out.firstThreadStillReadable = interrupted.thread.chatThreadId === firstThread;
+  } else if (scenario === "durable-unstarted") {
+    // A durable turn with no attempt at all: the player's message is committed
+    // and nothing was ever scheduled for it - no claim, no prompt, no start
+    // runner. This is the shape the old reading answered turn_in_flight for.
+    const accepted = await createPlayerTurnAcceptor(manifest, first).accept({
+      text: "Never started.",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+    });
+    const unstarted = await store.resumeThread(firstThread, firstSurface);
+    out.unstartedLedgerStatus = unstarted.turnLedger === null ? null : unstarted.turnLedger.status;
+    out.unstartedHasAttempt = unstarted.turnLedger !== null && "attempt" in unstarted.turnLedger;
+
+    const outcome = await authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
+    out.outcomeStatus = outcome.status;
+    out.outcomeThread = outcome.chatThreadId;
+    out.outcomeSurface = outcome.chatSurfaceSessionId;
+    out.firstSuperseded = isCurrentMountedChatRuntimeLease(first);
+    const second = await authority.startMountedChatRuntime();
+    out.secondThread = second.chatThreadId;
+    out.secondSurface = second.chatSurfaceSessionId;
+    out.secondCurrent = isCurrentMountedChatRuntimeLease(second);
+    out.acceptedTurnId = accepted.turnId;
+
+    // The turn that never started is terminal in the conversation switched away
+    // from: no dangling claim, no non-terminal row the browser could keep
+    // waiting on, and the player's own text still there.
+    const firstState = await store.resumeThread(firstThread, firstSurface);
+    out.firstThreadStillReadable = firstState.thread.chatThreadId === firstThread;
+    out.interruptedTurnId = firstState.turnLedger === null ? null : firstState.turnLedger.turnId;
+    out.interruptedLedgerStatus = firstState.turnLedger === null ? null : firstState.turnLedger.status;
+    out.interruptedLedgerObservation =
+      firstState.turnLedger !== null && firstState.turnLedger.status === "cancelled"
+        ? firstState.turnLedger.observation.phase
+        : null;
+    out.interruptedLedgerPresentation =
+      firstState.turnLedger !== null && firstState.turnLedger.status === "cancelled"
+        ? firstState.turnLedger.presentation !== null
+        : null;
+    out.interruptedKeptPlayerText = firstState.messages.some(
+      (message) => message.kind === "player" && message.text === "Never started.",
+    );
+    out.interruptedMessageCount = firstState.messages.length;
+
+    const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
+    out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
+    out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
   } else {
     const outcome = await authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
     out.outcomeStatus = outcome.status;
@@ -183,7 +234,10 @@ const switchScript = `
   await authority.close();
 `;
 
-async function runSwitchScenario(root: string, scenario: "switch" | "in-flight"): Promise<Record<string, unknown>> {
+async function runSwitchScenario(
+  root: string,
+  scenario: "switch" | "in-flight" | "durable-unstarted",
+): Promise<Record<string, unknown>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
     manifestPath,
@@ -286,6 +340,50 @@ test(
       assert.equal(observed.interruptedProducedTextKept, true);
       assert.equal(observed.interruptedLedgerPresentation, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 2);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The residual case, and the failure it catches: with the previous reading this
+ * same scenario answered `turn_in_flight` and left the durable `accepted_queued`
+ * row exactly as it was (non-terminal, no attempt, nothing running), so clicking
+ * another conversation did not switch and the player was told the switch would
+ * take effect at the next start. The assertions below fail on that reading at
+ * `outcomeStatus` and at `interruptedLedgerStatus`.
+ */
+test(
+  "a durable turn that never started is aborted and the switch happens in process",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-turn-level-unstarted-");
+    try {
+      const observed = await runSwitchScenario(root, "durable-unstarted");
+      // The turn really was durable with nothing running: no attempt, no prompt,
+      // no start runner.
+      assert.equal(observed.unstartedLedgerStatus, "accepted_queued");
+      assert.equal(observed.unstartedHasAttempt, false);
+      // The player gets the switch, never a refusal and never a promise about a
+      // later start.
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.firstSuperseded, false);
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.successorThreadReadable, true);
+      // The turn that never started is terminal in the conversation switched away
+      // from: no dangling claim and no non-terminal row the browser could keep
+      // waiting on.
+      assert.equal(observed.firstThreadStillReadable, true);
+      assert.equal(observed.interruptedTurnId, observed.acceptedTurnId);
+      assert.equal(observed.interruptedLedgerStatus, "cancelled");
+      assert.equal(observed.interruptedLedgerObservation, "armed");
+      assert.equal(observed.interruptedLedgerPresentation, false);
+      // Nothing the player wrote was lost, and no companion message was invented
+      // for a turn no provider ever saw.
+      assert.equal(observed.interruptedKeptPlayerText, true);
+      assert.ok(Number(observed.interruptedMessageCount) >= 1);
     } finally {
       cleanup(root);
     }

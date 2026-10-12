@@ -415,10 +415,11 @@ type SelectChatCommandV1 = Readonly<{
 /**
  * The honest selection outcome. Switching is turn-level and the request is never refused for a
  * generating turn (ADR-0010): the Host aborts the mounted turn through the same cancel path an
- * explicit Stop uses, lets that abort settle, releases the runtime and mounts the target, then
- * answers `switched`. `turn_in_flight` survives only as the bounded residual for a durable turn
- * whose attempt has not started yet, where there is nothing to abort and the recorded selection
- * settles at the next start instead. The recorded selection is durable either way.
+ * explicit Stop uses - including a turn whose attempt had not started, which is prepared to that
+ * path first - lets that abort settle, releases the runtime and mounts the target, then answers
+ * `switched`. `turn_in_flight` survives only as the fail-closed answer for the mounted turn that
+ * path cannot reach; the runtime then stays where it is. The recorded selection is durable either
+ * way.
  */
 export type ChatSelectResultV1 = Readonly<{
   apiVersion: 1;

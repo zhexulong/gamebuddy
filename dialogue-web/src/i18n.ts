@@ -510,9 +510,10 @@ const en = {
   // The transient acknowledgement while a Chat switch is in flight. The row stays enabled, so this
   // says the request is out rather than that the switch was refused.
   chatSelectSwitching: "Switching...",
-  // The bounded residual: a durable turn whose attempt has not started has nothing to abort, so the
-  // recorded selection takes effect the next time that conversation starts.
-  chatSelectRecordedNextStart: "The switch is recorded and takes effect the next time this conversation starts.",
+  // The fail-closed answer: the mounted turn could not be aborted, so the runtime deliberately stays
+  // where it is instead of being torn down under that turn. The selection itself is recorded.
+  chatSelectTurnNotAbortable:
+    "The switch is recorded, but this conversation still has a turn that cannot be interrupted, so the runtime stayed where it is.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -995,8 +996,9 @@ const zh: Messages = {
   // --- Class A/B 动作分层 lane（追加）：焦点转移会中止，状态变更等待 ---
   // 切换会话进行中的临时提示：该行仍可点击，所以它表示请求已发出，而不是切换被拒绝。
   chatSelectSwitching: "正在切换…",
-  // 有界残留：回合尚未开始，没有可中止的生成，切换已记录，将在下次启动该会话时生效。
-  chatSelectRecordedNextStart: "切换已记录，将在下次启动该会话时生效。",
+  // 失败关闭的答复：挂载中的回合无法中止，运行时宁可留在原会话，也不在该回合之下被拆除。
+  // 选择本身已记录。
+  chatSelectTurnNotAbortable: "切换已记录，但该会话仍有一个无法中断的回合，运行时保持在原会话。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-residual-switch",
+    "noUnusedLocals": false
+  },
+  "include": [],
+  "files": [
+    "src/continuity-semantic-production-coordinator/continuity-semantic-chat-switch.test.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.ts",
+    "src/continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.ts",
+    "src/tavern/chat-thread-store.ts",
+    "src/tavern/chat-thread-store.mounted-turn-transition.internal.ts",
+    "src/tavern/player-turn-acceptance.ts",
+    "src/tavern/player-turn-acceptance.internal.ts",
+    "src/tavern/provider-attempt-claim.ts",
+    "src/tavern/provider-attempt-claim.internal.ts",
+    "src/tavern-management-dialogue-web.chat-select.test.ts",
+    "src/tavern-management-dialogue-web.ts",
+    "src/tavern/browser-contract/index.ts",
+    "src/composition/desktop-presentation-admission-owner.ts"
+  ]
+}

@@ -278,12 +278,12 @@ export function ChatsSurfacePanel({
   /**
    * Chat selection (ADR 0009 / ADR-0010). Selecting another Chat is a focus transfer, so the
    * request is never refused for a generating turn: the Host aborts the mounted turn through the
-   * same cancel path an explicit Stop uses, lets that abort settle, releases the runtime and mounts
-   * the target, then answers `switched` - the surface re-reads the authoritative list and the shell
-   * reloads the target's transcript. `turn_in_flight` is only the bounded residual for a durable
-   * turn whose attempt has not started yet, where there is nothing to abort: the selection is
-   * recorded and takes effect at the next start. A bounded refusal (`selection_conflict`) re-reads
-   * the durable list before it is reported.
+   * same cancel path an explicit Stop uses - a turn whose attempt had not started included - lets
+   * that abort settle, releases the runtime and mounts the target, then answers `switched` - the
+   * surface re-reads the authoritative list and the shell reloads the target's transcript.
+   * `turn_in_flight` is only the fail-closed answer for a mounted turn that path could not abort:
+   * the runtime deliberately stayed where it was, and the recorded selection is durable. A bounded
+   * refusal (`selection_conflict`) re-reads the durable list before it is reported.
    */
   const selectChat = (handle: string): void => {
     if (selectAvailable === false || selecting !== null) return;
@@ -295,9 +295,9 @@ export function ChatsSurfacePanel({
         const result = await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
         await reread();
         if (result.status === "turn_in_flight") {
-          // Nothing to abort, so the mounted conversation has not moved; the recorded selection is
-          // durable and lands the next time that conversation starts.
-          report({ kind: "success", text: labels.chatSelectRecordedNextStart });
+          // The mounted conversation could not be switched under its current turn, so it has not
+          // moved; the recorded selection is durable either way.
+          report({ kind: "success", text: labels.chatSelectTurnNotAbortable });
           return;
         }
         // The mounted identity itself changed, so the shell must replace its session from the new
