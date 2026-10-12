@@ -60,6 +60,16 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "stardew_manifest_handoff_uncertain",
   "game_runtime_unavailable",
   "game_storage_unavailable",
+  // The composed reference-game shell's own route and transport refusals. They are
+  // produced by `composed-reference-game-browser.ts` for its bootstrap, state,
+  // lifecycle and game routes, so they belong to this surface's vocabulary rather
+  // than to a client-side allowlist. The client already reads `not_found` as an
+  // absent route and `state_unavailable` (and any 5xx) as retryable.
+  "closed",
+  "malformed_request",
+  "not_found",
+  "state_unavailable",
+  "game_endgame_settlement_unavailable",
 ] as const);
 
 const GameProblemCode = Type.Union([
@@ -81,6 +91,13 @@ const GameProblemCode = Type.Union([
   Type.Literal("stardew_manifest_handoff_uncertain"),
   Type.Literal("game_runtime_unavailable"),
   Type.Literal("game_storage_unavailable"),
+  // The composed reference-game shell's own route and transport refusals (see
+  // `GAME_BROWSER_PROBLEM_CODES_V1`).
+  Type.Literal("closed"),
+  Type.Literal("malformed_request"),
+  Type.Literal("not_found"),
+  Type.Literal("state_unavailable"),
+  Type.Literal("game_endgame_settlement_unavailable"),
 ]);
 
 // ─── Redacted read projections ──────────────────────────────────────────────

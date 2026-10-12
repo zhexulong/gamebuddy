@@ -34,11 +34,13 @@
  * code. The gate asserts the four sender signatures it read, so a renamed parameter
  * fails loudly instead of silently narrowing the scan.
  *
- * The composed reference-game route is the one surface with no declared problem
- * union: it composes the tavern and game routes and its client accepts any bounded
- * token by design (`composed-reference-game-browser-api.ts:593`). Its five codes
- * outside both contracts are listed below as findings reported to the owner, and the
- * gate asserts each still reproduces so the list cannot outlive a fix.
+ * The composed reference-game route is the one surface with no problem union of
+ * its own: it composes the tavern and game routes and its client accepts any bounded
+ * token by design (`composed-reference-game-browser-api.ts:593`). Its five own codes
+ * (`closed`, `malformed_request`, `not_found`, `state_unavailable`,
+ * `game_endgame_settlement_unavailable`) are members of the game contract now, so
+ * this gate carries no allowlist: every code the route can produce is declared, and
+ * a sixth one added without a declaration fails here.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -76,17 +78,7 @@ const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
  */
 const EXPECTED_CODE_ARITY = { sendProblem: 2, sendBootstrapProblem: 2, sendLifecycleProblem: 3, refuseBootstrap: 1 };
 
-/**
- * Codes the composed reference-game route emits that neither contract declares.
- * Reported to the owner; the gate fails if one stops reproducing.
- */
-const COMPOSED_ROUTE_CODES_OUTSIDE_CONTRACT = [
-  { code: "closed", reason: "503 while the composed shell is closing; the client treats it as a retryable failure" },
-  { code: "game_endgame_settlement_unavailable", reason: "endgame settlement refusal; no contract member exists for it" },
-  { code: "malformed_request", reason: "409 for an unreadable or unexpected body" },
-  { code: "not_found", reason: "404 for an operation the published profile does not serve; the client's absent-route list mirrors it" },
-  { code: "state_unavailable", reason: "the route's generic failure; the client treats it as retryable" },
-];
+/** A bounded token: the shape every problem code has. */
 
 function sourceOf(file) {
   return ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -271,10 +263,9 @@ test("problem-code.1: every tavern handler code is declared by the contract", (t
   assert.deepEqual(failures, [], "a code a handler produces must be a member of the contract's declared set");
 });
 
-test("problem-code.2: every composed route code is declared or reported", (t) => {
+test("problem-code.2: every composed route code is declared by a contract", (t) => {
   const { tavern, game } = authorities();
-  const reported = new Set(COMPOSED_ROUTE_CODES_OUTSIDE_CONTRACT.map((entry) => entry.code));
-  const allowed = new Set([...tavern, ...game, ...reported]);
+  const allowed = new Set([...tavern, ...game]);
   const failures = [];
   const seen = new Set();
   let codes = 0;
@@ -284,22 +275,14 @@ test("problem-code.2: every composed route code is declared or reported", (t) =>
     if (!allowed.has(produced.value))
       failures.push(`${produced.where} produces a code outside both contracts ${JSON.stringify(produced.value)}`);
   }
-  for (const entry of COMPOSED_ROUTE_CODES_OUTSIDE_CONTRACT) {
-    assert.ok(seen.has(entry.code), `${entry.code} is no longer produced; remove the reported entry`);
-    assert.ok(
-      !tavern.has(entry.code) && !game.has(entry.code),
-      `${entry.code} is now declared by a contract; remove the reported entry`,
-    );
-  }
   t.diagnostic(
-    `problem-code.2: ${codes} produced code(s), ${seen.size} distinct, ${COMPOSED_ROUTE_CODES_OUTSIDE_CONTRACT.length} reported outside both contracts, ${failures.length} unknown`,
+    `problem-code.2: ${codes} produced code(s), ${seen.size} distinct, all checked against ${tavern.size} tavern + ${game.size} game declared, ${failures.length} undeclared`,
   );
   assert.deepEqual(failures, [], "a code the composed route invents is a code no client can reason about");
 });
 
 test("problem-code.3: every client mirror is a subset of the declared set", (t) => {
   const { tavern, turn, game } = authorities();
-  const reported = new Set(COMPOSED_ROUTE_CODES_OUTSIDE_CONTRACT.map((entry) => entry.code));
   const failures = [];
   let mirrored = 0;
   for (const file of CLIENT_MIRRORS) {
@@ -317,7 +300,7 @@ test("problem-code.3: every client mirror is a subset of the declared set", (t) 
   for (const list of ["AUTHENTICATION_PROBLEM_CODES", "RECONCILIATION_PROBLEM_CODES", "ABSENT_ROUTE_PROBLEM_CODES"]) {
     for (const entry of literalsInDeclaration(join(WEB, "composed-problem-view.ts"), list)) {
       mirrored += 1;
-      if (!tavern.has(entry.value) && !game.has(entry.value) && !turn.has(entry.value) && !reported.has(entry.value))
+      if (!tavern.has(entry.value) && !game.has(entry.value) && !turn.has(entry.value))
         failures.push(`${entry.where} classifies undeclared code ${JSON.stringify(entry.value)}`);
     }
   }
@@ -349,7 +332,7 @@ test("problem-code.4: no browser-contract handler catches and decides nothing", 
 test("problem-code.5: the authorities and the sender signatures are read, not assumed", (t) => {
   const { tavern, turn, game, transport } = authorities();
   assert.equal(tavern.size, 38, `the tavern problem union should have 38 members, read ${tavern.size}`);
-  assert.equal(game.size, 18, `the game problem union should have 18 members, read ${game.size}`);
+  assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
   const arity = codeArity();
