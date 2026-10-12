@@ -21,7 +21,9 @@ export function ChatsSurface({
   selectionGeneration,
   currentChatHandle,
   selectAvailable,
+  turnInFlight,
   onRenamedTitle,
+  onChatSwitched,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -31,7 +33,14 @@ export function ChatsSurface({
   currentChatHandle: string;
   /** `false` when the mount knows no `chat.select` route is served; the rows are then not selectable. */
   selectAvailable?: boolean;
+  /**
+   * `true` while a turn is generating. Switching is turn-level, so the rows are
+   * then not selectable and the panel names the reason the player can act on.
+   */
+  turnInFlight?: boolean;
   onRenamedTitle: () => void;
+  /** Fires after the Host committed an in-process switch to another Chat. */
+  onChatSwitched?: () => void;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -48,7 +57,9 @@ export function ChatsSurface({
         selectionGeneration={selectionGeneration}
         currentChatHandle={currentChatHandle}
         {...(selectAvailable === undefined ? {} : { selectAvailable })}
+        {...(turnInFlight === undefined ? {} : { turnInFlight })}
         onRenamedTitle={onRenamedTitle}
+        {...(onChatSwitched === undefined ? {} : { onChatSwitched })}
       />
     </SurfaceView>
   );

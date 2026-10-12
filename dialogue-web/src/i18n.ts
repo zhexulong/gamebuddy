@@ -488,10 +488,9 @@ const en = {
   gameEndgameInProgress: "Ending the game...",
   gameEndgameFailed: "The game could not be ended. The latest authoritative game state is shown.",
 
-  // --- chat selection lane: choosing which existing Chat the next start mounts ---
-  chatSelectNextStart: "Next start",
-  chatSelectChosenNotice:
-    "Chat selected. It becomes the active conversation the next time GameBuddy starts.",
+  // --- chat selection lane: switching the mounted Chat is turn-level ---
+  chatSelectSwitchedNotice: "Chat switched.",
+  chatSelectTurnInFlight: "A reply is still being written. Stop it, then switch chat.",
 
   // --- optimistic send lane: the sent text is visible before the Host answers ---
   chatSending: "Sending...",
@@ -958,9 +957,9 @@ const zh: Messages = {
   gameEndgameInProgress: "正在结束游戏...",
   gameEndgameFailed: "无法结束游戏；当前显示的是最新权威游戏状态。",
 
-  // --- 会话选择 lane：选择下次启动时挂载的已有会话 ---
-  chatSelectNextStart: "下次启动",
-  chatSelectChosenNotice: "已选择该会话。下次启动 GameBuddy 时它会成为当前会话。",
+  // --- 会话选择 lane：挂载会话的切换是 turn 级的 ---
+  chatSelectSwitchedNotice: "已切换会话。",
+  chatSelectTurnInFlight: "正在生成回复。请先停止，再切换会话。",
 
   // --- 乐观发送 lane：在 Host 回应前先显示已发送文本 ---
   chatSending: "发送中...",

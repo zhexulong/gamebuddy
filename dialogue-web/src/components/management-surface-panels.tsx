@@ -147,7 +147,9 @@ export function ChatsSurfacePanel({
   retentionAvailable,
   createAvailable,
   selectAvailable,
+  turnInFlight,
   onRenamedTitle,
+  onChatSwitched,
   onNotice,
 }: Readonly<{
   api: ManagementPipelineApi;
@@ -169,8 +171,15 @@ export function ChatsSurfacePanel({
    * route and the rows are not selectable; `undefined` means the served route is the capability.
    */
   selectAvailable?: boolean;
+  /**
+   * `true` while a turn is generating. Switching is turn-level, so the rows are then not
+   * selectable and the panel states the reason the player can act on (Stop, then switch).
+   */
+  turnInFlight?: boolean;
   /** Lets the mount fold the validated rename read-back into its own mounted session. */
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
+  /** Fires after the Host committed an in-process switch to another Chat. */
+  onChatSwitched?: () => void;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [list, setList] = useState<ChatListView>("loading");
@@ -179,10 +188,10 @@ export function ChatsSurfacePanel({
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
   const [creating, setCreating] = useState(false);
-  // The Chat the player chose for the next runtime start. The mounted conversation does not
-  // switch here (the Host records the selection and settles it at the next start), so this is
-  // the surface's own honest marker of the choice, never a claim that a running turn switched.
-  const [chosen, setChosen] = useState<string | null>(null);
+  // The Chat whose switch the Host refused because a turn is still generating. Switching is
+  // turn-level, so this is a refusal the player can act on (Stop, then switch), never a claim
+  // that the mounted conversation moved.
+  const [blocked, setBlocked] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const { inline, report } = useSurfaceNotice(onNotice);
 
@@ -274,23 +283,30 @@ export function ChatsSurfacePanel({
   };
 
   /**
-   * Chat selection (ADR 0009). Clicking an already-selected Chat is a no-op: there is nothing
-   * to record and no second admission. Otherwise the Host records a durable expectation and
-   * answers `restart_required`; the surface marks the chosen row and says the selection takes
-   * effect at the next start - it never claims the running conversation switched. A bounded
-   * refusal (`selection_conflict`) re-reads the durable list before it is reported.
+   * Chat selection (ADR 0009). Switching is turn-level: while the runtime is idle the Host
+   * switches the mounted conversation inside the same process and answers `switched`, so the
+   * surface re-reads the authoritative list and the shell reloads the target's transcript. While
+   * a turn is generating the Host answers `turn_in_flight` and the surface states the reason it
+   * can act on instead of pretending a switch happened. A bounded refusal
+   * (`selection_conflict`) re-reads the durable list before it is reported.
    */
   const selectChat = (handle: string): void => {
-    if (selectAvailable === false || selecting) return;
-    // The mounted Chat and the already-chosen Chat are both no-ops: there is nothing new to
-    // record and no second admission.
-    if (handle === currentChatHandle || handle === chosen) return;
+    if (selectAvailable === false || turnInFlight === true || selecting) return;
+    // The mounted Chat is a no-op: there is nothing to switch to.
+    if (handle === currentChatHandle) return;
     setSelecting(true);
     void (async () => {
       try {
-        await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
-        setChosen(handle);
-        report({ kind: "success", text: labels.chatSelectChosenNotice });
+        const result = await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
+        if (result.status === "turn_in_flight") {
+          setBlocked(handle);
+          report({ kind: "failure", text: labels.chatSelectTurnInFlight });
+          return;
+        }
+        setBlocked(null);
+        await reread();
+        onChatSwitched?.();
+        report({ kind: "success", text: labels.chatSelectSwitchedNotice });
       } catch {
         await reread();
         report({ kind: "failure", text: labels.failure });
@@ -346,19 +362,24 @@ export function ChatsSurfacePanel({
         </div>
       )}
       <div className="chat-list" role="list">
+        {turnInFlight === true && (
+          <p className="empty-subtle" data-testid="chat-select-blocked">
+            {labels.chatSelectTurnInFlight}
+          </p>
+        )}
         {list.length === 0 ? (
           <p className="empty-subtle">{labels.noChats}</p>
         ) : (
           list.map((chat) => {
             const isSelected = chat.handle === currentChatHandle;
-            const isChosen = chat.handle === chosen;
+            const isBlocked = chat.handle === blocked;
             return (
               <div
                 key={chat.handle}
                 role="listitem"
                 data-testid="chat-item"
-                data-selected={isSelected || isChosen ? "true" : "false"}
-                className={`chat-item-card ${isSelected || isChosen ? "selected" : ""}`}
+                data-selected={isSelected ? "true" : "false"}
+                className={`chat-item-card ${isSelected ? "selected" : ""}`}
               >
                 {editing !== null && editing.handle === chat.handle && renameAvailable !== false ? (
                   <>
@@ -393,15 +414,15 @@ export function ChatsSurfacePanel({
                       type="button"
                       className="chat-item-title chat-item-select"
                       data-testid="chat-select"
-                      aria-current={isSelected || isChosen ? "true" : undefined}
-                      disabled={selectAvailable === false || selecting}
+                      aria-current={isSelected ? "true" : undefined}
+                      disabled={selectAvailable === false || turnInFlight === true || selecting}
                       onClick={() => selectChat(chat.handle)}
                     >
                       {chat.title ?? labels.untitledChat}
                     </button>
-                    {isChosen && !isSelected && (
+                    {isBlocked && !isSelected && (
                       <span className="chat-item-badge" data-testid="chat-select-pending">
-                        {labels.chatSelectNextStart}
+                        {labels.chatSelectTurnInFlight}
                       </span>
                     )}
                     <div className="chat-item-actions">

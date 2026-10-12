@@ -162,6 +162,10 @@ export function ComposedReferenceGameApp() {
   // The open contextual panel, as the URL states it. A refresh with
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
+  // Bumped after the Host commits a turn-level Chat switch. The mounted identity
+  // is new, so the live event subscription must reconnect on the new conversation
+  // instead of continuing the previous Chat's cursor.
+  const [mountedChatRevision, setMountedChatRevision] = useState(0);
   // This surface's model settings are a popout, not a block inside the reading
   // flow (design/104 §3 keeps the model on the surface it belongs to; the
   // conversation keeps its reading column). It is never the URL's `panel` fact,
@@ -312,7 +316,7 @@ export function ComposedReferenceGameApp() {
     };
   }, [commit]);
 
-  const eventStreamEpoch = view.kind === "ready" ? view.session.snapshot.eventStream?.epoch : undefined;
+  const eventStreamEpoch = view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
 
 
   useEffect(() => {
@@ -341,12 +345,24 @@ export function ComposedReferenceGameApp() {
         const current = viewRef.current;
         if (current.kind !== "ready" || root.chat.chat === null) return;
         const epochChanged = root.chat.eventStream?.epoch !== current.session.snapshot.eventStream?.epoch;
-        let session = current.session.applySnapshot(root.chat);
+        let session: ReturnType<typeof createReferencePipelineSession>;
+        let rebuilt = false;
+        try {
+          session = current.session.applySnapshot(root.chat);
+        } catch (error) {
+          // A committed Chat switch replaces the mounted identity itself: the new
+          // snapshot cannot be reconciled with the old session, so the session is
+          // rebuilt from it instead of failing the whole surface.
+          if (!(error instanceof ReferencePipelineSessionError) || error.code !== "state_reconciliation_required")
+            throw error;
+          session = createReferencePipelineSession(root.chat);
+          rebuilt = true;
+        }
         if (
           draft.revision !== root.chat.chat.draft.revision ||
           (draft.text !== null) !== root.chat.chat.draft.present
         ) throw new ReferencePipelineSessionError("state_reconciliation_required");
-        if (doReset || epochChanged) {
+        if (doReset || epochChanged || rebuilt) {
           if (root.chat.eventStream === null) throw new ReferencePipelineSessionError("stream_resync_required");
           cursor = root.chat.eventStream.cursor;
           session = session.resetEventCheckpoint();
@@ -848,6 +864,36 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * Follows a committed Chat switch. The Host has already released the previous
+   * mounted Chat and mounted the selected one, so the mounted identity itself is
+   * new: this shell rebuilds its session from the fresh snapshot (there is nothing
+   * to reconcile it with) and restarts the live cursor on the new conversation.
+   */
+  const handleChatSwitched = (): void => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    void (async () => {
+      try {
+        const root = await composedApiRef.current.readState();
+        const draft = await tavernApiRef.current.readDraft();
+        if (cancelledRef.current || root.chat.chat === null) return;
+        if (
+          draft.revision !== root.chat.chat.draft.revision ||
+          (draft.text !== null) !== root.chat.chat.draft.present
+        )
+          throw new ReferencePipelineSessionError("state_reconciliation_required");
+        setPreview(null);
+        const base = createReferencePipelineSession(root.chat);
+        const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
+        setMountedChatRevision((revision) => revision + 1);
+        commit({ ...current, root, session, draft });
+      } catch (error) {
+        commit(problemView(error, messages(current.locale)));
+      }
+    })();
+  };
+
+  /**
    * The World Info revision this surface shows. The composed Chat projection
    * carries no World Info at all (`chat.worldInfo: null` in the composed root and
    * a profile identity the management wire validator rejects), so this mount reads
@@ -1072,7 +1118,9 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
                 currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
+                turnInFlight={stopAvailable}
                 onRenamedTitle={handleRenamedTitle}
+                onChatSwitched={handleChatSwitched}
                 restoreFocusTo={chatsEntryRef}
               />
             )}

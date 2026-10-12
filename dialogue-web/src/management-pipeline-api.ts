@@ -412,12 +412,14 @@ type SelectChatCommandV1 = Readonly<{
 }>;
 
 /**
- * The honest selection outcome: the chosen Chat is recorded durably and becomes the mounted
- * conversation at the next runtime start, so this never claims a running conversation switched.
+ * The honest selection outcome. An idle runtime switches the mounted conversation inside the same
+ * process (`switched`); a runtime whose turn is still generating refuses with `turn_in_flight` and
+ * the durable expectation settles at the next start instead. Neither answer tears down a running
+ * conversation, and the recorded selection is durable either way.
  */
 export type ChatSelectResultV1 = Readonly<{
   apiVersion: 1;
-  status: "restart_required";
+  status: "switched" | "turn_in_flight";
 }>;
 
 export type MemoryItemV1 = Readonly<{
@@ -2072,7 +2074,7 @@ function isChatSelectResult(value: unknown): value is ChatSelectResultV1 {
     isRecord(value) &&
     hasExactKeys(value, CHAT_SELECT_RESULT_KEYS) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
-    value.status === "restart_required"
+    (value.status === "switched" || value.status === "turn_in_flight")
   );
 }
 
@@ -2340,7 +2342,7 @@ export function createManagementPipelineApi(
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         command,
       );
-      observe("chat.select", "passed", "restart_required");
+      observe("chat.select", "passed", result.status);
       return result;
     },
     async readDraft(): Promise<BrowserDraftV1> {
