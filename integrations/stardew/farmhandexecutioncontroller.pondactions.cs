@@ -269,7 +269,10 @@ internal sealed partial class ExecutionManager
                 door.X,
                 door.Y,
                 building.buildingType.Value,
-                occupants));
+                occupants,
+                // The fish the clearing would eject, so the caller knows WHAT it is about to put on the
+                // ground - the occupants count alone does not say whether they are what it wanted.
+                ((FishPond)building).fishType.Value ?? string.Empty));
             if (result.Count >= 16) break;
         }
         return result;

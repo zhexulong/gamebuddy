@@ -660,7 +660,7 @@ public sealed record BridgeAnimalDoorTarget(string TargetId, string Location, in
 /// structure and never its internal state. `Occupants` is published because it is what the action would
 /// eject (the body spawns one fish item per occupant as ground debris, so the count is what the player
 /// recovers) - an EMPTY pond is never advertised, since it has nothing to clear.</summary>
-public sealed record BridgeFishPondTarget(string TargetId, string Location, int X, int Y, string BuildingType, int Occupants);
+public sealed record BridgeFishPondTarget(string TargetId, string Location, int X, int Y, string BuildingType, int Occupants, string FishType);
 
 
 /// <summary>One named inventory a BUILDING declares in its own data (Data/Buildings ->

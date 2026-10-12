@@ -384,7 +384,8 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // WIA §4.2 answer_dialogue live proof: move interrupted by a native question
   // modal, answered with the native answerDialogue seam.
   wia_answer_question: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
-  wia_eat_interrupt: "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
+  wia_eat_interrupt: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
+"run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
   // The other three WIA slots: each holds a body-holding execution whose
   // interruption is measured while that slot is live (the tool-approach leg,
   // the asynchronous animal-product animation, and the magnetic pickup window).
