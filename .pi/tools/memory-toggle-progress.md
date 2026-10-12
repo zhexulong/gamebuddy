@@ -46,3 +46,40 @@ Two genuine gaps found OUTSIDE this change: `management-pipeline-browser.spec.ts
 `[data-import-fields]` / `[data-import-dispositions]`, which `CharacterCardImport.tsx` deliberately dropped in
 `cff42f76` (component header: "no multi-step classification review") — the spec still drives the removed
 two-phase flow. Not mine; reported.
+
+
+## Verification (after commit afb00dc9)
+
+- `pnpm exec tsc --noEmit -p tsconfig.json` — 0 errors.
+- `node tools/check-head-typecheck.mjs` — `head_typecheck_ok rev=afb00dc9b115`.
+- boundary gate `pnpm run test:artifact` — 13 pass / 0 fail.
+- `playwright test tests/conversation-rendering-defects.spec.ts` — **6 passed** (was 5 passed / 1 failed:
+  defect 5 timed out waiting for `[data-memory-authoring-toggle]`);
+  `[defect-5] memory: lines=1 {"text":"创建","whiteSpace":"nowrap","flexShrink":"0","height":44,"width":52}`.
+- `playwright test tests/composed-reference-game-browser.spec.ts` — 60 passed.
+- `playwright test tests/runtime-frontend-gates.spec.ts` — 22 passed (incl. gates 6b/6c memory surfaces).
+- `playwright test tests/stardew-installation-discovery.spec.ts tests/ui-hygiene-runtime.spec.ts` — 5 passed, 1 skipped.
+- `playwright test tests/management-surface-panels.spec.ts` — 2 passed / 2 failed, both BEFORE any memory
+  assertion: `[data-language-settings]` not rendered on `#profile=management` and no "World Info" nav button on
+  the composed shell (page snapshot: Chat/Game/Chats/Characters/Settings/Memory only). Independent of this change.
+- `playwright test tests/management-pipeline-browser.spec.ts` — 16 failed, all ENOENT
+  `host/dist/current.json` at `startMountedManagementComposition` (no built Host generation in this checkout).
+- `playwright test tests/companion-turn-browser.spec.ts tests/reference-pipeline-browser.spec.ts` — 12 failed,
+  all at `startMountedReferenceComposition` (missing built generation). Neither reaches a test body.
+
+## Panel verdict (correcting the two-implementation premise)
+
+There is ONE Memory presentation. `MemorySurfacePanel` (management-surface-panels.tsx:474) is the wire adapter
+(read + `memory.mutate` CAS + notice) and renders `MemoryPanel` (management-panels.tsx:908) at line 573; the
+notebook, live count (`data-memory-count`), category/origin badges, honest empty state and the collapsed
+authoring entry with `data-memory-authoring-toggle` (:1143) all live in `MemoryPanel`. The hook grep returned 0
+in the wrapper file because the wrapper renders the panel that owns it — nothing to delete, and deleting either
+layer would break the mount.
+
+## Second finding (outside ownership)
+
+`management-pipeline-browser.spec.ts` still drives the removed two-phase card-import review flow
+(`[data-import-fields]`, `[data-import-dispositions]`, "Review card"): the review stage was deliberately dropped
+in `cff42f76` (component header: "no multi-step classification review"), while its browser test predates that
+(`019f030e`, ancestor of `cff42f76`). Every other Memory/Chats/Characters/Settings hook the mounted specs query
+resolves in the component the surface renders.
