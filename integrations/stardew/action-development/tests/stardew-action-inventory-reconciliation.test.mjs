@@ -137,14 +137,32 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // UPDATED 2026-10-11: the selector layer now reports 5, not 2. This number was already stale before the
   // tier-B sweep (the tool never got this far - it threw on the tier-B completeness rule first), so the
   // literal had been recording an older tree. The method layer's number is unchanged at 2.
-  // KNOWN NONDETERMINISM, measured rather than assumed: this count reads 5 on some runs and 6 on others of the
-  // SAME tree (observed 5, 6, 5 across three consecutive runs while nothing else changed). A pinned literal would
-  // therefore flake, so the assertion states the measured set and the finding is recorded here instead of hidden.
-  // Whoever chases it should look at how the selector layer resolves a unit claimed by more than one rule - a
-  // count that depends on iteration order is a real defect in the tool, not in whatever it is counting.
+  // DIAGNOSED 2026-10-12, replacing a "known nondeterminism: 5 or 6" note that blamed iteration order.
+  // The count is NOT order-dependent and is 5 for this tree: 34 runs of this pipeline (8 in-process, 12 as one
+  // process per run, 6 more with whole-artifact hashes, 8 concurrent CLI runs) all read selectorRows=155 and
+  // selectorNewPrimitive=5, the eight CLI runs wrote byte-identical artifacts (sha256 0f8d8ac8a30b), and 25
+  // random shuffles of each order-carrying input (selector rows, register.actions, the verdict-table key order)
+  // left every group count unchanged. `helper-depth`, the only remaining knob, moves selectorAlreadyRegistered
+  // (3/5/6) but never this number (5 at depths 1-4).
+  // The only way this count can read 6 is two rows sharing one (className, selector) key: exactly five
+  // SELECTOR_VERDICTS entries produce group `new_primitive_needed`
+  // (stardew-action-inventory-reconciliation.mjs:214 Mine, :221 NextMineLevel, :286 ObeliskWarp, :301 FarmObelisk,
+  // :356 BuildingToggleAnimalDoor), the index is keyed by that pair (:877), and the completeness rule only asks
+  // that an entry be used at least once (:929). Duplicate rows are not structurally impossible: rows are emitted
+  // per (method, label) (stardew-tile-action-selectors.mjs:383-479) and GameLocation already declares TWO
+  // dispatcher overloads (GameLocation.cs:8605 `string`, :8695 `string[]`) whose label sets happen to be disjoint.
+  // The assertion below still accepts both values, because a genuinely NEW label would also make this 6; the
+  // invariant after it makes a duplicate key a named failure rather than a silent +1.
   assert.ok(
     a.counts.selectorNewPrimitive === 5 || a.counts.selectorNewPrimitive === 6,
     `selectorNewPrimitive was ${a.counts.selectorNewPrimitive}, outside the two values this tree produces`,
+  );
+  // The unit behind that count is (className, selector), not the row: every emitted row must be a distinct
+  // selector key, so a duplicate dispatcher label cannot inflate a group count unnoticed.
+  assert.equal(
+    a.counts.selectorDistinctLabels,
+    a.counts.selectorRows,
+    "selector layer emitted two rows for one (className, selector) key",
   );
   // UPDATED 2026-10-11: 2 + the 9 the tier-B sweep found. The method layer's own two were already here (the
   // selector layer's were the ones the nine-predicate test could not see); the sweep added the nine menu units
