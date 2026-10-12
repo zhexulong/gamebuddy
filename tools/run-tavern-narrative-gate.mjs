@@ -281,7 +281,7 @@ function deadlineFetch(url, options = {}) {
 }
 
 async function bootstrap(origin, token) {
-  const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
+  const response = await deadlineFetch(`${origin}${sessionEntry.route}`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
     body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
