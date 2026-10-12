@@ -52,10 +52,10 @@ import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { CharactersSurface } from "./CharactersSurface";
 import {
-  ChatsSurfacePanel,
   createManagementPipelineApi,
   type WorldInfoSurfaceSource,
 } from "./management-surface-panels";
+import { ChatsSurface } from "./ChatsSurface";
 import { MemorySurface } from "./MemorySurface";
 import { SettingsSurface } from "./SettingsSurface";
 
@@ -1966,21 +1966,15 @@ export function ComposedReferenceGameApp() {
               </SurfaceView>
             )}
             {shownSurface === CHATS_PANEL && (
-              <SurfaceView
-                title={labels().chatsPanel}
-                testId="chats-surface"
-                icon={MessagesSquare}
+              <ChatsSurface
+                api={managementPipelineApiRef.current}
+                csrfToken={view.session.snapshot.csrfToken}
+                labels={labels()}
+                selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
+                currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
+                onRenamedTitle={handleRenamedTitle}
                 restoreFocusTo={chatsEntryRef}
-              >
-                <ChatsSurfacePanel
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
-                  currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
-                  onRenamedTitle={handleRenamedTitle}
-                />
-              </SurfaceView>
+              />
             )}
             {shownSurface === CHARACTERS_PANEL && (
               <CharactersSurface
