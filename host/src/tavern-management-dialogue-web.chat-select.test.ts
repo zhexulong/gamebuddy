@@ -1,10 +1,12 @@
 /**
- * Chat selection (ADR 0009): the `PUT /api/tavern/v1/chat/select` route over the real dispatcher.
+ * Chat selection (ADR 0009 / ADR-0010): the `PUT /api/tavern/v1/chat/select` route over the real dispatcher.
  *
  * The point of this test is the durable read-back and the bounded refusals, not the wire: the
  * chosen Chat must become the durable active selection the very next mount settles, the generation
- * the browser read must be the generation the Host accepts, and the already-selected Chat must be
- * a no-op rather than a second admission.
+ * the browser read must be the generation the Host accepts, the already-selected Chat must be
+ * a no-op rather than a second admission, and a still-generating turn must not stop the switch -
+ * aborting it is the authority's own job (ADR-0010). `turn_in_flight` survives only for a durable
+ * turn whose attempt has not started, where there is nothing to abort.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -96,13 +98,16 @@ async function fixture() {
   const handleOf = (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) =>
     opaqueHandle(`${target.chatThreadId}\u0000${target.chatSurfaceSessionId}`);
   let selectionCalls = 0;
-  let turnInFlight = false;
+  // `false` models the one durable state the authority cannot abort: a turn whose
+  // attempt has not started yet.
+  let startedAttempt = true;
   const chatSelectProvisioner = Object.freeze({
     /**
      * The dispatch route's splice point, reduced to this fixture: resolve the opaque handle to the
-     * durable thread pair, refuse a stale generation, no-op the already-selected Chat, refuse while
-     * a turn is generating, and switch the active selection durably (the real production provisioner
-     * asks the semantic authority to release and remount the mounted Chat runtime).
+     * durable thread pair, refuse a stale generation, no-op the already-selected Chat, answer the
+     * residual `turn_in_flight` only for a turn with no started attempt, and switch the active
+     * selection durably (the real production provisioner asks the semantic authority to abort a
+     * generating turn and then release and remount the mounted Chat runtime).
      */
     async select(command: SelectChatCommandV1): Promise<ChatSelectResultV1> {
       const active = await threads.readActiveThreadSelection();
@@ -117,7 +122,7 @@ async function fixture() {
         active.chatSurfaceSessionId === target.chatSurfaceSessionId;
       if (alreadySelected)
         return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
-      if (turnInFlight)
+      if (!startedAttempt)
         return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "turn_in_flight" });
       selectionCalls += 1;
       await threads.selectActiveThread(target.chatThreadId, target.chatSurfaceSessionId);
@@ -210,7 +215,7 @@ async function fixture() {
     profile: profile(),
     bootstrapToken,
   });
-  return { page, threads, first, second, handleOf, selectionCalls: () => selectionCalls, setTurnInFlight: (value: boolean) => { turnInFlight = value; } };
+  return { page, threads, first, second, handleOf, selectionCalls: () => selectionCalls, setStartedAttempt: (value: boolean) => { startedAttempt = value; } };
 }
 
 async function openSession(origin: string): Promise<{ cookie: string; csrf: string }> {
@@ -258,27 +263,39 @@ test("chat.select switches the mounted Chat in process, refuses a stale generati
     assert.equal(((await unknown.json()) as { code?: string }).code, "selection_conflict");
     assert.equal(f.selectionCalls(), 0);
 
-    // While a turn is generating the switch is refused with the bounded reason the
-    // player can act on, and nothing durable changes.
-    f.setTurnInFlight(true);
-    const blocked = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) });
-    assert.equal(blocked.status, 200);
-    assert.deepEqual(await blocked.json(), { apiVersion: 1, status: "turn_in_flight" });
-    assert.equal(f.selectionCalls(), 0);
+    // A still-generating turn does not withhold the switch: aborting it is the
+    // authority's own job (ADR-0010), so the route answers the honest outcome and
+    // the durable selection moves.
+    f.setStartedAttempt(true);
+    const whileGenerating = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) });
+    assert.equal(whileGenerating.status, 200);
+    assert.deepEqual(await whileGenerating.json(), { apiVersion: 1, status: "switched" });
+    assert.equal(f.selectionCalls(), 1);
+    assert.equal((await f.threads.readActiveThreadSelection())?.chatThreadId, f.second.chatThreadId);
+    // Back to the mounted Chat for the remaining cases.
+    await f.threads.selectActiveThread(f.first.chatThreadId, f.first.chatSurfaceSessionId);
+
+    // The one durable state with nothing to abort answers the residual
+    // `turn_in_flight`, and nothing durable changes under it.
+    f.setStartedAttempt(false);
+    const residual = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) });
+    assert.equal(residual.status, 200);
+    assert.deepEqual(await residual.json(), { apiVersion: 1, status: "turn_in_flight" });
+    assert.equal(f.selectionCalls(), 1);
     assert.equal((await f.threads.readActiveThreadSelection())?.chatThreadId, f.first.chatThreadId);
-    f.setTurnInFlight(false);
+    f.setStartedAttempt(true);
 
     // Selecting the mounted Chat is a no-op: no durable write, no second admission.
     const noop = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.first) });
     assert.equal(noop.status, 200);
     assert.deepEqual(await noop.json(), { apiVersion: 1, status: "switched" });
-    assert.equal(f.selectionCalls(), 0);
+    assert.equal(f.selectionCalls(), 1);
 
     // A real selection switches the mounted Chat and answers the honest switched outcome.
     const chosen = await select({ apiVersion: 1, selectionGeneration: 1, chatHandle: f.handleOf(f.second) });
     assert.equal(chosen.status, 200);
     assert.deepEqual(await chosen.json(), { apiVersion: 1, status: "switched" });
-    assert.equal(f.selectionCalls(), 1);
+    assert.equal(f.selectionCalls(), 2);
 
     // Real read-back: the durable active selection is now the chosen Chat, and a fresh list read
     // reflects it.

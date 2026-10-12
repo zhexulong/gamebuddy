@@ -168,11 +168,17 @@ export type SemanticChatSelectionRequest =
     }>;
 /**
  * The honest product answer to a selection request. Switching is turn-level,
- * not process-level: an idle mounted runtime hot-swaps the Chat it serves
- * inside this process (`switched`), and a runtime whose turn is still in flight
- * refuses with `turn_in_flight` rather than tearing a generating conversation
- * down. The recorded expectation is durable in both cases, so a later start
- * still lands on the Chat the player chose.
+ * not process-level: the mounted runtime hot-swaps the Chat it serves inside
+ * this process and answers `switched`. Selecting another Chat is a focus
+ * transfer, so a turn that is still generating is aborted first through the
+ * same cancel path an explicit browser Stop uses - it is never refused and the
+ * player never has to wait for generation to finish (ADR-0010).
+ *
+ * `turn_in_flight` survives only as the bounded residual answer for a durable
+ * turn whose attempt has not started yet (`accepted_queued`): the store has no
+ * cancel transition for that state, so nothing can be aborted and the mount is
+ * not torn down under it. The recorded expectation is durable in both cases, so
+ * a later start still lands on the Chat the player chose.
  */
 export type SemanticChatSelectionOutcome =
   | Readonly<{ status: "switched"; chatThreadId: string; chatSurfaceSessionId: string }>
@@ -214,6 +220,13 @@ type MountedChatRuntimeLeaseRecord = {
 
   /** The sole Pi prompt currently executing under this mounted lease. */
   activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }> | undefined;
+  /**
+   * Process-local waiters resolved by the prompt runner once that prompt has
+   * stopped executing, which is after its durable terminal transition. They are
+   * never durable and never cross a mount: a focus transfer waits on them so no
+   * transition authority is revoked while an aborted turn is still settling.
+   */
+  readonly promptSettlementWaiters: Set<() => void>;
   /** Retained cancellation state; new browser Stop bypasses it. */
   cancellation?: Promise<CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
@@ -412,6 +425,17 @@ async function readCancellationResult(record: MountedChatRuntimeLeaseRecord): Pr
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
   return current;
+}
+
+/**
+ * Waits for the mounted lease's sole active prompt to stop executing. The runner
+ * that owns the prompt resolves this in its terminal drain, after the durable
+ * terminal transition and before it returns, so awaiting it fences the whole
+ * settlement of an aborted turn.
+ */
+function waitForMountedPromptSettlement(record: MountedChatRuntimeLeaseRecord): Promise<void> {
+  if (record.activePrompt === undefined) return Promise.resolve();
+  return new Promise<void>((resolve) => record.promptSettlementWaiters.add(resolve));
 }
 
 type MountedAttemptInvocationAdmission = Readonly<{
@@ -799,6 +823,8 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       mounted.activePrompt = activePrompt;
       return () => {
         if (mounted.activePrompt === activePrompt) mounted.activePrompt = undefined;
+        for (const resolve of mounted.promptSettlementWaiters) resolve();
+        mounted.promptSettlementWaiters.clear();
       };
     };
     let nativeContentCommitReserved = false;
@@ -1981,12 +2007,49 @@ async function createFreshChatRuntimeAuthority(
   };
 
   /**
+   * Exactly the durable states the mounted cancel seam can terminalize: an
+   * armed prompt, or a generating/presented turn. `accepted_queued` is
+   * deliberately absent - the store has no cancel transition for a turn whose
+   * attempt has not started, so a focus transfer in that one window keeps the
+   * bounded residual `turn_in_flight` instead of tearing the mount down under
+   * a turn that is about to be hoisted.
+   */
+  const isMountedTurnCancellable = async (record: MountedChatRuntimeLeaseRecord): Promise<boolean> => {
+    const ledger = (await record.store().resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
+    if (ledger === null) return false;
+    if (ledger.status === "running" || ledger.status === "presentation_committed") return true;
+    return ledger.status === "attempt_starting" && ledger.observation?.phase === "armed";
+  };
+
+  /**
+   * Class A abort for a focus transfer (ADR-0010). It reuses the one existing
+   * cancel path - the same seam an authenticated browser Stop reaches - so the
+   * presentation epoch is revoked, the exact durable cancel CAS wins, and the
+   * one mounted Pi prompt is aborted. It then waits only for that prompt's own
+   * runner to settle the ledger, because the transition authority is revoked
+   * when the mount is released and a revoked authority can no longer terminalize
+   * the turn. Whatever the turn had already committed stays durably stored as
+   * the interrupted turn's presentation; only never-committed preview deltas are
+   * discarded.
+   */
+  const abortMountedTurnForChatSelection = async (record: MountedChatRuntimeLeaseRecord): Promise<void> => {
+    if (mountedLease === undefined || !(await isMountedTurnCancellable(record))) return;
+    await stopMountedChatPresentationEpoch(manifest, mountedLease, {
+      stopId: `chat_select_stop_${randomUUID().replaceAll("-", "")}`,
+      sourceEventId: `chat_select_source_${randomUUID().replaceAll("-", "")}`,
+      reasonCode: "player_chat_select",
+    });
+    await waitForMountedPromptSettlement(record);
+  };
+
+  /**
    * Releases the one mounted runtime in process so a different Chat can be
    * mounted by the same authority. The mounted lease is revoked synchronously
-   * first, so no new turn can be admitted while the teardown runs; a lease whose
-   * turn is still in flight is restored untouched and reported as
-   * `turn_in_flight`. Everything else the authority owns - binding, store, mutex,
-   * broker, semantic projection - stays open.
+   * first, so no new turn can be admitted while the teardown runs. A caller that
+   * is switching Chat (ADR-0010) has already aborted any generating turn through
+   * the cancel seam and waited for it to settle, so the lease is releasable; a
+   * durable turn that could not be aborted (no started attempt yet) is restored
+   * untouched and reported as the bounded residual `turn_in_flight`.
    */
   const releaseMountedChatRuntime = async (): Promise<"released" | "turn_in_flight"> => {
     const lease = mountedLease;
@@ -2133,12 +2196,13 @@ async function createFreshChatRuntimeAuthority(
     return `chat-${kind}-${suffix.slice(0, 32)}`;
   }
   /**
-   * ADR 0009 / turn-level switching. The recorded expectation is durable, and an
-   * idle runtime follows it immediately: the one mounted runtime is released and
+   * ADR 0009 / ADR-0010. The recorded expectation is durable and the request is
+   * never refused for a generating turn: the one mounted runtime whose turn is
+   * still in flight is aborted through the same cancel path an explicit browser
+   * Stop uses, that abort is allowed to settle, then the runtime is released and
    * the successor mount for the requested Chat is committed in this same
-   * process. A turn that is still in flight is never torn down - the request is
-   * answered `turn_in_flight` and the durable expectation settles at the next
-   * start instead.
+   * process. Only a durable turn with no started attempt has nothing to abort,
+   * and that single window keeps the bounded residual `turn_in_flight`.
    */
   const requestChatSelection = (input: SemanticChatSelectionRequest): Promise<SemanticChatSelectionOutcome> =>
     begin(async () => {
@@ -2151,8 +2215,6 @@ async function createFreshChatRuntimeAuthority(
           : mintChatSelectionIdentity();
       const mountedRecord =
         mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
-      if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord)))
-        return Object.freeze({ status: "turn_in_flight" as const, ...target });
       await locked(() => {
         const catalog = provision.store.readChatCatalog();
         if (
@@ -2190,6 +2252,8 @@ async function createFreshChatRuntimeAuthority(
         mountedRecord.chatSurfaceSessionId === target.chatSurfaceSessionId
       )
         return Object.freeze({ status: "switched" as const, ...target });
+      if (mountedRecord?.active === true && (await mountedLeaseHasTurnInFlight(mountedRecord)))
+        await abortMountedTurnForChatSelection(mountedRecord);
       if ((await releaseMountedChatRuntime()) === "turn_in_flight")
         return Object.freeze({ status: "turn_in_flight" as const, ...target });
       await startMountedChatRuntime();
@@ -2424,6 +2488,7 @@ async function createFreshChatRuntimeAuthority(
           startedAttemptIds: new Set<string>(),
           transitionAuthority: createMountedTurnTransitionAuthority(),
           presentationEpoch: createCompanionInterruption(),
+          promptSettlementWaiters: new Set<() => void>(),
           begin,
           store: mountedStore,
           close: () => authority.close(),

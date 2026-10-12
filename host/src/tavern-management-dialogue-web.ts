@@ -190,10 +190,11 @@ const MANAGEMENT_CHAT_OPENING_ROUTES = ["chat.opening"] as const;
  * opening choice it is declared after the core and in the frozen group order, so a profile that
  * advertises it without the bound Chat creator fails closed at composition. */
 const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
-/** Optional Chat selection extension (ADR 0009): only a profile that declares this route
+/** Optional Chat selection extension (ADR 0009 / ADR-0010): only a profile that declares this route
  * mounts `PUT /api/tavern/v1/chat/select`; the runtime switches the mounted conversation in
- * process while it is idle and reports `turn_in_flight` while a turn is generating. A profile
- * that advertises it without the bound selection provisioner fails closed at composition. */
+ * process, aborting a still-generating turn through the same cancel path an explicit Stop uses
+ * (ADR-0010). A profile that advertises it without the bound selection provisioner fails closed
+ * at composition. */
 const MANAGEMENT_CHAT_SELECT_ROUTES = ["chat.select"] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
@@ -327,11 +328,12 @@ export type TavernManagementDialogueWebOptions = Readonly<{
     create(command: CreateChatCommandV1): Promise<ChatCreateResultV1>;
   }>;
   /**
-   * Host-owned Chat selection (ADR 0009). The browser names the exact Chat it read from
+   * Host-owned Chat selection (ADR 0009 / ADR-0010). The browser names the exact Chat it read from
    * `chat.list` and the generation it read; switching is turn-level, so the provisioner answers
-   * `switched` when the idle runtime hot-swapped the mounted conversation and `turn_in_flight`
-   * when a generating turn must not be torn down. Present only when the mounted profile
-   * declares `chat.select`; the route stays unavailable otherwise.
+   * `switched` after the runtime hot-swapped the mounted conversation - aborting a still-generating
+   * turn through the same cancel path an explicit Stop uses. `turn_in_flight` survives only as the
+   * bounded residual answer for a durable turn with no started attempt yet. Present only when the
+   * mounted profile declares `chat.select`; the route stays unavailable otherwise.
    */
   chatSelectProvisioner?: Readonly<{
     select(command: SelectChatCommandV1): Promise<ChatSelectResultV1>;
@@ -937,11 +939,12 @@ export function createTavernManagementDialogueWebRequestHandler(
         return sendJson(response, 200, result);
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/select") {
-        // chat.select (ADR 0009): the browser names the exact Chat it read and the
-        // generation it read. Switching is turn-level: an idle runtime hot-swaps the
-        // mounted conversation in process (`switched`), a generating one refuses with
-        // `turn_in_flight`. Refusals are bounded: a stale generation or an unknown/non-active
-        // Chat is `selection_conflict`.
+        // chat.select (ADR 0009 / ADR-0010): the browser names the exact Chat it read and the
+        // generation it read. Switching is turn-level: the runtime hot-swaps the mounted
+        // conversation in process and answers `switched`, aborting a still-generating turn through
+        // the same cancel path an explicit Stop uses. Refusals are bounded: a stale generation or
+        // an unknown/non-active Chat is `selection_conflict`, and `turn_in_flight` is only the
+        // residual answer for a durable turn with no started attempt yet.
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");

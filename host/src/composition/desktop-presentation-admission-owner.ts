@@ -84,11 +84,11 @@ export type DesktopPresentationAdmissionInput = Readonly<{
   /** Optional Voice surface reader: projects the additive v1 `voice` snapshot field. */
   voiceSurface?: VoiceSurfaceReader;
   /**
-   * The shared semantic authority's Chat selection capability (ADR 0009). When present, the
+   * The shared semantic authority's Chat selection capability (ADR 0009 / ADR-0010). When present, the
    * management domains mount `chat.select`: choosing another Chat switches the mounted conversation
-   * inside the same process while the runtime is idle, and reports `turn_in_flight` while a turn is
-   * generating, so a running conversation is never torn down. Absent means the route is not mounted
-   * and the Chats surface offers no selection control.
+   * inside the same process, aborting a still-generating turn through the same cancel path an explicit
+   * browser Stop uses, so the switch always lands. Absent means the route is not mounted and the Chats
+   * surface offers no selection control.
    */
   chatSelection?: Readonly<{
     requestChatSelection(
@@ -380,12 +380,12 @@ function createTavernManagementDomains(
     },
   });
   /**
-   * Chat selection (ADR 0009). The browser names the exact Chat it read from `chat.list` and the
+   * Chat selection (ADR 0009 / ADR-0010). The browser names the exact Chat it read from `chat.list` and the
    * generation it read; the Host resolves the opaque handle to the exact persisted thread pair and
    * asks the semantic authority to make it the mounted conversation. The authority switches in
-   * process while the runtime is idle (`switched`) and refuses with `turn_in_flight` while a turn is
-   * generating, so a running conversation is never torn down. The already-selected Chat is a no-op:
-   * the request names the mounted Chat, so nothing is recorded and no second admission is created.
+   * process and answers `switched`, aborting a still-generating turn through the same cancel path an
+   * explicit browser Stop uses. The already-selected Chat is a no-op: the request names the mounted
+   * Chat, so nothing is recorded and no second admission is created.
    */
   const chatSelectProvisioner =
     chatSelection === undefined

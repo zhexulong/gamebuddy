@@ -1086,12 +1086,13 @@ export const ChatCreateResultV1Schema = strictObject({
   opening: Type.Union([Type.String({ minLength: 1, maxLength: 8192 }), Type.Null()]),
 });
 /**
- * Chat selection (ADR 0009). The browser names the exact Chat it read from `chat.list` and the
- * selection generation it read. Switching is turn-level: an idle runtime hot-swaps the mounted
- * conversation inside the same process and answers `switched`; a runtime whose turn is still in
- * flight answers `turn_in_flight` and the durable expectation settles at the next start instead.
- * Either way the recorded selection is durable, so a later start still lands on the Chat the
- * player chose.
+ * Chat selection (ADR 0009 / ADR-0010). The browser names the exact Chat it read from `chat.list`
+ * and the selection generation it read. Switching is turn-level: the runtime hot-swaps the mounted
+ * conversation inside the same process and answers `switched`. Selecting another Chat is a focus
+ * transfer, so a turn that is still generating is aborted first through the same cancel path an
+ * explicit browser Stop uses; `turn_in_flight` is only the bounded residual answer for a durable
+ * turn whose attempt has not started yet. Either way the recorded selection is durable, so a later
+ * start still lands on the Chat the player chose.
  */
 export const SelectChatCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
