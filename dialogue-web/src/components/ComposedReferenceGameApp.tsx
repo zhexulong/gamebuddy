@@ -1786,8 +1786,9 @@ export function ComposedReferenceGameApp() {
                      { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: shownSurface === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
                      { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: shownSurface === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
                    ]
-                 : []),
+                   : []),
              ]}
+             fold={{ from: 2, label: labels().appBarMore }}
            />
           <main id="main-content" className="app-main-content">
             {/* Every surface is a peer: it takes this region in full, none of them

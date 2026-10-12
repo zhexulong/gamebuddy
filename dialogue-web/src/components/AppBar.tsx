@@ -1,5 +1,5 @@
-import type { LucideIcon } from "lucide-react";
-import type { Ref } from "react";
+import { MoreHorizontal, type LucideIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type Ref } from "react";
 
 /**
  * The shared application bar (design/26 §4.1, design/104 §2).
@@ -17,6 +17,14 @@ import type { Ref } from "react";
  *   panel passes no entry for them instead of a greyed-out button.
  * - The mark and the status text are catalog values, never literals: the entry
  *   is visible at every locale (design/26 §5.1).
+ * - `fold` moves the bar's trailing entries into one disclosure on a narrow
+ *   window instead of shrinking them. The owner's 400 px strip carries six peers,
+ *   which is more control than bar: at that width the rail squeezed the
+ *   companion's own name down to a bracket, which is the opposite of the point.
+ *   Folding is a viewport behaviour and never a capability change - every entry
+ *   keeps its name, its target and its surface, and on a wide window the bar is
+ *   exactly the row it always was (`display: contents` makes the wrapper no box
+ *   at all, style.css).
  */
 
 export type AppBarEntry = Readonly<{
@@ -41,6 +49,14 @@ export type AppBarProps = Readonly<{
   /** `progress` adds the pulsing accent dot a running turn already implies. */
   statusTone?: "idle" | "progress";
   entries: readonly AppBarEntry[];
+  /**
+   * Where the bar folds its trailing entries behind one `More` disclosure. The
+   * entries from `from` on keep every property they have - same control, same
+   * name, same 44 px target - and are only moved inside the panel on a narrow
+   * bar, which is what gives the companion block its width back. Absent means
+   * the bar never folds, which is the whole bar on a wide window.
+   */
+  fold?: Readonly<{ from: number; label: string }>;
 }>;
 
 export function AppBar({
@@ -50,6 +66,7 @@ export function AppBar({
   statusLabel,
   statusTone = "idle",
   entries,
+  fold,
 }: AppBarProps) {
   // The monogram is derived from the name, never a decorative symbol
   // (design/26 §4.1); an unnamed companion falls back to the brand mark. The
@@ -59,6 +76,68 @@ export function AppBar({
   const monogram = (
     (Array.from(companionName.trim())[0] ?? "") || (Array.from(brandMark)[0] ?? "")
   ).toUpperCase();
+
+  const foldAt = fold?.from ?? entries.length;
+  const visibleEntries = entries.slice(0, foldAt);
+  const foldedEntries = entries.slice(foldAt);
+  const morePanelId = useId();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+
+  // The folded entries are the same peer controls, so the disclosure that holds
+  // them is a disclosure and nothing more: Escape closes it and returns focus to
+  // the button that opened it, a click outside closes it, nothing is covered and
+  // nothing is modal - selecting an entry replaces the surface exactly as a
+  // visible entry does.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      // Escape belongs to this disclosure while it is open: closing the panel
+      // must not also step the shell back to the conversation behind it.
+      event.stopPropagation();
+      setMoreOpen(false);
+      moreTriggerRef.current?.focus();
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (moreRef.current !== null && !moreRef.current.contains(event.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [moreOpen]);
+
+  const renderEntry = (entry: AppBarEntry) => {
+    const Icon = entry.icon;
+    return (
+      <button
+        key={entry.id}
+        ref={entry.ref}
+        type="button"
+        className={entry.active ? "nav-button active" : "nav-button"}
+        // `active` is presentation; the selection is stated in `aria-current`.
+        // These entries are peers within one addressable set - the URL names the
+        // selected surface and Back returns to the previous one (design/104 §2) -
+        // which is exactly what `aria-current="page"` marks. Not `aria-selected`,
+        // which needs a widget role such as `tab`/`option` a plain button does not
+        // have; not `aria-pressed`, a toggle that can be released while exactly one
+        // of these can be current; and not `aria-expanded`, which described a drawer
+        // opening when selecting a peer surface opens nothing - the surface is
+        // replaced.
+        aria-current={entry.active ? "page" : undefined}
+        aria-label={entry.label}
+        title={entry.label}
+        onClick={entry.onClick}
+      >
+        <Icon size={18} aria-hidden="true" />
+        <span className="nav-label">{entry.label}</span>
+      </button>
+    );
+  };
 
   return (
     <header className="app-bar">
@@ -90,34 +169,41 @@ export function AppBar({
       </div>
 
       <div className="app-bar-actions">
-        {entries.map((entry) => {
-          const Icon = entry.icon;
-          return (
+        {visibleEntries.map(renderEntry)}
+        {foldedEntries.length > 0 && (
+          // One row of peers on a wide bar; one `More` on a 400 px strip. The
+          // panel's entries are the same controls, named the same way, and they
+          // leave the strip the width its companion block needs.
+          <div className="app-bar-more" ref={moreRef}>
             <button
-              key={entry.id}
-              ref={entry.ref}
+              ref={moreTriggerRef}
               type="button"
-              className={entry.active ? "nav-button active" : "nav-button"}
-              // `active` is presentation; the selection is stated in
-              // `aria-current`. These entries are peers within one addressable
-              // set - the URL names the selected surface and Back returns to the
-              // previous one (design/104 §2) - which is exactly what
-              // `aria-current="page"` marks. Not `aria-selected`, which needs a
-              // widget role such as `tab`/`option` a plain button does not have;
-              // not `aria-pressed`, a toggle that can be released while exactly
-              // one of these can be current; and not `aria-expanded`, which
-              // described a drawer opening when selecting a peer surface opens
-              // nothing - the previous surface is replaced.
-              aria-current={entry.active ? "page" : undefined}
-              aria-label={entry.label}
-              title={entry.label}
-              onClick={entry.onClick}
+              className="nav-button app-bar-more-trigger"
+              aria-expanded={moreOpen}
+              aria-controls={morePanelId}
+              aria-label={fold?.label}
+              title={fold?.label}
+              onClick={() => setMoreOpen((open) => !open)}
             >
-              <Icon size={18} aria-hidden="true" />
-              <span className="nav-label">{entry.label}</span>
+              <MoreHorizontal size={18} aria-hidden="true" />
             </button>
-          );
-        })}
+            <div
+              className="app-bar-more-menu"
+              id={morePanelId}
+              {...(moreOpen ? { "data-open": "true" as const } : {})}
+            >
+              {foldedEntries.map((entry) =>
+                renderEntry({
+                  ...entry,
+                  onClick: () => {
+                    setMoreOpen(false);
+                    entry.onClick();
+                  },
+                }),
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </header>
   );

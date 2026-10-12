@@ -236,8 +236,23 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
   if (options.waitForChat !== false) await expect(page.getByTestId("chat-surface")).toBeVisible();
 }
 
+/**
+ * Reaches a surface's entry the way a player does. On a ≤480 px window the bar
+ * folds its trailing peers behind one `More` disclosure (AppBar's `fold`), so a
+ * narrow window opens that first; the entry itself is the same control, with the
+ * same name and the same target, either way. A wide bar has no trigger to open.
+ */
+async function revealSurfaceEntry(page: Page, label: string) {
+  const entry = page.getByRole("button", { name: label, exact: true });
+  if (!(await entry.isVisible())) {
+    const more = page.getByRole("button", { name: "More", exact: true });
+    if (await more.isVisible()) await more.click();
+  }
+  return entry;
+}
+
 async function openSurface(page: Page, surface: Readonly<{ label: string; testId: string }>): Promise<void> {
-  await page.getByRole("button", { name: surface.label, exact: true }).click();
+  await (await revealSurfaceEntry(page, surface.label)).click();
   await expect(page.getByTestId(surface.testId)).toBeVisible();
 }
 
