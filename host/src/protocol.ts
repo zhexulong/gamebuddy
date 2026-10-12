@@ -606,6 +606,15 @@ activeExecution?: ActiveExecution | null;
    * slot the named action must act through, or -1 when the actor owns no tool for it. */
   worldObjectTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
     y: number; slot: number; qualifiedItemId: string; displayName: string }>[];
+  /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
+   * for this lane: 'build_site' is a free footprint the named building type could go on now (the
+   * structure does not exist yet, so `buildingId` is the literal 'none' and `daysOfConstructionLeft`
+   * is -1), and 'built' is a building already standing in the current location, carrying its durable
+   * id and construction days. `buildCost` and `buildDays` are the type's own Data/Buildings facts -
+   * what the commission charges and how long it takes. */
+  farmBuildingTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
+    y: number; buildingType: string; displayName: string; buildCost: number; buildDays: number;
+    buildingId: string; daysOfConstructionLeft: number }>[];
   /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
    * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
   wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
@@ -648,7 +657,10 @@ export type ExecutionRequest = Readonly<{
     | "use_obelisk"
     | "toggle_animal_door"
     | "clear_fish_pond"
+    | "accept_daily_quest"
+    | "build_farm_building"
     | "send_multiplayer_chat"
+    | "name_entity"
     | "use_warp_item"
     | "pan_ore"
     | "claim_mail_attachment"
@@ -1262,6 +1274,7 @@ const SNAPSHOT_KEYS = [
   "fenceGateTargets",
 
   "worldObjectTargets",
+  "farmBuildingTargets",
   "wearableTargets",
   "warpItemTargets",
   "panSites",
@@ -1278,6 +1291,7 @@ const SNAPSHOT_KEYS = [
     "mineEntranceTargets",
 
     "worldObjectTargets",
+    "farmBuildingTargets",
   "wearableTargets",
   "warpItemTargets",
   "panSites",
@@ -1800,7 +1814,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "use_obelisk" &&
      value.action !== "toggle_animal_door" &&
      value.action !== "clear_fish_pond" &&
+    value.action !== "accept_daily_quest" &&
+     value.action !== "build_farm_building" &&
      value.action !== "send_multiplayer_chat" &&
+     value.action !== "name_entity" &&
 
      value.action !== "place_owned_object" &&
      value.action !== "remove_placed_item" &&
@@ -1958,6 +1975,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action === "withdraw_silo_hay" ||
     value.action === "use_obelisk" ||
     value.action === "clear_fish_pond" ||
+    value.action === "accept_daily_quest" ||
     value.action === "toggle_animal_door"
   ) {
     // All three take the shared { x, y, expectedTargetId } shape and no slot.
@@ -1969,6 +1987,20 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["text"])) return "invalid_execution_request";
     if (typeof value.args.text !== "string" || value.args.text.trim().length === 0) return "invalid_execution_request";
     if (value.args.text.length > 256) return "invalid_execution_request";
+  } else if (value.action === "name_entity") {
+    // One string and nothing else - the name to write. Bounded by the SAME length the Mod
+    // enforces (EntityNameMaximumLength): an argument the wire accepts but the handler refuses
+    // would be a registered capability that cannot be invoked.
+    if (!hasExactKeys(value.args, ["text"])) return "invalid_execution_request";
+    if (typeof value.args.text !== "string" || value.args.text.trim().length === 0) return "invalid_execution_request";
+    if (value.args.text.length > 64) return "invalid_execution_request";
+  } else if (value.action === "build_farm_building") {
+    // The Data/Buildings type id, the top-left footprint tile and the opaque site id. The Mod
+    // re-resolves the type against Game1.buildingData and the site against the LIVE world.
+    if (!hasExactKeys(value.args, ["buildingType", "x", "y", "expectedTargetId"])) return "invalid_execution_request";
+    if (typeof value.args.buildingType !== "string" || value.args.buildingType.length === 0 || value.args.buildingType.length > 128) return "invalid_build_building_type";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_build_site";
+    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId)) return "invalid_build_target";
   } else if (value.action === "collect_building_chest_output") {
     // All four take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
@@ -2456,6 +2488,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.worldObjectTargets.every(isWorldObjectTargetFact))
   )
     return "invalid_snapshot:worldObjectTargets";
+  if (
+    value.farmBuildingTargets !== undefined &&
+    (!Array.isArray(value.farmBuildingTargets) ||
+      value.farmBuildingTargets.length > 16 ||
+      !value.farmBuildingTargets.every(isFarmBuildingTargetFact))
+  )
+    return "invalid_snapshot:farmBuildingTargets";
   if (
     value.wearableTargets !== undefined &&
     (!Array.isArray(value.wearableTargets) ||
@@ -2949,6 +2988,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   const mailboxTargetsVerdict = mailboxTargetsError(value);
   if (mailboxTargetsVerdict !== null) return mailboxTargetsVerdict;
   if (worldObjectTargetsVerdict !== null) return worldObjectTargetsVerdict;
+  const farmBuildingTargetsVerdict = farmBuildingTargetsError(value);
+  if (farmBuildingTargetsVerdict !== null) return farmBuildingTargetsVerdict;
   return hasOnlyKeys(value, SNAPSHOT_KEYS) &&
     Number.isSafeInteger(value.revision) &&
     typeof value.location === "string" &&
@@ -3207,8 +3248,11 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
   return hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
-      value.action === "clear_fish_pond" ||
-      value.action === "send_multiplayer_chat" ||
+       value.action === "clear_fish_pond" ||
+       value.action === "build_farm_building" ||
+       value.action === "send_multiplayer_chat" ||
+      value.action === "name_entity" ||
+       value.action === "accept_daily_quest" ||
       value.action === "place_owned_object" ||
       value.action === "remove_placed_item" ||
       value.action === "break_container_source" ||
@@ -4814,6 +4858,57 @@ function isWorldObjectTargetFact(value: unknown): boolean {
     typeof value.displayName === "string"
   );
 }
+function farmBuildingTargetsError(value: Record<string, unknown>): string | null {
+  if (value.farmBuildingTargets === undefined) return null;
+  if (
+    !Array.isArray(value.farmBuildingTargets) ||
+    value.farmBuildingTargets.length > 16 ||
+    !value.farmBuildingTargets.every(isFarmBuildingTargetFact)
+  )
+    return "invalid_snapshot:farmBuildingTargets";
+  return null;
+}
+
+function isFarmBuildingTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "targetId",
+      "kind",
+      "location",
+      "x",
+      "y",
+      "buildingType",
+      "displayName",
+      "buildCost",
+      "buildDays",
+      "buildingId",
+      "daysOfConstructionLeft",
+    ]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    (value.kind === "build_site" || value.kind === "built") &&
+    typeof value.location === "string" &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.buildingType === "string" &&
+    value.buildingType.length > 0 &&
+    typeof value.displayName === "string" &&
+    typeof value.buildCost === "number" &&
+    Number.isSafeInteger(value.buildCost) &&
+    value.buildCost >= 0 &&
+    typeof value.buildDays === "number" &&
+    Number.isSafeInteger(value.buildDays) &&
+    value.buildDays >= 0 &&
+    typeof value.buildingId === "string" &&
+    typeof value.daysOfConstructionLeft === "number" &&
+    Number.isSafeInteger(value.daysOfConstructionLeft) &&
+    value.daysOfConstructionLeft >= -1
+  );
+}
+
 function isBuildingChestTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&

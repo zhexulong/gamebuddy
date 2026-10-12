@@ -190,14 +190,18 @@ function hasStardewCompletionEvidence(
   actionId: string,
   receipt: IntegrationReceiptEvidence,
 ): boolean {
-  const detail = receipt.evidence?.detail;
+  const rawDetail = receipt.evidence?.detail;
   if (
     receipt.state !== "succeeded" ||
-    typeof detail !== "string" ||
-    detail.length === 0 ||
-    detail.length > 4_096
+    typeof rawDetail !== "string" ||
+    rawDetail.length === 0 ||
+    rawDetail.length > 4_096
   )
     return false;
+  // The guard above narrows `rawDetail` to string in FUNCTION scope, but type narrowing does not travel across a
+  // `switch` boundary into each case, so a plain alias would re-resolve to `unknown` at every `exactEvidence(detail,`
+  // call. Give the narrowed value a name that is visibly a string - once, for every case that follows.
+  const detail: string = rawDetail;
   // Each published action is explicit. Unsupported schemas fail closed rather
   // than treating a succeeded receipt or a matching substring as completion.
   switch (actionId) {
@@ -352,6 +356,31 @@ function hasStardewCompletionEvidence(
         })
       );
     case "clear_fish_pond":
+    case "name_entity":
+      // Evidence literal: farmhandexecutioncontroller.nameentityactions.cs - the subject, the horse
+      // id, the requested name, the name read back and the Mod's own read-back verdict. The
+      // entity's stored name IS the terminal, so the rule asks for exactly that: the terminal code,
+      // the twelve keys, an entity that was unnamed before the call, and a read-back that matched.
+      return (
+        receipt.reasonCode === "entity_named" &&
+        exactEvidence(
+          detail,
+          [
+            "owner_id", "location", "actor_tile", "horse_tile", "horse_owner_id", "horse_name",
+            "horse_id", "name_before", "requested", "name_after",
+            "name_matches_requested", "player_horse_name_updated",
+          ],
+          (e) =>
+            typeof e.name_before === "string" &&
+            e.name_before === "none" &&
+            typeof e.name_matches_requested === "string" &&
+            e.name_matches_requested === "true" &&
+            typeof e.name_after === "string" &&
+            e.name_after.length > 0 &&
+            typeof e.requested === "string" &&
+            e.name_after === e.requested,
+        )
+      );
       // Evidence literal: farmhandexecutioncontroller.pondactions.cs — the identity, the fish type before and
       // after, the occupant counts, the population gate, the spawn day, the golden-cracker flag and the
       // ejected count. The native seam returns void, so the proof is the OBSERVED reset: BOTH halves of the

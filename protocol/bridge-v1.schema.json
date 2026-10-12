@@ -6194,7 +6194,10 @@
             "send_multiplayer_chat",
             "equip_wearable",
             "unequip_wearable",
-            "dismount_transport"
+            "dismount_transport",
+            "build_farm_building",
+            "accept_daily_quest",
+            "name_entity"
           ]
         },
         "args": {

@@ -1478,6 +1478,29 @@ export function createStardewActionTools(
 
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "name_entity",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("name_entity", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("name_entity", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.name_entity,
+          label: "Name your horse",
+          description:
+            "Give your own horse its name through the game own naming settlement. It takes exactly one string (`text`) and no target: the subject is YOUR horse, found live. It is REFUSED when you own no horse (name_entity_target_unavailable), when the horse already carries a name (name_entity_target_already_named), or when the name is blank, longer than 64 characters, or carries a `;` or `=` (name_entity_name_invalid). The receipt reports the name READ BACK from the entity, never the call itself.",
+          parameters: schema,
+          action: "name_entity",
+          toArgs: (args) => ({ text: String(args.text ?? "") }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "express_emote",
     );
     if (

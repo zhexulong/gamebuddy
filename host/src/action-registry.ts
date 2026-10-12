@@ -331,6 +331,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["chat"],
   ),
   actionAdapter(
+    "name_entity",
+    "Name your horse",
+    "Give the farm's own horse its name through the game's own naming settlement (Horse.nameHorse), the very body the naming menu's callback is bound to. The subject is the ACTOR'S OWN horse - it takes no target id - and the name is its only input. A horse that already has a name is refused by name, and the receipt reports the name READ BACK from the entity.",
+    ["horse", "name"],
+  ),
+  actionAdapter(
     "claim_mail_attachment",
     "Claim a mailbox attachment",
     "Claim whatever is waiting in a mailbox, completing a letter whose %item attachment has to be delivered rather than discarding it. The opaque target id binds the location, the tile and the pending letter.",
@@ -561,6 +567,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   toggle_animal_door: "stardew_toggle_animal_door",
   clear_fish_pond: "stardew_clear_fish_pond",
   send_multiplayer_chat: "stardew_send_multiplayer_chat",
+  name_entity: "stardew_name_entity",
 
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
@@ -611,6 +618,8 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
   world_interact: Object.freeze(["execute_world_operation"]),
   // The one SOCIAL act that is not about an NPC in front of the actor: a line to the whole lobby.
   send_multiplayer_chat: Object.freeze(["send_multiplayer_chat"]),
+  // Naming the farm's own horse: a synchronous write with no target id.
+  name_entity: Object.freeze(["name_entity"]),
   special_interact: Object.freeze(["execute_world_operation"]),
   festival_interact: Object.freeze([
     "submit_festival_entry",
@@ -713,6 +722,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "toggle_animal_door",
   "clear_fish_pond",
   "send_multiplayer_chat",
+  "name_entity",
   "load_building_chest",
   "collect_building_chest_output",
   "use_warp_item",
@@ -951,6 +961,14 @@ export function isModDescriptorComplete(
     if (!hasExactPublishedArgumentNames(descriptor, ["text"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "chat_message_sent") return false;
+    return true;
+  }
+  if (actionId === "name_entity") {
+    // One string and nothing else: the subject is the actor's own horse, so any other argument
+    // name would mean the descriptor grew something the action cannot use.
+    if (!hasExactPublishedArgumentNames(descriptor, ["text"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "entity_named") return false;
     return true;
   }
   if (actionId === "toggle_animal_door") {
