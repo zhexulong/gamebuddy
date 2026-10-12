@@ -285,7 +285,9 @@ test("resource-depletion chain refuses a recovery that reports no refill", async
         };
       }
       if (request.action === "refill_watering_can") {
-        // Still empty: water_before == water_after == 0, max 40.
+        // Deliberately contradictory receipt: the refill claims success but the
+        // evidence still shows the can empty (water_after=0, never reaching the
+        // max 40), so the runner's refill postcondition must fail closed.
         const revision = mock.advance({}).revision;
         return {
           requestId: request.requestId,
@@ -293,7 +295,7 @@ test("resource-depletion chain refuses a recovery that reports no refill", async
           state: "succeeded",
           reasonCode: "watering_can_refilled",
           revision,
-          evidence: { detail: REFILL_EVIDENCE.replace("water_before=0", "water_before=0").replace("water_after=40", "water_after=0") },
+          evidence: { detail: REFILL_EVIDENCE.replace("water_after=40", "water_after=0") },
         };
       }
       throw new Error(`unexpected_action:${request.action}`);
