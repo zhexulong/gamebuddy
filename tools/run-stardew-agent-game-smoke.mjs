@@ -50,7 +50,10 @@ try {
   const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
   if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0))
     throw new Error("invalid_client_config");
-  if (modelId !== "deepseek-v4-flash") throw new Error("invalid_agent_model");
+  // Any bounded model id is accepted: the model the harness runs is user input,
+  // and a shipped recommendation is never the upper bound of what may be chosen
+  // (design/28 §2.3.1). Only the bounded shape is checked.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(modelId)) throw new Error("invalid_agent_model");
   if ((knowledgeBundlePath === undefined) !== (gameVersion === undefined))
     throw new Error("knowledge_version_required");
   const knowledge =

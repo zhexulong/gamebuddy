@@ -142,24 +142,40 @@ if (fs.existsSync(orphan)) {
   console.log("[recover] orphaned backup preserved as:", path.basename(aside));
 }
 
-execFileSync(
-  "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-  ["-NoProfile", "-File", path.join(repo, "tools", "prepare-stardew-action-fixture.ps1"), "-FixtureRoot", fixtureRoot, "-TemplateName", templateName, "-SaveName", saveName],
-  { cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
-);
-console.log("working save restored from the native template");
-
-run([
-  "tools/prepare-stardew-native-local-player-fixture.mjs",
-  "--root", fixtureRoot,
-  "--mods-path", modsPath,
-  "--release-dir", releaseDir,
-  "--save-name", saveName,
-  "--backup-name", backupName,
-  "--binding-path", binding,
-  "--action", action,
-]);
-console.log(`fixture prepared (action=${action})`);
+// Preparing is racy on a shared root: another lane can start a session in the gap between the
+// free-fixture check and the file operation, and the fixture refuses to touch a running game. That
+// refusal is contention, not a failure, so it re-enters the wait instead of ending the run.
+const CONTENTION = /Refusing fixture file operation while Stardew|native_local_fixture_transaction_locked|SMAPI is running/;
+const prepareAttempt = (attempt) => {
+  execFileSync(
+    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+    ["-NoProfile", "-File", path.join(repo, "tools", "prepare-stardew-action-fixture.ps1"), "-FixtureRoot", fixtureRoot, "-TemplateName", templateName, "-SaveName", saveName],
+    { cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
+  );
+  run([
+    "tools/prepare-stardew-native-local-player-fixture.mjs",
+    "--root", fixtureRoot,
+    "--mods-path", modsPath,
+    "--release-dir", releaseDir,
+    "--save-name", saveName,
+    "--backup-name", backupName,
+    "--binding-path", binding,
+    "--action", action,
+  ]);
+  console.log(`fixture prepared (action=${action}, attempt ${attempt})`);
+};
+for (let attempt = 1; ; attempt += 1) {
+  try {
+    prepareAttempt(attempt);
+    break;
+  } catch (error) {
+    const message = String((error.stdout ?? "") + (error.stderr ?? "") + (error.message ?? ""));
+    if (attempt >= 6 || !CONTENTION.test(message)) throw error;
+    console.log(`[wait] prepare contention (attempt ${attempt}); re-entering the free-fixture wait`);
+    await sleep(30_000);
+    await waitForFreeFixture();
+  }
+}
 
 let exitCode = null;
 const myOwnerId = currentOwnerId();

@@ -288,8 +288,9 @@ async function bootstrap(origin, token) {
   });
   const body = await response.json();
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!response.ok || typeof cookie !== "string" || typeof body.csrfToken !== "string")
+  if (!response.ok || typeof cookie !== "string" || typeof body.csrfToken !== "string") {
     throw new Error(`bootstrap_failed:${response.status}`);
+  }
   return Object.freeze({ cookie, csrf: body.csrfToken });
 }
 
