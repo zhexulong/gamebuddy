@@ -15,6 +15,7 @@ import {
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
+import { hasUnrenderedMacro, renderWorldBookText } from "../tavern/macro-engine.js";
 import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
 import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
@@ -314,7 +315,20 @@ async function resolveBoundWorldBookSource(
     metadata.canonicalHash !== binding.canonicalHash
   )
     throw new Error("chat_runtime_exact_content_unavailable");
-  const constantEntries: readonly WorldBookEntry[] = book.entries.filter((entry) => entry.constant === true);
+  // The world book carries card macros; render them as authored content here so
+  // no `{{...}}` placeholder reaches the Chat catalog. `char` is not known on
+  // this path, so a `{{char}}`-bearing entry that extraction could not resolve is
+  // dropped rather than published.
+  const constantEntries: readonly WorldBookEntry[] = book.entries
+    .filter((entry) => entry.constant === true)
+    .map((entry) =>
+      Object.freeze({
+        ...entry,
+        title: renderWorldBookText(entry.title, { char: null }),
+        content: renderWorldBookText(entry.content, { char: null }),
+      }),
+    )
+    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
   // Keyword-gated entries must ALSO be handed over: `deriveVolatileWorldInfoSources` turns a native
   // book's `keywordEntries` into per-turn volatile selection candidates (catalog-service.ts:303-328).
   // Without them it returns an empty list (catalog-service.ts:327), so the companion never surfaces what
@@ -324,16 +338,19 @@ async function resolveBoundWorldBookSource(
     .map((entry) =>
       Object.freeze({
         entryId: entry.entryId,
-        title: entry.title,
-        content: entry.content,
+        title: renderWorldBookText(entry.title, { char: null }),
+        content: renderWorldBookText(entry.content, { char: null }),
         // The card's own trigger words ride along; without them the volatile selection can only ever match the
         // author-facing title, which a player does not say.
         ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
       }),
-    );
+    )
+    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
+  const alwaysOnPremise = renderWorldBookText(book.alwaysOnPremise, { char: null });
+  if (hasUnrenderedMacro(alwaysOnPremise)) throw new Error("chat_runtime_exact_content_unavailable");
   return Object.freeze({
     binding,
-    alwaysOnPremise: book.alwaysOnPremise,
+    alwaysOnPremise,
     ...(constantEntries.length > 0 ? { constantEntries } : {}),
     ...(keywordEntries.length > 0 ? { keywordEntries: Object.freeze(keywordEntries) } : {}),
   });

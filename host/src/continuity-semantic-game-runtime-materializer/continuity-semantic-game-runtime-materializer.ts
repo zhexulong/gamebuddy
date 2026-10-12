@@ -817,7 +817,9 @@ async function createMaterializedGameRuntime(
               canonicalHash: profileMetadata.canonicalHash,
             }),
           });
-          const catalog = buildGameSurfaceAuthoredCatalog(scope, assembledWorldBook);
+          const catalog = buildGameSurfaceAuthoredCatalog(scope, assembledWorldBook, {
+            char: runtime.profile.identity.name,
+          });
           const { publishGameBuddyAuthoredStableCatalog } = await import(
             "@cortexkit/pi-magic-context/tavern"
           );

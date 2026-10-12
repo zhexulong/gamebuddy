@@ -65,6 +65,51 @@ test("WorldBook catalog/query are bounded and current-world scoped", async () =>
   await assert.rejects(() => execute(query, {}), /worldbook_query_selector_required/);
 });
 
+test("WorldBook query renders macros and omits an entry that cannot be rendered", async () => {
+  // The failure this catches: the query tool used to return `entry.content`
+  // verbatim, so a `{{user}}`-bearing entry reached the model as a literal brace
+  // placeholder in a tool result.
+  const macroBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_macro",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: [
+      {
+        entryId: "macro",
+        title: "Pact",
+        content: "{{char}} and {{user}} farm together.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+      },
+      {
+        entryId: "broken",
+        title: "Broken",
+        content: "A {{unknown}} reference.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const [, query] = createWorldBookTools(
+    { metadata: worldBookMetadata(macroBook), book: macroBook },
+    undefined,
+    { char: "Kohaku" },
+  );
+  const execute = (tool: typeof query, params: unknown) => {
+    assert.ok(tool);
+    return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+  };
+  const rendered = await execute(query, { entryId: "macro" });
+  const renderedEntry = JSON.parse((rendered.content[0]! as { text: string }).text).entries[0] as { content: string };
+  assert.equal(renderedEntry.content, "Kohaku and the player farm together.");
+  assert.doesNotMatch(renderedEntry.content, /\{\{/u);
+  const omitted = await execute(query, { entryId: "broken" });
+  assert.deepEqual(JSON.parse((omitted.content[0]! as { text: string }).text).entries, []);
+});
+
 test("WorldBook rejects scope drift and duplicate entries", () => {
   assert.throws(() => validateWorldBook({ ...book, entries: [...book.entries, book.entries[0]] }), /invalid_worldbook/);
   assert.throws(

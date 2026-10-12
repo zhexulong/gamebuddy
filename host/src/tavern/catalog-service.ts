@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson, type TavernArtifactStore } from "./artifact-store.js";
+import { hasUnrenderedMacro, renderWorldBookText } from "./macro-engine.js";
 import type {
   ChatThread,
   TavernStableManagedWorldInfoBinding,
@@ -408,17 +409,23 @@ function hash(value: string): string {
 export function buildGameSurfaceAuthoredCatalog(
   binding: TavernStableContextBinding,
   worldBook: WorldBookBinding,
+  macros: Readonly<{ char: string | null }> = { char: null },
 ): TavernAuthoredContextCatalog {
   if (binding.surface !== "game") throw new Error("game_authored_context_surface_mismatch");
-  const constantEntries = worldBook.book.entries.filter((entry) => entry.constant === true);
+  const constantEntries = worldBook.book.entries
+    .filter((entry) => entry.constant === true)
+    .map((entry) => ({
+      entryId: entry.entryId,
+      title: renderWorldBookText(entry.title, macros),
+      content: renderWorldBookText(entry.content, macros),
+    }))
+    // An entry the macro set cannot fully render is dropped instead of shipped
+    // with a raw `{{...}}` placeholder as the companion's authored context.
+    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
   const content = canonicalJson({
     worldBookId: worldBook.book.worldBookId,
-    alwaysOnPremise: worldBook.book.alwaysOnPremise,
-    entries: constantEntries.map((entry) => ({
-      entryId: entry.entryId,
-      title: entry.title,
-      content: entry.content,
-    })),
+    alwaysOnPremise: renderWorldBookText(worldBook.book.alwaysOnPremise, macros),
+    entries: constantEntries,
   });
   const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [
     source(
@@ -433,6 +440,12 @@ export function buildGameSurfaceAuthoredCatalog(
   ];
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("game_stable_context_oversize");
+  // Rendering upstream is not enough discipline for this invariant: a hand-placed
+  // or hand-edited worldbook reaches this function unchanged, and an unresolved
+  // macro must never be published as the companion's authored context.
+  for (const item of sources) {
+    if (hasUnrenderedMacro(item.content)) throw new Error("game_authored_context_unrendered_macro");
+  }
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { hasUnrenderedMacro, renderWorldBookText } from "./tavern/macro-engine.js";
 
 const WORLDBOOK_SCHEMA_VERSION = 1 as const;
 const MAX_ENTRIES = 128;
@@ -109,7 +110,11 @@ export async function writeWorldBook(path: string, value: WorldBook): Promise<vo
  *  entries) now lives in the Tier 2 m[0] `lorebook_constant` source — the tools
  *  must NOT echo it back, or the same background would ride in context twice.
  *  They list/serve only the keyword-gated, queryable entries. */
-export function createWorldBookTools(binding: WorldBookBinding, activeScope?: WorldBookQueryScope): ToolDefinition[] {
+export function createWorldBookTools(
+  binding: WorldBookBinding,
+  activeScope?: WorldBookQueryScope,
+  macros: Readonly<{ char: string | null }> = { char: null },
+): ToolDefinition[] {
   const catalog = defineTool({
     name: "companion_worldbook_catalog",
     label: "WorldBook Catalog",
@@ -118,7 +123,7 @@ export function createWorldBookTools(binding: WorldBookBinding, activeScope?: Wo
     parameters: Type.Object({ topic: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
     execute: async (_toolCallId, params) => {
       const topic = typeof params.topic === "string" ? normalizeQuery(params.topic) : "";
-      const entries = visibleEntries(binding.book, activeScope)
+      const entries = authoredEntries(binding.book, activeScope, macros)
         .filter((entry) => entry.constant !== true)
         .filter((entry) => topic === "" || haystack(entry).includes(topic))
         .map((entry) => ({
@@ -143,7 +148,7 @@ export function createWorldBookTools(binding: WorldBookBinding, activeScope?: Wo
     execute: async (_toolCallId, params) => {
       if ((params.entryId === undefined) === (params.topic === undefined))
         throw new Error("worldbook_query_selector_required");
-      const entries = visibleEntries(binding.book, activeScope)
+      const entries = authoredEntries(binding.book, activeScope, macros)
         .filter((entry) =>
           params.entryId === undefined
             ? haystack(entry).includes(normalizeQuery(params.topic!))
@@ -172,6 +177,27 @@ function visibleEntries(book: WorldBook, scope?: WorldBookQueryScope): readonly 
         entry.integrationId === scope.integrationId &&
         (entry.scope === "integration" || (entry.saveId === scope.saveId && entry.worldId === scope.worldId))),
   );
+}
+
+/**
+ * The visible entries with their macros rendered as authored content. An entry
+ * the macro set cannot fully render is omitted: a tool result must never carry a
+ * raw `{{...}}` placeholder the companion would read literally.
+ */
+function authoredEntries(
+  book: WorldBook,
+  scope: WorldBookQueryScope | undefined,
+  macros: Readonly<{ char: string | null }>,
+): readonly WorldBookEntry[] {
+  return visibleEntries(book, scope)
+    .map((entry) =>
+      Object.freeze({
+        ...entry,
+        title: renderWorldBookText(entry.title, macros),
+        content: renderWorldBookText(entry.content, macros),
+      }),
+    )
+    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
 }
 function validateEntry(value: unknown): WorldBookEntry {
   if (

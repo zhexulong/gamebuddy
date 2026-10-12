@@ -378,6 +378,7 @@ test("Chat construction materializes the companion's own world book (always-on c
   const { existsSync } = await import("node:fs");
   const { resolve: resolvePath } = await import("node:path");
   const { readWorldBook } = await import("../worldbook.js");
+  const { renderWorldBookText } = await import("../tavern/macro-engine.js");
   let repoRoot: string | undefined;
   for (const candidate of [process.cwd(), resolvePath(process.cwd(), ".."), resolvePath(process.cwd(), "..", "..")]) {
     if (existsSync(resolvePath(candidate, "assets/tavern/presets/default-companion/worldbook.json"))) {
@@ -405,8 +406,9 @@ test("Chat construction materializes the companion's own world book (always-on c
     // `resolveBoundWorldBookSource` runs.
     const catalog = await prepared.materializeDesiredStableContextForPiSession("pi_session_own_book");
     const materialized = catalog.stableSources.map((source) => source.content).join("\n");
+    assert.doesNotMatch(materialized, /\{\{/u, "the book's macros are rendered into the materialization");
     assert.equal(
-      materialized.includes(constantEntry.content.slice(0, 12)),
+      materialized.includes(renderWorldBookText(constantEntry.content, { char: null }).slice(0, 12)),
       true,
       "control: the book's always-on entry reaches the materialization",
     );

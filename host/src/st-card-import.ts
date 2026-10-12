@@ -1,6 +1,6 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
-import { renderMacros } from "./tavern/macro-engine.js";
+import { hasUnrenderedMacro, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { WorldBookEntry } from "./worldbook.js";
 
@@ -216,7 +216,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           interactionStyle: personality ?? "Respect the player's agency and do not invent shared experiences.",
           expressionStyle: "Use natural player-facing language; do not use system or tool language.",
         });
-  const worldBookCandidates = extractCharacterBook(data.character_book, format);
+  const worldBookCandidates = extractCharacterBook(data.character_book, format, name);
   const unsupportedFields = Object.keys(data).filter(isUnsupported).sort();
   // Product policy: limits only prevent physical blowup, never the player's
   // choices. Description text loads losslessly. A soft hint (not a gate) is
@@ -395,7 +395,7 @@ function playableKeys(value: unknown): readonly string[] {
   );
 }
 
-function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldBookEntry[] {
+function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3", charName: string): WorldBookEntry[] {
   if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
     return [];
   const entries = Array.isArray(value.entries)
@@ -408,15 +408,24 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldB
     if (!isRecord(raw)) return [];
     const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
     if (content === undefined) return [];
-    const title =
+    // Card macros are part of the format, so the entry is rendered into authored
+    // content here - the same rendering `candidateToIdentityProfile` applies to
+    // the persona and examples. An entry the macro set cannot fully render is
+    // dropped rather than written into the companion's worldbook with a raw
+    // `{{...}}` placeholder.
+    const renderedContent = renderWorldBookText(content, { char: charName });
+    if (hasUnrenderedMacro(renderedContent)) return [];
+    const title = renderWorldBookText(
       boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
-      boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
-      `Imported background ${index + 1}`;
+        boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
+        `Imported background ${index + 1}`,
+      { char: charName },
+    );
     return [
       Object.freeze({
         entryId: `st-${format}-${index + 1}`,
         title,
-        content,
+        content: renderedContent,
         scope: "setting" as const,
         provenance: "st-card-import" as const,
         tokenBudget: "small" as const,

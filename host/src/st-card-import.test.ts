@@ -143,6 +143,31 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
   assert.match(prompt, /Macro Rae keeps a small amethyst/);
 });
 
+test("imported character-book entries are macro-rendered and an unrenderable entry is dropped", () => {
+  // The failure this catches: the worldbook candidate used to keep the card's
+  // raw `{{user}}`/`{{char}}` tokens, so the companion's own context and the
+  // worldbook tools read a literal brace placeholder instead of a name.
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Macro Rae",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Farm pact", content: "{{char}} and {{user}} share the farm.", constant: true },
+          { comment: "Broken", content: "This references {{unknown_macro}}.", constant: true },
+        ],
+      },
+    },
+  });
+  assert.equal(preview.worldBookCandidates.length, 1);
+  const entry = preview.worldBookCandidates[0]!;
+  assert.equal(entry.title, "Farm pact");
+  assert.equal(entry.content, "Macro Rae and the player share the farm.");
+  assert.doesNotMatch(entry.content, /\{\{/u);
+  assert.doesNotMatch(entry.title, /\{\{/u);
+});
+
 test("safe decoder classifies accepted, opaque, and executable card fields without interpreting them", () => {
   const report = decodeStCard(
     JSON.stringify({

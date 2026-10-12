@@ -1112,7 +1112,7 @@ export async function createRuntimeWithFixedToolsCore(
   const worldBookTools =
     worldBook === undefined
       ? []
-      : createWorldBookTools(worldBook, worldBookScope ?? undefined);
+      : createWorldBookTools(worldBook, worldBookScope ?? undefined, { char: profile.identity.name });
   const gameplaySubagent = gameplaySubagentEnabled && runtimeSurface === "game"
     ? integration !== undefined && modelConfig !== undefined
       ? new GameplayTaskSubagent(

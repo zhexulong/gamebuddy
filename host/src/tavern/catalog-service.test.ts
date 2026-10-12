@@ -248,8 +248,8 @@ test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBo
   assert.equal(source?.revision, "3");
   // always-on premise renders, the constant entry renders, keyword-gated entry does not.
   assert.match(source?.content ?? "", /player-reviewed companion backdrop/);
-  assert.match(source?.content ?? "", /不懂艺术的肥鱼/);
-  assert.doesNotMatch(source?.content ?? "", /喜欢帅哥/);
+  assert.match(source?.content ?? "", /琥珀与玩家是共同开拓农场的青梅竹马合伙人。/);
+  assert.doesNotMatch(source?.content ?? "", /雨天喜欢在门廊煮热茶看雨。/);
   assert.deepEqual(catalog.volatileSources, []);
   // Canonical hash is deterministic: same input -> same catalog.
   const again = buildGameSurfaceAuthoredCatalog(
@@ -289,6 +289,76 @@ test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {
         binding,
       ),
     /game_authored_context_surface_mismatch/,
+  );
+});
+
+test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrenderable entry and refuses a poisoned premise", () => {
+  // The failure the rendering half catches: the preset worldbook ships
+  // `{{user}}`, and publishing it raw put a literal brace placeholder in the
+  // companion's m[0] authored context. The failure the assertion catches: a
+  // hand-placed book reaches this function unchanged, so rendering upstream is
+  // not enough to keep a placeholder out of a published source.
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "macro-worldbook",
+    revision: 1,
+    alwaysOnPremise: "{{user}} arrives at the valley.",
+    entries: [
+      {
+        entryId: "kohaku-pact",
+        title: "Farm pact",
+        content: "{{char}} and {{user}} share the farm.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "kohaku-broken",
+        title: "Broken",
+        content: "A {{unknown_macro}} reference.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+    ],
+  });
+  const catalog = buildGameSurfaceAuthoredCatalog(
+    scope,
+    { metadata: worldBookMetadata(worldBook), book: worldBook },
+    { char: "Kohaku" },
+  );
+  const content = catalog.stableSources[0]?.content ?? "";
+  assert.match(content, /the player arrives at the valley\./);
+  assert.match(content, /Kohaku and the player share the farm\./);
+  // The entry the macro set cannot fully render is dropped, not published.
+  assert.doesNotMatch(content, /unknown_macro/);
+  assert.doesNotMatch(content, /\{\{/u);
+
+  // Plant an unresolved macro in the premise: the published-source assertion fails.
+  const poisoned = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "macro-worldbook",
+    revision: 1,
+    alwaysOnPremise: "A {{unrendered}} premise.",
+    entries: [],
+  });
+  assert.throws(
+    () =>
+      buildGameSurfaceAuthoredCatalog(
+        scope,
+        { metadata: worldBookMetadata(poisoned), book: poisoned },
+        { char: "Kohaku" },
+      ),
+    /game_authored_context_unrendered_macro/,
   );
 });test("native WorldBookBinding materializes constant entries into lorebook_constant and keyword entries as volatile", async () => {
   const root = await canonicalTestRoot("gamebuddy-native-catalog-");
