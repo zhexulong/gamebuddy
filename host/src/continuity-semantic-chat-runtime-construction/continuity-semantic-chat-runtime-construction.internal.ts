@@ -15,7 +15,7 @@ import {
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
-import { hasUnrenderedMacro, renderWorldBookText } from "../tavern/macro-engine.js";
+import { hasUnrenderedMacro, macroTable, renderMacros, type MacroTable } from "../tavern/macro-engine.js";
 import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
 import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
@@ -119,6 +119,11 @@ async function buildExactChatRuntimeConstruction(
     selectedThread.profileCanonicalHash !== profileMetadata.canonicalHash
   )
     throw new Error("chat_runtime_exact_content_unavailable");
+  // The companion's language is the player's choice, held in the one preference
+  // the management surface writes; the runtime reads it at mount instead of
+  // carrying a locale of its own. It is read once here because the authored
+  // context it renders (the world book's macros) is constructed with this mount.
+  const presentationLocale = await resolveCompanionLocale(paths.root);
   const materializeContextForPiSession = async (
     piSessionId: string,
     mode: "mounted" | "desired",
@@ -134,7 +139,8 @@ async function buildExactChatRuntimeConstruction(
         freshState.thread.lifecycleStatus !== "active"
       )
         throw new Error("chat_runtime_exact_content_unavailable");
-      const freshProfileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE));
+      const freshProfile = await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
+      const freshProfileMetadata = identityProfileMetadata(freshProfile);
       if (
         freshState.thread.profileId !== freshProfileMetadata.profileId ||
         freshState.thread.profileRevision !== freshProfileMetadata.revision ||
@@ -173,7 +179,10 @@ async function buildExactChatRuntimeConstruction(
           ? undefined
           : "source" in effectiveBinding
             ? await managedWorldInfoResolver.resolve(effectiveBinding)
-            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd),
+            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd, {
+                companionName: freshProfile.identity.name,
+                locale: presentationLocale,
+              }),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");
@@ -185,10 +194,6 @@ async function buildExactChatRuntimeConstruction(
     materializeContextForPiSession(piSessionId, "desired");
 
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
-  // The companion's language is the player's choice, held in the one preference
-  // the management surface writes; the runtime reads it at mount instead of
-  // carrying a locale of its own.
-  const presentationLocale = await resolveCompanionLocale(paths.root);
   // The player's connection selection is the authority for the chat surface's
   // provider/model/thinking level. With no active connection the frozen chat
   // model profile is used unchanged, so a root without player connections keeps
@@ -301,6 +306,7 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
   runtimeCwd: string,
+  identity: Readonly<{ companionName: string; locale: string }>,
 ): Promise<import("../tavern/catalog-service.js").TavernWorldInfoSource> {
   let book;
   try {
@@ -316,37 +322,41 @@ async function resolveBoundWorldBookSource(
   )
     throw new Error("chat_runtime_exact_content_unavailable");
   // The world book carries card macros; render them as authored content here so
-  // no `{{...}}` placeholder reaches the Chat catalog. `char` is not known on
-  // this path, so a `{{char}}`-bearing entry that extraction could not resolve is
-  // dropped rather than published.
+  // no `{{...}}` placeholder reaches the Chat catalog. `{{char}}` is the
+  // companion's own name - read from the identity profile construction has
+  // already verified against this thread's binding, the same authority the Game
+  // surface renders its own book with - and `{{user}}` follows the player's
+  // language. An entry the table still cannot fully render is omitted from the
+  // companion's context, but never silently: see renderWorldBookEntry.
+  const macros = macroTable({ char: identity.companionName, locale: identity.locale });
   const constantEntries: readonly WorldBookEntry[] = book.entries
     .filter((entry) => entry.constant === true)
-    .map((entry) =>
-      Object.freeze({
-        ...entry,
-        title: renderWorldBookText(entry.title, { char: null }),
-        content: renderWorldBookText(entry.content, { char: null }),
-      }),
-    )
-    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
+    .flatMap((entry) => {
+      const rendered = renderWorldBookEntry(entry, macros);
+      return rendered === undefined ? [] : [Object.freeze({ ...entry, ...rendered })];
+    });
   // Keyword-gated entries must ALSO be handed over: `deriveVolatileWorldInfoSources` turns a native
   // book's `keywordEntries` into per-turn volatile selection candidates (catalog-service.ts:303-328).
   // Without them it returns an empty list (catalog-service.ts:327), so the companion never surfaces what
-  // its own card says — silently, with no error anywhere.
+  // its own card says - silently, with no error anywhere.
   const keywordEntries = book.entries
     .filter((entry) => entry.constant !== true)
-    .map((entry) =>
-      Object.freeze({
-        entryId: entry.entryId,
-        title: renderWorldBookText(entry.title, { char: null }),
-        content: renderWorldBookText(entry.content, { char: null }),
-        // The card's own trigger words ride along; without them the volatile selection can only ever match the
-        // author-facing title, which a player does not say.
-        ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
-      }),
-    )
-    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
-  const alwaysOnPremise = renderWorldBookText(book.alwaysOnPremise, { char: null });
+    .flatMap((entry) => {
+      const rendered = renderWorldBookEntry(entry, macros);
+      return rendered === undefined
+        ? []
+        : [
+            Object.freeze({
+              entryId: entry.entryId,
+              title: rendered.title,
+              content: rendered.content,
+              // The card's own trigger words ride along; without them the volatile selection can only ever match the
+              // author-facing title, which a player does not say.
+              ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
+            }),
+          ];
+    });
+  const alwaysOnPremise = renderMacros(book.alwaysOnPremise, macros);
   if (hasUnrenderedMacro(alwaysOnPremise)) throw new Error("chat_runtime_exact_content_unavailable");
   return Object.freeze({
     binding,
@@ -354,4 +364,29 @@ async function resolveBoundWorldBookSource(
     ...(constantEntries.length > 0 ? { constantEntries } : {}),
     ...(keywordEntries.length > 0 ? { keywordEntries: Object.freeze(keywordEntries) } : {}),
   });
+}
+
+/**
+ * Renders one world book entry through the run's macro table.
+ *
+ * An entry the table cannot fully render is omitted - a raw `{{...}}`
+ * placeholder must never reach the companion's context or a tool result - but it
+ * is not dropped in silence. A lorebook entry that disappears without a word is
+ * a loss nobody notices until the companion contradicts her own background, so
+ * the omission is named on stderr (the composed child's log): bounded,
+ * non-fatal, and visible in exactly the place the construction's other gaps are
+ * reported.
+ */
+function renderWorldBookEntry(
+  entry: WorldBookEntry,
+  macros: MacroTable,
+): Readonly<{ title: string; content: string }> | undefined {
+  const title = renderMacros(entry.title, macros);
+  const content = renderMacros(entry.content, macros);
+  if (!hasUnrenderedMacro(title) && !hasUnrenderedMacro(content)) return Object.freeze({ title, content });
+  const named = entry.title.length > 80 ? `${entry.title.slice(0, 80)}…` : entry.title;
+  process.stderr.write(
+    `[worldbook] omitting world book entry ${entry.entryId} (${named}): it carries a macro the companion's context cannot resolve\n`,
+  );
+  return undefined;
 }

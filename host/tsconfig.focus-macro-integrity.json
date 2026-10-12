@@ -9,6 +9,7 @@
   "files": [
     "src/st-card-import.test.ts",
     "src/tavern/macro-engine.test.ts",
-    "src/tavern/default-companion-preset.test.ts"
+    "src/tavern/default-companion-preset.test.ts",
+    "src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.test.ts"
   ]
 }

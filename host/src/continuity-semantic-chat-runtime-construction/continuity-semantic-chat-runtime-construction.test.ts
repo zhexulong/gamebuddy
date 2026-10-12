@@ -28,6 +28,7 @@ import {
   resolveCompanionLocale,
 } from "../settings/player-preference-store.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
+import { validateWorldBook, writeWorldBook } from "../worldbook.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -408,7 +409,12 @@ test("Chat construction materializes the companion's own world book (always-on c
     const materialized = catalog.stableSources.map((source) => source.content).join("\n");
     assert.doesNotMatch(materialized, /\{\{/u, "the book's macros are rendered into the materialization");
     assert.equal(
-      materialized.includes(renderWorldBookText(constantEntry.content, { char: null }).slice(0, 12)),
+      materialized.includes(
+        renderWorldBookText(constantEntry.content, {
+          char: DEFAULT_IDENTITY_PROFILE.identity.name,
+          locale: "zh-CN",
+        }).slice(0, 12),
+      ),
       true,
       "control: the book's always-on entry reaches the materialization",
     );
@@ -422,6 +428,85 @@ test("Chat construction materializes the companion's own world book (always-on c
       "a keyword-gated fact from the companion's own world book must become a volatile per-turn candidate",
     );
   } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+// The failures this catches, both halves of one defect. The Chat assembly rendered the
+// book with `{ char: null }`, so an entry whose prose names the companion by {{char}}
+// stayed unresolved, `hasUnrenderedMacro` classified it illegal, and it was filtered
+// out - the entry never reached the model and nothing anywhere said so. The name is
+// available on that path: the identity profile construction already verified against
+// the thread binding, the same authority the Game surface renders its own book with.
+test("a {{char}} entry reaches the materialization, and an entry nothing can render is reported instead of vanishing", async () => {
+  const { join: joinPath } = await import("node:path");
+  const bookRoot = await canonicalTestRoot("chat-runtime-worldbook-macros-");
+  const bookPath = joinPath(bookRoot, "worldbook.json");
+  await writeWorldBook(
+    bookPath,
+    validateWorldBook({
+      schemaVersion: 1,
+      worldBookId: "worldbook_macro",
+      revision: 1,
+      alwaysOnPremise: "农场的清晨。",
+      entries: [
+        {
+          entryId: "wb-char",
+          title: "{{char}}的农场誓约",
+          content: "{{char}}与{{user}}共享农场。",
+          scope: "setting",
+          provenance: "authored",
+          tokenBudget: "small",
+          constant: true,
+        },
+        {
+          entryId: "wb-unknown",
+          title: "Unknown",
+          content: "这行引用了{{not_a_macro}}。",
+          scope: "setting",
+          provenance: "authored",
+          tokenBudget: "small",
+          constant: true,
+        },
+      ],
+    }),
+  );
+  const value = await fixture({ ownWorldBookPath: bookPath });
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  const stderrWrite = process.stderr.write;
+  let diagnostics = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const catalog = await prepared.materializeDesiredStableContextForPiSession("pi_session_macro_book");
+    const materialized = catalog.stableSources.map((source) => source.content).join("\n");
+    const companionName = DEFAULT_IDENTITY_PROFILE.identity.name;
+    assert.equal(
+      materialized.includes(`${companionName}的农场誓约`),
+      true,
+      "the companion's own name resolves {{char}} in the entry's title",
+    );
+    assert.equal(
+      materialized.includes(`${companionName}与玩家共享农场。`),
+      true,
+      "and in its body, beside the player reference the run's language gives",
+    );
+    assert.doesNotMatch(materialized, /\{\{/u, "no raw macro reaches the companion's context");
+    assert.doesNotMatch(materialized, /not_a_macro/u, "an entry the table cannot render is omitted");
+    // A silently missing lorebook entry is a loss nobody notices until the companion
+    // contradicts her own background, so the omission is named where it can be seen.
+    assert.match(diagnostics, /omitting world book entry wb-unknown/u, "the omission is reported");
+    assert.match(diagnostics, /Unknown/u, "the report names the entry");
+  } finally {
+    process.stderr.write = stderrWrite;
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
   }
