@@ -4076,6 +4076,26 @@ body {
   outline: 1px solid var(--border-strong);
 }
 
+/* ==========================================================================
+   A button beside a full-width field keeps its label on one line
+   (conversation-rendering lane block)
+
+   A panel row pairs a `width: 100%` field with one `.small-button` (创建伙伴,
+   创建). The field's 100% basis leaves the button as the row's only shrinkable
+   item, so the button was squeezed below its label's width and the CJK label
+   wrapped: 创建伙伴 broke in two and 创建 stacked its two characters inside a
+   44px box. The shared button never wraps and never shrinks; the field gives up
+   the width instead, which is what `width: 100%` already lets it do.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.small-button,
+.primary-button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 } /* end @layer theme.polish */
 
 

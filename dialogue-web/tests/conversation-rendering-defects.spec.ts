@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * The conversation-rendering defects, each asserted through a value the browser
@@ -8,6 +8,15 @@ import { expect, test, type Page } from "@playwright/test";
  *      carried `flex-direction: row-reverse` while the avatar was the *last* DOM
  *      child, so the bubble hugged the right edge and the avatar floated
  *      inboard. A player's avatar belongs on the outer (right) boundary.
+ *   2. The player's own line was printed twice: the monogram read 你 and the
+ *      author line above the bubble read 你 again, so input read as "[你] 你: 你好".
+ *   3. The surface heading's scripted focus was painted in the saturated accent,
+ *      so every static one-word heading read as an unclicked pink badge.
+ *   4. The first screen stacked four titles - the app bar's mark and companion,
+ *      the surface heading, the transcript's untitled placeholder - and printed
+ *      the companion's name a third time in the zero state's plate.
+ *   5. A button beside a `width: 100%` field was squeezed until its label
+ *      wrapped: 创建伙伴 broke in two and 创建 stacked its two characters.
  */
 
 const token = "A".repeat(43);
@@ -363,4 +372,73 @@ test("defect 4: a published title is what the transcript heading shows", async (
   );
   console.log(`[defect-4] published title: ${JSON.stringify(titled)}`);
   expect(titled, "a published title is what the transcript heading shows").toBe("Gate Chat");
+});
+
+// --- defect 5 ----------------------------------------------------------------
+
+/** The number of line boxes a control's own text occupies. */
+async function textLineCount(locator: Locator): Promise<number> {
+  return locator.evaluate((node) => {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    const tops = new Set<number>();
+    let textNode = walker.nextNode();
+    while (textNode !== null) {
+      if ((textNode.textContent ?? "").trim().length > 0) {
+        range.selectNodeContents(textNode);
+        for (const rect of range.getClientRects()) tops.add(Math.round(rect.top));
+      }
+      textNode = walker.nextNode();
+    }
+    return tops.size;
+  });
+}
+
+async function openSurface(page: Page, label: string, testId: string): Promise<void> {
+  const entry = page.getByRole("button", { name: label, exact: true });
+  if (!(await page.getByTestId(testId).isVisible())) {
+    if (!(await entry.isVisible())) await page.getByRole("button", { name: "更多", exact: true }).click();
+    await entry.click();
+  }
+  await expect(page.getByTestId(testId)).toBeVisible();
+}
+
+test("defect 5: a button beside a full-width field keeps its label on one line", async ({ page }) => {
+  await mountShell(page);
+
+  const read = (locator: Locator) =>
+    locator.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        text: (node.textContent ?? "").trim(),
+        whiteSpace: style.whiteSpace,
+        flexShrink: style.flexShrink,
+        height: Math.round(node.getBoundingClientRect().height),
+        width: Math.round(node.getBoundingClientRect().width),
+      };
+    });
+
+  await openSurface(page, "角色", "characters-surface");
+  const createCompanion = page.getByTestId("characters-surface").getByRole("button", { name: "创建伙伴", exact: true });
+  await expect(createCompanion).toBeVisible();
+  const characters = await read(createCompanion);
+  const charactersLines = await textLineCount(createCompanion);
+  console.log(`[defect-5] characters: lines=${charactersLines} ${JSON.stringify(characters)}`);
+
+  await openSurface(page, "记忆", "memory-surface");
+  await page.getByTestId("memory-surface").locator("[data-memory-authoring-toggle]").click();
+  const createMemory = page.getByTestId("memory-surface").getByRole("button", { name: "创建", exact: true });
+  await expect(createMemory).toBeVisible();
+  const memory = await read(createMemory);
+  const memoryLines = await textLineCount(createMemory);
+  console.log(`[defect-5] memory: lines=${memoryLines} ${JSON.stringify(memory)}`);
+
+  expect(charactersLines, "创建伙伴 stays on one line").toBe(1);
+  expect(memoryLines, "创建 stays on one line").toBe(1);
+  expect(characters.whiteSpace, "a shared button never wraps its label").toBe("nowrap");
+  expect(memory.whiteSpace, "a shared button never wraps its label").toBe("nowrap");
+  expect(characters.flexShrink, "a shared button is not squeezed by the field").toBe("0");
+  expect(memory.flexShrink, "a shared button is not squeezed by the field").toBe("0");
+  expect(characters.height, "the label fits inside the 44px floor").toBe(44);
+  expect(memory.height, "the label fits inside the 44px floor").toBe(44);
 });
