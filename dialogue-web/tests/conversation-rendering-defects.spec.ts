@@ -242,3 +242,52 @@ test("defect 2: the player's own line is not repeated above the bubble", async (
     `the player's bubble starts at the top of its body (bubble ${measured.player.bubbleTop}, body ${measured.player.bodyTop})`,
   ).toBe(measured.player.bodyTop);
 });
+
+// --- defect 3 ----------------------------------------------------------------
+
+test("defect 3: the surface heading's scripted focus is a colourless hairline, not the accent badge", async ({ page }) => {
+  await mountShell(page);
+
+  const focused = await page.evaluate(() => {
+    const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
+    const style = getComputedStyle(heading);
+    return {
+      text: (heading.textContent ?? "").trim(),
+      isActive: document.activeElement === heading,
+      focusVisible: heading.matches(":focus-visible"),
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineColor: style.outlineColor,
+      borderRadius: style.borderRadius,
+    };
+  });
+  console.log(`[defect-3] mount: ${JSON.stringify(focused)}`);
+
+  expect(focused.isActive, "the heading takes focus on mount").toBe(true);
+  expect(focused.outlineStyle, "scripted focus still shows an indicator").not.toBe("none");
+  expect(focused.outlineWidth, "the indicator is a hairline, not a 2px badge border").toBe("1px");
+  expect(
+    focused.outlineColor,
+    `the scripted focus ring is ${focused.outlineColor}, the saturated accent; it must be a low-contrast hairline`,
+  ).not.toBe("rgb(200, 120, 125)");
+
+  // The keyboard floor: a control reached with the keyboard still paints the
+  // product's own focus ring, so the low-contrast heading did not delete focus
+  // visibility for the path that needs it.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("Tab");
+  const keyboardRing = await page.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    if (active === null) return null;
+    const style = getComputedStyle(active);
+    return {
+      tag: active.tagName,
+      className: active.className,
+      outlineColor: style.outlineColor,
+      outlineWidth: style.outlineWidth,
+    };
+  });
+  console.log(`[defect-3] keyboard: ${JSON.stringify(keyboardRing)}`);
+  expect(keyboardRing, "Tab lands on a control").not.toBeNull();
+  expect(keyboardRing!.outlineColor, "the keyboard focus ring is the product's own").toBe("rgb(214, 168, 91)");
+});

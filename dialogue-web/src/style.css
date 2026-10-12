@@ -4056,6 +4056,26 @@ body {
   }
 }
 
+/* ==========================================================================
+   The surface heading's focus indicator (conversation-rendering lane block)
+
+   `SurfaceView` focuses its heading whenever its surface is selected, so a
+   static one-word heading (游戏 / 角色 / 记忆) is focused for most of its life.
+   The ring this sheet drew for it is the accent at a 2px outline with a corner
+   radius, which reads as an unclicked pink badge - a control the player is
+   invited to press. The heading is not a control, so its indicator is a
+   colourless hairline: still drawn, still visible, and no longer competing with
+   the accent the surface's own icon already owns. The keyboard path keeps the
+   product's ring: every control reached with the keyboard draws `--focus-ring`
+   through the sheet's own `:focus-visible` rule above.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.surface-header h2:focus-visible {
+  outline: 1px solid var(--border-strong);
+}
+
 } /* end @layer theme.polish */
 
 
