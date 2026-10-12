@@ -841,21 +841,24 @@ test("gate 6c: a slow surface read shows a loading affordance, not a blank regio
  * something.
  *
  * The failures this catches: a zero-message transcript that paints a bare
- * region - no companion, no line - and a conversation whose own heading reads as
- * the untitled placeholder, so the player cannot tell what they are looking at.
- * The zero state is the first screen a new player sees; "it is technically not
- * blank" is the bar it has to clear, not the target.
+ * region - no companion, no line - and a first screen that prints the
+ * catalogue's untitled placeholder as though it were the conversation's own
+ * title. The transcript's heading is the *published* title's own band, so an
+ * untitled conversation has none: the first screen is named by its surface
+ * heading and by the invitation that names the companion. The zero state is the
+ * first screen a new player sees; "it is technically not blank" is the bar it
+ * has to clear, not the target.
  */
-test("gate 7: a new conversation is titled for real and opens on a real empty state", async ({ page }) => {
+test("gate 7: a new conversation opens on a real empty state and prints no placeholder title", async ({ page }) => {
   await mountShell(page, { root: composedRoot({ transcript: [], title: null }) });
 
   const measured = await page.evaluate(() => {
     const anchor = document.querySelector<HTMLElement>("[data-empty-anchor]");
-    const heading = document.querySelector<HTMLElement>(".timeline-heading h1");
+    const band = document.querySelector<HTMLElement>(".timeline-heading");
     const timeline = document.querySelector<HTMLElement>(".timeline");
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]');
     return {
-      heading: (heading?.textContent ?? "").trim(),
+      titleBand: band === null ? null : (band.textContent ?? "").trim(),
       anchorText: (anchor?.innerText ?? "").trim(),
       anchorHeight: anchor === null ? 0 : anchor.getBoundingClientRect().height,
       timelineHeight: timeline === null ? 0 : timeline.getBoundingClientRect().height,
@@ -878,14 +881,14 @@ test("gate 7: a new conversation is titled for real and opens on a real empty st
     failures.push(
       `the zero state fills ${Math.round(measured.anchorHeight)}px of a ${Math.round(measured.timelineHeight)}px transcript`,
     );
-  if (["", "Untitled chat", "未命名聊天"].includes(measured.heading))
-    failures.push(`the conversation title is the untitled placeholder "${measured.heading}"`);
+  if (measured.titleBand !== null)
+    failures.push(`an untitled conversation prints a title band ("${measured.titleBand}")`);
 
   record(
     "gate-7",
-    `heading="${measured.heading}"; zero state ${Math.round(measured.anchorHeight)}/${Math.round(measured.timelineHeight)}px; ${failures.length} failure(s)`,
+    `title band=${JSON.stringify(measured.titleBand)}; zero state ${Math.round(measured.anchorHeight)}/${Math.round(measured.timelineHeight)}px; ${failures.length} failure(s)`,
   );
-  expect(failures, "a new conversation is titled for real and opens on a real zero state").toEqual([]);
+  expect(failures, "a new conversation opens on a real zero state, with no placeholder title").toEqual([]);
 });
 
 /**

@@ -238,9 +238,9 @@ test("the zero-message anchor appears only while the transcript is empty", async
 
   const anchor = page.locator("[data-empty-anchor]");
   await expect(anchor).toHaveCount(1);
-  // The companion's own name is on the plate and in the line: a generic
-  // "no messages" line is exactly the first screen this replaces.
-  await expect(anchor.locator(".empty-state-nameplate")).toHaveText("Mira");
+  // The zero state is one invitation that names the companion; the app bar
+  // above already carries the monogram and the name, so there is no second plate.
+  await expect(anchor.locator(".empty-state-nameplate")).toHaveCount(0);
   await expect(anchor.locator(".empty-state-opening")).toContainText("Mira");
 
   const drawn = await page.evaluate(() => {

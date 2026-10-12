@@ -21,7 +21,7 @@ const openedMessageHandle = "W".repeat(42) + "A";
 
 type Message = Readonly<{ role: "player" | "companion"; text: string; opening?: boolean }>;
 
-function composedRoot(options: Readonly<{ transcript?: readonly Message[] }> = {}) {
+function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title?: string | null }> = {}) {
   const transcript = options.transcript ?? [];
   return {
     apiVersion: 1,
@@ -41,7 +41,7 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[] }> = {
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
       chat: {
         companion: { name: "Mira" },
-        title: null,
+        title: options.title ?? null,
         transcript: transcript.map((message, index) => ({
           handle: message.role === "player" ? playerMessageHandle + String(index) : openedMessageHandle + String(index),
           role: message.role,
@@ -84,6 +84,11 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[] }> = {
 }
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+const OPENINGS = [
+  { label: "Default", text: "The lantern over the porch is still lit." },
+  { label: "Alternate 1", text: "Rain has been falling since dawn." },
+];
 
 type MountOptions = Readonly<{
   root?: unknown;
@@ -290,4 +295,72 @@ test("defect 3: the surface heading's scripted focus is a colourless hairline, n
   console.log(`[defect-3] keyboard: ${JSON.stringify(keyboardRing)}`);
   expect(keyboardRing, "Tab lands on a control").not.toBeNull();
   expect(keyboardRing!.outlineColor, "the keyboard focus ring is the product's own").toBe("rgb(214, 168, 91)");
+});
+
+// --- defect 4 ----------------------------------------------------------------
+
+test("defect 4: the first screen's title stack is collapsed and the void is guided", async ({ page }) => {
+  await mountShell(page, { root: composedRoot({ transcript: [] }), openings: OPENINGS });
+  // The card's record is read after the first paint; wait for the chips to land
+  // (or for the read to prove it offers none) before the screen is measured.
+  await page
+    .locator(".composer-chips-row")
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .catch(() => undefined);
+
+  const measured = await page.evaluate(() => {
+    const read = (selector: string) => {
+      const node = document.querySelector<HTMLElement>(selector);
+      if (node === null) return null;
+      const rect = node.getBoundingClientRect();
+      return { text: (node.textContent ?? "").trim(), top: Math.round(rect.top), height: Math.round(rect.height) };
+    };
+    const timeline = document.querySelector<HTMLElement>(".timeline");
+    const anchor = document.querySelector<HTMLElement>("[data-empty-anchor]");
+    return {
+      stack: {
+        appBarBrand: read(".app-bar-brand-name"),
+        appBarCompanion: read(".app-bar-title"),
+        surfaceHeading: read(".surface-header h2"),
+        titleBand: read(".timeline-heading"),
+        nameplate: read(".empty-state-nameplate"),
+        openingLine: read(".empty-state-opening"),
+      },
+      chips: document.querySelectorAll(".composer-chip").length,
+      timelineHeight: timeline === null ? 0 : Math.round(timeline.getBoundingClientRect().height),
+      anchorHeight: anchor === null ? 0 : Math.round(anchor.getBoundingClientRect().height),
+    };
+  });
+  console.log(`[defect-4] first screen: ${JSON.stringify(measured)}`);
+
+  // The two redundant layers are gone: no placeholder title band above the
+  // transcript, and no plate repeating the name the app bar already carries.
+  expect(measured.stack.titleBand, "an untitled conversation prints no title band").toBeNull();
+  expect(measured.stack.nameplate, "the companion's name is not printed a third time").toBeNull();
+  // The levels that survive: the app bar's brand + companion, the surface
+  // heading, and the zero state's invitation (which names the companion).
+  expect(measured.stack.appBarBrand?.text, "the app bar keeps the product mark").toBe("GameBuddy 酒馆");
+  expect(measured.stack.appBarCompanion?.text, "the app bar keeps the companion identity").toBe("Mira");
+  expect(measured.stack.surfaceHeading?.text, "the surface keeps its own heading").toBe("聊天");
+  expect(measured.stack.openingLine?.text, "the invitation names the companion").toContain("Mira");
+  // The void is guided: the card's own openings reach the first screen, and the
+  // zero state still fills the transcript.
+  expect(measured.chips, "a chip per opening the card carries").toBe(OPENINGS.length);
+  expect(measured.anchorHeight, "the zero state fills the transcript").toBeGreaterThanOrEqual(
+    measured.timelineHeight * 0.5,
+  );
+});
+
+/**
+ * The other half of the collapse: the band is not gone for good. A conversation
+ * the Host has titled shows that title where the placeholder used to sit, so the
+ * change removed a placeholder and not the transcript's own heading.
+ */
+test("defect 4: a published title is what the transcript heading shows", async ({ page }) => {
+  await mountShell(page, { root: composedRoot({ transcript: [], title: "Gate Chat" }) });
+  const titled = await page.evaluate(
+    () => document.querySelector<HTMLElement>(".timeline-heading h1")?.textContent?.trim() ?? null,
+  );
+  console.log(`[defect-4] published title: ${JSON.stringify(titled)}`);
+  expect(titled, "a published title is what the transcript heading shows").toBe("Gate Chat");
 });
