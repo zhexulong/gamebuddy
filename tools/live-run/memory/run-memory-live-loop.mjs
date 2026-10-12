@@ -300,7 +300,13 @@ async function deadlineFetch(url, init = {}) {
   }
 }
 
-async function bootstrap(origin, token) {
+async function bootstrap(origin, token, sessionEntry) {
+  // The surface that was mounted decides how a caller gets a session, and the acknowledgement publishes
+  // it. Guessing the management route is how a truthful 404 became a day-long investigation.
+  if (sessionEntry?.kind !== "http")
+    throw new Error(
+      `session_entry_unusable:${sessionEntry?.kind ?? "unpublished"}: the launched surface's session entry is not an HTTP token exchange`,
+    );
   const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
@@ -774,7 +780,7 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
-    const client = await bootstrap(origin, bootstrapToken);
+    const client = await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
     mark("bootstrapAuthMs");
     const result = await seedMemory(origin, client, seeds, supersedes);
     mark("seedWrittenMs");
@@ -881,7 +887,7 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
-    const client = await bootstrap(origin, bootstrapToken);
+    const client = await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
     const result = await run(origin, client);
     // Drain pending stderr appends BEFORE returning: the report branch closes the
     // capture right after, and a late stderr flush must not land after the

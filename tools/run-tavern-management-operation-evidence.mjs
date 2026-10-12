@@ -127,7 +127,13 @@ async function deadlineFetch(url, init = {}) {
   }
 }
 
-async function bootstrap(origin, token) {
+async function bootstrap(origin, token, sessionEntry) {
+  // The surface that was mounted decides how a caller gets a session, and the acknowledgement publishes
+  // it. Guessing the management route is how a truthful 404 became a day-long investigation.
+  if (sessionEntry?.kind !== "http")
+    throw new Error(
+      `session_entry_unusable:${sessionEntry?.kind ?? "unpublished"}: the launched surface's session entry is not an HTTP token exchange`,
+    );
   const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
@@ -1028,7 +1034,7 @@ export async function runManagementOperationEvidence({ outcomesPath, reportPath 
     const origin = `${url.protocol}//${url.host}`;
     const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
     if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
-    const client = await bootstrap(origin, bootstrapToken);
+    const client = await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
     const operations = await exerciseOperations(origin, client);
     // The WHOLE profile is derived from the composition source, never hand-written.
     // Writing `routeIds` by hand here while deriving `operationIds` from the shared

@@ -825,6 +825,27 @@ async function writeStatus(stage: string, waitingForPlayerInput?: string): Promi
   });
 }
 
+/**
+ * The session entry this surface actually offers, published in the acknowledgement.
+ *
+ * A launched surface has exactly one way in, and it is not the same way for every surface: a standalone
+ * management or chat-only mount exchanges its one-time token at its own HTTP route, while the composed
+ * reference game owns bootstrap/session/CSRF itself and hands the token out in a launch fragment, so an
+ * HTTP client that POSTs the shared route reaches a delegated mount that refuses it by design
+ * (`profile_operation_unavailable`). Publishing which of the two applies turns that refusal from a 404 a
+ * caller cannot explain into a fact it can read before it tries.
+ */
+function sessionEntryForSurface(surface: string | undefined): Readonly<Record<string, unknown>> {
+  if (surface === "composed-reference-game")
+    return Object.freeze({ kind: "browser", launchPath: "/", bootFragmentKey: "boot" });
+  return Object.freeze({
+    kind: "http",
+    method: "POST",
+    route: "/api/tavern/v1/bootstrap",
+    bodyKeys: Object.freeze(["apiVersion", "bootstrapToken"]),
+  });
+}
+
 async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<void> {
   const acknowledgement = Buffer.from(`${JSON.stringify({
     schema: bootstrapSchema,
@@ -835,6 +856,7 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
     inventoryDigest: frame.inventoryDigest,
     runtimeAdmissionSha256: frame.runtimeAdmissionSha256,
     rootLayoutSchema,
+    sessionEntry: sessionEntryForSurface(process.env.GAMEBUDDY_HOST_SURFACE),
   })}\n`, "utf8");
   if (acknowledgement.length > MAX_WIRE_BYTES) throw unavailable();
   await new Promise<void>((resolveWrite, rejectWrite) => {

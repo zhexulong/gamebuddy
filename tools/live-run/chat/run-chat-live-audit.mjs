@@ -878,7 +878,13 @@ function deadlineFetch(url, options = {}) {
   return fetch(url, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 }
 
-async function bootstrap(origin, token) {
+async function bootstrap(origin, token, sessionEntry) {
+  // The surface that was mounted decides how a caller gets a session, and the acknowledgement publishes
+  // it. Guessing the management route is how a truthful 404 became a day-long investigation.
+  if (sessionEntry?.kind !== "http")
+    throw new Error(
+      `session_entry_unusable:${sessionEntry?.kind ?? "unpublished"}: the launched surface's session entry is not an HTTP token exchange`,
+    );
   const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
@@ -1264,7 +1270,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const origin = `${url.protocol}//${url.host}`;
   const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
   if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
-  const client = await bootstrap(origin, bootstrapToken);
+  const client = await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
   environment.started = true;
   recorder.record("lifecycle", "harness", "run.started", { status: "ready" });
 

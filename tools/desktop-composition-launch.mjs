@@ -115,7 +115,17 @@ export function composeDesktopBootstrapFrame({ bootstrapId, generation, inventor
 
 export function validateBootstrapAcknowledgement(value, expected) {
   return (
-    exactKeysInOrder(value, ["schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema"]) &&
+    exactKeysInOrder(value, [
+      "schema",
+      "protocolVersion",
+      "status",
+      "bootstrapId",
+      "generation",
+      "inventoryDigest",
+      "runtimeAdmissionSha256",
+      "rootLayoutSchema",
+      "sessionEntry",
+    ]) &&
     value.schema === BOOTSTRAP_SCHEMA &&
     value.protocolVersion === 1 &&
     value.status === "accepted" &&
@@ -123,7 +133,26 @@ export function validateBootstrapAcknowledgement(value, expected) {
     value.generation === expected.generation &&
     value.inventoryDigest === expected.inventoryDigest &&
     value.runtimeAdmissionSha256 === expected.runtimeAdmissionSha256 &&
-    value.rootLayoutSchema === ROOT_LAYOUT_SCHEMA
+    value.rootLayoutSchema === ROOT_LAYOUT_SCHEMA &&
+    isSessionEntry(value.sessionEntry)
+  );
+}
+
+/**
+ * The session entry the Host published: either an HTTP token exchange the harness can perform, or a browser
+ * fragment it cannot. Callers must read this instead of assuming the management route; assuming it is how a
+ * 404 `profile_operation_unavailable` became a day-long mystery.
+ */
+function isSessionEntry(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (value.kind === "browser")
+    return typeof value.launchPath === "string" && typeof value.bootFragmentKey === "string";
+  return (
+    value.kind === "http" &&
+    value.method === "POST" &&
+    typeof value.route === "string" &&
+    Array.isArray(value.bodyKeys) &&
+    value.bodyKeys.every((key) => typeof key === "string")
   );
 }
 
