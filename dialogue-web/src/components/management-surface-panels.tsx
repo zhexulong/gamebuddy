@@ -475,8 +475,8 @@ export function ChatsSurfacePanel({
 
 function memoryViewOf(result: MemoryReadV1): MemoryView {
   return result.memories.length === 0
-    ? { kind: "empty", projectionRevision: result.projectionRevision }
-    : { kind: "ready", rows: result.memories, projectionRevision: result.projectionRevision };
+    ? { kind: "empty", projectionRevision: result.projectionRevision, chapters: result.chapters }
+    : { kind: "ready", rows: result.memories, projectionRevision: result.projectionRevision, chapters: result.chapters };
 }
 
 /**
@@ -540,7 +540,9 @@ export function MemorySurfacePanel({
     input:
       | Readonly<{ operation: "create"; content: string }>
       | Readonly<{ operation: "update"; handle: string; content: string }>
-      | Readonly<{ operation: "archive"; handle: string }>,
+      | Readonly<{ operation: "archive"; handle: string }>
+      | Readonly<{ operation: "update_chapter"; handle: string; content: string }>
+      | Readonly<{ operation: "delete_chapter"; handle: string }>,
   ): void => {
     const projectionRevision = view.kind === "ready" || view.kind === "empty" ? view.projectionRevision : null;
     if (projectionRevision === null) return;

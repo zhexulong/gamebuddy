@@ -195,7 +195,7 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
   await page.route(/\/api\/tavern\/v1\/chats(\?|$)/, delayed(slow.chats, { apiVersion: 1, chats: [] }));
   await page.route(
     "**/api/tavern/v1/memory",
-    delayed(slow.memory, { apiVersion: 1, projectionRevision, memories: [] }),
+    delayed(slow.memory, { apiVersion: 1, projectionRevision, memories: [], chapters: [] }),
   );
   await page.route("**/api/tavern/v1/world-info", delayed(undefined, { state: "none", revision: worldBookRevision, items: [] }));
   await page.route(

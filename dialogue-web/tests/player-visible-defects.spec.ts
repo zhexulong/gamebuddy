@@ -141,7 +141,7 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
     route.fulfill(jsonOk({ apiVersion: 1, status: "cancelled" })),
   );
   await page.route(/\/api\/tavern\/v1\/chats(\?|$)/, (route) => route.fulfill(jsonOk({ apiVersion: 1, chats: [] })));
-  await page.route("**/api/tavern/v1/memory", (route) => route.fulfill(jsonOk({ apiVersion: 1, projectionRevision, memories: [] })));
+  await page.route("**/api/tavern/v1/memory", (route) => route.fulfill(jsonOk({ apiVersion: 1, projectionRevision, memories: [], chapters: [] })));
   await page.route("**/api/tavern/v1/world-info", (route) => route.fulfill(jsonOk({ state: "none", revision: worldBookRevision, items: [] })));
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
     route.fulfill(jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null })),

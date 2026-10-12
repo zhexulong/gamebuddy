@@ -2059,7 +2059,7 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ apiVersion: 1, projectionRevision, memories }),
+        body: JSON.stringify({ apiVersion: 1, projectionRevision, memories, chapters: [] }),
       });
       return;
     }
@@ -2097,7 +2097,7 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ apiVersion: 1, projectionRevision: nextProjectionRevision, memories }),
+      body: JSON.stringify({ apiVersion: 1, projectionRevision: nextProjectionRevision, memories, chapters: [] }),
     });
   });
 
@@ -2185,7 +2185,7 @@ test("the Memory surface reads as the companion's notebook, with a real count an
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ apiVersion: 1, projectionRevision: memoryRevision, memories }),
+      body: JSON.stringify({ apiVersion: 1, projectionRevision: memoryRevision, memories, chapters: [] }),
     }),
   );
 
@@ -2998,6 +2998,7 @@ test("the Memory surface narrows to one origin and back", async ({ page }) => {
             pinned: false,
           },
         ],
+        chapters: [],
       }),
     });
   });
