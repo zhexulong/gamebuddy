@@ -10,6 +10,7 @@ import {
   type ComposedTavernProfile,
   isComposedTavernProfile,
   type MemoryItemV1,
+  type MemoryChapterV1,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
   TAVERN_BROWSER_API_VERSION,
@@ -20,6 +21,7 @@ import type {
   GameBuddyMemoryView as MemoryRowView,
   GameBuddyPlayerMemoryCrudFacade as MemoryCrudFacade,
   GameBuddyPlayerMemoryReadProjection as MemoryReadProjection,
+  GameBuddyPlayerChapterView as MemoryChapterRowView,
 } from "@cortexkit/pi-magic-context/memory";
 
 export type MemoryManagementService = Readonly<{
@@ -102,11 +104,48 @@ export function createMemoryManagementService(
   }
 
   const assertMutationFacade = (value: MemoryCrudFacade): void => {
-    if (typeof value.create !== "function" || typeof value.update !== "function" || typeof value.archive !== "function")
+    if (
+      typeof value.create !== "function" ||
+      typeof value.update !== "function" ||
+      typeof value.archive !== "function" ||
+      typeof value.updateChapter !== "function" ||
+      typeof value.deleteChapter !== "function"
+    )
       throw unavailable();
   };
 
-  const projectRows = (rows: readonly MemoryRowView[]): MemoryReadV1 => {
+  /**
+   * A chapter's opaque handle. Same construction as a memory handle - an HMAC over the continuity and a
+   * subject - so a chapter id never reaches the browser and two continuities cannot address each other's
+   * chapters.
+   */
+  const projectChapterHandle = (chapterId: number): string =>
+    createHmac("sha256", handleSecret).update(`chapter\0${continuityId}\0${chapterId}`, "utf8").digest("base64url");
+
+  const projectChapters = (rows: readonly MemoryChapterRowView[]): MemoryChapterV1[] =>
+    rows.map((row) => {
+      if (
+        typeof row.chapterId !== "number" ||
+        !isMemoryContent(row.content) ||
+        (row.status !== "sealed" && row.status !== "edited" && row.status !== "deleted")
+      )
+        throw unavailable();
+      const span =
+        row.startDate === row.endDate ? row.startDate : `${row.startDate}\u2192${row.endDate}`;
+      return Object.freeze({
+        handle: projectChapterHandle(row.chapterId),
+        title: typeof row.title === "string" && row.title.length > 0 ? row.title : "Chapter",
+        span: span.length > 0 ? span : "unrecorded",
+        content: row.content,
+        status: row.status,
+        // The panel says whose words these are, so a player can tell what they changed from what the
+        // companion wrote.
+        editedByPlayer: row.status !== "sealed",
+      });
+    });
+
+
+  const projectRows = (rows: readonly MemoryRowView[], chapters: readonly MemoryChapterV1[]): MemoryReadV1 => {
     const memories: MemoryItemV1[] = rows.map((row) => {
       if (
         typeof row.stateToken !== "string" ||
@@ -130,15 +169,22 @@ export function createMemoryManagementService(
     });
     memories.sort((left, right) => left.handle.localeCompare(right.handle));
     const projectionRevision = createHmac("sha256", handleSecret)
-      .update(JSON.stringify(memories), "utf8")
+      .update(JSON.stringify({ memories, chapters }), "utf8")
       .digest("base64url");
     const result: MemoryReadV1 = Object.freeze({
       apiVersion: TAVERN_BROWSER_API_VERSION,
       projectionRevision,
       memories: Object.freeze(memories),
+      chapters: Object.freeze(chapters),
     });
     if (!TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(result)) throw unavailable();
     return result;
+  };
+
+  const readChapters = async (): Promise<readonly MemoryChapterRowView[]> => {
+    const chapters = await (await facade()).listChapters({ continuityId, ...profileBinding });
+    assertOpen();
+    return chapters;
   };
 
   const readRows = async (): Promise<readonly MemoryRowView[]> => {
@@ -152,7 +198,7 @@ export function createMemoryManagementService(
       assertOpen();
       inFlight += 1;
       try {
-        return projectRows(await readRows());
+      return projectRows(await readRows(), projectChapters(await readChapters()));
       } catch (error) {
         throw mapReadError(error);
       } finally {
@@ -171,11 +217,45 @@ export function createMemoryManagementService(
               const operation = async () => {
                 assertOpen();
                 const rows = await readRows();
-                const before = projectRows(rows);
+                // Both forms are needed: the projected chapters build the read model a client compares,
+                // and the vendor rows carry the chapter id a mutation addresses. The id never leaves the
+                // Host - the browser only ever sees the projected handle.
+                const chapterRows = await readChapters();
+                const chapters = projectChapters(chapterRows);
+                const before = projectRows(rows, chapters);
                 if (before.projectionRevision !== command.expectedProjectionRevision) throw conflict();
                 const vendor = await facade();
                 assertMutationFacade(vendor);
-                if (command.operation !== "archive" && !isMemoryContent(command.content)) throw unavailable();
+                if (
+                  command.operation !== "archive" &&
+                  command.operation !== "delete_chapter" &&
+                  !isMemoryContent(command.content)
+                )
+                  throw unavailable();
+                // Chapter commands address a chapter, not a memory row, so they resolve their own
+                // handle and never touch the Memory store.
+                if (command.operation === "update_chapter" || command.operation === "delete_chapter") {
+                  const chapter = chapterRows.find(
+                    (candidate) => projectChapterHandle(candidate.chapterId) === command.handle,
+                  );
+                  if (chapter === undefined) throw conflict();
+                  if (command.operation === "update_chapter")
+                    await vendor.updateChapter({
+                      continuityId,
+                      ...profileBinding,
+                      chapterId: chapter.chapterId,
+                      content: command.content,
+                    });
+                  else
+                    await vendor.deleteChapter({
+                      continuityId,
+                      ...profileBinding,
+                      chapterId: chapter.chapterId,
+                    });
+                  assertOpen();
+                  return projectRows(await readRows(), projectChapters(await readChapters()));
+                }
+
                 if (command.operation === "create") {
                   await vendor.create({ continuityId, ...profileBinding, content: command.content });
                 } else {
@@ -186,7 +266,7 @@ export function createMemoryManagementService(
                   else await vendor.archive({ continuityId, ...profileBinding, stateToken: row.stateToken });
                 }
                 assertOpen();
-                return projectRows(await readRows());
+                return projectRows(await readRows(), projectChapters(await readChapters()));
               };
               const queued = mutationQueue.then(operation, operation);
               mutationQueue = queued.catch(() => {});
@@ -244,6 +324,12 @@ function identifier(value: unknown): value is string {
 
 function unavailable(): Error {
   return new Error("memory_read_service_unavailable");
+}
+
+/** One bounded line naming what actually went wrong: never content, never a stack. */
+function boundedReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/gu, " ").slice(0, 300);
 }
 
 function conflict(): Error {

@@ -223,6 +223,8 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
           { sourceType: "historian", stateToken: "tok_789_original", content: "Old quest notes.", category: "semantic", status: "archived" },
         ];
       },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, stub);
     const result = await service.read();
@@ -290,6 +292,8 @@ test("mounted memory service projects every injected Memory row and fingerprints
         category: i % 2 === 0 ? "semantic" : "interaction",
         status: i % 3 === 0 ? "permanent" : i % 3 === 1 ? "active" : "archived",
       })),
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, stub);
     const first = await service.read();
@@ -390,6 +394,10 @@ test("mounted memory service mutates only after projection CAS and always return
         writes.push({ operation: "archive", stateToken });
         rows = rows.map((row) => row.stateToken === stateToken ? { ...row, stateToken: "tok_archived", status: "archived" } : row);
       },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, stub);
     const initial = await service.read();
@@ -424,6 +432,10 @@ test("mounted memory service rejects concurrent creates sharing the same project
       },
       update: async () => { throw new Error("unexpected update"); },
       archive: async () => { throw new Error("unexpected archive"); },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, stub);
     const initial = await service.read();
@@ -464,6 +476,10 @@ test("mounted memory service maps a vendor CAS conflict to 409 without a stale s
         throw new Error("Memory state token was not found or is stale");
       },
       archive: async () => { throw new Error("unexpected archive"); },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, stub);
     const initial = await service.read();
@@ -493,6 +509,8 @@ test("mounted memory service fails closed on continuity mismatch without exposin
   const results = await mounted(`
     const errorStub = Object.freeze({
       listMemories: async () => { throw new Error("gamebuddy_memory_continuity_mismatch"); },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, errorStub);
     const outcome = await run(async () => await service.read());
@@ -509,6 +527,8 @@ test("mounted memory service fails closed on storage errors and after lease revo
   const results = await mounted(`
     const storageStub = Object.freeze({
       listMemories: async () => { throw new Error("sqlite: database disk image is malformed"); },
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, storageStub);
     const storageOutcome = await run(async () => await service.read());
@@ -535,6 +555,8 @@ test("mounted memory service rejects malformed or oversized vendor content befor
         category: "semantic",
         status: "active",
       }],
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, oversizedStub);
     const outcome = await run(async () => await service.read());
@@ -557,6 +579,8 @@ test("mounted memory service retains all rows when the projected set exceeds 200
         category: "semantic",
         status: "active",
       })),
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, largeStub);
     const result = await service.read();
@@ -581,6 +605,8 @@ test("mounted memory service uses fixed category labels that never derive from c
         category: "semantic",
         status: "active",
       }],
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
     });
     const service = createMemoryManagementService({ manifest, lease, profile }, longStub);
     const result = await service.read();
