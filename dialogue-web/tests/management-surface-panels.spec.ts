@@ -314,3 +314,104 @@ test("the product Settings surface shows the real settings panels and moves both
   await expect(surface.locator("#companion-language")).toHaveValue("ja-JP");
   expect(languageWrites.length).toBe(2);
 });
+
+/**
+ * The durable World Info binding when the mounted conversation has already
+ * spoken.
+ *
+ * The coordinator converges a binding on the next turn, so a bind made after a
+ * message is reported by the authoritative projection as `pending`, not as a
+ * settled selection. The mounted management suite asserted exactly this against
+ * the removed shell (deleted with it, 13c4c70a/6406dd0a); the Characters surface
+ * carries the same state machine now, so the surface's side of it is asserted
+ * here.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the write carries the exact opaque revision it read: catches a bind that
+ *    CASes on a revision it invented;
+ *  - the panel then re-reads instead of trusting its own click, and re-reads to
+ *    `pending`: catches a panel that shows the bind as settled because it asked
+ *    for it;
+ *  - the pending notice names what happens next: catches a pending state shown as
+ *    a plain success, which is what makes a player think the bind applies now;
+ *  - a reload still shows it: catches a pending fact the surface only kept in
+ *    memory, which would let a refresh silently promote it to settled.
+ */
+test("the product Characters surface shows a world book bind made after a message as pending until the next turn", async ({ page }) => {
+  const revision = `${"W".repeat(42)}A`;
+  const writes: unknown[] = [];
+  const reads = { count: 0 };
+  let bound = false;
+
+  const currentWorldInfo = () => ({
+    state: bound ? "pending" : "none",
+    revision,
+    items: [{ handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: bound, pending: bound }],
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  // A reload carries no boot token: the shell re-enters through the composed
+  // state read, so this journey's reload leg needs the route it actually uses.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/companions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, companions: [] }) }),
+  );
+  const characterReads = {
+    persona: { apiVersion: 1, present: false, revision: null, name: null, description: null },
+    scenario: { apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null },
+    greeting: { apiVersion: 1, present: false, revision: null, label: null, variants: [] },
+    "import-history": { apiVersion: 1, entries: [] },
+  };
+  for (const [path, body] of Object.entries(characterReads)) {
+    await page.route(`**/api/tavern/v1/${path}`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }),
+    );
+  }
+  await page.route("**/api/tavern/v1/world-info", async (route) => {
+    if (route.request().method() === "GET") {
+      reads.count += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentWorldInfo()) });
+      return;
+    }
+    writes.push(route.request().postDataJSON());
+    bound = (route.request().postDataJSON() as { sourceHandle: string | null }).sourceHandle !== null;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentWorldInfo()) });
+  });
+
+  const openWorldBook = async () => {
+    await page.getByRole("button", { name: "Characters", exact: true }).click();
+    const surface = page.getByTestId("characters-surface");
+    await expect(surface).toBeVisible();
+    return surface.locator("[data-world-book]");
+  };
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const binding = await openWorldBook();
+  await expect(binding.getByText("Pelican Town", { exact: true })).toBeVisible();
+
+  await binding.getByRole("button", { name: "Attach: Pelican Town" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: revision,
+    sourceHandle: worldInfoItemHandle,
+  });
+  // The service result is never applied locally: the panel re-reads, and what it
+  // re-reads is a pending bind.
+  await expect.poll(() => reads.count).toBe(2);
+  await expect(binding).toContainText("Saved. It fully applies on the next turn.");
+  await expect(binding.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
+
+  await page.reload();
+  const reloaded = await openWorldBook();
+  await expect(reloaded).toContainText("Saved. It fully applies on the next turn.");
+  await expect(reloaded.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
+});
