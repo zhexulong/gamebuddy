@@ -74,6 +74,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_feed_animal_v1",
   ),
   gate("use_item", 1, "run-stardew-native-local-player-use-item-smoke.mjs", "item_used", "native_use_item_v1"),
+  // Promoted 2026-10-12 after its native-local live gate passed on all five checks: the pond emptied
+  // (occupants 1 -> 0, fish type -> none), the receipt agreed with the world, the published target DISAPPEARED
+  // from discovery, the ejected fish were OBSERVED as ground itemTargets, and a stale target was refused by name.
+  gate("clear_fish_pond", 1, "run-stardew-native-local-player-clear-fish-pond-smoke.mjs", "fish_pond_cleared", "native_clear_fish_pond_v1"),
   gate(
     "harvest_crop",
     1,
@@ -385,7 +389,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // WIA §4.2 answer_dialogue live proof: move interrupted by a native question
   // modal, answered with the native answerDialogue seam.
   wia_answer_question: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
-  clear_fish_pond: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
   wia_eat_interrupt: "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs",
   // The other three WIA slots: each holds a body-holding execution whose
   // interruption is measured while that slot is live (the tool-approach leg,

@@ -3207,6 +3207,8 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
   return hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
+      value.action === "clear_fish_pond" ||
+      value.action === "send_multiplayer_chat" ||
       value.action === "place_owned_object" ||
       value.action === "remove_placed_item" ||
       value.action === "break_container_source" ||

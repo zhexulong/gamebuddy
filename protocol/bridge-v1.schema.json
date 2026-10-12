@@ -6190,6 +6190,8 @@
             "use_warp_item",
             "pan_ore",
             "claim_mail_attachment",
+            "clear_fish_pond",
+            "send_multiplayer_chat",
             "equip_wearable",
             "unequip_wearable",
             "dismount_transport"

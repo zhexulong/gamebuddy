@@ -2680,3 +2680,48 @@ success.
 Two gate flakes were also fixed while re-verifying, both the same warp transient: the shop runner observed
 immediately after the fixture warped the actor, so `player_cannot_move` ended a run as
 `native_snapshot_not_actionable`. It now waits for the ability to act, like the talk runner.
+
+---
+
+### `clear_fish_pond` promoted to live_verified (2026-10-12)
+
+Promotion after its native-local live gate passed on **all five checks** (run recorded above in the paging entry's
+companion run): the pond emptied (`occupants 1 -> 0`, `fish_type -> none`), the receipt agreed with the world
+(`fish_ejected=1`), the published target **disappeared** from discovery, the ejected fish were **observed** as ground
+`itemTargets`, and a stale target was refused by name (`pond_already_empty`).
+
+Promotion is **five edits, not one** — the earlier note said three, and this run proved otherwise:
+
+1. the Mod catalog lifecycle (`FarmhandActionDefinitions.cs`): `Experimental` -> `LiveVerified`;
+2. `STARDEW_PUBLISHED_ACTION_GATES` gains the gate (`terminalReasonCode` `fish_pond_cleared`, scenario
+   `native_clear_fish_pond_v1`);
+3. the **same id leaves `STARDEW_EXPERIMENTAL_ACTION_RUNNERS`** — a key in BOTH maps fails the resolver test;
+4. the descriptor test's **two** frozen lists (the golden runner map AND the fixture-backed list);
+5. the **Host's four admission layers** — union, request validator, `validateExecutionRequestEnvelope`, and
+   `protocol/bridge-v1.schema.json`'s `executionAction` enum. The promotion gate names each missing one
+   (`missing_execution_request_union`, `missing_host_request_validator`, `missing_envelope_validator`,
+   `missing_schema_execution_action`), and my first pass missed the last two because the envelope validator and the
+   schema are DIFFERENT files from the ones the earlier chunks had taught me to touch.
+
+Then the derived artifacts are **regenerated, not hand-edited**: the surface (`action-surface.v1.json`, now 85 actions:
+29 published / 52 live_verified / 4 experimental) and the sensitivity register.
+
+**A stale build hides drift, and the drift test could not see it.** The surface's drift test runs a prebuilt exporter
+DLL from `bin/Debug`; that DLL predated both new actions, so exporting produced the OLD artifact and "drift" passed
+while the Mod source already declared two more actions. Rebuilding the exporter and regenerating surfaced both. Worth
+remembering: `action-surface.v1.json` is only as fresh as the DLL that emits it.
+
+**The register then demanded seam entries, which is the point of it.** Deriving the sensitivity register now fails
+loudly (`action needs an explicit seam entry: <id>`) for any action in the surface without a classification — that is
+how `send_multiplayer_chat`'s total absence from the register surfaced. Two entries were added, each measured rather
+than assumed: `clear_fish_pond` is **mp-insensitive** (scanning `FishPond.ClearPond`'s body for multiplayer tokens
+finds **zero**), and `send_multiplayer_chat` is **mp-semantic** with `shared_world_multiplayer` (its seam returns
+without sending when neither `IsClient` nor `IsServer` holds). The checker VERIFIES each quoted signature against the
+decompiled source, and it rejected my first one: the real declaration nests the enum
+(`LocalizedContentManager.LanguageCode`), so a signature nobody can find in the source is not a citation.
+
+**One assertion had gone stale before any of this**, and the measurement says so: `talk_to_npc` landed as
+`Experimental` + `mp-semantic` with a declared scope acknowledgement while that suite still asserted the acknowledged
+list was EMPTY — measured 16 pass / 1 fail at HEAD by running the suite against `git show HEAD:` of the artifact. The
+replacement asserts the invariant that actually holds, derived from the register: an acknowledged action may not be
+`live_verified` or `published`, because there the shared-world run IS the evidence.

@@ -87,6 +87,8 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     use_obelisk: "run-stardew-native-local-player-use-obelisk-smoke.mjs",
     withdraw_silo_hay: "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
     move_to_tile: "run-stardew-native-local-player-move-smoke.mjs",
+  // Promoted 2026-10-12 with its native-local live gate.
+  clear_fish_pond: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
     equip_tool: "run-stardew-native-local-player-equip-tool-smoke.mjs",
     travel: "run-stardew-native-local-player-travel-smoke.mjs",
     enter_exit: "run-stardew-native-local-player-enter-exit-smoke.mjs",
@@ -236,6 +238,7 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "collect_animal_product",
       "feed_animal",
       "use_item",
+      "clear_fish_pond",
       "harvest_crop",
       "refill_watering_can",
       "break_rock_source",
