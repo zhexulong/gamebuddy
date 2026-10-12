@@ -892,8 +892,9 @@ async function bootstrap(origin, token, sessionEntry) {
   });
   const body = await response.json().catch(() => undefined);
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!response.ok || typeof cookie !== "string" || typeof (body?.csrfToken ?? body?.chat?.csrfToken) !== "string")
-    process.stderr.write(`[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => { try { return JSON.stringify(body ?? null); } catch { return "unavailable"; } })().slice(0, 300)}\n`);
+  if (!response.ok || typeof cookie !== "string" || typeof (body?.csrfToken ?? body?.chat?.csrfToken) !== "string") {
+      process.stderr.write(`[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => { try { return JSON.stringify(body ?? null); } catch { return "unavailable"; } })().slice(0, 300)}\n`);
+  }
     throw new Error(`bootstrap_failed:${response.status}`);
   return Object.freeze({ cookie, csrf: body.csrfToken ?? body.chat.csrfToken });
 }
