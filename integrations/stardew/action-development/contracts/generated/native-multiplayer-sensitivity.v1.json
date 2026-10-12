@@ -6,7 +6,8 @@
     {
       "defect": "unverified_scope",
       "actions": [
-        "talk_to_npc"
+        "talk_to_npc",
+        "send_multiplayer_chat"
       ],
       "reason": "Admission admits a shared world, but the native seam reads outcome-affecting multiplayer state, so the transaction outcome can differ there and a single-player pass cannot stand in for a shared-world one. For `ship_item` the settlement container is chosen by `Farm.getShippingBin(who)` from `Game1.player.team.useSeparateWallets`, so the destination bin differs between single-player and a shared world. For `chest_retrieve` the container is resolved by `Chest.GetItemsForPlayer(long id)`: a chest with a GlobalInventoryId returns the team-shared inventory and a MiniShippingBin returns that player's own separate-wallet inventory, and the Mod calls the no-arg overload that resolves `Game1.player.UniqueMultiplayerID`. For `pet_animal` the +12 friendship is gated on the single per-pet `grantedFriendshipForPet` flag rather than the acting farmer's `lastPetDay` entry, so a second farmer's pet in the same day grants 0 friendship while the Mod receipt asserts before+12. These actions are pinned here only until their own shared-world live run lands; that run is the evidence, so reaching `live_verified` retires the pin.",
       "owner": "stardew-integration"
@@ -139,7 +140,9 @@
     "dismount_transport",
     "dismiss_modal",
     "answer_dialogue",
-    "advance_day"
+    "advance_day",
+    "send_multiplayer_chat",
+    "clear_fish_pond"
   ],
   "actions": [
     {
@@ -1554,6 +1557,40 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "send_multiplayer_chat",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/Multiplayer.cs",
+          "signature": "public virtual void sendChatMessage(LocalizedContentManager.LanguageCode language, string message, long recipientID)",
+          "sensitivity": "mp-semantic",
+          "semanticEffect": "the body reads Game1.IsClient (sends through Game1.client) and Game1.IsServer (fans out to the connected farmers), and RETURNS when neither is true - so single-player sends nothing while reporting no error, and the lobby it fans out to is the very fact the action's receipt depends on."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "clear_fish_pond",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Buildings/FishPond.cs",
+          "signature": "public void ClearPond()",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "ClearPond's body reads no multiplayer token at all: it resets the pond's own net fields (currentOccupants, fishType, the population gate, the cracker flag) and spawns each occupant through Game1.createItemDebris, whose sprite fan-out belongs to the game and not to this outcome; the pond it acts on is the live one either way, so the same call clears the same pond in both world modes."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     }
   ]
 }

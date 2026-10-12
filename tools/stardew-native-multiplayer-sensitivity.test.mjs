@@ -319,15 +319,28 @@ test("the committed register derives cleanly against the exact decompiled source
   // exactly rather than by count, so neither a stale pin nor a hand-typed one can
   // hide here. Update this list deliberately when a shared-world action lands.
   //
-  // It is now empty: every mp-semantic action (pet_animal, chest_retrieve,
-  // ship_item, advance_day) has reached live_verified, and a live_verified action
-  // cannot also be an unverified-scope gap -- the shared-world run IS the
-  // evidence. An empty list is the correct outcome here, not a missing pin.
-  assert.deepEqual(
-    report.acknowledged.map((ack) => `${ack.defect}:${ack.actionId}`).sort(),
-    [],
-  );
+  // An acknowledgement is legitimate ONLY for an action that has no shared-world evidence yet: a live_verified
+  // action cannot also be an unverified-scope gap, because the shared-world run IS the evidence. The invariant is
+  // asserted per acknowledgement against the register's own lifecycle (derived, not hand-listed), so a pin on a
+  // finished action fails here as well as in the validator's /stale/ check.
+  //
+  // This replaced an `acknowledged === []` assertion that had gone stale: it was written when every mp-semantic
+  // action happened to be live_verified, and `talk_to_npc` later landed as Experimental + mp-semantic WITH a
+  // declared acknowledgement. Measured before the change, on this same tree: 16 pass / 1 fail, this assertion.
+  const registerById = new Map(JSON.parse(registerText).actions.map((action) => [action.actionId, action]));
   for (const ack of report.acknowledged) {
+    const action = registerById.get(ack.actionId);
+    assert.ok(action, `${ack.actionId} is acknowledged but absent from the register`);
+    assert.notEqual(
+      action.lifecycle,
+      "live_verified",
+      `${ack.actionId} is acknowledged as unverified scope while it already carries live evidence`,
+    );
+    assert.notEqual(
+      action.lifecycle,
+      "published",
+      `${ack.actionId} is acknowledged as unverified scope while it is published`,
+    );
     assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);
     assert.ok(ack.owner && ack.owner.length > 0, `${ack.actionId} pin must carry an owner`);
   }

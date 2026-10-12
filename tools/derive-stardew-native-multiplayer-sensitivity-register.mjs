@@ -380,6 +380,25 @@ const TABLE = {
   // checker refuses an mp-insensitive claim whose exact source reads a decisive token. Talking
   // needs shared-world evidence before it can leave Experimental - unlike its sibling
   // interact_npc_with_item, whose declared seam (receiveGift) reads no such token.
+  // The chat egress: the game's own Multiplayer.sendChatMessage. Its body branches on Game1.IsClient /
+  // Game1.IsServer and returns without sending when neither holds, so the multiplayer mode decides whether a
+  // message leaves the process AT ALL - hence mp-semantic, and hence a success terminal exists only on a real
+  // lobby (the farmhand lane). That is also why a green receipt on a single-player fixture would be a false green.
+  // FishPond.ClearPond() resets the pond's own state and drops the fish as debris; scanning the method body finds
+  // no multiplayer token, so the same call empties the same pond in both world modes - collateral fan-out inside
+  // the game's own debris helper is not this action's outcome.
+  clear_fish_pond: [
+    "StardewValley.Buildings/FishPond.cs",
+    "public void ClearPond()",
+    "mp-insensitive",
+    "ClearPond's body reads no multiplayer token at all: it resets the pond's own net fields (currentOccupants, fishType, the population gate, the cracker flag) and spawns each occupant through Game1.createItemDebris, whose sprite fan-out belongs to the game and not to this outcome; the pond it acts on is the live one either way, so the same call clears the same pond in both world modes.",
+  ],
+  send_multiplayer_chat: [
+    "StardewValley/Multiplayer.cs",
+    "public virtual void sendChatMessage(LocalizedContentManager.LanguageCode language, string message, long recipientID)",
+    "mp-semantic",
+    "the body reads Game1.IsClient (sends through Game1.client) and Game1.IsServer (fans out to the connected farmers), and RETURNS when neither is true - so single-player sends nothing while reporting no error, and the lobby it fans out to is the very fact the action's receipt depends on.",
+  ],
   talk_to_npc: [
     "StardewValley/NPC.cs",
     "public virtual bool checkAction(",
