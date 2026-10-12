@@ -26,6 +26,16 @@ overrides:
   # Transformers 4.2 permits sharp ^0.34.5; pin its current stable advisory
   # remediation rather than retaining the vulnerable 0.34.5 resolution.
   '@huggingface/transformers>sharp': 0.35.3
-  # ORT 1.24.3 remains required by Transformers 4.2. Its adm-zip range admits
-  # 0.6.0, which resolves GHSA-xcpc-8h2w-3j85 without changing the ORT ABI.
-  'onnxruntime-node>adm-zip': 0.6.0
+  # ORT 1.30.0 permits adm-zip ^0.6.0, but 0.6.0 now carries open advisories;
+  # pin the first patched release without changing the ORT ABI.
+  'onnxruntime-node>adm-zip': 0.6.1
+  # dependency-cruiser 17.3.2 pins these two to vulnerable exact versions.
+  'dependency-cruiser>ajv': 8.18.0
+  'dependency-cruiser>picomatch': 4.0.5
+  # tsx 4.21.0 pins esbuild to ~0.27.0, which is vulnerable; align it with the
+  # copy the rest of the graph already resolves.
+  'tsx>esbuild': 0.28.2
+  # ajv ^3.0.1 and knip ^1.8.0 both admit the vulnerable resolutions, so these
+  # transitive-only packages cannot be raised by `pnpm update`.
+  'ajv>fast-uri': 3.1.8
+  'knip>smol-toml': 1.9.1
