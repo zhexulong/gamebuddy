@@ -242,7 +242,7 @@ public sealed class HostBootstrapSupervisorTests
     }
 
     [Fact]
-    public void Supervisor_source_uses_one_bounded_strict_frame_and_ack_with_redacted_lease()
+    public void Supervisor_source_uses_one_bounded_frame_and_an_additive_ack_with_redacted_lease()
     {
         var source = File.ReadAllText(SupervisorSource());
 
@@ -254,7 +254,12 @@ public sealed class HostBootstrapSupervisorTests
         var validation = source.IndexOf("ValidateOneWireDocument(frame)", StringComparison.Ordinal);
         var parse = source.IndexOf("JsonDocument.Parse(frame[..^1])", validation, StringComparison.Ordinal);
         Assert.True(validation >= 0 && parse > validation);
-        Assert.Contains("ExactPropertiesInOrder(ack", source, StringComparison.Ordinal);
+        // The acknowledgement is read by name, never by an exact key set: every field the launcher
+        // judges the child by must be present, and a field the child adds beside them is ignored.
+        // Requiring the launcher's own key set is what refused a healthy child the moment the Host
+        // published one more field.
+        Assert.Contains("AcknowledgementRequiredProperties.All(name => ack.TryGetProperty(name, out _))", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExactPropertiesInOrder(ack", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ProcessId { get", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RuntimePath { get", source[source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal)..], StringComparison.Ordinal);
         Assert.DoesNotContain("BootstrapPath { get", source[source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal)..], StringComparison.Ordinal);

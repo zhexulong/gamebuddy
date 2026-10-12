@@ -3,6 +3,7 @@ using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 const string schema = "gamebuddy-desktop-host-bootstrap/v1";
 const string sessionSchema = "gamebuddy-desktop-" + "gua" + "rdian-session/v1";
@@ -68,7 +69,38 @@ try
     // child's stdout after the session hello. Mirror the production Host's
     // writeAcknowledgement exactly: one LF-terminated JSON document written
     // through the inherited stdout handle, then the child closes its copy.
-    var acknowledgementBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { schema, protocolVersion = 1, status = "accepted", binding.bootstrapId, binding.generation, binding.inventoryDigest, binding.runtimeAdmissionSha256, rootLayoutSchema }) + "\n");
+    //
+    // The optional acknowledgement plan reshapes THAT document - it removes named fields, retypes
+    // or rewrites them, or adds fields beside them - so a test can drive the launcher with the
+    // frame a newer or a broken child would write instead of only the one this fixture composes.
+    // Without a plan the child writes exactly the eight fields above, in that order.
+    var acknowledgementPayload = new JsonObject
+    {
+        ["schema"] = schema,
+        ["protocolVersion"] = 1,
+        ["status"] = "accepted",
+        ["bootstrapId"] = binding.bootstrapId,
+        ["generation"] = binding.generation,
+        ["inventoryDigest"] = binding.inventoryDigest,
+        ["runtimeAdmissionSha256"] = binding.runtimeAdmissionSha256,
+        ["rootLayoutSchema"] = rootLayoutSchema,
+    };
+    var acknowledgementPlanPath = Path.Combine(dataRoot, "desktop-host-runtime-fixture.ack.json");
+    if (File.Exists(acknowledgementPlanPath))
+    {
+        using var acknowledgementPlan = JsonDocument.Parse(File.ReadAllText(acknowledgementPlanPath));
+        if (acknowledgementPlan.RootElement.TryGetProperty("omit", out var omittedFields))
+            foreach (var field in omittedFields.EnumerateArray()) _ = acknowledgementPayload.Remove(field.GetString() ?? string.Empty);
+        if (acknowledgementPlan.RootElement.TryGetProperty("rewrite", out var rewrittenFields))
+            foreach (var field in rewrittenFields.EnumerateObject()) acknowledgementPayload[field.Name] = JsonNode.Parse(field.Value.GetRawText());
+        if (acknowledgementPlan.RootElement.TryGetProperty("extra", out var extraFields))
+            foreach (var field in extraFields.EnumerateObject()) acknowledgementPayload[field.Name] = JsonNode.Parse(field.Value.GetRawText());
+    }
+    // Test-only proof of THIS child's own ack shape, written before the frame itself. A test that
+    // plants a field and then asks what the launcher accepted reads this file, so a child that
+    // silently ignored the plan can never look like a reader that accepted the planted field.
+    File.WriteAllText(Path.Combine(dataRoot, "desktop-host-runtime-fixture.ack.applied"), acknowledgementPayload.ToJsonString() + "\n", new UTF8Encoding(false));
+    var acknowledgementBytes = Encoding.UTF8.GetBytes(acknowledgementPayload.ToJsonString() + "\n");
     // Test-only status channel. The plan file names the exact frames this child writes
     // VERBATIM, in order, before its acknowledgement, plus how long it stays quiet after each
     // of them and before the acknowledgement. A test can therefore drive the launcher with

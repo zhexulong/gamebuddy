@@ -34,10 +34,12 @@ internal sealed class BootstrapHandshakeHarness : IAsyncDisposable
     /// A non-null refusal is written to the file the fixture reads before it answers the handshake,
     /// so the child writes those exact bytes to its own standard error and exits without an
     /// acknowledgement. A status plan is the exact frame plan the child writes before its
-    /// acknowledgement. A silence timeout overrides the launcher's interval so a test observes the
-    /// watch expire in milliseconds.
+    /// acknowledgement. An acknowledgement plan reshapes the acknowledgement itself - removing a
+    /// field, retyping one or adding one beside them - so a test can observe which acknowledgement
+    /// shapes the launcher accepts. A silence timeout overrides the launcher's interval so a test
+    /// observes the watch expire in milliseconds.
     /// </summary>
-    internal static async Task<BootstrapHandshakeHarness> CreateAsync(string? refusal = null, string? statusPlan = null, TimeSpan? silenceTimeout = null)
+    internal static async Task<BootstrapHandshakeHarness> CreateAsync(string? refusal = null, string? statusPlan = null, TimeSpan? silenceTimeout = null, string? acknowledgementPlan = null)
     {
         var generation = await DisposableInstalledGuardianGeneration.BuildAsync();
         try
@@ -54,6 +56,7 @@ internal sealed class BootstrapHandshakeHarness : IAsyncDisposable
                 var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
                 if (refusal is not null) File.WriteAllBytes(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.refuse"), Encoding.UTF8.GetBytes(refusal));
                 if (statusPlan is not null) File.WriteAllText(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.status.json"), statusPlan, new UTF8Encoding(false));
+                if (acknowledgementPlan is not null) File.WriteAllText(Path.Combine(layout.DataRoot, "desktop-host-runtime-fixture.ack.json"), acknowledgementPlan, new UTF8Encoding(false));
                 var supervisor = new RuntimeSupervisor { BootstrapSilenceTimeoutForTesting = silenceTimeout };
                 return new BootstrapHandshakeHarness(generation, layout, selection, runtime, supervisor);
             }

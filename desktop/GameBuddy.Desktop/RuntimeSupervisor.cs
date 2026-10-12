@@ -18,6 +18,12 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     // entering, and optionally the player decision it is waiting for, so the launcher can
     // measure the child's SILENCE instead of guessing the whole startup from one timer.
     private const string StatusSchema = "gamebuddy-desktop-host-bootstrap-status/v1";
+    // Every field the acknowledgement must carry, by name. Presence is required; position is not,
+    // and neither is the absence of fields beside them - see IsAcknowledgement.
+    private static readonly string[] AcknowledgementRequiredProperties =
+    [
+        "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema",
+    ];
     // The acknowledgement means READY FOR SERVICE: by the time the child writes it, it has opened
     // its databases, provisioned the semantic authority, Magic Context and the Pi agent stores, and
     // is listening on its private channel - and everything the supervisor does next (transferring the
@@ -576,7 +582,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     /// <summary>
     /// Classifies one frame the child wrote. Returns the announced stage for a status frame; null
     /// means this frame is the acknowledgement. The two schemas are disjoint and each frame is
-    /// validated against its own exact shape here, so a status frame that copies the
+    /// validated against its own shape here, so a status frame that copies the
     /// acknowledgement's fields is refused rather than served, and the acknowledgement is never
     /// read as one more status frame.
     /// </summary>
@@ -600,8 +606,27 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
 
+    /// <summary>
+    /// The acknowledgement the launcher accepts: every field it judges the child by is present and
+    /// says what it must, and anything else the frame carries is ignored.
+    ///
+    /// The wire is ADDITIVE by construction. The child that writes this frame and the launcher that
+    /// reads it are separate generations, each built on its own schedule, so a field a newer child
+    /// adds beside these - the surface's own session entry was the first - must not turn a healthy
+    /// child into a launch failure. What is still refused is the shape that carries meaning: a
+    /// required field that is absent, mistyped or wrong, or a frame that is not the acknowledgement
+    /// at all. The schema strings remain the discriminator between the two frame types.
+    ///
+    /// The ORDER of the required fields is deliberately not part of this predicate. Nothing is
+    /// matched by position (each field is read by name and judged by value) and the frame type was
+    /// already decided by the schema above, so an order check would only add one more way for the
+    /// two sides to disagree about the same acknowledged fact. The status frame's own reader keeps
+    /// its ordinal check, because there the position of the optional wait statement is exactly what
+    /// makes three fields and four fields unambiguous.
+    /// </summary>
     private static bool IsAcknowledgement(JsonElement ack, InstalledGenerationSelection selection, string bootstrapId) =>
-        ExactPropertiesInOrder(ack, "schema", "protocolVersion", "status", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256", "rootLayoutSchema") &&
+        ack.ValueKind == JsonValueKind.Object &&
+        AcknowledgementRequiredProperties.All(name => ack.TryGetProperty(name, out _)) &&
         ack.GetProperty("schema").GetString() == "gamebuddy-desktop-host-bootstrap/v1" &&
         ack.GetProperty("protocolVersion").GetInt32() == 1 &&
         ack.GetProperty("status").GetString() == "accepted" &&
@@ -644,9 +669,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         if (bytes.Length == 0 || bytes.Length > MaxWireBytes || bytes[0] == 0xEF && bytes.Length >= 3 && bytes[1] == 0xBB && bytes[2] == 0xBF || bytes.Contains((byte)0) || bytes.Contains((byte)'\r') || bytes[^1] != (byte)'\n' || bytes[..^1].Contains((byte)'\n'))
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
     }
-
-    private static bool ExactPropertiesInOrder(JsonElement value, params string[] names) =>
-        value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Select(property => property.Name).SequenceEqual(names, StringComparer.Ordinal);
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
 }
