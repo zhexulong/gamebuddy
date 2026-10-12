@@ -50,7 +50,7 @@ import { SkipLink } from "./SkipLink";
 import { Timeline } from "./Timeline";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
-import { CharactersSurfacePanel } from "./CharactersSurfacePanel";
+import { CharactersSurface } from "./CharactersSurface";
 import {
   ChatsSurfacePanel,
   createManagementPipelineApi,
@@ -1983,19 +1983,14 @@ export function ComposedReferenceGameApp() {
               </SurfaceView>
             )}
             {shownSurface === CHARACTERS_PANEL && (
-              <SurfaceView
-                title={labels().charactersPanel}
-                testId="characters-surface"
-                icon={Users}
+              <CharactersSurface
+                api={managementPipelineApiRef.current}
+                csrfToken={view.session.snapshot.csrfToken}
+                labels={labels()}
+                locale={view.locale}
+                read={readProductWorldInfo}
                 restoreFocusTo={charactersEntryRef}
-              >
-                <CharactersSurfacePanel
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  locale={view.locale}
-                  read={readProductWorldInfo}
-                />
-              </SurfaceView>
+              />
             )}
             {shownSurface === SETTINGS_PANEL && (
               <SettingsSurface
