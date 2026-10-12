@@ -3663,4 +3663,78 @@ body {
   }
 }
 
+/* ==========================================================================
+   Memory notebook (时光手札) — memory-surface lane
+
+   The Memory surface reads as the companion's own scrapbook, so its chrome is
+   warmer and quieter than a management form: a soft card that says what the
+   notebook is, one real accumulated count, a life-flavoured category badge per
+   entry, and authoring tucked behind a single quiet button. Appended block; the
+   rules above are untouched.
+   ========================================================================== */
+
+.memory-notebook {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-card);
+}
+
+.memory-notebook-promise {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.memory-notebook-count {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.memory-item-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.memory-authoring {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.memory-authoring-toggle {
+  align-self: flex-start;
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.memory-authoring-toggle:hover {
+  color: var(--text-primary);
+}
+
 } /* end @layer theme.polish */

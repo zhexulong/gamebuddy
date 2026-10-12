@@ -1,5 +1,6 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { type Locale, messages } from "../i18n";
+import { memoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
   type MemoryItemV1,
@@ -916,32 +917,64 @@ export function MemoryPanel({
   // The filter is presentation state, not a projection: switching it re-reads
   // nothing, and the mounted rows are what it narrows.
   const [originFilter, setOriginFilter] = useState<MemoryOriginFilter>("all");
+  // Manual authoring is real (`memory.mutate`) but secondary: it is the one
+  // control a player has to open, so the surface reads as the companion's own
+  // notebook rather than as a form the player fills.
+  const [authoringOpen, setAuthoringOpen] = useState(false);
   const rows = memoryView.kind === "ready" ? memoryView.rows : [];
   const visibleRows = originFilter === "all" ? rows : rows.filter((item) => item.origin === originFilter);
+  // The notebook's own words, selected by this mount's locale.
+  const notebook = memoryNotebookLabels(locale);
+
+  // The historian card is the surface's first line, and its number is the
+  // projection the Host just returned - never an optimistic local count. With
+  // nothing written yet the card still explains what the notebook is and that
+  // it fills from ordinary play, so an empty projection reads as "not yet"
+  // rather than as a blank form.
+  const notebookState: "ready" | "loading" | "empty" | "unavailable" | "error" =
+    memoryView.kind === "loading"
+      ? "loading"
+      : memoryView.kind === "unavailable"
+        ? "unavailable"
+        : memoryView.kind === "error"
+          ? "error"
+          : memoryView.kind === "empty"
+            ? "empty"
+            : "ready";
+  const notebookText =
+    notebookState === "loading"
+      ? labels.loading
+      : notebookState === "unavailable"
+        ? notebook.unavailable
+        : notebookState === "error"
+          ? notebook.failed
+          : notebookState === "empty"
+            ? notebook.empty
+            : notebook.count.replace("{{count}}", String(rows.length));
   return (
-    <section className="tavern-memory-section" aria-label={labels.semanticMemory} data-memory-panel>
+    <section className="tavern-memory-section" aria-label={notebook.title} data-memory-panel>
       <div className="tavern-memory-header">
-        <h2 className="tavern-memory-title" id={MEMORY_TITLE_ID}>{labels.semanticMemory}</h2>
+        <h2 className="tavern-memory-title" id={MEMORY_TITLE_ID}>{notebook.title}</h2>
         <button type="button" className="small-button" onClick={onRefresh} title={labels.refreshMemory}>
           {labels.refreshMemory}
         </button>
       </div>
-      {memoryView.kind === "loading" && (
-        <div className="state-placeholder" data-memory-state="loading">
-          <p className="loading-text">{labels.loading}</p>
-        </div>
-      )}
-      {memoryView.kind === "unavailable" && (
-        <div className="state-placeholder" data-memory-state="unavailable">
-          <p className="loading-text">{labels.noMemories}</p>
-        </div>
-      )}
-      {memoryView.kind === "error" && (
-        <div className="state-placeholder" data-memory-state="error">
-          <p className="loading-text">{labels.failure}</p>
-        </div>
-      )}
-      {mutationAvailable && <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />}
+      {/*
+        The historian card: the notebook, its promise, and the real accumulated
+        count. The same card whether the notebook has entries or not, so a player
+        who has just started still learns what will fill it - the feature says it
+        exists by behaving, not by explaining itself.
+      */}
+      <aside className="memory-notebook" data-memory-notebook>
+        <p className="memory-notebook-promise">{notebook.promise}</p>
+        <p
+          className="memory-notebook-count"
+          data-memory-state={notebookState === "ready" ? undefined : notebookState}
+          data-memory-count={notebookState === "ready" || notebookState === "empty" ? rows.length : undefined}
+        >
+          {notebookText}
+        </p>
+      </aside>
       {memoryView.kind === "ready" && (
         // The group is named by the panel's own heading, so no string exists only
         // for the filter and the two origin chips keep the labels the rows
@@ -969,11 +1002,6 @@ export function MemoryPanel({
           ))}
         </div>
       )}
-      {memoryView.kind === "empty" && (
-        <div className="state-placeholder" data-memory-state="empty">
-          <p className="loading-text">{labels.noMemories}</p>
-        </div>
-      )}
       {memoryView.kind === "ready" && visibleRows.length === 0 && (
         // Still the one "nothing recorded" line: under an active filter it reads
         // as "none of these", and the pressed chip says which slice is shown.
@@ -989,12 +1017,27 @@ export function MemoryPanel({
               item={item}
               statusText={statusText(item.status, item.pinned)}
               originText={item.origin === "player" ? labels.originPlayer : labels.originCompanion}
+              categoryText={item.category === "semantic" ? notebook.categorySemantic : notebook.categoryInteraction}
               labels={labels}
               mutationAvailable={mutationAvailable}
               onUpdate={(content) => onMutate({ operation: "update", handle: item.handle, content })}
               onArchive={() => onMutate({ operation: "archive", handle: item.handle })}
             />
           ))}
+        </div>
+      )}
+      {mutationAvailable && (
+        <div className="memory-authoring" data-memory-authoring>
+          <button
+            type="button"
+            className="memory-authoring-toggle"
+            data-memory-authoring-toggle
+            aria-expanded={authoringOpen}
+            onClick={() => setAuthoringOpen((open) => !open)}
+          >
+            {authoringOpen ? notebook.authoringClose : notebook.authoringOpen}
+          </button>
+          {authoringOpen && <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />}
         </div>
       )}
     </section>
@@ -1017,6 +1060,7 @@ export function MemoryRow({
   item,
   statusText,
   originText,
+  categoryText,
   labels,
   mutationAvailable,
   onUpdate,
@@ -1025,6 +1069,7 @@ export function MemoryRow({
   item: MemoryItemV1;
   statusText: string;
   originText: string;
+  categoryText: string;
   labels: ReturnType<typeof messages>;
   mutationAvailable: boolean;
   onUpdate: (content: string) => void;
@@ -1040,9 +1085,11 @@ export function MemoryRow({
     setEditing(true);
   };
   return (
-    <div className="memory-item-card" role="listitem">
+    <div className="memory-item-card" role="listitem" data-memory-handle={item.handle}>
       <div className="memory-header">
-        <span className="memory-item-title">{item.title}</span>
+        <span className="memory-item-badge" data-memory-category={item.category}>
+          {categoryText}
+        </span>
         <span className="memory-item-origin" data-memory-origin={item.origin}>
           {originText}
         </span>
