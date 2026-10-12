@@ -50,7 +50,15 @@
  *     `CARD_SCORE_THRESHOLD` without a `spec` member: a v1 card, or a v2/v3
  *     card whose spec was stripped, under an arbitrary name. The former rule
  *     demanded all six CCv2 core fields, so a real card that simply omitted
- *     `mes_example` sailed through;
+ *     `mes_example` sailed through. The score alone is deliberately NOT
+ *     enough: `name` and `description` are fields every dependency manifest
+ *     carries, and a 69-character description beside a name scores exactly the
+ *     threshold, so the value must ALSO hold a field only a character card has
+ *     (`CARD_ONLY_FIELDS`, or `tags` beside `avatar`). Without that half the
+ *     rule refused `node_modules/@aws/lambda-invoke-store/package.json` — a
+ *     gate naming a character card while looking at something with no card
+ *     field in it, which is a build nobody can run rather than a card nobody
+ *     should ship;
  *   - `embedded_card_png`: a PNG whose text chunks use the `chara` / `ccv3` /
  *     `character` keyword, i.e. an embedded card payload.
  *
@@ -67,6 +75,13 @@
  *   far below the reviewed card, while a real card that omits `mes_example`
  *   still scores 12 and a v1 card with all six short fields scores 14 - so
  *   "the card forgot one field" can no longer hide a card.
+ *
+ * The score is a NECESSARY condition, not a sufficient one, for an untyped
+ * value: `name` (+2) and a description of `MIN_CARD_CONTENT_CHARS` or more
+ * (+3, +3) cross the threshold on their own, and those two fields are on every
+ * `package.json` in the dependency closure. Identification therefore also
+ * requires a card-only field, and `cardScore` itself is unchanged so the
+ * anchors below stay the facts they are stated as.
  *
  * The gate reads at most `MAX_SCANNED_BYTES` per file. Larger files are still
  * checked by NAME: the bundled runtime, the native helpers and the Mod bundle
@@ -137,6 +152,27 @@ const CARD_CONTENT_FIELDS = Object.freeze([
   "post_history_instructions",
 ]);
 /**
+ * The fields ONLY a character card carries. `name` and `description` are not
+ * among them: every dependency manifest has both, and `name` plus a
+ * 69-character `description` is exactly `CARD_SCORE_THRESHOLD`, which is how
+ * this gate came to report `node_modules/@aws/lambda-invoke-store/package.json`
+ * as a spec-stripped card. An untyped value is a card when the score crosses
+ * AND it holds one of these, so the evidence that identifies a card is never a
+ * field a manifest also has.
+ */
+const CARD_ONLY_FIELDS = Object.freeze([
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "character_book",
+  "creator",
+  "character_version",
+  "alternate_greetings",
+]);
+/** The one card-only shape whose evidence is a PAIR rather than a single field. */
+const CARD_ONLY_PAIR_FIELDS = Object.freeze(["tags", "avatar"]);
+/**
  * How much authored prose one field must hold before it is content rather than
  * an example. Chosen from the repository's own reviewed card
  * (`assets/tavern/presets/default-companion/card.json`, a real card the tests
@@ -155,6 +191,23 @@ const MAX_BASE64_CANDIDATES = 64;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+/** True when a field's value carries something, in any of a card's JSON shapes. */
+function carriesContent(value) {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return isRecord(value) && Object.keys(value).length > 0;
+}
+/** The record a card's fields live in: the CCv2 payload under `data`, or the value itself. */
+function cardFields(value) {
+  return isRecord(value.data) ? value.data : value;
+}
+/** True when the value holds at least one field only a character card has. */
+function hasCardOnlyEvidence(value) {
+  const data = cardFields(value);
+  if (!isRecord(data)) return false;
+  if (CARD_ONLY_FIELDS.some((field) => carriesContent(data[field]))) return true;
+  return CARD_ONLY_PAIR_FIELDS.every((field) => carriesContent(data[field]));
 }
 function hasPngSignature(bytes) {
   return bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte);
@@ -210,7 +263,7 @@ export function cardScore(value) {
   if (!isRecord(value)) return 0;
   let score = 0;
   if (typeof value.spec === "string" && CARD_SPEC_VALUES.has(value.spec)) score += CARD_SPEC_WEIGHT;
-  const data = isRecord(value.data) ? value.data : value;
+  const data = cardFields(value);
   if (isRecord(data)) {
     for (const [field, weight] of Object.entries(CARD_FIELD_WEIGHTS))
       if (typeof data[field] === "string" && data[field].trim().length > 0) score += weight;
@@ -238,7 +291,11 @@ function jsonCardKind(value) {
     return null;
   }
   if (!isRecord(value) || cardScore(value) < CARD_SCORE_THRESHOLD) return null;
-  return typeof value.spec === "string" && CARD_SPEC_VALUES.has(value.spec) ? "card_payload" : "untyped_card_payload";
+  // A spec member identifies the card on its own. Without one the score has to
+  // be earned by a field only a card has, because the threshold is reachable
+  // from `name` + a long `description`, which everything in `node_modules` has.
+  if (typeof value.spec === "string" && CARD_SPEC_VALUES.has(value.spec)) return "card_payload";
+  return hasCardOnlyEvidence(value) ? "untyped_card_payload" : null;
 }
 
 /** Parse a JSON value that starts with `{` or `[`, or return null. */

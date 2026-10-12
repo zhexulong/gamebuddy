@@ -49,6 +49,18 @@ import {
  *    bundles out of `CharacterCardImport.tsx`; the marker-only rule refused
  *    every generation built after it landed over this string, so a test keeps
  *    the help text and the gate compatible.
+ * 10. `a dependency manifest with a long description is not a card` - the same
+ *    class again, one rule later: `name` + a 69-character `description` is
+ *    exactly `CARD_SCORE_THRESHOLD`, so the score-only rule refused
+ *    `node_modules/@aws/lambda-invoke-store/package.json` and the generation
+ *    could not be built at all. The fixture is that file's own manifest.
+ * 11. `a spec-stripped reviewed card is still a card` - the case the untyped
+ *    rule exists for, run against the repository's OWN reviewed card with its
+ *    `spec` member deleted, so the card-only-field requirement cannot be
+ *    traded for a gate that only reads typed cards.
+ * 12. `a planted reviewed card that keeps its spec still fails` - the typed
+ *    half, at a file name that is not card-shaped, so the pass in 10 is not
+ *    bought by weakening the payload rule.
  */
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -229,6 +241,48 @@ test("an untyped card that omits mes_example is still a card", async (t) => {
   );
   assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
     { path: "kohaku-no-example.json", kind: "untyped_card_payload" },
+  ]);
+});
+
+test("a dependency manifest with a long description is not a card", async (t) => {
+  const root = await generationRoot(t);
+  // The real bytes that stopped the build: a `description` of 69 characters
+  // beside a `name` scores 2 + 3 + 3 = 8, which IS the threshold.
+  const manifest = {
+    name: "@aws/lambda-invoke-store",
+    version: "0.3.0",
+    description: "Invoke scoped data storage for AWS Lambda Node.js Runtime Environment",
+    main: "./dist-cjs/invoke-store.js",
+    license: "Apache-2.0",
+  };
+  assert.equal(cardScore(manifest), CARD_SCORE_THRESHOLD, "the manifest scores exactly the threshold");
+  await mkdir(path.join(root, "node_modules", "@aws", "lambda-invoke-store"), { recursive: true });
+  await writeFile(
+    path.join(root, "node_modules", "@aws", "lambda-invoke-store", "package.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
+});
+
+test("a spec-stripped reviewed card is still a card", async (t) => {
+  const root = await generationRoot(t);
+  const seed = path.join(REPOSITORY_ROOT, "assets", "tavern", "presets", "default-companion", "card.json");
+  const stripped = JSON.parse(await readFileUtf8(seed));
+  delete stripped.spec;
+  assert.equal(stripped.spec, undefined);
+  await writeFile(path.join(root, "companion-backup.json"), `${JSON.stringify(stripped)}\n`, "utf8");
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "companion-backup.json", kind: "untyped_card_payload" },
+  ]);
+});
+
+test("a planted reviewed card that keeps its spec still fails", async (t) => {
+  const root = await generationRoot(t);
+  const seed = path.join(REPOSITORY_ROOT, "assets", "tavern", "presets", "default-companion", "card.json");
+  await writeFile(path.join(root, "companion-backup.json"), await readFileUtf8(seed), "utf8");
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "companion-backup.json", kind: "card_payload" },
   ]);
 });
 
