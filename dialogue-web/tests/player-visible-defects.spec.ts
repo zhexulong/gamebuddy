@@ -324,3 +324,28 @@ test("defect 2: a cabin read with no session reads as the prerequisite, not a fa
   expect(text, "the handoff does not advise reloading a page that is not broken").not.toContain(ZH.reloadAdvice);
   expect(tone, "a state is not painted as a warning").toBe("info");
 });
+
+// --- defect 3 -----------------------------------------------------------------
+
+/**
+ * Defect 3. The advanced Pi JSON block renders from a second catalogue
+ * (`pi-settings-model.ts`) that defaults to `en` because no caller passes a
+ * locale, so a Chinese surface shows an English section.
+ *
+ * The failure this catches: player-facing text out of the message catalogue, and
+ * a section whose whole content is "not editable here" - which tells the player
+ * nothing about what the advanced JSON is or why it is out of reach here.
+ */
+test("defect 3: the advanced Pi JSON block is localised and explains itself", async ({ page }) => {
+  await mountShell(page);
+  await openSurface(page, "游戏", "game-surface");
+  const block = page.locator(".surface-advanced-settings");
+  await expect(block).toBeVisible();
+  const text = ((await block.innerText()) ?? "").replace(/\s+/gu, " ").trim();
+  console.log(`[defect-3] advanced block: ${JSON.stringify(text)}`);
+
+  expect(text, "the block's own title is the surface's language").toContain("高级配置");
+  expect(text, "no English sentence survives in a Chinese surface").not.toMatch(/[A-Za-z] [a-z]+ [a-z]+ [a-z]+/u);
+  expect(text, "the block says what the advanced document is").toContain("models.json");
+  expect(text, "the block says why it is not editable from here").toMatch(/Host/u);
+});

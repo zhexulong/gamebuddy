@@ -49,7 +49,16 @@ export type AdvancedPiSettingsParse =
 
 const TOP_LEVEL_KEYS = ["providers"] as const;
 
-/** The one player-facing sentence for each closed parse problem, in the UI's language. */
+/**
+ * The advanced section's player-facing text, for a caller that holds a `Locale`.
+ *
+ * The surface itself reads these entries from the product's message catalogue
+ * (`i18n.ts`, `advancedPiSettings*`), which is where every other string a player
+ * reads lives: this accessor used to be the *only* copy, and its `locale ?? "en"`
+ * default is how the block rendered English inside a Chinese surface. It stays
+ * because a unit test in a file this change does not own imports it; the
+ * duplicate pair here is the follow-up, not the product path.
+ */
 export function advancedPiSettingsText(locale: Locale): Readonly<{
   title: string;
   hint: string;
@@ -65,7 +74,7 @@ export function advancedPiSettingsText(locale: Locale): Readonly<{
       hint: "直接编辑 Pi 的 models.json：providers 下每个条目就是 Pi 读取的 provider 记录（baseUrl、api、apiKey、models 等），字段与 Pi 完全一致。",
       save: "保存高级配置",
       applied: "已保存。将在下次启动运行时读取。",
-      unavailable: "当前 Host 未发布高级配置路由，这里不提供编辑。",
+      unavailable: "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
       invalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
       invalidShape: "这不是 Pi 的 models.json：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
     };
@@ -74,9 +83,11 @@ export function advancedPiSettingsText(locale: Locale): Readonly<{
     hint: "Edit Pi's own models.json directly: each entry under providers is a provider record Pi reads (baseUrl, api, apiKey, models, …), with exactly Pi's fields.",
     save: "Save advanced configuration",
     applied: "Saved. It is read the next time a runtime starts.",
-    unavailable: "This Host publishes no advanced-configuration route, so it is not editable here.",
+    unavailable:
+      "This is Pi's own models.json - the providers map, with each provider's baseUrl, api, apiKey and models. The Host writes that file itself from the provider you set above, and this Host publishes no route that reads or writes it, so there is nothing to edit here.",
     invalidJson: "This is not valid JSON. Check brackets, commas and quotes and try again. Nothing was written.",
-    invalidShape: "This is not Pi's models.json: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
+    invalidShape:
+      "This is not Pi's models.json: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
   };
 }
 

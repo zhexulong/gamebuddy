@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import type { ManagementPipelineApi, TavernConnectionThinkingLevelV1, TavernModelProfileV1, TavernModelProfilesV1 } from "../management-pipeline-api";
-import { advancedPiSettingsText, applyAdvancedPiSettingsEdit } from "../pi-settings-model";
-import type { Locale, Messages } from "../i18n";
+import { applyAdvancedPiSettingsEdit } from "../pi-settings-model";
+import type { Messages } from "../i18n";
 
 /**
  * One surface's model settings (design/104 §3; the owner's ruling that the model a
@@ -19,9 +19,13 @@ import type { Locale, Messages } from "../i18n";
  *  - **Advanced**, and therefore Pi's own JSON: `models.json` in exactly Pi's shape.
  *    This section is capability-gated rather than faked: this Host publishes no route
  *    that reads or writes the raw document (the provider store merges one entry under
- *    `providers`), so the editor states that plainly instead of offering a textarea
- *    whose save would go nowhere. When a Host route appears, it passes a writer here
- *    and the same validation path (`applyAdvancedPiSettingsEdit`) becomes live.
+ *    `providers`), so the section says what that document *is* and who writes it here
+ *    instead of offering a textarea whose save would go nowhere. When a Host route
+ *    appears, it passes a writer here and the same validation path
+ *    (`applyAdvancedPiSettingsEdit`) becomes live.
+ *
+ *    Every sentence in it comes from the surface's own `labels`, so the block
+ *    cannot render in a language the rest of the surface is not using.
  *
  * Reading is the browser session's; writing carries the mounted session's CSRF token,
  * so both halves move on the same broker session as the rest of the surface.
@@ -32,7 +36,6 @@ export function SurfaceModelSettings({
   api,
   csrfToken,
   labels,
-  locale,
   writeAdvancedSettings,
   readAdvancedSettings,
 }: Readonly<{
@@ -40,7 +43,6 @@ export function SurfaceModelSettings({
   api: ManagementPipelineApi;
   csrfToken: string;
   labels: Messages;
-  locale?: Locale;
   /** Present only once the Host publishes a route for Pi's raw document. */
   writeAdvancedSettings?: (document: Readonly<{ providers: Readonly<Record<string, Readonly<Record<string, unknown>>>> }>) => Promise<void>;
   readAdvancedSettings?: () => Promise<unknown>;
@@ -50,7 +52,6 @@ export function SurfaceModelSettings({
   const [thinkingLevel, setThinkingLevel] = useState<TavernConnectionThinkingLevelV1>("off");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<"saved" | "conflict" | "model_required" | "error" | null>(null);
-  const advanced = advancedPiSettingsText(locale ?? "en");
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -185,21 +186,23 @@ export function SurfaceModelSettings({
       </div>
 
       <section className="surface-advanced-settings" data-advanced-settings={writeAdvancedSettings === undefined ? "unavailable" : "available"}>
-        <h4>{advanced.title}</h4>
+        <h4>{labels.advancedPiSettingsTitle}</h4>
         {writeAdvancedSettings === undefined ? (
-          // Honest absence: this Host publishes no route for Pi's raw document, and a
-          // textarea whose save went nowhere would be exactly the disabled lookalike
-          // design/26 §1 forbids.
+          // Honest absence, and useful: this Host publishes no route for Pi's raw
+          // document, so instead of a textarea whose save would go nowhere
+          // (design/26 §1 forbids the disabled lookalike) the section says what
+          // that document is, who writes it here, and therefore why there is
+          // nothing to edit on this surface.
           <p className="state-placeholder" data-advanced-settings-state="unavailable">
-            {advanced.unavailable}
+            {labels.advancedPiSettingsNoRoute}
           </p>
         ) : (
           <AdvancedPiSettings
-            hint={advanced.hint}
-            save={advanced.save}
-            applied={advanced.applied}
-            invalidJson={advanced.invalidJson}
-            invalidShape={advanced.invalidShape}
+            hint={labels.advancedPiSettingsHint}
+            save={labels.advancedPiSettingsSave}
+            applied={labels.advancedPiSettingsApplied}
+            invalidJson={labels.advancedPiSettingsInvalidJson}
+            invalidShape={labels.advancedPiSettingsInvalidShape}
             read={readAdvancedSettings}
             write={writeAdvancedSettings}
           />

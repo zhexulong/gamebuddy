@@ -462,6 +462,20 @@ const en = {
   gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
   gameGuideStepThreeTitle: "Your companion moves in",
   gameGuideStepThreeDetail: "Choose the cabin your companion settles into.",
+  /* The advanced Pi document (design/104 §3). `noRoute` is what a player reads
+     when this Host publishes no route for Pi's raw file, so it says what the
+     document *is* and who writes it instead of only that it is not editable. */
+  advancedPiSettingsTitle: "Advanced configuration (Pi JSON)",
+  advancedPiSettingsHint:
+    "Edit Pi's own models.json directly: each entry under providers is a provider record Pi reads (baseUrl, api, apiKey, models, …), with exactly Pi's fields.",
+  advancedPiSettingsSave: "Save advanced configuration",
+  advancedPiSettingsApplied: "Saved. It is read the next time a runtime starts.",
+  advancedPiSettingsNoRoute:
+    "This is Pi's own models.json - the providers map, with each provider's baseUrl, api, apiKey and models. The Host writes that file itself from the provider you set above, and this Host publishes no route that reads or writes it, so there is nothing to edit here.",
+  advancedPiSettingsInvalidJson:
+    "This is not valid JSON. Check brackets, commas and quotes and try again. Nothing was written.",
+  advancedPiSettingsInvalidShape:
+    "This is not Pi's models.json: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -907,6 +921,15 @@ const zh: Messages = {
   gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
   gameGuideStepThreeTitle: "同伴住进农舍",
   gameGuideStepThreeDetail: "选一间农舍，同伴就住进去。",
+  // 高级配置（Pi JSON）：没有路由时也要说清楚这份文档是什么、谁在写它，
+  // 而不是只说“这里不能改”。
+  advancedPiSettingsTitle: "高级配置（Pi JSON）",
+  advancedPiSettingsHint: "直接编辑 Pi 的 models.json：providers 下每个条目就是 Pi 读取的 provider 记录（baseUrl、api、apiKey、models 等），字段与 Pi 完全一致。",
+  advancedPiSettingsSave: "保存高级配置",
+  advancedPiSettingsApplied: "已保存。将在下次启动运行时读取。",
+  advancedPiSettingsNoRoute: "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
+  advancedPiSettingsInvalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
+  advancedPiSettingsInvalidShape: "这不是 Pi 的 models.json：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
