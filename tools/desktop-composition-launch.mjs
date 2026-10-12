@@ -577,78 +577,85 @@ export async function launchDesktopCompositionGateChild({
   const frame = composeDesktopBootstrapFrame({ bootstrapId, ...pointer, rootLayout });
   const peer = serveGuardianHello({ bootstrapId, ...pointer });
   await peer.listen();
-  // Spawn the INSTALLED copy, not the artifact. The bootstrap validates that its
-  // own module directory is inside `rootLayout.programRoot` (the child's
-  // LOCALAPPDATA), which the artifact path never is once the generation is
-  // published outside the repository — so spawning the artifact made every
-  // installed/composed run die with `desktop_runtime_bootstrap_unavailable`. The
-  // install step exists precisely to give the child its launcher-shaped root, and
-  // the production Desktop launcher starts the installed generation too. Runtime
-  // and bootstrap are therefore resolved relative to the installed root; their
-  // artifact-side digests were already verified above by the admission.
-  const installedRuntimePath = join(rootLayout.generationRoot, "runtime", "node.exe");
-  const installedBootstrapPath = join(rootLayout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
-  await regularFile(installedRuntimePath, "installed_runtime");
-  await regularFile(installedBootstrapPath, "installed_bootstrap");
-  const child = spawnImpl(installedRuntimePath, [installedBootstrapPath], {
-    cwd: rootLayout.generationRoot,
-    stdio: ["pipe", "pipe", "pipe", "ipc"],
-    windowsHide: true,
-    env: composeDesktopChildEnvironment({
-      base: process.env,
-      localAppDataRoot: root,
-      manifestPath,
-      surface,
-      nonceSha256,
-      gameSessionMode,
-    }),
-  });
-  // The child may publish the IPC-ready fact and the gate markers while the
-  // acknowledgement is still awaited; every message is buffered from spawn so
-  // late subscribers (the gate collectors, the ready waiter) never miss one.
-  const messages = collectChildMessages(child);
-  // Capture a bounded stderr tail so a pre-ready exit names its cause. The
-  // child writes at most one bounded token and never a stack; the printf-style
-  // cap keeps a misbehaving child from growing this buffer without bound.
-  let childStderr = "";
-  child.stderr?.setEncoding?.("utf8");
-  child.stderr?.on?.("data", (chunk) => {
-    if (childStderr.length < 2_048) childStderr = `${childStderr}${chunk}`;
-  });
-  const readyPromise = waitForCompositionReady(child, readyTimeoutMs, () => childStderr.trim());
-  // The callers await this only AFTER the bootstrap ack and the guardian hello. A
-  // child that exits in that window would reject an unobserved promise and kill the
-  // process with an unhandled rejection, discarding the bounded diagnostic it
-  // carries and making every early failure look like a crash with no handler.
-  // Attaching a no-op handler here does not consume the rejection: a later
-  // `waitForReady()` still observes it.
-  readyPromise.catch(() => undefined);
-  // The ack waiter attaches before the frame write so an early wire failure is
-  // never missed; the frame is the one bootstrap input, written once and
-  // followed by EOF, exactly like the production launcher's private bootstrap pipe.
-  const ackPromise = waitForBootstrapAck(child, readyTimeoutMs, () => childStderr.trim());
-  child.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
-    if (error != null && child.listenerCount("error") > 0) child.emit("error", error);
-  });
-  child.stdin.end();
-  const ackLine = await ackPromise;
-  let ack;
+  // The pipe server is listening from here on: every failure below must dispose it, or a launch that
+  // did not complete leaves a live guardian endpoint behind.
   try {
-    ack = JSON.parse(ackLine);
-  } catch {
-    throw new Error("desktop_compose_bootstrap_ack_invalid");
+    // Spawn the INSTALLED copy, not the artifact. The bootstrap validates that its
+    // own module directory is inside `rootLayout.programRoot` (the child's
+    // LOCALAPPDATA), which the artifact path never is once the generation is
+    // published outside the repository — so spawning the artifact made every
+    // installed/composed run die with `desktop_runtime_bootstrap_unavailable`. The
+    // install step exists precisely to give the child its launcher-shaped root, and
+    // the production Desktop launcher starts the installed generation too. Runtime
+    // and bootstrap are therefore resolved relative to the installed root; their
+    // artifact-side digests were already verified above by the admission.
+    const installedRuntimePath = join(rootLayout.generationRoot, "runtime", "node.exe");
+    const installedBootstrapPath = join(rootLayout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+    await regularFile(installedRuntimePath, "installed_runtime");
+    await regularFile(installedBootstrapPath, "installed_bootstrap");
+    const child = spawnImpl(installedRuntimePath, [installedBootstrapPath], {
+      cwd: rootLayout.generationRoot,
+      stdio: ["pipe", "pipe", "pipe", "ipc"],
+      windowsHide: true,
+      env: composeDesktopChildEnvironment({
+        base: process.env,
+        localAppDataRoot: root,
+        manifestPath,
+        surface,
+        nonceSha256,
+        gameSessionMode,
+      }),
+    });
+    // The child may publish the IPC-ready fact and the gate markers while the
+    // acknowledgement is still awaited; every message is buffered from spawn so
+    // late subscribers (the gate collectors, the ready waiter) never miss one.
+    const messages = collectChildMessages(child);
+    // Capture a bounded stderr tail so a pre-ready exit names its cause. The
+    // child writes at most one bounded token and never a stack; the printf-style
+    // cap keeps a misbehaving child from growing this buffer without bound.
+    let childStderr = "";
+    child.stderr?.setEncoding?.("utf8");
+    child.stderr?.on?.("data", (chunk) => {
+      if (childStderr.length < 2_048) childStderr = `${childStderr}${chunk}`;
+    });
+    const readyPromise = waitForCompositionReady(child, readyTimeoutMs, () => childStderr.trim());
+    // The callers await this only AFTER the bootstrap ack and the guardian hello. A
+    // child that exits in that window would reject an unobserved promise and kill the
+    // process with an unhandled rejection, discarding the bounded diagnostic it
+    // carries and making every early failure look like a crash with no handler.
+    // Attaching a no-op handler here does not consume the rejection: a later
+    // `waitForReady()` still observes it.
+    readyPromise.catch(() => undefined);
+    // The ack waiter attaches before the frame write so an early wire failure is
+    // never missed; the frame is the one bootstrap input, written once and
+    // followed by EOF, exactly like the production launcher's private bootstrap pipe.
+    const ackPromise = waitForBootstrapAck(child, readyTimeoutMs, () => childStderr.trim());
+    child.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
+      if (error != null && child.listenerCount("error") > 0) child.emit("error", error);
+    });
+    child.stdin.end();
+    const ackLine = await ackPromise;
+    let ack;
+    try {
+      ack = JSON.parse(ackLine);
+    } catch {
+      throw new Error("desktop_compose_bootstrap_ack_invalid");
+    }
+    if (!validateBootstrapAcknowledgement(ack, { bootstrapId, ...pointer }))
+      throw new Error("desktop_compose_bootstrap_ack_invalid");
+    await peer.hello;
+    return Object.freeze({
+      child,
+      bootstrapId,
+      rootLayout,
+      frame,
+      ack,
+      onMessage: (listener) => messages.subscribe(listener),
+      waitForReady: () => readyPromise,
+      dispose: () => peer.dispose(),
+    });
+  } catch (error) {
+    peer.dispose();
+    throw error;
   }
-  if (!validateBootstrapAcknowledgement(ack, { bootstrapId, ...pointer }))
-    throw new Error("desktop_compose_bootstrap_ack_invalid");
-  await peer.hello;
-  return Object.freeze({
-    child,
-    bootstrapId,
-    rootLayout,
-    frame,
-    ack,
-    onMessage: (listener) => messages.subscribe(listener),
-    waitForReady: () => readyPromise,
-    dispose: () => peer.dispose(),
-  });
 }
