@@ -16,12 +16,10 @@ import {
   createReferencePipelineSession,
   type PendingSubmission,
   pendingSubmission,
-  type ReferencePipelineSession,
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import {
   createComposedReferenceGameBrowserApi,
-  type ComposedReferenceGameBrowserRootV1,
   type GameCreateRequestV1,
   type GameCreateResultV1,
   type GameResumeResultV1,
@@ -29,8 +27,18 @@ import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
-import { composedProblemView as problemView, type ProblemViewState } from "../composed-problem-view";
+import { composedProblemView as problemView } from "../composed-problem-view";
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
+import {
+  delay,
+  newIdempotencyKey,
+  RESUMABLE_CONNECTION_STATUSES,
+  RESUME_REREAD_INTERVAL_MS,
+  RESUME_REREAD_MAX_ATTEMPTS,
+  STARDEW_GAME_INTEGRATION_ID,
+  type ReadyView,
+  type ViewState,
+} from "./composed-reference-game-view";
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { ContextDrawer } from "./ContextDrawer";
@@ -68,28 +76,6 @@ const MAX_POLL_ATTEMPTS = Math.ceil(HOST_TURN_ADMISSION_CEILING_MS / POLL_INTERV
 const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
 
 /**
- * Bounded authoritative reread budget while an admitted `game.resume` or
- * `game.reopen` is converging. `accepted`/`attached`/`reopened` transport
- * results are never runtime success: the composed authoritative Game
- * projection is the sole terminal authority. This budget fails an unconverged
- * attempt over to the existing unavailable presentation (exact generation key
- * preserved) instead of ever clearing in-flight early and re-enabling a
- * duplicate command.
- */
-const RESUME_REREAD_INTERVAL_MS = 500;
-const RESUME_REREAD_MAX_ATTEMPTS = 60;
-
-/**
- * Redacted connection presentations that were attached and then dropped in a
- * way a player may recover with the generation-bound `game.resume` command.
- * `reconnecting` is already under backend recovery, and `stopped` is the
- * deliberate end state after STOP, so neither is player-resumable here.
- */
-const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
-
-const STARDEW_GAME_INTEGRATION_ID = "stardew" as const;
-
-/**
  * The single contextual panel this profile can open (design/26 §4.2). The open
  * panel is part of the URL, so a refresh restores it and Browser Back closes it
  * before it leaves the chat (design/26 §7.2, design/104 §2).
@@ -104,24 +90,6 @@ const MEMORY_PANEL = "memory" as const;
 
 function readPanelFromUrl(): string | null {
   return new URLSearchParams(window.location.hash.slice(1)).get(PANEL_PARAM);
-}
-
-type ReadyView = Readonly<{
-  kind: "ready";
-  root: ComposedReferenceGameBrowserRootV1;
-  session: ReferencePipelineSession;
-  draft: BrowserDraftV1;
-  locale: Locale;
-}>;
-type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
-
-function newIdempotencyKey(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
 }
 
 function terminalTurn(turn: BrowserTurnV1 | null): boolean {
@@ -148,10 +116,6 @@ function firstScreenOpen(transcript: readonly BrowserMessageV1[]): boolean {
   return transcript.every(
     (message) => message.role === "companion" && message.openingVariant !== undefined,
   );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 /**
