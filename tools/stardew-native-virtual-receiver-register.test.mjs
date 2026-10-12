@@ -45,3 +45,19 @@ test("forbids primitive or action vocabulary", () => {
     code: "virtual_receiver_register_forbidden_field",
   });
 });
+test("accepts only the literal Tool virtual method set, never a regex fragment", () => {
+  // A command-line argument is interpolated into an override pattern; the
+  // METHODS gate narrows it to six literal identifiers so no regex can be
+  // injected. The gate is the primary check, and the escape in the pattern
+  // construction is the local backstop.
+  assert.throws(
+    () => deriveNativeVirtualReceiverRegister({ sourceFiles, methodName: "beginUsing)(.*(" }),
+    { code: "virtual_receiver_register_method_invalid" },
+  );
+  assert.throws(
+    () => deriveNativeVirtualReceiverRegister({ sourceFiles, methodName: "\\E" + "x" }),
+    { code: "virtual_receiver_register_method_invalid" },
+  );
+  for (const methodName of ["leftClick", "DoFunction", "endUsing", "beginUsing", "onRelease", "Update"])
+    assert.equal(typeof deriveNativeVirtualReceiverRegister({ sourceFiles, methodName }).methodName, "string");
+});

@@ -42,3 +42,24 @@ test("forbids primitive and action vocabulary", async () => {
     { code: "virtual_member_invocation_register_forbidden_field" },
   );
 });
+test("accepts only the literal Tool virtual method set, never a regex fragment", async () => {
+  // A command-line argument is interpolated into a base-signature pattern; the
+  // METHODS gate narrows it to six literal identifiers so no regex can be
+  // injected. The gate is the primary check, and the escape in the pattern
+  // construction is the local backstop.
+  await assert.rejects(
+    () => deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing)(.*(" }),
+    { code: "virtual_member_invocation_register_method_invalid" },
+  );
+  await assert.rejects(
+    () => deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "\\E" + "x" }),
+    { code: "virtual_member_invocation_register_method_invalid" },
+  );
+  // The fixture Tool.cs declared only `beginUsing`; a real supported method
+  // passes the METHODS gate (any base-signature failure downstream would be a
+  // fixture/source error, never the injection code).
+  assert.equal(
+    (await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" })).methodName,
+    "beginUsing",
+  );
+});

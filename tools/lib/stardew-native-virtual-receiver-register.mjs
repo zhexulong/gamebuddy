@@ -98,7 +98,10 @@ export function deriveNativeVirtualReceiverRegister({ sourceFiles, baseType = "T
           }),
         );
     }
-    const overridePattern = new RegExp(`\\boverride\\s+(?:void|bool)\\s+${methodName}\\s*\\(`, "g");
+    // methodName is validated against METHODS above, but escape it anyway so the
+    // pattern construction is locally safe even if that gate ever drifts.
+    const escapedMethodName = methodName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const overridePattern = new RegExp(`\\boverride\\s+(?:void|bool)\\s+${escapedMethodName}\\s*\\(`, "g");
     for (let match; (match = overridePattern.exec(source.text)); ) {
       const startByte = Buffer.byteLength(source.text.slice(0, match.index), "utf8");
       const range = methodBody(bytes, startByte);

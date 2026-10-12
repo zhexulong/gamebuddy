@@ -72,7 +72,10 @@ function signatureAt(source, startByte) {
   return signature;
 }
 function baseSignature(source, methodName) {
-  const pattern = new RegExp(`\\bpublic\\s+virtual\\s+(?:void|bool)\\s+${methodName}\\s*\\(`, "g");
+  // methodName is validated against METHODS above, but escape it anyway so the
+  // pattern construction is locally safe even if that gate ever drifts.
+  const escapedMethodName = methodName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\bpublic\\s+virtual\\s+(?:void|bool)\\s+${escapedMethodName}\\s*\\(`, "g");
   const matches = [...source.matchAll(pattern)];
   if (matches.length !== 1)
     fail("virtual_member_invocation_register_base_missing", "Expected one Tool base virtual declaration.", {
