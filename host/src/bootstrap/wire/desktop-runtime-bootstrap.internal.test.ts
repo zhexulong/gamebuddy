@@ -389,6 +389,11 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     // clean tree with ERR_MODULE_NOT_FOUND for voice-bootstrap.js.
     await writeFile(join(moduleDirectory, "voice-bootstrap.js"), "// Hermetic wire-fixture stub: the bootstrap entry imports this seam but the\n// fixture configures no Voice surface, so it is never invoked.\nexport async function connectHealthyVoiceGateway() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\nexport async function connectHealthyVoiceGatewayWith() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\n");
     await cp(resolve(compiledRoot, "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
+    // The bootstrap entry imports the presentation-handoff publisher (introduced
+    // with the private presentation pipe) . The fixture ships every module the
+    // compiled entry actually imports; a missing one fails every wire scenario
+    // with ERR_MODULE_NOT_FOUND before the first assertion.
+    await cp(resolve(compiledRoot, "desktop-presentation-handoff.internal.js"), join(moduleDirectory, "desktop-presentation-handoff.internal.js"));
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
       schemaVersion: 2,
@@ -401,14 +406,46 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(moduleDirectory, "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
     await new Promise<void>((resolveListen, rejectListen) => { server.once("error", rejectListen); server.listen(endpoint, resolveListen); });
     const workerPath = join(fixtureRoot, "wire-fixture-worker.mjs");
-    await writeFile(workerPath, workerSource(moduleDirectory, guardianInstanceId, attemptId, scenario));
+    const wireFixture = {
+      scenario,
+      moduleDirectory,
+      bootstrapUrl: pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href,
+      compositionUrl: pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href,
+      platformUrl: pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href,
+      guardianInstanceId,
+      attemptId,
+      approvedExecutable: "C:\\Program Files\\GameBuddy\\roles\\RoleRootFixture.exe",
+      launchFacts: {
+        executable: "C:\\Program Files\\GameBuddy\\roles\\RoleRootFixture.exe",
+        cwd: "C:\\Program Files\\GameBuddy",
+        arguments: ["--signal", "C:\\tmp\\wire.txt"],
+        environment: {
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+          WINDIR: "C:\\Windows",
+          TEMP: "C:\\Windows\\Temp",
+          TMP: "C:\\Windows\\Temp",
+          USERPROFILE: "C:\\Users\\tester",
+          GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation",
+        },
+      },
+      armFacts: {
+        revision: "11111111-1111-4111-8111-111111111111",
+        leaseName: "Local\\GameBuddy-Wire-Lease",
+        playerJobName: "Local\\GameBuddy-Wire-Player",
+        aiJobName: "Local\\GameBuddy-Wire-Ai",
+      },
+      recoveryLeaseName: "Local\\GameBuddy-Lease-1",
+      recoveryBindingRevision: "88888888-8888-4888-8888-888888888888",
+    };
+    await writeFile(workerPath, wireFixtureWorkerSource);
     // The shutdown-request scenarios exercise the IPC channel: the parent asks
     // the child via `process.send` to close its own composition. That channel is
     // the gate launcher's readiness IPC, opened by the spawn's fourth stdio slot.
     const stdio: "pipe"[] | ["pipe", "pipe", "pipe", "ipc"] = fixturesWithIpc
       ? ["pipe", "pipe", "pipe", "ipc"]
       : ["pipe", "pipe", "pipe"];
-    worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
+    worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, GAMEBUDDY_WIRE_FIXTURE: JSON.stringify(wireFixture), LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
     const workerClose = waitForClose(worker);
     const failureScenario = scenario === "composition-failure" || scenario === "ack-write-failure" || scenario === "termination-failure" || scenario === "invalid-surface" || scenario === "invalid-nonce";
     const output = failureScenario ? undefined : collectFrames(worker.stdout!, worker);
@@ -462,56 +499,236 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
   }
 }
 
-function workerSource(moduleDirectory: string, guardianInstanceId: string, attemptId: string, scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce"): string {
-  const bootstrapUrl = pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href;
-  const compositionUrl = pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href;
-  const platformUrl = pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href;
-  // The fixture drives the real contained runtime platform so the recorded wire
-  // arm frame is the usual approvedExecutable-carrying frame and the launch plan
-  // is the native ParseLaunch encoder output (executable === approvedExecutable).
-  const operation = scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed"
-    ? `const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); const approvedExecutable = "C:\\\\Program Files\\\\GameBuddy\\\\roles\\\\RoleRootFixture.exe"; const launchFacts = { executable: approvedExecutable, cwd: "C:\\\\Program Files\\\\GameBuddy", arguments: ["--signal", "C:\\\\tmp\\\\wire.txt"], environment: { PATH: "C:\\\\Windows\\\\System32", SystemRoot: "C:\\\\Windows", WINDIR: "C:\\\\Windows", TEMP: "C:\\\\Windows\\\\Temp", TMP: "C:\\\\Windows\\\\Temp", USERPROFILE: "C:\\\\Users\\\\tester", GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "wire-generation" } }; await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, armFacts: { revision: "11111111-1111-4111-8111-111111111111", leaseName: "Local\\\\GameBuddy-Wire-Lease", playerJobName: "Local\\\\GameBuddy-Wire-Player", aiJobName: "Local\\\\GameBuddy-Wire-Ai" }, authorization: { executable: approvedExecutable } }); await platform.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 60000, role: "player_host", authorization: launchFacts }); await platform.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, role: "player_host" });`
-    : scenario === "recovery-success"
-      ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
-      : scenario === "recovery-role-rejected"
-        ? `const recoveryInstanceId = "77777777-7777-4777-8777-777777777777"; const preCasFrame = new TextEncoder().encode(JSON.stringify({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, bindingRevision: "88888888-8888-4888-8888-888888888888", leaseName: "Local\\\\GameBuddy-Lease-1" })); const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 })); const outcome = await session.recover({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 123, recoveryInstanceId, preCasFrame, beginRecovery: async () => postCasFrame, roleContained: async (role) => { process.stderr.write("recovery_role_contained:" + role + "\\n"); throw new Error("stardew_bootstrap_owner_transition_mismatch"); } }); process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");`
-      : scenario === "missing-arm-executable"
-      ? `try { const { createDesktopGuardianGameRuntimePlatform } = await import(${JSON.stringify(platformUrl)}); const platform = createDesktopGuardianGameRuntimePlatform(session); await platform.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" } }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-    : scenario === "composition-failure"
-      ? `throw new Error("composition_construction_failed")`
-      : scenario === "withheld-contain-ack"
-        ? `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, privateFrame: new Uint8Array([1]) }); await session.contain({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 50, role: "player_host" }); throw new Error("unexpected_contain_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-        : scenario === "expired-launch"
-            ? `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, privateFrame: new Uint8Array([1]) }); await session.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() - 1, role: "player_host", privateFrame: new Uint8Array([2]) }); throw new Error("unexpected_launch_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-            : scenario === "overhorizon-launch"
-              ? `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, privateFrame: new Uint8Array([1]) }); await session.launch({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, deadlineUnixMs: Date.now() + 600000, role: "player_host", privateFrame: new Uint8Array([2]) }); throw new Error("unexpected_launch_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-              : scenario === "peer-disconnect"
-                ? `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, privateFrame: new Uint8Array([1]) }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-                : scenario === "delayed-arm-ack"
-                  ? `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: 100, privateFrame: new Uint8Array([1]) }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`
-                  : `try { await session.arm({ guardianInstanceId: ${JSON.stringify(guardianInstanceId)}, guardianEpoch: 1, attemptId: ${JSON.stringify(attemptId)}, operationWaitBudgetMs: ${scenario === "withheld-arm-ack" ? 50 : 123}, ${scenario === "malformed-arm" ? `deadlineUnixMs: Date.now() + 60000, ` : ""}privateFrame: new Uint8Array([1]) }); throw new Error("unexpected_arm_success"); } catch (error) { process.stderr.write(String(error?.message ?? error) + "\\n"); process.kill(process.pid, "SIGTERM"); }`;
-  const setup = scenario === "ack-write-failure"
-    ? `process.stdout.end = (() => { process.nextTick(() => process.stdout.emit("error", new Error("ack_write_failed"))); return process.stdout; });`
-    : scenario === "termination-failure"
-      ? `const originalProcessOnce = process.once.bind(process); process.once = ((event, listener) => { if (event === "SIGTERM") throw new Error("termination_failed"); return originalProcessOnce(event, listener); });`
-      : "";
-  // The composition mock runs the session operations only for scenarios that
-  // must exercise the authenticated wire. ack-write/termination scenarios keep
-  // the mock inert so the failure under test is observable before any op.
-  //
-  // The operation's rejection is consumed by close(), which is the path the
-  // worker reports and exits on, so the fixture marks it handled at the source.
-  // Left unhandled, Node's default rejection reporter races the fixture's SIGTERM
-  // cleanup and dumps the whole worker module source into stderr; that source
-  // spells the outcome marker the fail-closed assertion below forbids, so the
-  // assertion would read the crash report instead of what the worker wrote.
-  const composition = scenario === "composition-failure"
-     ? `createDesktopProductComposition() { throw new Error("composition_construction_failed"); }`
-     : scenario === "ack-write-failure" || scenario === "termination-failure"
-       ? `createDesktopProductComposition(_rootLayoutCapability, session) { return { async close() { await session.close(); } }; }`
-       : `createDesktopProductComposition(_rootLayoutCapability, session, assemblyInput) { process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n"); assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:4444/#profile=reference&boot=fixture"); process.stderr.write("wire_publish_ready:called\\n"); const operationTask = (async () => { ${operation} })(); void operationTask.catch(() => undefined); return { async close() { await operationTask; await session.close(); } }; }`;
-  return `${setup}\nimport { mock } from "node:test";\nawait mock.module(${JSON.stringify(compositionUrl)}, { namedExports: { ${composition} } });\nconst { runDesktopHostBootstrap } = await import(${JSON.stringify(bootstrapUrl)});\ntry { await runDesktopHostBootstrap(${JSON.stringify(moduleDirectory)}); } catch (error) { process.stderr.write(String((error instanceof Error ? error.message : error) ?? "desktop_runtime_bootstrap_unavailable") + "\\n"); process.exit(1); }`;
+/**
+ * One FIXED worker module, replayed unchanged for every scenario. All per-case
+ * variation is delivered as the `GAMEBUDDY_WIRE_FIXTURE` JSON document on the
+ * child environment - scenario, correlation ids, module URLs, launch facts,
+ * arm facts and the recovery binding/lease literals - so no harness value is
+ * ever interpolated into code position. This is the sink the CodeQL `
+ * js/bad-code-sanitization` finding flagged (the former `` ${`operation`} `` splice
+ * inside `workerSource`); keeping the module a constant string makes the
+ * code/data split explicit and auditable.
+ */
+const wireFixtureWorkerSource = `import { mock } from "node:test";
+
+const fixture = JSON.parse(process.env.GAMEBUDDY_WIRE_FIXTURE);
+if (fixture === null || typeof fixture !== "object" || Array.isArray(fixture)) throw new Error("wire_fixture_invalid");
+const scenario = fixture.scenario;
+
+if (scenario === "ack-write-failure") {
+  process.stdout.end = (() => {
+    process.nextTick(() => process.stdout.emit("error", new Error("ack_write_failed")));
+    return process.stdout;
+  });
 }
+if (scenario === "termination-failure") {
+  const originalProcessOnce = process.once.bind(process);
+  process.once = ((event, listener) => {
+    if (event === "SIGTERM") throw new Error("termination_failed");
+    return originalProcessOnce(event, listener);
+  });
+}
+
+function reportAndStop(error) {
+  process.stderr.write(String(error?.message ?? error) + "\\n");
+  process.kill(process.pid, "SIGTERM");
+}
+
+async function drive(session) {
+  if (scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    await platform.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      armFacts: fixture.armFacts,
+      authorization: { executable: fixture.approvedExecutable },
+    });
+    await platform.launch({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      deadlineUnixMs: Date.now() + 60000,
+      role: "player_host",
+      authorization: fixture.launchFacts,
+    });
+    await platform.contain({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      role: "player_host",
+    });
+    return;
+  }
+  if (scenario === "recovery-success" || scenario === "recovery-role-rejected") {
+    const recoveryInstanceId = "77777777-7777-4777-8777-777777777777";
+    const preCasFrame = new TextEncoder().encode(JSON.stringify({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      bindingRevision: fixture.recoveryBindingRevision,
+      leaseName: fixture.recoveryLeaseName,
+    }));
+    const postCasFrame = new TextEncoder().encode(JSON.stringify({ ownerRecordRevision: 2 }));
+    const outcome = await session.recover({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      recoveryInstanceId,
+      preCasFrame,
+      beginRecovery: async () => postCasFrame,
+      roleContained: async (role) => {
+        process.stderr.write("recovery_role_contained:" + role + "\\n");
+        if (scenario === "recovery-role-rejected") throw new Error("stardew_bootstrap_owner_transition_mismatch");
+      },
+    });
+    process.stderr.write("recovery_outcome:" + outcome.outcome + "\\n");
+    return;
+  }
+  if (scenario === "missing-arm-executable") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    try {
+      await platform.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 100,
+        authorization: { role: "player_host", revision: "33333333-3333-4333-8333-333333333333" },
+      });
+      throw new Error("unexpected_arm_success");
+    } catch (error) {
+      reportAndStop(error);
+    }
+    return;
+  }
+  if (scenario === "withheld-contain-ack") {
+    try {
+      await session.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 100,
+        privateFrame: new Uint8Array([1]),
+      });
+      await session.contain({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 50,
+        role: "player_host",
+      });
+      throw new Error("unexpected_contain_success");
+    } catch (error) {
+      reportAndStop(error);
+    }
+    return;
+  }
+  if (scenario === "expired-launch") {
+    try {
+      await session.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 100,
+        privateFrame: new Uint8Array([1]),
+      });
+      await session.launch({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        deadlineUnixMs: Date.now() - 1,
+        role: "player_host",
+        privateFrame: new Uint8Array([2]),
+      });
+      throw new Error("unexpected_launch_success");
+    } catch (error) {
+      reportAndStop(error);
+    }
+    return;
+  }
+  if (scenario === "overhorizon-launch") {
+    try {
+      await session.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 100,
+        privateFrame: new Uint8Array([1]),
+      });
+      await session.launch({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        deadlineUnixMs: Date.now() + 600000,
+        role: "player_host",
+        privateFrame: new Uint8Array([2]),
+      });
+      throw new Error("unexpected_launch_success");
+    } catch (error) {
+      reportAndStop(error);
+    }
+    return;
+  }
+  if (scenario === "peer-disconnect" || scenario === "delayed-arm-ack") {
+    try {
+      await session.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 100,
+        privateFrame: new Uint8Array([1]),
+      });
+      throw new Error("unexpected_arm_success");
+    } catch (error) {
+      reportAndStop(error);
+    }
+    return;
+  }
+  // malformed-arm | withheld-arm-ack: the last two authenticated arm failures.
+  try {
+    await session.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: scenario === "withheld-arm-ack" ? 50 : 123,
+      ...(scenario === "malformed-arm" ? { deadlineUnixMs: Date.now() + 60000 } : {}),
+      privateFrame: new Uint8Array([1]),
+    });
+    throw new Error("unexpected_arm_success");
+  } catch (error) {
+    reportAndStop(error);
+  }
+}
+
+function mockComposition(_rootLayoutCapability, session, assemblyInput) {
+  if (scenario === "composition-failure") {
+    throw new Error("composition_construction_failed");
+  }
+  if (scenario === "ack-write-failure" || scenario === "termination-failure") {
+    return { async close() { await session.close(); } };
+  }
+  process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n");
+  assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:4444/#profile=reference&boot=fixture");
+  process.stderr.write("wire_publish_ready:called\\n");
+  const operationTask = (async () => { await drive(session); })();
+  operationTask.catch(() => undefined);
+  return { async close() { await operationTask; await session.close(); } };
+}
+
+await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition } });
+const { runDesktopHostBootstrap } = await import(fixture.bootstrapUrl);
+try {
+  await runDesktopHostBootstrap(fixture.moduleDirectory);
+} catch (error) {
+  process.stderr.write(String((error instanceof Error ? error.message : error) ?? "desktop_runtime_bootstrap_unavailable") + "\\n");
+  process.exit(1);
+}
+`;
 
 /*
  * The two frame types the child may write on its standard output before it serves, and the one
@@ -582,7 +799,7 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: 
 test("desktop bootstrap helper remains private and has no entrypoint", async () => {
   const source = await readFile(resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"), "utf8");
 
-  assert.match(source, /export async function runDesktopHostBootstrap\(moduleDirectory: string\)/);
+  assert.match(source, /export async function runDesktopHostBootstrap\(artifactRoot: string\)/);
   assert.doesNotMatch(source, /import.meta.main/);
   assert.doesNotMatch(source, /desktop-host-entry.internal.js/);
    assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
@@ -626,9 +843,17 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.match(source, /process\.stdout\.write\(bytes, \(\) => \{ process\.stdout\.off\("error", onError\); resolveWrite\(\); \}\);/);
   assert.match(source, /process\.stdout\.end\(acknowledgement/);
   for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"]) {
-    assert.match(source, new RegExp(`await writeStatus\\\\("${stage}"\\\\)`));
+    assert.ok(source.includes(`await writeStatus("${stage}")`), `missing status stage ${stage}`);
   }
-  assert.ok(source.indexOf('await writeStatus("provisioning")') < acknowledgementIndex);
+  // The pre-acknowledgement status stages are ordered by the composition
+  // construction inside runDesktopHostBootstrap: the private composition factory
+  // (below the acknowledgement in source order) writes `guardian-session` and
+  // `provisioning` when it runs. The runtime status sequence is pinned exactly
+  // by the statuses test, so the ordering assertion covers the four stages
+  // written in the call site before the acknowledgement only.
+  for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"]) {
+    assert.ok(source.indexOf(`await writeStatus("${stage}")`) < acknowledgementIndex, `stage ${stage} must precede the acknowledgement`);
+  }
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.
   assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);
