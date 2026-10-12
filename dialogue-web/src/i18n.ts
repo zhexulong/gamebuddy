@@ -424,6 +424,40 @@ const en = {
   gameDiagnosticsNoChannel: "No diagnostics are published on this route.",
   gameDiagnosticsJson: "Instance and session projection, as published",
   gameDiagnosticsUnavailable: "No game data is published for this profile, so there is nothing to show.",
+  // --- conversation-surface lane: the card's own openings -------------------
+  // One word naming the material the chips are made of (the card's own opening
+  // lines), never a sentence explaining the product.
+  openingChipsLabel: "Openings",
+
+  // The companion capability board and the three-step start guide.
+  //
+  // The board is derived from the capability surface the composed game
+  // projection actually publishes (`capabilitySummary`, `role`/`companionName`,
+  // `actionAuthority`); it is never a hand-written list of abilities. Every
+  // sentence here is player language for one published fact, so a raw enum, an
+  // operation id or an ability id is never rendered (design/104 §10).
+  gameBoardTitle: "What you can do together",
+  gameBoardPublishedLead: "The game reports {{count}} things your companion can do with you.",
+  gameBoardUnpublishedLead: "This session has not published what your companion can do with you yet.",
+  gameBoardWaiting:
+    "The companion's abilities come from the game itself. They appear here once the game reports them for the farm you are playing.",
+  gameBoardCompanionTitle: "Your companion",
+  gameBoardCompanionPresent: "{{name}} is with you in the farm.",
+  gameBoardCompanionAbsent: "No companion has taken a cabin in your farm yet.",
+  gameBoardAbilitiesPublished: "{{count}} things published",
+  gameBoardAbilitiesUnpublished: "Nothing published yet",
+  gameBoardAbilitiesPublishedDetail: "These are the abilities the game itself reported for this session.",
+  gameBoardAbilitiesUnpublishedDetail: "The game has not reported any ability for this session.",
+  gameBoardActingActive: "Your companion may act in your farm.",
+  gameBoardActingPaused: "Your companion waits for your word before acting.",
+  gameBoardActingUnavailable: "Your companion has no way into your farm yet.",
+  gameStartGuide: "Getting started together",
+  gameGuideStepOneTitle: "Start Stardew",
+  gameGuideStepOneDetail: "Prepare Stardew and the companion mod.",
+  gameGuideStepTwoTitle: "Load your farm",
+  gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
+  gameGuideStepThreeTitle: "Your companion moves in",
+  gameGuideStepThreeDetail: "Choose the cabin your companion settles into.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -839,6 +873,34 @@ const zh: Messages = {
   gameDiagnosticsNoChannel: "此路由未发布诊断信息。",
   gameDiagnosticsJson: "按发布内容呈现的实例与会话投影",
   gameDiagnosticsUnavailable: "该档案未发布游戏数据，因此没有可显示的内容。",
+  // --- conversation-surface lane: the card's own openings -------------------
+  openingChipsLabel: "开场白",
+
+  // 伴玩能力台与三步起步指引。能力台由游戏投影真正发布的能力面推导而来
+  // （`capabilitySummary`、`role`/`companionName`、`actionAuthority`），
+  // 绝不是手写的能力清单：每句话都是某一个已发布事实的玩家语言，
+  // 因此原始枚举、操作 id 或能力 id 永远不会出现在界面上（design/104 §10）。
+  gameBoardTitle: "和同伴一起能做的事",
+  gameBoardPublishedLead: "游戏公布了 {{count}} 件同伴可以和你一起做的事。",
+  gameBoardUnpublishedLead: "这次会话还没有公布同伴可以和你一起做的事。",
+  gameBoardWaiting: "同伴能做的事由游戏本身决定。游戏为你正在玩的农场报上来之后，它们会出现在这里。",
+  gameBoardCompanionTitle: "你的同伴",
+  gameBoardCompanionPresent: "{{name}} 已经在农场里陪你。",
+  gameBoardCompanionAbsent: "农场里还没有同伴住进农舍。",
+  gameBoardAbilitiesPublished: "已公布 {{count}} 件事",
+  gameBoardAbilitiesUnpublished: "还没有公布",
+  gameBoardAbilitiesPublishedDetail: "这些是游戏为这次会话报上来的能力。",
+  gameBoardAbilitiesUnpublishedDetail: "游戏还没有为这次会话报上能力。",
+  gameBoardActingActive: "同伴可以在你的农场里动手。",
+  gameBoardActingPaused: "同伴会先等你发话再动手。",
+  gameBoardActingUnavailable: "同伴还没有接到你的农场。",
+  gameStartGuide: "怎么开始",
+  gameGuideStepOneTitle: "启动星露谷",
+  gameGuideStepOneDetail: "先把星露谷和同伴模组准备好。",
+  gameGuideStepTwoTitle: "载入你的农场",
+  gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
+  gameGuideStepThreeTitle: "同伴住进农舍",
+  gameGuideStepThreeDetail: "选一间农舍，同伴就住进去。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
