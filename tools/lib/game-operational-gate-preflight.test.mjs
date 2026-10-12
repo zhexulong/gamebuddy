@@ -101,3 +101,19 @@ test("Game Operational Gate preflight remains a pure config module", async () =>
   );
   assert.doesNotMatch(source, /node:(?:fs|sqlite|child_process)|DatabaseSync|lstat|realpath|spawn/i);
 });
+
+test("runtime root validation is linear on pathological path strings (ReDoS regression)", () => {
+  // The old `ROOT` pattern nested a separator alternation inside a quantified
+  // group: `C:\\` + `!/!` repeats + a forbidden tail char backtracked
+  // exponentially (hundreds of characters were already >3s). The replacement
+  // is a flat character class, so the same inputs complete instantly.
+  const bang = "C:\\" + "!/!".repeat(300) + '"';
+  const slash = "C:\\" + "/".repeat(600) + '"';
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: bang }).reasonCode, "runtime_root_invalid");
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: slash }).reasonCode, "runtime_root_invalid");
+  // The legal corpus still accepts and rejects exactly as before.
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "C:/GameBuddy/operational-gate" }).state, "READY");
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "/" }).reasonCode, "runtime_root_invalid");
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "relative/game" }).reasonCode, "runtime_root_invalid");
+  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: 'C:/a"b' }).reasonCode, "runtime_root_invalid");
+});

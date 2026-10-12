@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createParser, extractBranches } from "../src/analysis/stardew-branch-writeset.mjs";
+import { createParser, extractBranches, isCompilerTemporaryCondition } from "../src/analysis/stardew-branch-writeset.mjs";
 
 /**
  * Golden test：用「已注册 action 的 native seam 映射」校准分支级提取。
@@ -292,4 +292,21 @@ test("提取产物声明它不做什么", async () => {
     "not_a_publishable_action_catalog",
   ])
     assert.ok(source.includes(nonGuarantee), `产物必须声明 ${nonGuarantee}`);
+});
+
+test("编译器临时量判定是线性的(ReDoS 回归)", async () => {
+  // 旧实现用嵌套量词的正则:仅 12 个 `flag0` token(不足 100 字符)加一个
+  // 尾随 `x` 就在 Node 24 上超过 8s。线性扫描器在同样输入上瞬时完成。
+  const failing = "flag0 ".repeat(3000).trimEnd() + "x";
+  const matching = "flag0 ".repeat(3000).trimEnd();
+  const t0 = performance.now();
+  assert.equal(isCompilerTemporaryCondition(failing), false);
+  assert.equal(isCompilerTemporaryCondition(matching), true);
+  const elapsed = performance.now() - t0;
+  assert.ok(elapsed < 1000, `线性扫描应亚秒完成,实测 ${elapsed.toFixed(1)}ms`);
+  // 语言等价仍成立:与文档正则相同的接受集合(标识符是必需的最小单元)。
+  assert.equal(isCompilerTemporaryCondition("flag5 || flag2 && (num4)"), true);
+  assert.equal(isCompilerTemporaryCondition("flag0 && who.X"), false);
+  assert.equal(isCompilerTemporaryCondition(""), false);
+  assert.equal(isCompilerTemporaryCondition(" ! && || ("), false);
 });

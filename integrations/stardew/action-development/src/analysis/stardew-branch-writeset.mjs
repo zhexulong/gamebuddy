@@ -66,8 +66,51 @@ const HELD_SLOT = /^(Game1\.player|who)\.(ActiveObject|CurrentTool)$/;
  * 编译器临时量条件：仅由 `flagN` / `numN` / `IL_xxxx` 这类变量构成。
  * 出现在新版 ILSpy 对复杂方法（含 try/finally、大 switch）的降级输出里。
  */
+// The regex below is the documentation form; execution uses the linear
+// isCompilerTemporaryCondition scanner below it, whose language is proven
+// equivalent by differential test. The regex itself is kept only as the
+// human-readable spec (and would backtrack exponentially if executed).
 const COMPILER_TEMPORARY_CONDITION =
   /^(?:\(?\s*(?:!|\|\||&&|\()*\s*(?:flag|num|text|array|list|bool)\d*\s*\)?\s*(?:\|\||&&)?\s*)+$/;
+
+const COMPILER_TEMPORARY_IDENTIFIER = /^(?:flag|num|text|array|list|bool)\d*/;
+
+/**
+ * Linear recognizer for the same language as COMPILER_TEMPORARY_CONDITION.
+ *
+ * The regex form nests a quantified operator group inside a quantified outer
+ * group and backtracked exponentially on inputs such as `flag0 flag0 ... x`
+ * (12 tokens were already >8s in Node 24). A token scan never backtracks:
+ * every iteration consumes at least one character, so runtime is linear in
+ * the condition length. Production caps conditions at 96 chars, but the
+ * predicate is linear for unbounded input too. The language requires at
+ * least one identifier: operator/whitespace-only strings are false, exactly
+ * like the regex `+` unit, and no other letter sequences are allowed.
+ */
+export function isCompilerTemporaryCondition(value) {
+  let at = 0;
+  let sawIdentifier = false;
+  while (at < value.length) {
+    const char = value[at];
+    if (/\s/.test(char)) {
+      at += 1;
+      continue;
+    }
+    if (char === "!" || char === "(" || char === ")") {
+      at += 1;
+      continue;
+    }
+    if (value.startsWith("&&", at) || value.startsWith("||", at)) {
+      at += 2;
+      continue;
+    }
+    const identifier = COMPILER_TEMPORARY_IDENTIFIER.exec(value.slice(at));
+    if (!identifier || identifier[0].length === 0) return false;
+    sawIdentifier = true;
+    at += identifier[0].length;
+  }
+  return sawIdentifier;
+}
 
 /**
  * 阶段标记字段：写它表示**开始一个跨 tick 的生命周期**，终态由游戏循环后续驱动，
@@ -511,7 +554,7 @@ export async function extractBranches({ sourceRoot, relPath, memberName, parser 
          * （实测 14 个文件如此，含 FishingRod）。这种分支的“条件”无源码语义，
          * **不可判定**，必须拒绝而不是猜。
          */
-        P10_sourceShapedCondition: !COMPILER_TEMPORARY_CONDITION.test(b.condition),
+        P10_sourceShapedCondition: !isCompilerTemporaryCondition(b.condition),
       };
       b.candidate = Object.values(b.verdict).every(Boolean);
       b.rejectedBy = Object.entries(b.verdict)

@@ -4,7 +4,13 @@
  */
 const OPAQUE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const ROOT = /^(?:[A-Za-z]:[\\/]|\/)(?:[^\0<>:"|?*]+(?:[\\/][^\0<>:"|?*]+)*)?$/;
+// Absolute root prefix: `C:\\`/`C:/` or `/`.
+const ABSOLUTE_PREFIX = /^(?:[A-Za-z]:[\\/]|\/)/;
+// The remainder may be any run of characters outside the Windows forbidden set.
+// Written as one flat class rather than a nested alternation: the previous
+// `(?:[^\0<>:"|?*]+(?:[\\/][^\0<>:"|?*]+)*)?` form backtracked exponentially on
+// inputs such as `!/!` repeats with a forbidden tail char.
+const WITHOUT_FORBIDDEN = /^[^\0<>:"|?*]*$/;
 const IDENTITY_KEYS = Object.freeze(["playerId", "companionId", "continuityId"]);
 const SURFACE_SESSION_KEYS = Object.freeze(["chat", "game", "foreign"]);
 
@@ -25,9 +31,11 @@ function validOpaqueIdentity(value) {
 }
 
 function validRoot(value) {
-  return (
-    typeof value === "string" && value.length > 1 && value.length <= 1024 && ROOT.test(value) && !/[\r\n]/.test(value)
-  );
+  if (typeof value !== "string" || value.length <= 1 || value.length > 1024) return false;
+  if (/[\r\n]/.test(value)) return false;
+  const prefix = ABSOLUTE_PREFIX.exec(value);
+  if (!prefix) return false;
+  return WITHOUT_FORBIDDEN.test(value.slice(prefix[0].length));
 }
 
 /** Validates an exact Memory identity triple. */
