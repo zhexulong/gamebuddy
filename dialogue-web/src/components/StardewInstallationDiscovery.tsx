@@ -29,6 +29,24 @@ type Props = {
   labels: Messages;
 };
 
+/**
+ * Installation discovery.
+ *
+ * The read behind this panel is a *scan* rather than a projection: the Host runs
+ * the discovery provider on `discovery_read`, so every mount starts one, and a
+ * scan on a cold machine is the slowest thing the surface does. Two rules follow
+ * from that, and both are the panel's own:
+ *
+ *  - **One sentence per moment.** The panel's status line is exactly one of the
+ *    typed states, so the surface never reads "still searching" and "nothing
+ *    found" at once: searching while a scan is outstanding, the answer once it
+ *    settles, and nothing else in between.
+ *  - **A scan that does not settle must not lock the panel.** The controls that
+ *    *start* work are off while work is outstanding, but the one that abandons it
+ *    is not, and abandoning it retires the read it interrupts - otherwise a slow
+ *    or stuck scan leaves the surface asserting a search the player cannot stop,
+ *    and a late answer can contradict the cancel they already made.
+ */
 export function StardewInstallationDiscovery({ api, labels }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
@@ -67,6 +85,25 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
     void read();
   }, []);
   const action = async (kind: "confirm" | "retry" | "cancel" | "picker", candidateId?: string) => {
+    // The one control that stays reachable while a read is outstanding: it is what
+    // turns a scan that does not settle into an answer the player can act on. It
+    // retires the read it interrupts, so that read cannot answer over the cancel.
+    if (kind === "cancel") {
+      refreshEpoch.current += 1;
+      setBusy(true);
+      try {
+        await api.cancelStardewInstallationDiscovery();
+        if (mounted.current) setState("cancelled");
+      } catch (error) {
+        if (mounted.current) {
+          const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+          setState(code === "game_unavailable" || code === "source_unavailable" ? "source-unavailable" : "error");
+        }
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (busy) return;
     setBusy(true);
     setState(kind === "confirm" ? "confirming" : kind === "retry" ? "retrying" : state);
@@ -76,14 +113,8 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
           ? await api.confirmStardewInstallation(candidateId!)
           : kind === "retry"
             ? await api.retryStardewInstallationDiscovery()
-            : kind === "cancel"
-              ? await api.cancelStardewInstallationDiscovery()
-              : await api.openStardewInstallationPicker();
+            : await api.openStardewInstallationPicker();
       if (!mounted.current) return;
-      if (kind === "cancel") {
-        setState("cancelled");
-        return;
-      }
       if (
         kind === "confirm" &&
         "status" in result &&
@@ -118,6 +149,9 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
     }
   };
   const disabled = busy || state === "loading" || state === "confirming" || state === "retrying";
+  // A confirmation is a Host operation with no cancel of its own, so it is the
+  // one state in which abandoning the panel is not offered.
+  const cancelDisabled = state === "confirming";
   const retryable =
     state === "no-candidates" || state === "source-unavailable" || state === "error" || state === "expired";
   return (
@@ -172,7 +206,7 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         <button type="button" className="game-action" disabled={disabled} onClick={() => void action("retry")}>
           {labels.gameInstallationFindAgain}
         </button>
-        <button type="button" className="game-action" disabled={disabled} onClick={() => void action("cancel")}>
+        <button type="button" className="game-action" disabled={cancelDisabled} onClick={() => void action("cancel")}>
           {labels.gameResumeCancel}
         </button>
       </div>

@@ -349,3 +349,107 @@ test("defect 3: the advanced Pi JSON block is localised and explains itself", as
   expect(text, "the block says what the advanced document is").toContain("models.json");
   expect(text, "the block says why it is not editable from here").toMatch(/Host/u);
 });
+
+// --- defect 4 -----------------------------------------------------------------
+
+/**
+ * Defect 4. The installation panel answers from a mount-local state: it renders
+ * `loading` until a private read resolves, so one visit shows "still searching"
+ * (beside the surface's generic "加载中..." line, from a different block) and the
+ * next shows "not found", with no single truthful answer per moment.
+ *
+ * The failure this catches: the panel's sentence is not a function of the read it
+ * has actually settled; and a settled "not found" can be followed by the
+ * searching sentence again on the same mount.
+ */
+test("defect 4: the installation panel answers searching, then not-found, exactly once", async ({ page }) => {
+  await mountShell(page, { discoveryDelayMs: 150, discoveryCandidates: [] });
+  await openSurface(page, "游戏", "game-surface");
+  const panel = installationPanel(page);
+  const status = panel.locator(".installation-state");
+
+  const whilePending = { state: await panel.getAttribute("data-state"), text: (await status.innerText()).trim() };
+  console.log(`[defect-4] while pending: ${JSON.stringify(whilePending)}`);
+  expect(whilePending.state, "the panel names the read it is waiting on").toBe("loading");
+  expect(whilePending.text, "searching while searching").toBe(ZH.searching);
+
+  await expect(panel).toHaveAttribute("data-state", "no-candidates");
+  const settled = (await status.innerText()).trim();
+  console.log(`[defect-4] settled: ${JSON.stringify(settled)}`);
+  expect(settled, "not found once the scan is done and there is nothing").toBe(ZH.notFound);
+
+  // The settled answer is the answer: it does not revert to a search that is not
+  // running, and the surface never shows both statements for this panel.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await page.waitForTimeout(120);
+    const sample = { state: await panel.getAttribute("data-state"), text: (await status.innerText()).trim() };
+    expect(`${sample.state} ${sample.text}`.includes(ZH.searching), `still searching at sample ${attempt}: ${JSON.stringify(sample)}`).toBe(false);
+  }
+  const surfaceText = (await page.getByTestId("game-surface").innerText()) ?? "";
+  console.log(`[defect-4] surface text: ${JSON.stringify(surfaceText.replace(/\s+/gu, " ").slice(0, 600))}`);
+  expect(
+    surfaceText.includes(ZH.searching) && surfaceText.includes(ZH.notFound),
+    "the surface never carries both statements at once",
+  ).toBe(false);
+
+  // A second visit to the surface answers the same thing.
+  await openSurface(page, "聊天", "chat-surface");
+  await openSurface(page, "游戏", "game-surface");
+  await expect(panel).toHaveAttribute("data-state", "no-candidates");
+  expect((await status.innerText()).trim(), "the second visit settles on the same answer").toBe(ZH.notFound);
+});
+
+/**
+ * Defect 4, the half that never settles: the read behind this panel is a Host-side
+ * *scan*, and while one is outstanding the panel disables every control on it -
+ * including the one that abandons the scan. A scan that does not answer (a cold
+ * machine, or a response that never arrives) therefore leaves the surface
+ * asserting "still searching" with no way for the player to end it, which is what
+ * the surface's second, generic loading line compounds.
+ *
+ * The failure this catches: `取消` is disabled while the scan is outstanding, so a
+ * stuck scan is a sentence the player cannot change; and a cancel that does not
+ * retire the read it interrupts is overwritten by that read's late answer.
+ */
+test("defect 4: a scan that does not settle can be abandoned, and the cancel holds", async ({ page }) => {
+  await mountShell(page, { discoveryHangs: true });
+  await openSurface(page, "游戏", "game-surface");
+  const panel = installationPanel(page);
+  const status = panel.locator(".installation-state");
+  const cancel = panel.getByRole("button", { name: "取消", exact: true });
+
+  await expect(panel).toHaveAttribute("data-state", "loading");
+  expect((await status.innerText()).trim(), "searching while searching").toBe(ZH.searching);
+  const enabledWhileScanning = await cancel.isEnabled();
+  console.log(`[defect-4] cancel enabled while the scan is outstanding: ${enabledWhileScanning}`);
+  expect(enabledWhileScanning, "a scan that does not settle is not a sentence the player cannot change").toBe(true);
+
+  await cancel.click();
+  await expect(panel).toHaveAttribute("data-state", "cancelled");
+  expect((await status.innerText()).trim(), "the panel answers the cancel").toBe("搜索已取消。");
+
+  // The answer the player chose holds, and the late read cannot answer over it.
+  releaseDiscovery();
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await page.waitForTimeout(120);
+    const sample = { state: await panel.getAttribute("data-state"), text: (await status.innerText()).trim() };
+    expect(sample.state, `the cancelled answer holds at sample ${attempt}: ${JSON.stringify(sample)}`).toBe("cancelled");
+    expect(sample.text, `no second answer appears at sample ${attempt}: ${JSON.stringify(sample)}`).not.toBe(ZH.notFound);
+  }
+});
+
+/**
+ * Defect 4, the surface's own reading order: once every block on the Game surface
+ * has settled, no block may still carry the generic "加载中..." line.
+ */
+test("defect 4: the settled surface does not carry a generic loading line", async ({ page }) => {
+  await mountShell(page, { discoveryCandidates: [] });
+  await openSurface(page, "游戏", "game-surface");
+  await expect(installationPanel(page)).toHaveAttribute("data-state", "no-candidates");
+  // The model block renders its section only once its own read has settled.
+  await expect(page.locator(".surface-advanced-settings")).toBeVisible();
+  await expect(page.locator(".surface-model-settings")).toContainText("模型 ID");
+  const surfaceText = (await page.getByTestId("game-surface").innerText()) ?? "";
+  console.log(`[defect-4] settled surface carries the generic loading line: ${surfaceText.includes(ZH.genericLoading)}`);
+  expect(surfaceText, "no block still claims to be loading once every read has settled").not.toContain(ZH.genericLoading);
+});
