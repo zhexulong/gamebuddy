@@ -1,5 +1,5 @@
 /**
- * A declared contract member has a producer, or it is marked reserved.
+ * A declared contract member has a producer, or the gate's own ledger reserves it.
  *
  * "A schema with nothing behind it is worse than a missing one": a member added to
  * a published contract reads as a capability, a client branches on it, a player
@@ -15,36 +15,49 @@
  *
  * The members are *enumerated from the contracts*, not listed here: every id in
  * `GAME_BROWSER_OPERATION_IDS_V1`, every id in the tavern contract's `OperationId`
- * union and the three literals of `TavernVoiceSurfaceStateV1Schema` are read from
- * their own declarations, so a newly declared operation is checked the moment it
- * is added and there is no list to forget to update.
+ * union, the three literals of `TavernVoiceSurfaceStateV1Schema.state`, the seven
+ * of `BrowserTurnV1Schema.state`, the three of `MemoryItemV1Schema.status`, and
+ * the card-import classification/eligibility unions are read from their own
+ * declarations, so a newly declared member is checked the moment it is added and
+ * there is no list to forget to update.
  *
- * The rule, per subject kind:
+ * The producer rule, per subject:
  *  - a game operation is produced when a shipped (non-test, non-contract) Host
- *    source names it in a value position - the composed route's mount checks and the
- *    Stardew profile's own list are those producers;
- *  - a tavern operation is produced when the contract's own `RouteDescriptors`
- *    names it (the tavern profile's route table lives inside the contract, which the
- *    file search excludes by design);
- *  - a state member is produced when a non-test Host source *writes* it into the
- *    schema's own field (`state`) inside a scope that also names the field's owner
- *    (`voice`), so a comparison or a type annotation cannot vouch for it;
- * and any subject may instead carry a reservation marker on its own declaration: a
- * comment mentioning "reserved" in the comment block directly above the declaring
- * line, with no blank line and no other entry in between.
+ *    source names it in a value position;
+ *  - a tavern operation is produced when a module the composed static shell MOUNTS
+ *    as a route server names it in a value position - see `mountedRouteModules`.
+ *    The contract's own `RouteDescriptors` table is deliberately NOT a producer:
+ *    the contract declares both the `OperationId` union and that table, so letting
+ *    the table vouch for the union is the contract certifying itself;
+ *  - a voice state member is produced when a non-test Host source *writes* it into
+ *    the schema's own field (`state`) inside a scope that also names the field's
+ *    owner (`voice`), so a comparison or a type annotation cannot vouch for it;
+ *  - a turn/memory/card-import member is produced the way an operation is, because
+ *    the browser projection emits those vocabularies through ternaries, call
+ *    arguments and passthroughs rather than property writes, and the strict write
+ *    rule would leave every member of them bare. The owner scope must still be
+ *    named (`turn`, `memor`, `import`), and the type-position exclusion still
+ *    applies.
  *
- * Why value position matters: the union's own declaration repeats the member as a
- * type (`state: "unavailable" | "ready" | "speaking"` in
- * `tavern/reference-pipeline-state.ts`), and counting that as a producer would let
- * the gate pass on the very file that proves nothing produces the member.
+ * Reservations are the ONLY escape hatch, and they are not free text: they live in
+ * the frozen `CONTRACT_RESERVATIONS` ledger below, one structured entry per
+ * reserved member, each carrying a `servedBy` path that must resolve to a shipped
+ * source on disk and an `instead` member that must be declared by the same
+ * contract and itself produced. A gate reports how many members are reserved; a
+ * comment in the product can no longer silence it, because no comment is read.
+ *
+ * Why value position matters: a union declaration repeats its members as a type
+ * (`state: "unavailable" | "ready" | "speaking"`), and counting that as a producer
+ * would let the gate pass on the very file that proves nothing produces the member.
  *
  * What this cannot express honestly, and therefore does not claim: "produced" here
- * means *some* shipped source names that literal - for the game operations, that the
- * id is written anywhere outside the contract, not that a route serves it, and for
- * the tavern operations, that the contract's own descriptor table lists it. It is a
- * closure check over declarations, not a proof that a live Host path emits the
- * member, and a member whose producer is reached only from a test fixture would still
- * pass. The gate states that limit rather than guessing a stronger rule.
+ * means *some* shipped source names that literal in a scope naming its owner;
+ * for the game and state members that is not a proof that a live Host path emits
+ * it, and a member whose producer is reached only from a test fixture would still
+ * pass. For the tavern operations it is stronger - the naming source must be a
+ * mounted route server - but still a name in a served module, not a request that
+ * the dispatcher actually answers. The gate states that limit rather than guessing
+ * a stronger rule.
  *
  * False positives, and how each is handled:
  *  - test files, `*.test.ts`, `test-fixtures/` and `test-support/` are excluded, so
@@ -54,6 +67,8 @@
  *  - the field-name requirement is scoped to the same function or statement, so an
  *    unrelated `"unavailable"` in a file that mentions `voice` elsewhere cannot
  *    vouch for the voice surface;
+ *  - the turn owner regex is `(?<!re)turn`, so the common word "return" does not
+ *    vouge for a turn member;
  *  - the file must only *mention* the field, not import it: a member produced in a
  *    differently-named module still counts, which is the conservative direction.
  */
@@ -68,29 +83,8 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOST = join(REPO, "host", "src");
 const TAVERN_CONTRACT = join(HOST, "tavern", "browser-contract", "index.ts");
 const GAME_CONTRACT = join(HOST, "game-browser-contract", "index.ts");
-
-/**
- * The reservation marker for a declaration: the comment block directly above it,
- * with no blank line and no other line in between. A six-line window is what let a
- * planted entry hide behind its neighbour's marker, so the rule reads the
- * declaration's own block: a line counts only while it is a whole comment line (a
- * line comment, a block opening, a star continuation, or a block close), and any
- * other line ends the block.
- */
-export function reservationMarker(text, declaration) {
-  const lines = text.split("\n");
-  const index = lines.findIndex((line) => line.includes(declaration));
-  if (index < 0) return null;
-  const run = [];
-  for (let at = index - 1; at >= 0; at -= 1) {
-    const line = lines[at].trim();
-    const isCommentLine =
-      line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line === "*/";
-    if (!isCommentLine) break;
-    run.unshift(line);
-  }
-  return run.join("\n");
-}
+/** The file that registers the browser routes and mounts the handlers that serve them. */
+const COMPOSITION = join(HOST, "tavern", "composed-reference-game-static-shell-composition.ts");
 
 /**
  * The string literals of a named top-level `const` declaration, in source order.
@@ -109,44 +103,212 @@ export function literalsOfDeclaration(text, fileName, name) {
   return found;
 }
 
+/** The string literals of one named property inside a named top-level schema. */
+export function literalsOfProperty(text, fileName, declaration, property) {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const found = [];
+  walk(sourceFile, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || node.name.text !== declaration) return;
+    walk(node, (inner) => {
+      if (!ts.isPropertyAssignment(inner) || !ts.isIdentifier(inner.name) || inner.name.text !== property) return;
+      walk(inner.initializer, (literal) => {
+        if (ts.isStringLiteral(literal)) found.push(literal.text);
+      });
+    });
+  });
+  return found;
+}
+
 function literalsOf(contract, name) {
   return literalsOfDeclaration(readFileSync(contract, "utf8"), contract, name);
 }
 
-/** The tavern contract's own route descriptor table: the tavern profile's producers. */
-const TAVERN_DESCRIPTOR_IDS = new Set(literalsOf(TAVERN_CONTRACT, "RouteDescriptors"));
+function propertyLiteralsOf(contract, declaration, property) {
+  return literalsOfProperty(readFileSync(contract, "utf8"), contract, declaration, property);
+}
+
+/**
+ * The modules the composed static shell MOUNTS as browser route servers: the
+ * composition that registers the routes itself, plus every module it reaches
+ * transitively through a `create*RequestHandler` / `create*DelegatedHandler`
+ * import - i.e. the handlers that actually serve `/api/tavern/v1/`. The contract
+ * is never in this set, so an operation cannot certify itself.
+ */
+export function mountedRouteModules(compositionFile = COMPOSITION) {
+  const mounted = new Set();
+  const queue = [compositionFile];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (mounted.has(file)) continue;
+    mounted.add(file);
+    walk(sourceOf(file), (node) => {
+      if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) return;
+      const clause = node.importClause;
+      if (clause === undefined) return;
+      const names = [];
+      if (clause.name !== undefined) names.push(clause.name.text);
+      const bindings = clause.namedBindings;
+      if (bindings !== undefined) {
+        if (ts.isNamespaceImport(bindings)) names.push("*");
+        else for (const element of bindings.elements) names.push(element.name.text);
+      }
+      if (!names.some((name) => /^create[A-Za-z0-9]*(?:RequestHandler|DelegatedHandler)$/u.test(name))) return;
+      const resolved = resolveImport(file, node.moduleSpecifier.text);
+      if (resolved !== null) queue.push(resolved);
+    });
+  }
+  return [...mounted].sort();
+}
+
+/** Resolve a relative import specifier to the TypeScript source file it names. */
+function resolveImport(fromFile, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const base = join(dirname(fromFile), specifier);
+  for (const candidate of [base.replace(/\.js$/u, ".ts"), `${base}.ts`, base.replace(/\.js$/u, ".tsx")]) {
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Not on disk: fall through to the next spelling.
+    }
+  }
+  return null;
+}
+
+const MOUNTED_ROUTE_MODULES = mountedRouteModules();
+/** Mounted modules that declare a `/api/tavern/v1/` route, so they serve that API. */
+const TAVERN_ROUTE_SERVERS = MOUNTED_ROUTE_MODULES.filter((file) =>
+  readFileSync(file, "utf8").includes("/api/tavern/v1/"),
+);
+
+/** True when a mounted tavern route server names `member` in a value position. */
+export function tavernMountProducers(member, servers = TAVERN_ROUTE_SERVERS) {
+  return producersOf(member, null, new Set(), servers);
+}
+
+/**
+ * The reservation ledger. Each entry is a structured, verifiable fact about a
+ * member no producer can emit: which shipped source serves the shell in its place
+ * (`servedBy`) and which declared, produced member answers the request instead
+ * (`instead`). Nothing else reserves a member, and a comment never can.
+ */
+export const CONTRACT_RESERVATIONS = Object.freeze([
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.prerequisites.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason: "no route serves it; the composed state read publishes the prerequisites projection",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.instances.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason: "no honest body; the one owned instance is already published by the state read",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.attach",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason: "no route serves it; the Stardew profile does not list it in its operationIds",
+  }),
+  Object.freeze({
+    kind: "game-operation",
+    member: "game.diagnostics.read",
+    servedBy: "host/src/composed-reference-game-browser.ts",
+    instead: "game.state.read",
+    reason: "no honest body; the state read already answers the one published diagnostics fact",
+  }),
+  Object.freeze({
+    kind: "voice-state",
+    member: "unavailable",
+    servedBy: "host/src/voice-gateway-client.ts",
+    instead: "ready",
+    reason: "the one production reader emits ready/speaking; no captured-input path can produce unavailable",
+  }),
+]);
 
 /**
  * Every subject the gate checks, with its members enumerated from the contract
- * they are declared in. `declaration` is the line a reservation marker would sit
- * above, and the line a failure names; `produced` replaces the shipped-source
- * search for a subject whose producers live inside its own contract.
+ * they are declared in. `mode` selects the producer rule (`"value"` or `"write"`),
+ * `field` is the owner scope a producer must name, and `produced` replaces the
+ * shipped-source search for a subject whose producers are the mounted route
+ * servers.
  */
 const SUBJECTS = [
   ...literalsOf(GAME_CONTRACT, "GAME_BROWSER_OPERATION_IDS_V1").map((id) => ({
-    kind: "operation",
+    kind: "game-operation",
     label: "the declared game operation",
     contract: GAME_CONTRACT,
     declaration: id,
     field: null,
+    mode: "value",
     members: [id],
   })),
   ...literalsOf(TAVERN_CONTRACT, "OperationId").map((id) => ({
-    kind: "route-descriptor",
+    kind: "tavern-operation",
     label: "the declared tavern operation",
     contract: TAVERN_CONTRACT,
     declaration: id,
     field: null,
+    mode: "value",
     members: [id],
-    produced: () => (TAVERN_DESCRIPTOR_IDS.has(id) ? ["tavern/browser-contract/index.ts:RouteDescriptors"] : []),
+    produced: (member) => tavernMountProducers(member),
   })),
   {
-    kind: "state-member",
+    kind: "voice-state",
     label: "the voice surface state",
     contract: TAVERN_CONTRACT,
     declaration: "TavernVoiceSurfaceStateV1Schema",
     field: /voice/iu,
+    mode: "write",
     members: literalsOf(TAVERN_CONTRACT, "TavernVoiceSurfaceStateV1Schema"),
+  },
+  {
+    kind: "turn-state",
+    label: "the browser turn state",
+    contract: TAVERN_CONTRACT,
+    declaration: "BrowserTurnV1Schema",
+    field: /(?<!re)turn/iu,
+    mode: "value",
+    members: propertyLiteralsOf(TAVERN_CONTRACT, "BrowserTurnV1Schema", "state"),
+  },
+  {
+    kind: "memory-status",
+    label: "the memory row status",
+    contract: TAVERN_CONTRACT,
+    declaration: "MemoryItemV1Schema",
+    field: /memor/iu,
+    mode: "value",
+    members: propertyLiteralsOf(TAVERN_CONTRACT, "MemoryItemV1Schema", "status"),
+  },
+  {
+    kind: "memory-category",
+    label: "the memory row category",
+    contract: TAVERN_CONTRACT,
+    declaration: "MemoryItemV1Schema",
+    field: /memor/iu,
+    mode: "value",
+    members: propertyLiteralsOf(TAVERN_CONTRACT, "MemoryItemV1Schema", "category"),
+  },
+  {
+    kind: "card-import-classification",
+    label: "the card-import disposition class",
+    contract: TAVERN_CONTRACT,
+    declaration: "StCardImportDispositionV1Schema",
+    field: /import/iu,
+    mode: "value",
+    members: propertyLiteralsOf(TAVERN_CONTRACT, "StCardImportDispositionV1Schema", "classification"),
+  },
+  {
+    kind: "card-import-eligibility",
+    label: "the card-import field eligibility",
+    contract: TAVERN_CONTRACT,
+    declaration: "StCardImportFieldSummaryV1Schema",
+    field: /import/iu,
+    mode: "value",
+    members: propertyLiteralsOf(TAVERN_CONTRACT, "StCardImportFieldSummaryV1Schema", "eligibility"),
   },
 ];
 
@@ -242,17 +404,6 @@ export function propertyNamesOf(contract, declaration) {
   return names;
 }
 
-function assignmentTargetNamesField(node, field) {
-  for (let current = node.parent; current !== undefined; current = current.parent) {
-    if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      return field.test(current.left.getText());
-    }
-    if (ts.isPropertyAssignment(current)) return false;
-    if (ts.isFunctionLike(current) || ts.isStatement(current)) return false;
-  }
-  return false;
-}
-
 /**
  * True when the literal is *written* into the schema's own property rather than
  * compared, validated or annotated. A comparison (`current.state !== "ready"`) and
@@ -296,6 +447,13 @@ export function producersOf(member, field, properties, files = producerFiles()) 
   return found;
 }
 
+/** The producers of one member under its subject's own rule. */
+export function producersForSubject(subject, member, files = producerFiles()) {
+  if (subject.produced !== undefined) return subject.produced(member);
+  const properties = subject.mode === "write" ? propertyNamesOf(subject.contract, subject.declaration) : new Set();
+  return producersOf(member, subject.field, properties, files);
+}
+
 /** The 1-based line a named declaration starts on, for a routable failure message. */
 export function declarationLine(contractFile, declaration) {
   const lines = readFileSync(contractFile, "utf8").split("\n");
@@ -303,39 +461,54 @@ export function declarationLine(contractFile, declaration) {
   return index < 0 ? 0 : index + 1;
 }
 
-/** True when the contract marks this declaration reserved. */
-export function isReserved(contractFile, declaration) {
-  const marker = reservationMarker(readFileSync(contractFile, "utf8"), declaration);
-  return marker !== null && /reserved/iu.test(marker);
+/** The ledger entry for a subject kind and member, or null when it is unreserved. */
+export function findReservation(kind, member) {
+  return CONTRACT_RESERVATIONS.find((entry) => entry.kind === kind && entry.member === member) ?? null;
 }
 
-test("producer.1: every declared contract member has a producer or a reservation", (t) => {
-  const files = producerFiles();
+/**
+ * The bare/full enumeration over any subject list. Exported so the planted
+ * violation below runs the exact rule the real gate runs.
+ */
+export function enumerateSubjects(subjects, files = producerFiles()) {
   const failures = [];
   const reserved = [];
   let produced = 0;
   let checked = 0;
-  for (const subject of SUBJECTS) {
-    const properties = subject.kind === "state-member" ? propertyNamesOf(subject.contract, subject.declaration) : new Set();
+  for (const subject of subjects) {
     for (const member of subject.members) {
       checked += 1;
-      const producers =
-        subject.produced === undefined ? producersOf(member, subject.field, properties, files) : subject.produced();
-      if (producers.length > 0) {
+      if (producersForSubject(subject, member, files).length > 0) {
         produced += 1;
         continue;
       }
-      if (isReserved(subject.contract, subject.declaration)) {
+      if (findReservation(subject.kind, member) !== null) {
         reserved.push(member);
         continue;
       }
       failures.push(
-        `${subject.contract.replace(/\\/gu, "/").split("/src/").pop()}:${declarationLine(subject.contract, subject.declaration)} declares ${member} (${subject.label}) with no producer and no reserved marker`,
+        `${subject.contract.replace(/\\/gu, "/").split("/src/").pop()}:${declarationLine(subject.contract, subject.declaration)} declares ${member} (${subject.label}) with no producer and no ledger reservation`,
       );
     }
   }
+  return { checked, produced, reserved, failures };
+}
+
+/** The subject that declares `member`. */
+function subjectOf(kind, member) {
+  return SUBJECTS.find((subject) => subject.kind === kind && subject.members.includes(member));
+}
+
+/** The subject, in the same contract, whose members include `member`. */
+function subjectOfContractMember(contract, member) {
+  return SUBJECTS.find((subject) => subject.contract === contract && subject.members.includes(member));
+}
+
+test("producer.1: every declared contract member has a producer or a ledger reservation", (t) => {
+  const files = producerFiles();
+  const { checked, produced, reserved, failures } = enumerateSubjects(SUBJECTS, files);
   t.diagnostic(
-    `producer.1: ${checked} declared member(s) enumerated from the contracts, ${files.length} non-test source file(s); ${produced} produced, ${reserved.length} reserved${reserved.length === 0 ? "" : ` (${reserved.join(", ")})`}, ${failures.length} bare`,
+    `producer.1: ${checked} declared member(s) enumerated from the contracts, ${files.length} non-test source file(s); ${MOUNTED_ROUTE_MODULES.length} mounted route module(s), ${TAVERN_ROUTE_SERVERS.length} serving /api/tavern/v1/; ${produced} produced, ${reserved.length} reserved${reserved.length === 0 ? "" : ` (${reserved.join(", ")})`}, ${failures.length} bare`,
   );
   assert.deepEqual(failures, [], "a member no producer can emit reads as a capability the product does not have");
 });
@@ -388,33 +561,29 @@ test("producer.3: a type annotation, a comparison and a validator are not produc
   t.diagnostic("producer.3: the union, the comparisons and the validator contribute no producer; the write does");
 });
 
-test("producer.4 (mutation): a member with no producer and no marker fails, with the contract path", (t) => {
-  const probeContract = join(REPO, "dialogue-web", "tests", "gate-probe-contract.ts");
-  const declared = [
-    "const ProbeState = strictObject({",
-    "  state: Type.Union([Type.Literal(\"gate_absent_member\")]),",
-    "});",
-  ].join("\n");
-  assert.equal(isReservedFor(declared, "ProbeState"), false);
-  const withMarker = ["/** Reserved: no producer on this shell yet. */", "const ProbeState = strictObject({", "});"].join("\n");
-  assert.equal(isReservedFor(withMarker, "ProbeState"), true);
-  t.diagnostic(`producer.4: a marker above the declaration flips reserved (${probeContract.endsWith("gate-probe-contract.ts") ? "probe" : "probe"})`);
+test("producer.4 (mutation): a tavern operation is produced by a mounted server, not the contract table", (t) => {
+  // Every declared operation really is named by a mounted tavern route server.
+  const servers = TAVERN_ROUTE_SERVERS.map((file) => file.replace(/\\/gu, "/").split("/host/src/").pop());
+  assert.ok(
+    servers.includes("tavern-management-dialogue-web.ts"),
+    `the management handler must be a mounted route server, found ${servers.join(", ")}`,
+  );
+  assert.ok(
+    servers.includes("reference-pipeline-dialogue-web.delegated.ts"),
+    `the reference handler must be a mounted route server, found ${servers.join(", ")}`,
+  );
+  assert.ok(
+    !MOUNTED_ROUTE_MODULES.includes(TAVERN_CONTRACT) && !MOUNTED_ROUTE_MODULES.includes(GAME_CONTRACT),
+    "the contracts must never be their own mounting evidence",
+  );
+  // A planted operation no mounted server names has no producer, even though the
+  // contract's own descriptor table would happily list it.
+  assert.deepEqual(tavernMountProducers("chat.planted"), [], "an unmounted id has no producer");
+  assert.ok(tavernMountProducers("chat.submit").length > 0, "a real operation is named by the reference handler");
+  t.diagnostic(`producer.4: ${TAVERN_ROUTE_SERVERS.length} mounted tavern route server(s); the contract is not one`);
 });
 
-/** `isReserved`, over text instead of a file, for the mutation proof. */
-function isReservedFor(text, declaration) {
-  const marker = reservationMarker(text, declaration);
-  return marker !== null && /reserved/iu.test(marker);
-}
-
-/**
- * The mutation proof for the enumeration: a member planted in a declared
- * vocabulary is read by the same function the gate uses, and with no producer and
- * no marker in its window it fails. The real plant was also run by hand -
- * `game.instances.list` added to `GAME_BROWSER_OPERATION_IDS_V1` turned
- * producer.1 red at the line that declares it.
- */
-test("producer.5 (mutation): a planted declaration is enumerated, and only a marker clears it", (t) => {
+test("producer.5 (mutation): a planted declaration is enumerated, and only the ledger clears it", (t) => {
   const planted = [
     "const ProbeVocabulary = Object.freeze([",
     '  "game.state.read",',
@@ -426,31 +595,74 @@ test("producer.5 (mutation): a planted declaration is enumerated, and only a mar
     ["game.state.read", "game.instances.list"],
     "the vocabulary is read out of its own declaration",
   );
-  assert.equal(isReservedFor(planted, "game.instances.list"), false, "a planted member carries no marker");
-
-  // The regression the real plant found: an entry marked reserved sits directly
-  // above the next one, and a window-shaped rule cleared the planted entry with
-  // its neighbour's marker instead of failing it.
-  const neighbourMarker = [
-    "const ProbeVocabulary = Object.freeze([",
-    "  /** Reserved: this marker belongs to the entry below it. */",
-    '  "game.state.read",',
-    '  "game.instances.list",',
-    "] as const);",
-  ].join("\n");
   assert.equal(
-    isReservedFor(neighbourMarker, "game.instances.list"),
-    false,
-    "a neighbour's marker must not clear the entry under it",
+    findReservation("game-operation", "game.instances.list"),
+    null,
+    "a planted member is not in the ledger and cannot be reserved by a comment",
   );
-  assert.equal(isReservedFor(neighbourMarker, "game.state.read"), true, "the marker clears its own declaration");
-
+  assert.notEqual(findReservation("game-operation", "game.prerequisites.read"), null, "the ledger reserves its own members");
   const marked = [
     "const ProbeVocabulary = Object.freeze([",
-    "  /** Reserved: planted with the reason stated. */",
+    "  /** Reserved: this comment must clear nothing. */",
     '  "game.instances.list",',
     "] as const);",
   ].join("\n");
-  assert.equal(isReservedFor(marked, "game.instances.list"), true, "a marker in the window is the only way through");
-  t.diagnostic("producer.5: the planted member is enumerated, and only a reservation marker clears it");
+  assert.ok(marked.includes("Reserved"), "the probe still carries the comment that used to be the escape hatch");
+  assert.equal(
+    findReservation("game-operation", "game.instances.list"),
+    null,
+    "a reservation comment in the product no longer clears anything",
+  );
+  t.diagnostic("producer.5: a planted member is enumerated, and only the structured ledger can reserve it");
+});
+
+test("producer.6: the reservation ledger is counted and every entry names a real substitute", (t) => {
+  const files = producerFiles();
+  const shipped = new Set(files);
+  const problems = [];
+  for (const entry of CONTRACT_RESERVATIONS) {
+    const subject = subjectOf(entry.kind, entry.member);
+    if (subject === undefined) {
+      problems.push(`${entry.member}: reserved but not declared by any subject (stale reservation)`);
+      continue;
+    }
+    if (typeof entry.reason !== "string" || entry.reason.trim().length < 8)
+      problems.push(`${entry.member}: a reservation must state why no producer can emit it`);
+    if (typeof entry.servedBy !== "string" || !shipped.has(join(REPO, entry.servedBy)))
+      problems.push(`${entry.member}: servedBy ${JSON.stringify(entry.servedBy)} does not resolve to a shipped source`);
+    const substitute = subjectOfContractMember(subject.contract, entry.instead);
+    if (substitute === undefined) {
+      problems.push(`${entry.member}: instead ${JSON.stringify(entry.instead)} is not declared by the same contract`);
+    } else if (producersForSubject(substitute, entry.instead, files).length === 0) {
+      problems.push(`${entry.member}: instead ${entry.instead} is itself unproduced, so the substitute is not real`);
+    }
+  }
+  t.diagnostic(
+    `producer.6: ${CONTRACT_RESERVATIONS.length} reserved member(s), each with a resolvable servedBy and a produced instead`,
+  );
+  assert.deepEqual(problems, [], "a reservation is a structured, verifiable fact - not prose");
+});
+
+test("producer.7 (planted): an unproduced, unreserved member turns the enumeration red", (t) => {
+  const files = producerFiles();
+  const plantedSubject = {
+    kind: "tavern-operation",
+    label: "the declared tavern operation",
+    contract: TAVERN_CONTRACT,
+    declaration: "OperationId",
+    field: null,
+    mode: "value",
+    members: ["chat.planted"],
+    produced: (member) => tavernMountProducers(member),
+  };
+  const planted = enumerateSubjects([plantedSubject], files);
+  assert.equal(
+    planted.failures.length,
+    1,
+    "a mounted route server does not name chat.planted, so the enumeration must fail it",
+  );
+  assert.match(planted.failures[0], /declares chat\.planted .* with no producer and no ledger reservation/u);
+  const clean = enumerateSubjects([{ ...plantedSubject, members: ["chat.submit"] }], files);
+  assert.deepEqual(clean.failures, [], "the same enumeration over a real operation passes");
+  t.diagnostic(`producer.7: planted -> ${planted.failures[0]}`);
 });
