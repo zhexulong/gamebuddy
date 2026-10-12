@@ -4237,31 +4237,49 @@ test("Game endgame control is absent when no live session can be ended", async (
 
 
 /**
- * Chat selection (ADR 0009). A created Chat could not be switched to: the list grew but clicking a
- * row did nothing, the dead end a player hits the moment they create a second conversation. The
- * selected Chat is recorded durably and becomes the mounted conversation at the next runtime start,
- * so the surface says exactly that - it never claims the running conversation switched. Clicking the
- * already-selected row is a no-op (no second admission), and a stale generation is a bounded refusal.
+ * Chat selection (ADR-0009, turn-level). Choosing another Chat must switch the mounted
+ * conversation inside the same process while the runtime is idle, and must refuse with a reason the
+ * player can act on while a turn is generating. The surface may never claim a switch it did not
+ * make, and it may never leave the player with a raw code or a "restart the app" dead end.
  */
-test("Chats surface selects another chat durably, no-ops the current one, and refuses a stale generation", async ({ page }) => {
-  const chatHandleB = "C".repeat(42) + "A";
-  const chatHandleC = "D".repeat(42) + "A";
+test("Chats surface switches the mounted conversation on click and refuses a stale generation", async ({ page }) => {
+  const secondHandle = "C".repeat(42) + "A";
+  const thirdHandle = "D".repeat(42) + "A";
   let selectRequests = 0;
   let listReads = 0;
   let selectStatus = 200;
-  let selectTarget = chatHandleB;
+  let selectTarget = secondHandle;
+  // The Host's own mounted Chat: a real switch changes it, so the next /state read is the target's.
+  let mountedHandle = handle;
   const listOf = () => ({
     apiVersion: 1,
     chats: [
-      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
-      { handle: chatHandleB, title: "Second conversation", status: "active", managementRevision: 1, isSelected: false },
-      { handle: chatHandleC, title: "Third conversation", status: "active", managementRevision: 1, isSelected: false },
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+      { handle: secondHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === secondHandle },
+      { handle: thirdHandle, title: "Third conversation", status: "active", managementRevision: 1, isSelected: false },
     ],
   });
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill(jsonOk(root)),
-  );
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  const secondChat = {
+    ...chat,
+    selection: { chatHandle: secondHandle, generation: 2, stateRevision: secondHandle },
+    chat: {
+      ...chat.chat,
+      title: "Second conversation",
+      transcript: [
+        {
+          handle: "E".repeat(42) + "A",
+          role: "companion",
+          text: "This is the second conversation.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+      ],
+    },
+  };
+  const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -4280,44 +4298,117 @@ test("Chats surface selects another chat durably, no-ops the current one, and re
     expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, selectionGeneration: 1, chatHandle: selectTarget });
     if (selectStatus !== 200)
       return route.fulfill({ status: selectStatus, contentType: "application/json", body: JSON.stringify({ code: "selection_conflict" }) });
-    return route.fulfill(jsonOk({ apiVersion: 1, status: "restart_required" }));
+    mountedHandle = selectTarget;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  // The conversation the app opens on is the first chat's.
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("The game projection is read-only.");
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.getByTestId("chat-item")).toHaveCount(3);
+
+  // The mounted chat is the selected row.
+  await expect(surface.getByTestId("chat-item").first()).toHaveAttribute("data-selected", "true");
+  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "false");
+
+  // Clicking the already-mounted chat is a no-op: no selection admission at all.
+  await surface.getByTestId("chat-item").first().getByTestId("chat-select").click();
+  await page.waitForTimeout(50);
+  expect(selectRequests, "selecting the mounted chat must not create a second admission").toBe(0);
+
+  // A stale generation is a bounded refusal: the failure is reported and the list re-read.
+  selectStatus = 409;
+  selectTarget = thirdHandle;
+  const readsBefore = listReads;
+  await surface.getByTestId("chat-item").nth(2).getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(1);
+  await expect(surface.getByRole("status")).toContainText("Operation failed.");
+  await expect.poll(() => listReads).toBeGreaterThan(readsBefore);
+
+  // An idle switch: the Host switches the mounted conversation in process and answers `switched`, so
+  // the browser reloads the mounted conversation and the transcript shown is the target's. No restart
+  // happens anywhere, and no "next start" promise is made.
+  selectStatus = 200;
+  selectTarget = secondHandle;
+  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(2);
+  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
+  await expect(surface.getByRole("status")).toContainText("Chat switched.");
+
+  // The mounted conversation is the target's: returning to the conversation shows its transcript.
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
+  await expect(page.getByRole("region", { name: "Chat transcript" })).not.toContainText("The game projection is read-only.");
+
+  // The now-mounted chat is a no-op again: the switch did not leave a second admission behind.
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
+  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
+  await page.waitForTimeout(50);
+  expect(selectRequests, "re-selecting the mounted chat must not create a second admission").toBe(2);
+});
+
+/**
+ * The other half of the turn-level ruling: while a turn is generating, the affordance is disabled and
+ * the panel names the reason the player can act on (Stop, then switch) - never a raw code, and never a
+ * switch that would tear a generating conversation down.
+ */
+test("Chats surface disables the switch and names the reason while a turn is generating", async ({ page }) => {
+  let selectRequests = 0;
+  const runningRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" },
+      ],
+      chat: {
+        ...chat.chat,
+        turn: { handle: "F".repeat(42) + "A", state: "running", projectionRevision: 1, canCancel: true },
+      },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(runningRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(runningRoot)));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [
+          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
+          { handle: "C".repeat(42) + "A", title: "Second conversation", status: "active", managementRevision: 1, isSelected: false },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/select", (route) => {
+    selectRequests += 1;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "turn_in_flight" }));
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  await expect(surface.getByTestId("chat-item")).toHaveCount(3);
+  await expect(surface.getByTestId("chat-item")).toHaveCount(2);
 
-  // The mounted chat is the selected row; the others are offered for selection.
-  await expect(surface.getByTestId("chat-item").first()).toHaveAttribute("data-selected", "true");
-  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "false");
-
-  // Clicking the already-selected chat is a no-op: no selection admission at all.
-  await surface.getByTestId("chat-item").first().getByTestId("chat-select").click();
+  // The reason is the player's next action, not a code.
+  await expect(surface.getByTestId("chat-select-blocked")).toContainText("still being written");
+  await expect(surface.getByTestId("chat-select-blocked")).toContainText("Stop");
+  // Both rows are unselectable, the mounted one included.
+  await expect(surface.getByTestId("chat-item").first().getByTestId("chat-select")).toBeDisabled();
+  await expect(surface.getByTestId("chat-item").nth(1).getByTestId("chat-select")).toBeDisabled();
+  // A disabled control never reaches the selection route.
+  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click({ force: true });
   await page.waitForTimeout(50);
-  expect(selectRequests, "selecting the mounted chat must not create a second admission").toBe(0);
-
-  // Selecting the other Chat records it and says the honest restart outcome.
-  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
-  await expect.poll(() => selectRequests).toBe(1);
-  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
-  await expect(surface.getByTestId("chat-select-pending")).toHaveText("Next start");
-  await expect(surface.getByRole("status")).toContainText("the next time GameBuddy starts");
-
-  // The Chat already chosen for the next start is a no-op too: no second admission for it.
-  await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
-  await page.waitForTimeout(50);
-  expect(selectRequests, "re-selecting the already-chosen chat must not create a second admission").toBe(1);
-
-  // A stale generation is a bounded refusal: the failure is reported and the list re-read.
-  selectStatus = 409;
-  selectTarget = chatHandleC;
-  const readsBefore = listReads;
-  await surface.getByTestId("chat-item").nth(2).getByTestId("chat-select").click();
-  await expect.poll(() => selectRequests).toBe(2);
-  await expect(surface.getByRole("status")).toContainText("Operation failed.");
-  await expect.poll(() => listReads).toBeGreaterThan(readsBefore);
+  expect(selectRequests, "a generating turn must not reach the selection route").toBe(0);
 });
 
 
