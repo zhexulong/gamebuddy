@@ -26,6 +26,7 @@ internal sealed class WorldLifecycleActionHandler : IFarmhandActionHandler
         return request.Action switch
         {
             "advance_day" => this.executions.RequestLocalAdvanceDay(request.RequestId, request.DeadlineMs),
+            "accept_daily_quest" => this.executions.RequestLocalAcceptDailyQuest(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
             _ => new LocalExecutionReceipt(
                 Guid.NewGuid().ToString("N"),
                 request.RequestId,

@@ -520,6 +520,10 @@ public sealed record BridgeSnapshot(
         // reason as its siblings above: the positional list is already closed by the parameters
         // before it.
         IReadOnlyList<BridgeWearableTarget>? WearableTargets = null,
+        // The farm-building lane's projection: the commission sites this actor can name right now
+        // (`build_site`) and the buildings already standing (`built`), so the caller can see its own
+        // commission change the published fact. Defaulted, like every sibling projection.
+        IReadOnlyList<BridgeFarmBuildingTarget>? FarmBuildingTargets = null,
         // The World Model's disposition for this tick - the single authority every consumer reads
         // instead of re-deriving the body's environment (WIA rev C). `Kind` is one of idle, modal,
         // event, pass_out, transient; `Detail` names the modal class or transient kind when the kind
@@ -528,7 +532,13 @@ public sealed record BridgeSnapshot(
         // is holding the body rather than only that it cannot act.
         string ActorDispositionKind = "idle",
         string? ActorDispositionDetail = null,
-        bool ActorDispositionActionOwned = false
+        bool ActorDispositionActionOwned = false,
+        // The day's posted quest, published only while `accept_daily_quest` is advertised and the
+        // game would accept it - the discovery projection the action's expectedTargetId comes from -
+        // plus the world flag the accept turns true. Defaulted and LAST for the same reason as the
+        // siblings above: the positional list is already closed by the parameters before them.
+        IReadOnlyList<BridgeDailyQuestTarget>? DailyQuestTargets = null,
+        bool? AcceptedDailyQuest = null
     );
 
 public sealed record BridgeActiveExecution(
@@ -616,6 +626,9 @@ public sealed class BridgeExecutionArgs
     public string? Tool { get; init; }
     public string? ExpectedQualifiedItemId { get; init; }
     public string? ExpectedTargetId { get; init; }
+    /// <summary>The `Data/Buildings` type id a build_farm_building commission is for (the value
+    /// `CarpenterMenu.BlueprintEntry.Id` carries for the selected blueprint).</summary>
+    public string? BuildingType { get; init; }
     /// <summary>How many units to buy. Only shop_purchase uses it today; the Mod clamps it
     /// against the live stock and the player's purse on the game thread.</summary>
     public int? Quantity { get; init; }
@@ -689,6 +702,27 @@ public sealed record BridgeBuildingChestTarget(
     string? LoadInputQualifiedItemId = null,
     int? LoadInputStack = null);
 
+/// <summary>One farm-building fact the build_farm_building caller can name. `Kind` is what the
+/// fact IS for this lane, never a client-supplied classification: <c>build_site</c> is a free
+/// footprint the named building type could go on now (the structure does not exist yet, so
+/// <c>BuildingId</c> is the literal `none` and <c>DaysOfConstructionLeft</c> is -1), and
+/// <c>built</c> is a building already standing in the current location, carrying its own durable
+/// <c>Building.id</c> and its `daysOfConstructionLeft`. <c>BuildCost</c> and <c>BuildDays</c> are
+/// the type's own `Data/Buildings` facts, published because they are what the commission charges
+/// and how long it takes - the two halves of the world change a receipt must be able to show.</summary>
+public sealed record BridgeFarmBuildingTarget(
+    string TargetId,
+    string Kind,
+    string Location,
+    int X,
+    int Y,
+    string BuildingType,
+    string DisplayName,
+    int BuildCost,
+    int BuildDays,
+    string BuildingId,
+    int DaysOfConstructionLeft);
+
 /// <summary>One owned warp totem the actor can activate right now. `Slot` and
 /// `QualifiedItemId` are exactly the action's arguments, and `Destination` is derived by the
 /// same helper the action executes with, so the projection and the execution cannot
@@ -708,6 +742,13 @@ public sealed record BridgePanSiteTarget(int X, int Y);
 /// hashed INTO the id and never published, so the projection carries the mail count without
 /// carrying mailbox content.</summary>
 public sealed record BridgeMailboxTarget(string TargetId, string Location, int X, int Y, int PendingCount);
+
+/// <summary>The day's posted help-wanted quest, identified opaquely and published only while
+/// `accept_daily_quest` is advertised AND Game1.CanAcceptDailyQuest() is true - the same predicate
+/// the board's own Accept button reads for its visible flag. It carries no tile: the offer is native
+/// world state, not a position. QuestType is the native quest-type value and Title the game's own
+/// title, so a receipt can be tied to the offer that produced it.</summary>
+public sealed record BridgeDailyQuestTarget(string TargetId, int QuestType, string Title);
 
 public sealed record BridgeObeliskTarget(
     string TargetId,

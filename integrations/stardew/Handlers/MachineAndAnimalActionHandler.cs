@@ -159,6 +159,11 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
 
             "use_warp_item" => this.executions.RequestLocalUseWarpItem(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedQualifiedItemId ?? string.Empty, request.DeadlineMs),
 
+            "name_entity" => this.executions.RequestLocalNameEntity(
+                request.RequestId,
+                request.Args.Text ?? string.Empty,
+                request.DeadlineMs),
+
             "ship_item" => this.executions.RequestLocalShipItem(
                 request.RequestId,
                 request.Args.Slot ?? 0,

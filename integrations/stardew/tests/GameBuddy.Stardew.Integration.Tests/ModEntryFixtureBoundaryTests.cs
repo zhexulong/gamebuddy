@@ -81,9 +81,13 @@ public sealed class ModEntryFixtureBoundaryTests
         "FindNativeLocalBuildingChestStandingTile", "FindNativeLocalBuildingChestFixtureStandingTile",
 
         "InstallNativeLocalWorldObjectFixture",
+        "InitializeNativeLocalBuildFarmBuildingFixture",
+        "FindNativeLocalBuildFarmBuildingSite", "FindNativeLocalBuildFarmBuildingStandingTile",
+        "IsNativeLocalBuildFarmBuildingFootprintFree", "NativeLocalBuildFarmBuildingFootprintCovers",
         "InitializeNativeLocalEquipWearableFixture",
         "InitializeNativeLocalUnequipWearableFixture",
         "InitializeNativeLocalDismountTransportFixture",
+        "InitializeNativeLocalAcceptDailyQuestFixture",
     };
 
     /// <summary>

@@ -565,6 +565,9 @@ export function fixtureActions(action) {
   if (action === "withdraw_silo_hay") return ["withdraw_silo_hay"];
   if (action === "toggle_animal_door") return ["toggle_animal_door"];
   if (action === "clear_fish_pond") return ["clear_fish_pond"];
+  if (action === "build_farm_building") return ["build_farm_building"];
+  if (action === "name_entity") return ["name_entity"];
+  if (action === "accept_daily_quest") return ["accept_daily_quest"];
   // The building-chest pair. Both publish the same load/collect targets over the building the
   // fixture provisions (a Load chest and a Collect chest declared by its own data); each action is
   // independently listed because neither is a precondition of the other.
@@ -780,6 +783,8 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("withdraw_silo_hay")) return "native_withdraw_silo_hay_v1";
   if (actions.includes("toggle_animal_door")) return "native_toggle_animal_door_v1";
   if (actions.includes("clear_fish_pond")) return "native_clear_fish_pond_v1";
+  if (actions.includes("build_farm_building")) return "native_build_farm_building_v1";
+  if (actions.includes("name_entity")) return "native_name_entity_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
   if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
   if (action === "talk_to_npc") return "native_talk_to_npc_v1";

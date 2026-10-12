@@ -70,6 +70,11 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // The pond runner drives the action whose fixture it uses, so this table names that action: the fixture
   // library keys the scenario on it.
   "run-stardew-native-local-player-clear-fish-pond-smoke.mjs": "clear_fish_pond",
+  "run-stardew-native-local-player-build-farm-building-smoke.mjs": "build_farm_building",
+  // A synchronous name write with no target id: the subject is the actor's own horse, so the
+  // fixture scenario is keyed on the action alone.
+  "run-stardew-native-local-player-name-entity-smoke.mjs": "name_entity",
+"run-stardew-native-local-player-accept-daily-quest-smoke.mjs": "accept_daily_quest",
   // The chat deed is NOT a native-local fixture: it lives on the farmhand lane of the
   // two-process launcher (a true client of the host), so the native-local fixture
   // library has no send_multiplayer_chat mapping - the policy-check subtest skipping

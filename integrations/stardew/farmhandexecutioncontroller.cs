@@ -2089,6 +2089,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // The actor's OWN wearable body slots. Published when EITHER wearable action is
             // advertised, because both name the same body-slot targets.
             WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
+            // The farm-building commission sites and the buildings already standing, only while the
+            // action is itself advertised.
+            FarmBuildingTargets: advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player) : null,
             // The world-object lane's single shared projection: placement candidates, removable and
             // non-removable objects, and breakable containers, published while ANY of the three
@@ -2098,7 +2101,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // second computation would be a second authority.
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
-            ActorDispositionActionOwned: this.disposition.ModalActionOwned
+            ActorDispositionActionOwned: this.disposition.ModalActionOwned,
+            DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
+            AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null
         );
     }
 
@@ -2124,7 +2129,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle");
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)

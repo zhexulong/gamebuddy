@@ -87,6 +87,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId!,
                 request.DeadlineMs),
             "toggle_animal_door" => this.executions.RequestLocalToggleAnimalDoor(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "build_farm_building" => this.executions.RequestLocalBuildFarmBuilding(request.RequestId, request.Args.BuildingType ?? string.Empty, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "break_container_source" => this.executions.RequestLocalBreakContainerSource(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 

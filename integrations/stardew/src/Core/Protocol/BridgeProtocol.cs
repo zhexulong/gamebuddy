@@ -1942,6 +1942,14 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "use_obelisk" => new[] { "x", "y", "expectedTargetId" },
         "toggle_tool_light" => new[] { "slot", "x", "y" },
         "clear_fish_pond" => new[] { "x", "y", "expectedTargetId" },
+        "build_farm_building" => new[] { "buildingType", "x", "y", "expectedTargetId" },
+
+        // accept_daily_quest names the day's posted help-wanted quest through the opaque target id
+        // the Mod publishes. There is no coordinate: the offer is native world state, not a tile.
+        "accept_daily_quest" => new[] { "expectedTargetId" },
+        // name_entity's subject is the actor's OWN horse and its one input is the name itself,
+        // so the wire carries exactly the protocol's free-text argument.
+        "name_entity" => new[] { "text" },
         "use_item" => new[] { "slot", "expectedQualifiedItemId" },
         "navigate_to_destination" => new[] { "destination" },
         "express_emote" => new[] { "emote" },
