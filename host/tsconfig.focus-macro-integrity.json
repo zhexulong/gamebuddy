@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/st-card-import.test.ts",
+    "src/tavern/macro-engine.test.ts",
+    "src/tavern/default-companion-preset.test.ts"
+  ]
+}

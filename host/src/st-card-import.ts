@@ -1,6 +1,7 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
-import { hasUnrenderedMacro, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
+import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
+import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "./settings/player-preference-store.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { WorldBookEntry } from "./worldbook.js";
 
@@ -110,20 +111,27 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
 /**
  * Maps an imported candidate's static persona and identity into a Host IdentityProfile,
  * ensuring 100% Prefix Caching in m[0]. Card macros are rendered deterministically
- * ({{char}} → name, {{user}} → "the player") before the profile is frozen, so a card
- * writer can use the standard ST token set without leaking raw placeholders into the
- * Tier 1 prefix. Rendering is single-pass (renderMacros), values are re-checked by
+ * ({{char}} → name, {{user}} → the run's own word for the player) before the profile is
+ * frozen, so a card writer can use the standard ST token set without leaking raw
+ * placeholders into the Tier 1 prefix. The player reference is the locale's, never the
+ * English constant "the player": a Chinese card rendered into a Chinese run reads
+ * 与玩家一同从都市迁居. Rendering is single-pass (renderMacros), values are re-checked by
  * validateIdentityProfile at the write boundary.
+ *
+ * `locale` is the run's companion language. It defaults to the product's own default
+ * companion language, which is what a build-time compile of the reviewed preset (a
+ * Chinese card) and any caller that has not read the player's stored preference get.
  */
 export function candidateToIdentityProfile(
   previewOrCandidate: StCardImportPreview | StCardImportCandidate,
   revision = 1,
+  locale: CompanionLocale = DEFAULT_COMPANION_LOCALE,
 ): IdentityProfile {
   const profileCandidate =
     "profileCandidate" in previewOrCandidate
       ? previewOrCandidate.profileCandidate
       : (previewOrCandidate as StCardImportPreview).profileCandidate;
-  const macros = Object.freeze({ char: profileCandidate.identity.name, user: "the player" });
+  const macros = macroTable({ char: profileCandidate.identity.name, locale });
   const render = (value: string): string => renderMacros(value, macros);
   const persona =
     profileCandidate.persona === undefined

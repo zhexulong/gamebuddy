@@ -132,7 +132,7 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
     },
   });
 
-  const profile = candidateToIdentityProfile(preview, 1);
+  const profile = candidateToIdentityProfile(preview, 1, "en-US");
   // {{char}} → the card's own name (not "the player").
   assert.equal(profile.persona?.core, "Macro Rae keeps a small amethyst on the nightstand, a gift the player gave her.");
   // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
@@ -145,6 +145,45 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.doesNotMatch(prompt, /\(?\{\{char\}\}|\(?<BOT>\)?|\(?\{\{user\}\}/u);
   assert.match(prompt, /Macro Rae keeps a small amethyst/);
+});
+
+// The failure this catches: the converter held the English literal "the player" for
+// {{user}}, so a Chinese card's own prose reached the companion as 与the player一同从
+// 都市迁居 - English inside Chinese 设定, in her own profile, with nothing reporting it.
+test("a card's {{user}} renders in the run's own language, and never as a raw macro", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "琥珀",
+      description: "{{user}}的农场搭档。",
+      personality: "严厉收缴{{user}}手里的工具。",
+      mes_example: "{{user}}: {{user}}把工具递过去。\n{{char}}: 收下了。",
+    },
+  });
+
+  const chinese = candidateToIdentityProfile(preview, 1, "zh-CN");
+  assert.equal(chinese.persona?.core, "玩家的农场搭档。");
+  assert.equal(chinese.persona?.interactionStyle, "严厉收缴玩家手里的工具。");
+  assert.equal(chinese.examples?.[0]?.user, "玩家把工具递过去。");
+  // The card's OWN prose, which is what the macro table renders. The identity role,
+  // continuity and the expression-style default are Host-authored English schema text,
+  // not card prose, so they are deliberately outside this assertion.
+  const cardProse = JSON.stringify({
+    core: chinese.persona?.core,
+    interactionStyle: chinese.persona?.interactionStyle,
+    examples: chinese.examples,
+  });
+  assert.doesNotMatch(cardProse, /the player/u, "no English player reference inside Chinese prose");
+  assert.doesNotMatch(cardProse, /\{\{/u, "no raw macro reaches the frozen profile");
+  // A caller that has not read the player's stored preference gets the product's own
+  // default companion language: this is the path the reviewed preset compiles through.
+  assert.deepEqual(candidateToIdentityProfile(preview, 1), chinese);
+  assert.match(buildChatCompanionSystemPrompt(chinese), /玩家的农场搭档。/u);
+
+  // The same card in an English run reads naturally, in English.
+  const english = candidateToIdentityProfile(preview, 1, "en-US");
+  assert.equal(english.persona?.core, "the player的农场搭档。");
+  assert.equal(english.examples?.[0]?.user, "the player把工具递过去。");
 });
 
 test("imported character-book entries are macro-rendered and an unrenderable entry is dropped", () => {

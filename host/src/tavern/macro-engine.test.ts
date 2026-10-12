@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasUnrenderedMacro, renderMacros, renderWorldBookText } from "./macro-engine.js";
+import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./macro-engine.js";
 
 test("renderMacros replaces every supported macro, including mixed forms", () => {
   assert.equal(
@@ -46,4 +46,27 @@ test("hasUnrenderedMacro detects only a surviving macro", () => {
   assert.equal(hasUnrenderedMacro("the player and Kohaku farm."), false);
   assert.equal(hasUnrenderedMacro("a {{char}} placeholder"), true);
   assert.equal(hasUnrenderedMacro("single { braces } are fine"), false);
+});
+
+// The failure this catches: the macro table carried the English literal "the player"
+// as the player reference at every call site, so a Chinese companion's own 设定 was
+// frozen as 与the player一同从都市迁居. Nothing threw; the prose was simply wrong.
+test("the macro table renders the player in the run's locale, not in an English constant", () => {
+  assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "玩家");
+  assert.equal(macroTable({ char: "琥珀", locale: "zh-Hant-TW" }).user, "玩家");
+  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "the player");
+  // A name a caller actually has wins over any word.
+  assert.equal(macroTable({ char: "琥珀", user: "Alex", locale: "zh-CN" }).user, "Alex");
+  assert.equal(macroTable({ char: "琥珀", user: "   ", locale: "zh-CN" }).user, "玩家");
+});
+
+test("renderWorldBookText renders the player word from the locale it is given", () => {
+  assert.equal(
+    renderWorldBookText("{{user}} and {{char}}耕田", { char: "琥珀", locale: "zh-CN" }),
+    "玩家 and 琥珀耕田",
+  );
+  assert.equal(
+    renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku", locale: "en-US" }),
+    "the player and Kohaku farm.",
+  );
 });
