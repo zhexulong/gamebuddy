@@ -4212,4 +4212,55 @@ body {
       animation: none;
     }
   }
+/* ==========================================================================
+   The card's own openings stay one row on the phone strip
+   (composer-chips lane block)
+
+   The measured defect (audit `shots-final4/00-fresh-first-400x800.png`, evidence
+   `shots-final4/b-surfaces.txt:15`): at 400x800 the three shipped openings
+   wrapped to three lines (tops 578 / 630 / 682), so the composer band came out
+   at 256 px - 32% of the window - and the transcript kept only 426 of 800 px:
+   the companion's own first line and the 重新生成 control ended at bottom 806 >
+   800. The longest opening was also clipped behind an ellipsis at that width
+   (chip scrollWidth 54 px past its clientWidth), so the row cost the reading
+   column height *and* hid its own label.
+
+   Below 480 the row is one line that scrolls sideways instead of stacking: the
+   reading column keeps its height, and the overshoot is reachable rather than
+   spent. The chips keep their meaning - each is still one of the card's own
+   openings, still sends through the composer's one submit path, and still says
+   what a tap does in its accessible name - and each keeps its own natural
+   width, so a long opening is *reached* by scrolling rather than hidden behind
+   an ellipsis. The row is not a tab stop: Tab still walks the chips, and the
+   browser scrolls the focused chip into view, which is the keyboard path a
+   scroller of focusable content already has.
+
+   The affordance is the row's own: the product's thin themed scrollbar, and a
+   20 px fade at the trailing edge. The fade sits over the row's own 12 px of
+   trailing padding, so once the row is scrolled out it covers padding rather
+   than the last chip.
+
+   Above 480 nothing changes: there is vertical room there, and wrapping is the
+   row's long-standing behaviour. Appended block; the rules above are untouched.
+   ========================================================================== */
+
+@media (max-width: 480px) {
+  .composer-chips-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* A sideways swipe over the chips must not become the browser's back gesture. */
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+    /* Room under the fade's own 20 px, so the affordance never covers a chip. */
+    padding-right: var(--space-3);
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  }
+
+  .composer-chip {
+    /* The row is the scroller: a chip is as wide as the card's own opening. */
+    max-width: none;
+  }
+}
+
 } /* end @layer theme.polish */
