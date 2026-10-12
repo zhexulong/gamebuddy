@@ -27,6 +27,22 @@ const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title" as c
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
+/**
+ * Additive v1 fact: the swipe/regenerate set a message belongs to.
+ * Mirrors `BrowserSwipeInfoV1Schema`.
+ */
+type BrowserSwipeInfoV1 = Readonly<{
+  currentIndex: number;
+  totalSwipes: number;
+  label: string;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}>;
+
+// `swipeInfo` and `openingVariant` are `Type.Optional` in the Host contract
+// (host/src/tavern/browser-contract). They are declared-optional additive v1
+// facts, so a read that carries either is legal; the mirror must allow them
+// rather than reject the whole message (and, with it, the management surface).
 type BrowserMessageV1 = Readonly<{
   handle: string;
   role: "player" | "companion";
@@ -34,6 +50,8 @@ type BrowserMessageV1 = Readonly<{
   locale: "en" | "zh-CN" | "und";
   order: number;
   revision: number;
+  swipeInfo?: BrowserSwipeInfoV1;
+  openingVariant?: BrowserOpeningVariantV1;
 }>;
 
 type BrowserTurnV1 = Readonly<{
@@ -843,6 +861,7 @@ const RENAME_COMMAND_KEYS = [
   "title",
 ] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
+const SWIPE_INFO_KEYS = ["currentIndex", "totalSwipes", "label", "hasPrevious", "hasNext"] as const;
 const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] as const;
 const CHAT_OPENING_RESULT_KEYS = ["apiVersion", "openingVariant"] as const;
 const CREATE_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration"] as const;
@@ -1020,9 +1039,16 @@ function isNfcUtf8Text(value: unknown, minLength = 1, maxBytes = MAX_TEXT_UTF8_B
 // --- DTO validators (strict closed shapes; every invalid value throws TavernProtocolError). ---
 
 function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (!MESSAGE_KEYS.every((key) => keys.includes(key))) return false;
+  // The two additive optional facts a message may carry; any subset is legal.
+  const optionalKeys = ["swipeInfo", "openingVariant"] as const;
+  const expectedKeys = MESSAGE_KEYS.length + optionalKeys.filter((key) => key in value).length;
+  if (keys.length !== expectedKeys) return false;
+  if ("swipeInfo" in value && !isBrowserSwipeInfo(value.swipeInfo)) return false;
+  if ("openingVariant" in value && !isBrowserOpeningVariant(value.openingVariant)) return false;
   return (
-    isRecord(value) &&
-    hasExactKeys(value, MESSAGE_KEYS) &&
     isOpaqueHandle(value.handle) &&
     isOneOf(value.role, MESSAGE_ROLES) &&
     isNfcUtf8Text(value.text) &&
@@ -1495,6 +1521,18 @@ function isChatTitle(value: unknown): value is ChatTitleV1 {
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     (value.title === null || isLengthBoundedString(value.title, 0, 256)) &&
     isNonNegativeSafeInteger(value.managementRevision)
+  );
+}
+
+function isBrowserSwipeInfo(value: unknown): value is BrowserSwipeInfoV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SWIPE_INFO_KEYS) &&
+    isNonNegativeSafeInteger(value.currentIndex) &&
+    isPositiveSafeInteger(value.totalSwipes) &&
+    isLengthBoundedString(value.label, 1, 32) &&
+    typeof value.hasPrevious === "boolean" &&
+    typeof value.hasNext === "boolean"
   );
 }
 
