@@ -97,8 +97,18 @@ test("composition launch validates the bootstrap acknowledgement and guardian he
     status: "accepted",
     ...expected,
     rootLayoutSchema: "gamebuddy-windows-root-layout/v1",
+    // The session entry the Host publishes: how a caller gets a session on the surface that was actually
+    // mounted. It must be present and well formed - the whole point is that a client reads this instead of
+    // assuming the management route.
+    sessionEntry: { kind: "http", method: "POST", route: "/api/composed-reference-game/v1/bootstrap", bodyKeys: ["apiVersion", "bootstrapToken"] },
   };
   assert.equal(validateBootstrapAcknowledgement(ack, expected), true);
+  assert.equal(
+    validateBootstrapAcknowledgement({ ...ack, sessionEntry: { kind: "browser", launchPath: "/", bootFragmentKey: "boot" } }, expected),
+    true,
+  );
+  assert.equal(validateBootstrapAcknowledgement({ ...ack, sessionEntry: { kind: "browser" } }, expected), false);
+  assert.equal(validateBootstrapAcknowledgement({ ...ack, sessionEntry: { kind: "http", method: "POST" } }, expected), false);
   assert.equal(validateBootstrapAcknowledgement({ ...ack, status: "accepted" }, { ...expected, bootstrapId: "b".repeat(64) }), false);
   assert.equal(validateBootstrapAcknowledgement({ ...ack, status: "blocked" }, expected), false);
   assert.equal(validateBootstrapAcknowledgement({ ...ack, extra: true }, expected), false);
