@@ -504,12 +504,11 @@ export const METHOD_VERDICTS = Object.freeze({
       "PrizeTicketMenu.cs:180 -> addItemToInventoryBool",
       "Menus/PrizeTicketMenu.cs:145",
     ),
-  "PondQueryMenu.receiveLeftClick@124": newPrimitive(
-      "clear_fish_pond",
-      "the confirm branch calls FishPond.ClearPond (PondQueryMenu.cs:135), emptying every fish in one irreversible step; the netting branch (:158) is the same pond's own state.",
-      "PondQueryMenu.cs:135 -> _pond.ClearPond()",
-      "Menus/PondQueryMenu.cs:124",
-    ),
+  "PondQueryMenu.receiveLeftClick@124": merge(
+    ["clear_fish_pond"],
+    "the confirm branch calls the public FishPond.ClearPond (PondQueryMenu.cs:135), and that seam is now the REGISTERED, live-verified `clear_fish_pond` action - measured live: the pond empties (occupants 1 -> 0, fish type -> none), the fish land on the ground as items, and a stale target is refused by name. The menu is only where a player expresses it, so this unit is COVERED rather than a missing primitive.",
+    "Menus/PondQueryMenu.cs:135",
+  ),
   "DiscreteColorPicker.receiveLeftClick@57": newPrimitive(
       "color_placed_object",
       "the picker writes the container's persistent Net field (DiscreteColorPicker.cs:77-78: chest.playerChoiceColor.Value plus resetLidFrame). Cosmetically small but a SAVED world write, so it is not pure UI - the weakest entry here, and the one whose bucket is most worth re-checking.",
