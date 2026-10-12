@@ -198,8 +198,14 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
   child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
   const [code] = (await once(child, "exit")) as [number | null];
-  assert.equal(code, 0, Buffer.concat(errors).toString("utf8"));
-  return JSON.parse(Buffer.concat(output).toString("utf8")) as Record<string, unknown>;
+  const stderr = Buffer.concat(errors).toString("utf8");
+  assert.equal(code, 0, stderr);
+  // The child's stderr is where the service reports one bounded reason per failed read or
+  // mutation, so every mounted result carries it: a case that asserts the reason sees the bytes.
+  return {
+    ...(JSON.parse(Buffer.concat(output).toString("utf8")) as Record<string, unknown>),
+    stderr,
+  };
 }
 
 async function mounted(body: string): Promise<Record<string, unknown>> {
@@ -616,4 +622,78 @@ test("mounted memory service uses fixed category labels that never derive from c
     await authority.close();
   `);
   assert.equal(results.title, "Semantic memory");
+});
+
+test("a failed read reports one bounded reason on stderr: no stack, no unbounded vendor text", async () => {
+  const results = await mounted(`
+    const mismatched = Object.freeze({
+      listMemories: async () => {
+        throw new Error("gamebuddy_memory_continuity_mismatch\\n    at MemoryStore.list (store.js:1:1)");
+      },
+      listChapters: async () => [],
+    });
+    const mismatchedService = createMemoryManagementService({ manifest, lease, profile }, mismatched);
+    const mismatch = await run(async () => await mismatchedService.read());
+    await mismatchedService.close();
+    const long = Object.freeze({
+      listMemories: async () => { throw new Error("sqlite_outage_marker_" + "x".repeat(900)); },
+      listChapters: async () => [],
+    });
+    const longService = createMemoryManagementService({ manifest, lease, profile }, long);
+    const truncated = await run(async () => await longService.read());
+    await longService.close();
+    process.stdout.write(JSON.stringify({ mismatch, truncated }));
+    await lease.close();
+    await authority.close();
+  `);
+  assert.match((results.mismatch as { error: string }).error, /memory_read_unavailable/);
+  assert.match((results.truncated as { error: string }).error, /memory_read_storage_unavailable/);
+  const reasons = (results.stderr as string)
+    .split("\n")
+    .filter((line) => line.startsWith("[memory] read failed: "));
+  assert.equal(reasons.length, 2);
+  // The vendor message's newline is collapsed, so one failure is exactly one line and never a stack.
+  assert.match(
+    reasons[0]!,
+    /^\[memory\] read failed: gamebuddy_memory_continuity_mismatch\s+at MemoryStore\.list \(store\.js:1:1\)$/u,
+  );
+  // The reason is bounded, so a vendor message cannot grow this channel without limit.
+  assert.equal(reasons[1], `[memory] read failed: sqlite_outage_marker_${"x".repeat(279)}`);
+});
+
+test("a failed mutation reports one bounded reason on stderr", async () => {
+  const results = await mounted(`
+    const incomplete = Object.freeze({
+      listMemories: async () => [{
+        sourceType: "historian",
+        stateToken: "tok_original",
+        content: "Original",
+        category: "semantic",
+        status: "active",
+      }],
+      // Chapters: this stub holds none - a valid history for a continuity before its first fold.
+      listChapters: async () => [],
+      // No create/update/archive: a facade that cannot serve the command it advertises.
+    });
+    const service = createMemoryManagementService({ manifest, lease, profile }, incomplete);
+    const initial = await service.read();
+    const outcome = await run(async () => await service.mutate({
+      apiVersion: 1,
+      operation: "create",
+      expectedProjectionRevision: initial.projectionRevision,
+      content: "Created",
+    }));
+    process.stdout.write(JSON.stringify({ outcome }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.equal((results.outcome as { ok: boolean }).ok, false);
+  assert.match((results.outcome as { error: string }).error, /memory_read_service_unavailable/);
+  // The client still sees only the canonical code; the reason that distinguishes this from a
+  // storage outage is the one bounded line on the diagnostic channel, and nothing else.
+  assert.equal(
+    (results.stderr as string).trimEnd(),
+    "[memory] mutation failed: memory_read_service_unavailable",
+  );
 });

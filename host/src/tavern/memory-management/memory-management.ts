@@ -337,6 +337,7 @@ function conflict(): Error {
 }
 
 function mapReadError(error: unknown): Error {
+  process.stderr.write(`[memory] read failed: ${boundedReason(error)}\n`);
   if (error instanceof Error && error.message === "memory_read_service_unavailable") return error;
   const message = error instanceof Error ? error.message : "";
   if (/storage|sqlite|eio|enoent/i.test(message)) return new Error("memory_read_storage_unavailable");
@@ -344,6 +345,7 @@ function mapReadError(error: unknown): Error {
 }
 
 function mapMutationError(error: unknown): Error {
+  process.stderr.write(`[memory] mutation failed: ${boundedReason(error)}\n`);
   if (error instanceof Error && /memory_(?:read_service_unavailable|mutation_conflict)/.test(error.message)) return error;
   const message = error instanceof Error ? error.message : "";
   if (/storage|sqlite|eio|enoent/i.test(message)) return new Error("memory_read_storage_unavailable");
