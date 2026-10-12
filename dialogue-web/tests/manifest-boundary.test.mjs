@@ -253,14 +253,13 @@ test("artifact verifier rejects preexisting symbolic-link files before manifest 
   const linkedTarget = join(artifactRoot, "linked-target.js");
   try {
     await writeFile(linkedTarget, "console.log(1)", "utf8");
+    await rm(assetPath);
     try {
-      await rm(assetPath);
       await symlink(linkedTarget, assetPath, "file");
     } catch (error) {
-      if (error?.code === "EPERM" || error?.code === "ENOTSUP") return;
-      throw error;
+      throw new Error(`this boundary check requires creating a real file reparse point; symlink failed with ${error?.code ?? error}`);
     }
-    await assert.rejects(verifyProductionArtifactManifest(artifactRoot), /symlink or reparse point/);
+    await assert.rejects(verifyProductionArtifactManifest(artifactRoot, nodeDefensePolicy), /symlink or reparse point/);
   } finally {
     await rm(artifactRoot, { recursive: true, force: true });
   }
