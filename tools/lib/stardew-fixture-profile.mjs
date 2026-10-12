@@ -25,6 +25,7 @@ const ALLOWED_FIXTURE_SCENARIOS = Object.freeze([
   "native_pickup_item_v1",
   "native_use_item_v1",
   "native_harvest_crop_v1",
+"native_farmhand_chat_v1",
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
 const CONFIG_TARGETS = Object.freeze([

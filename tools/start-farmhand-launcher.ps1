@@ -392,7 +392,7 @@ foreach ($path in @($hostConfig, $aiConfig)) { if (-not (Test-Path -LiteralPath 
 $originalHost = Get-Content -LiteralPath $hostConfig -Raw | ConvertFrom-Json
 $scenario = [string]$originalHost.HostAutomation.FixtureScenario
 $targetSave = [string]$originalHost.HostAutomation.SaveName
-if ($scenario -notin @("native_animal_product_v2", "native_feed_animal_v1", "native_water_crop_v1", "native_fertilize_tile_v1", "native_plant_seed_v1", "native_till_soil_v1", "native_machine_inspect_v1", "native_npc_relationship_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_use_item_v1", "native_harvest_crop_v1") -or $targetSave -notmatch "^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$") { throw "fixture_config_invalid" }
+if ($scenario -notin @("native_animal_product_v2", "native_feed_animal_v1", "native_water_crop_v1", "native_fertilize_tile_v1", "native_plant_seed_v1", "native_till_soil_v1", "native_machine_inspect_v1", "native_npc_relationship_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_use_item_v1", "native_harvest_crop_v1", "native_farmhand_chat_v1") -or $targetSave -notmatch "^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$") { throw "fixture_config_invalid" }
 $backupName = ("preview-" + [guid]::NewGuid().ToString("N") + "-fixture-backup")
 $runRoot = Join-Path $fixtureRoot ("farmhand-companion-preview-" + [guid]::NewGuid().ToString("N"))
 $overridePath = Join-Path $runRoot "bridge-override.json"

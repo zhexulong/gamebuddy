@@ -1959,7 +1959,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             // One FINISHED pond that HOLDS fish, and the actor one Chebyshev step from its human door. The
             // Given sets both halves of the precondition the product reads - a resolvable fish type and a
             // positive occupant count - and asserts them through the product's own predicate.
-            InitializeNativeLocalClearFishPondFixture(player, player.currentLocation);
+            InitializeNativeLocalClearFishPondFixture(player, farm);
             return;
         }
 
@@ -4087,7 +4087,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     private void TryInitializeNativeFixtureScenario()
     {
         HostAutomationConfig? automation = this.config.HostAutomation;
-        if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true } || automation.FixtureScenario is not ("native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1"))
+        if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true } || automation.FixtureScenario is not ("native_farmhand_chat_v1" or "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1"))
             return;
         if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.server is not null || this.hostFarmhandProvisioner?.IsAwaitingSave == true)
             return;
@@ -4106,6 +4106,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             if (automation.FixtureScenario == "native_use_item_v1")
             {
                 this.InitializeNativeUseItemFixture(farm);
+                return;
+            }
+            if (automation.FixtureScenario == "native_farmhand_chat_v1")
+            {
+                // No world Given: the chat deed only needs a LOBBY, which the launcher establishes by
+                // starting the LAN server and having the farmhand join. Running after that state exists is
+                // the given; nothing is mutated.
+                this.hostAutomationFixtureInitialized = true;
+                this.Monitor.Log("GameBuddy host-automation chat fixture Given: lobby present; no world mutation.", LogLevel.Info);
                 return;
             }
 
