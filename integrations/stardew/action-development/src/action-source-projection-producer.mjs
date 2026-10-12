@@ -88,7 +88,7 @@ const ACTION_SOURCE_PATHS = Object.freeze([
   {
     category: "mod_execution_controller",
     path: "integrations/stardew/farmhandexecutioncontroller.cs",
-    maxBytes: 256 * 1024,
+    maxBytes: 512 * 1024,
   },
   {
     category: "mod_router",

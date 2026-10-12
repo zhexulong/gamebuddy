@@ -406,6 +406,33 @@ const TABLE = {
     `the conversation branch is gated on who.IsLocalPlayer, so only the local farmer can trigger it, and the same method sets movementPause = Game1.IsMultiplayer ? 1000 : 10, so the actor stays paused 100x longer after the call in a shared world. Neither changes which dialogue is chosen nor whether conversation friendship is granted; they change who may trigger the branch and how long the pause lasts afterward.`,
   ],
   npc_relationship: ["mod_owned", "Farmer.friendshipData"],
+  // ---- the three queue actions (2026-10-13) ----
+  // The Mod calls the STRING overload (`GameLocation.cs:16926`), which only resolves the
+  // Data/Buildings entry and forwards to the DATA overload (`:16800`) - that overload is the
+  // settlement (the placement checks, `Building.CreateInstanceFromId`, `buildings.Add`, the team
+  // event), so the seam is cited there: the entry overload's own body carries no game logic to
+  // classify. The settlement reads no multiplayer state that decides the outcome; its two
+  // decisive-pattern reads are collateral (see observedEffect).
+  build_farm_building: [
+    "StardewValley/GameLocation.cs",
+    "public bool buildStructure(string typeId, BuildingData data, Vector2 tileLocation, Farmer who, out Building constructed, bool magicalConstruction = false, bool skipSafetyChecks = false)",
+    "mp-observational",
+    "the settlement's only pattern-decisive reads are presentation and provenance: `Game1.multiplayer.globalChatInfoMessage(...)` posts the game's own 'who built what' lobby notice, and `building.owner.Value = who.UniqueMultiplayerID` records the ACTING farmer's own id, which is the same value in both world modes (the same reading `place_wood_fence` records against `Object.placementAction`). The placement checks (`isBuildable`, the farmers' bounding boxes, `isThereAnythingtoPreventConstruction`), `Building.CreateInstanceFromId`, the terrain removal and `buildings.Add` are mode-independent, and `who.team.SendBuildingConstructedEvent` fires off a FarmerTeam that exists in single-player too.",
+  ],
+  // The accepted flag is set through the game's own `Quest.accept()` (`Quest.cs:475`,
+  // `accepted.Value = true`); the rest of the branch is the Mod's own writes to the public native
+  // members the board's accept branch writes (`dailyQuest`/`dayQuestAccepted`/`canBeCancelled`/
+  // `daysLeft`, `Farmer.questLog`, `Farmer.acceptedDailyQuest`), and the Mod's admission reads no
+  // multiplayer token either. The accepted flag itself is the same write in both world modes.
+  accept_daily_quest: ["StardewValley.Quests/Quest.cs", "public virtual void accept()", "mp-insensitive"],
+  // The horse naming settlement (`Horse.nameHorse`, `Horse.cs:570`). Its only pattern-decisive
+  // read is the lobby notice; the name write is mode-independent (see observedEffect).
+  name_entity: [
+    "StardewValley.Characters/Horse.cs",
+    "public void nameHorse(string name)",
+    "mp-observational",
+    "the settlement's only pattern-decisive read is presentation: `Game1.multiplayer.globalChatInfoMessage(\"HorseNamed\", Game1.player.Name, name)` announces the rename. The stored name - `base.Name`, `displayName`, and the acting player's own `Game1.player.horseName` - is written the same way in both world modes, and `mutex.ReleaseLock()` only releases the horse's own NetMutex this call already holds, so the name the postcondition reads back cannot differ by world mode.",
+  ],
   // ---------------- read-only / no native mutation ----------------
   inspect_world_map: ["mod_owned", "WorldMap"],
   find_destination: ["mod_owned", "DerivedDestinationSet"],

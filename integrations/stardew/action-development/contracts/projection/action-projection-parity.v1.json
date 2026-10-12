@@ -2482,6 +2482,141 @@
         "postcondition": {
           "name": "day_advanced"
         }
+      },
+      {
+        "actionId": "send_multiplayer_chat",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "chat_message_sent"
+        }
+      },
+      {
+        "actionId": "clear_fish_pond",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "fish_pond_cleared"
+        }
+      },
+      {
+        "actionId": "build_farm_building",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "buildingType": {
+            "type": "string"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "farm_building_built"
+        }
+      },
+      {
+        "actionId": "accept_daily_quest",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "daily_quest_accepted"
+        }
+      },
+      {
+        "actionId": "name_entity",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "entity_named"
+        }
       }
     ]
   },
@@ -2568,7 +2703,8 @@
       "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
-      "advance_day"
+      "advance_day",
+      "clear_fish_pond"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -2578,7 +2714,11 @@
     "experimentalActionIds": [
       "talk_to_npc",
       "load_building_chest",
-      "collect_building_chest_output"
+      "collect_building_chest_output",
+      "send_multiplayer_chat",
+      "build_farm_building",
+      "accept_daily_quest",
+      "name_entity"
     ]
   },
   "protocol": {
@@ -2675,7 +2815,8 @@
       "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
-      "advance_day"
+      "advance_day",
+      "clear_fish_pond"
     ]
   },
   "fixtureOwnedFiles": [

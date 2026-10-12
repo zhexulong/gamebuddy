@@ -1045,6 +1045,129 @@
         "handlerGroup": null
       },
       {
+        "actionId": "place_owned_object",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "place_owned_object",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "owned_object_placed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "remove_placed_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "remove_placed_item",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "placed_item_removed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "break_container_source",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "break_container_source",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "container_source_broken"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "chop_tree_source",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1575,6 +1698,43 @@
         "handlerGroup": null
       },
       {
+        "actionId": "talk_to_npc",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "talk_to_npc",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "npc_talked"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "express_emote",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2083,6 +2243,302 @@
         "handlerGroup": null
       },
       {
+        "actionId": "withdraw_silo_hay",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "withdraw_silo_hay",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "silo_hay_taken"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "use_obelisk",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "use_obelisk",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "obelisk_arrived"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "toggle_animal_door",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "toggle_animal_door",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "animal_door_toggled"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "use_warp_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "use_warp_item",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "warp_item_arrived"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "pan_ore",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "pan_ore",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "ore_panned"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "claim_mail_attachment",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "claim_mail_attachment",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "mail_claimed"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "load_building_chest",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "load_building_chest",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "building_chest_loaded"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "collect_building_chest_output",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "collect_building_chest_output",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "building_chest_output_collected"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "scythe_crop",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2487,6 +2943,104 @@
         "handlerGroup": null
       },
       {
+        "actionId": "equip_wearable",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "equip_wearable",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "wearable_equipped"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "unequip_wearable",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "unequip_wearable",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "wearable_unequipped"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "dismount_transport",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "dismount_transport",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {},
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "transport_dismounted"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "dismiss_modal",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2570,6 +3124,176 @@
           }
         },
         "handlerGroup": null
+      },
+      {
+        "actionId": "send_multiplayer_chat",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "send_multiplayer_chat",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "chat_message_sent"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_fish_pond",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_fish_pond",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "fish_pond_cleared"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "build_farm_building",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "build_farm_building",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "buildingType": {
+              "type": "string"
+            },
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "farm_building_built"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "accept_daily_quest",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "accept_daily_quest",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "daily_quest_accepted"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "name_entity",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "name_entity",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "entity_named"
+          }
+        },
+        "handlerGroup": null
       }
     ],
     "publishedExecutionActionIds": [
@@ -2599,6 +3323,9 @@
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
+      "place_owned_object",
+      "remove_placed_item",
+      "break_container_source",
       "chop_tree_source",
       "break_rock_source",
       "clear_hoedirt",
@@ -2624,6 +3351,12 @@
       "set_sign_display",
       "deposit_silo_hay",
       "toggle_tool_light",
+      "withdraw_silo_hay",
+      "use_obelisk",
+      "toggle_animal_door",
+      "use_warp_item",
+      "pan_ore",
+      "claim_mail_attachment",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2635,9 +3368,13 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "equip_wearable",
+      "unequip_wearable",
+      "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
-      "advance_day"
+      "advance_day",
+      "clear_fish_pond"
     ],
     "executableActionIds": [
       "move_to_tile",
@@ -2663,6 +3400,9 @@
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
+      "place_owned_object",
+      "remove_placed_item",
+      "break_container_source",
       "chop_tree_source",
       "break_rock_source",
       "clear_hoedirt",
@@ -2683,6 +3423,12 @@
       "plant_sapling",
       "cut_weeds",
       "cut_grass",
+      "withdraw_silo_hay",
+      "use_obelisk",
+      "toggle_animal_door",
+      "use_warp_item",
+      "pan_ore",
+      "claim_mail_attachment",
       "scythe_crop",
       "harvest_bush",
       "craft_item",
@@ -2690,16 +3436,28 @@
       "collect_crab_pot_output",
       "shop_purchase",
       "ship_item",
+      "equip_wearable",
+      "unequip_wearable",
+      "dismount_transport",
       "dismiss_modal",
       "answer_dialogue",
-      "advance_day"
+      "advance_day",
+      "clear_fish_pond"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [],
+    "experimentalActionIds": [
+      "talk_to_npc",
+      "load_building_chest",
+      "collect_building_chest_output",
+      "send_multiplayer_chat",
+      "build_farm_building",
+      "accept_daily_quest",
+      "name_entity"
+    ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
       "snapshotCapabilitiesFromCapabilitySet": true,
@@ -2711,14 +3469,18 @@
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -2726,8 +3488,10 @@
       "cut_weeds",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "enter_exit",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -2735,46 +3499,62 @@
       "harvest_bush",
       "harvest_crop",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "ship_item",
       "shop_purchase",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "toolActionIds": [
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -2783,10 +3563,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -2795,53 +3577,69 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "toolRouteActionIds": [
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -2850,10 +3648,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -2862,53 +3662,71 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "requestValidatorActionIds": [
+      "accept_daily_quest",
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
+      "build_farm_building",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -2917,10 +3735,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -2929,53 +3749,71 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "envelopeValidatorActionIds": [
+      "accept_daily_quest",
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
+      "build_farm_building",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -2984,10 +3822,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -2996,53 +3836,71 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "executionRequestUnionActionIds": [
+      "accept_daily_quest",
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
+      "build_farm_building",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -3051,10 +3909,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -3063,39 +3923,51 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ],
     "bridgeMessageTypes": [
       "hello",
@@ -3192,18 +4064,24 @@
       "stop_all"
     ],
     "schemaExecutionActionIds": [
+      "accept_daily_quest",
       "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
+      "build_farm_building",
       "chest_retrieve",
       "chest_store",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
       "clear_hoedirt",
       "collect_animal_product",
+      "collect_building_chest_output",
       "collect_crab_pot_output",
       "cook_recipe",
       "craft_item",
@@ -3212,10 +4090,12 @@
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dismiss_modal",
+      "dismount_transport",
       "dress_mannequin",
       "enter_exit",
       "enter_mine",
       "equip_tool",
+      "equip_wearable",
       "express_emote",
       "face_direction",
       "feed_animal",
@@ -3224,39 +4104,51 @@
       "harvest_crop",
       "harvest_fruit_tree",
       "interact_npc_with_item",
+      "load_building_chest",
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
       "mount_transport",
       "move_to_tile",
+      "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "pan_ore",
       "pet_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
       "refill_watering_can",
+      "remove_placed_item",
       "ride_bus",
       "ride_minecart",
       "scythe_crop",
       "select_mine_elevator_floor",
+      "send_multiplayer_chat",
       "set_sign_display",
       "shake_tree",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "till_soil",
+      "toggle_animal_door",
       "toggle_fence_gate",
       "toggle_tool_light",
       "travel",
+      "unequip_wearable",
       "use_item",
+      "use_obelisk",
       "use_raft",
+      "use_warp_item",
       "water_crop",
       "water_pet_bowl",
-      "water_slime_hutch_trough"
+      "water_slime_hutch_trough",
+      "withdraw_silo_hay"
     ]
   },
   "router": {
@@ -3296,6 +4188,7 @@
       "pickup_item"
     ],
     "Movement": [
+      "dismount_transport",
       "enter_exit",
       "enter_mine",
       "face_direction",
@@ -3306,6 +4199,7 @@
       "ride_minecart",
       "select_mine_elevator_floor",
       "travel",
+      "use_obelisk",
       "use_raft"
     ],
     "MachinesAndAnimals": [
@@ -3320,34 +4214,50 @@
       "machine_collect_output",
       "machine_inspect",
       "machine_load",
+      "name_entity",
       "npc_relationship",
       "pet_animal",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",
+      "talk_to_npc",
       "use_item",
+      "use_warp_item",
       "water_pet_bowl",
       "water_slime_hutch_trough"
     ],
     "ResourceTools": [
       "bait_crab_pot",
+      "break_container_source",
       "break_rock_source",
+      "build_farm_building",
       "chop_stump",
       "chop_tree_source",
+      "claim_mail_attachment",
       "clear_cask",
       "clear_debris",
+      "clear_fish_pond",
+      "collect_building_chest_output",
       "cut_grass",
       "cut_weeds",
       "deposit_silo_hay",
       "dig_artifact_spot",
       "dress_mannequin",
       "equip_tool",
+      "equip_wearable",
+      "load_building_chest",
+      "pan_ore",
       "place_crab_pot",
+      "place_owned_object",
       "place_wood_fence",
       "refill_watering_can",
+      "remove_placed_item",
       "set_sign_display",
+      "toggle_animal_door",
       "toggle_fence_gate",
-      "toggle_tool_light"
+      "toggle_tool_light",
+      "unequip_wearable",
+      "withdraw_silo_hay"
     ]
   },
   "runnerFixtureParity": {
@@ -3431,6 +4341,11 @@
         "actionId": "use_item",
         "runner": "run-stardew-native-local-player-use-item-smoke.mjs",
         "fixtureScenario": "native_use_item_v1"
+      },
+      {
+        "actionId": "clear_fish_pond",
+        "runner": "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
+        "fixtureScenario": "native_clear_fish_pond_v1"
       },
       {
         "actionId": "harvest_crop",
@@ -3583,9 +4498,24 @@
         "fixtureScenario": "native_ride_bus_v1"
       },
       {
+        "actionId": "withdraw_silo_hay",
+        "runner": "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
+        "fixtureScenario": "native_withdraw_silo_hay_v1"
+      },
+      {
+        "actionId": "use_obelisk",
+        "runner": "run-stardew-native-local-player-use-obelisk-smoke.mjs",
+        "fixtureScenario": "native_use_obelisk_v1"
+      },
+      {
         "actionId": "shop_purchase",
         "runner": "run-stardew-native-local-player-shop-purchase-smoke.mjs",
         "fixtureScenario": "native_shop_purchase_v1"
+      },
+      {
+        "actionId": "toggle_animal_door",
+        "runner": "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
+        "fixtureScenario": "native_toggle_animal_door_v1"
       },
       {
         "actionId": "select_mine_elevator_floor",
@@ -3671,6 +4601,51 @@
         "actionId": "answer_dialogue",
         "runner": "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
         "fixtureScenario": "native_wia_answer_question_v1"
+      },
+      {
+        "actionId": "place_owned_object",
+        "runner": "run-stardew-native-local-player-place-owned-object-smoke.mjs",
+        "fixtureScenario": "native_world_object_v1"
+      },
+      {
+        "actionId": "remove_placed_item",
+        "runner": "run-stardew-native-local-player-remove-placed-item-smoke.mjs",
+        "fixtureScenario": "native_world_object_v1"
+      },
+      {
+        "actionId": "break_container_source",
+        "runner": "run-stardew-native-local-player-break-container-source-smoke.mjs",
+        "fixtureScenario": "native_world_object_v1"
+      },
+      {
+        "actionId": "equip_wearable",
+        "runner": "run-stardew-native-local-player-equip-wearable-smoke.mjs",
+        "fixtureScenario": "native_equip_wearable_v1"
+      },
+      {
+        "actionId": "unequip_wearable",
+        "runner": "run-stardew-native-local-player-unequip-wearable-smoke.mjs",
+        "fixtureScenario": "native_unequip_wearable_v1"
+      },
+      {
+        "actionId": "dismount_transport",
+        "runner": "run-stardew-native-local-player-dismount-transport-smoke.mjs",
+        "fixtureScenario": "native_dismount_transport_v1"
+      },
+      {
+        "actionId": "use_warp_item",
+        "runner": "run-stardew-native-local-player-use-warp-item-smoke.mjs",
+        "fixtureScenario": "native_use_warp_item_v1"
+      },
+      {
+        "actionId": "pan_ore",
+        "runner": "run-stardew-native-local-player-pan-ore-smoke.mjs",
+        "fixtureScenario": "native_pan_ore_v1"
+      },
+      {
+        "actionId": "claim_mail_attachment",
+        "runner": "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
+        "fixtureScenario": "native_claim_mail_attachment_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",

@@ -142,7 +142,10 @@
     "answer_dialogue",
     "advance_day",
     "send_multiplayer_chat",
-    "clear_fish_pond"
+    "clear_fish_pond",
+    "build_farm_building",
+    "accept_daily_quest",
+    "name_entity"
   ],
   "actions": [
     {
@@ -1585,6 +1588,56 @@
           "signature": "public void ClearPond()",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "ClearPond's body reads no multiplayer token at all: it resets the pond's own net fields (currentOccupants, fishType, the population gate, the cracker flag) and spawns each occupant through Game1.createItemDebris, whose sprite fan-out belongs to the game and not to this outcome; the pond it acts on is the live one either way, so the same call clears the same pond in both world modes."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "build_farm_building",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/GameLocation.cs",
+          "signature": "public bool buildStructure(string typeId, BuildingData data, Vector2 tileLocation, Farmer who, out Building constructed, bool magicalConstruction = false, bool skipSafetyChecks = false)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the settlement's only pattern-decisive reads are presentation and provenance: `Game1.multiplayer.globalChatInfoMessage(...)` posts the game's own 'who built what' lobby notice, and `building.owner.Value = who.UniqueMultiplayerID` records the ACTING farmer's own id, which is the same value in both world modes (the same reading `place_wood_fence` records against `Object.placementAction`). The placement checks (`isBuildable`, the farmers' bounding boxes, `isThereAnythingtoPreventConstruction`), `Building.CreateInstanceFromId`, the terrain removal and `buildings.Add` are mode-independent, and `who.team.SendBuildingConstructedEvent` fires off a FarmerTeam that exists in single-player too."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "accept_daily_quest",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Quests/Quest.cs",
+          "signature": "public virtual void accept()",
+          "sensitivity": "mp-insensitive"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "name_entity",
+      "lifecycle": "experimental",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Characters/Horse.cs",
+          "signature": "public void nameHorse(string name)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the settlement's only pattern-decisive read is presentation: `Game1.multiplayer.globalChatInfoMessage(\"HorseNamed\", Game1.player.Name, name)` announces the rename. The stored name - `base.Name`, `displayName`, and the acting player's own `Game1.player.horseName` - is written the same way in both world modes, and `mutex.ReleaseLock()` only releases the horse's own NetMutex this call already holds, so the name the postcondition reads back cannot differ by world mode."
         }
       ],
       "admission": {
