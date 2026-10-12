@@ -145,6 +145,7 @@ export function ChatsSurfacePanel({
   currentChatHandle,
   renameAvailable,
   retentionAvailable,
+  createAvailable,
   onRenamedTitle,
   onNotice,
 }: Readonly<{
@@ -156,12 +157,22 @@ export function ChatsSurfacePanel({
   currentChatHandle: string;
   renameAvailable?: boolean;
   retentionAvailable?: boolean;
+  /**
+   * New Chat (design/26 §4.4). `false` means the mount knows the Host published no
+   * `chat.create` route and the control is absent; `undefined` means this mount cannot see that
+   * projection and the served route is the capability, exactly like `renameAvailable`.
+   */
+  createAvailable?: boolean;
   /** Lets the mount fold the validated rename read-back into its own mounted session. */
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [list, setList] = useState<ChatListView>("loading");
   const [editing, setEditing] = useState<Readonly<{ handle: string; title: string }> | null>(null);
+  // The exact durable opening of the Chat this panel just created: design/26 §4.4 renders the
+  // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
+  const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
+  const [creating, setCreating] = useState(false);
   const { inline, report } = useSurfaceNotice(onNotice);
 
   useEffect(() => {
@@ -225,6 +236,32 @@ export function ChatsSurfacePanel({
     })();
   };
 
+  /**
+   * New Chat (design/26 §4.4): one creation at a time, then the durable list is re-read, so the
+   * panel only ever shows Chats the store actually holds. The created Chat is NOT the mounted
+   * one, so this claims creation only - never that the running conversation switched - and a
+   * rejected creation leaves the list re-read from the authority.
+   */
+  const createChat = (): void => {
+    if (creating) return;
+    setCreating(true);
+    void (async () => {
+      try {
+        const result = await api.createChat({ apiVersion: 1, selectionGeneration }, csrfToken);
+        setCreated(result.opening === null ? null : { opening: result.opening });
+        await reread();
+        report({ kind: "success", text: labels.success });
+      } catch {
+        // A rejection may still hide a committed creation, so the authoritative
+        // list is re-read BEFORE the failure is reported.
+        await reread();
+        report({ kind: "failure", text: labels.failure });
+      } finally {
+        setCreating(false);
+      }
+    })();
+  };
+
   const transition = (handle: string, operation: "archive" | "trash"): void => {
     const entry = chatListRows(list).find((chat) => chat.handle === handle);
     if (entry === undefined) {
@@ -257,6 +294,19 @@ export function ChatsSurfacePanel({
   return (
     <>
       <SurfaceNotice notice={inline} />
+      {createAvailable !== false && (
+        <div className="button-group">
+          <button type="button" className="small-button primary" onClick={createChat} disabled={creating}>
+            {labels.newChat}
+          </button>
+        </div>
+      )}
+      {created !== null && (
+        <div className="chat-item-card">
+          <div className="chat-item-title">{labels.newChat}</div>
+          <div className="chat-item-main">{created.opening}</div>
+        </div>
+      )}
       <div className="chat-list" role="list">
         {list.length === 0 ? (
           <p className="empty-subtle">{labels.noChats}</p>

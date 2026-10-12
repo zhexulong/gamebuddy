@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
@@ -12,6 +13,11 @@ import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
 import { type ComposedTavernProfile, composeTavernProfile, type BrowserTurnV1 } from "../tavern/browser-contract/index.js";
+import {
+  type ChatCreateResultV1,
+  type CreateChatCommandV1,
+  TAVERN_BROWSER_API_VERSION,
+} from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
@@ -134,6 +140,7 @@ type TavernManagementDomains = Readonly<
       | "libraryService"
       | "companionDetailService"
       | "newCompanionProvisioner"
+      | "newChatProvisioner"
       | "personaService"
       | "scenarioService"
       | "greetingService"
@@ -236,7 +243,7 @@ function createTavernManagementDomains(
   const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
   // The library service owns one lazily opened thread connection; it is opened
   // only if a Chat-creating route ever runs and is closed with this owner's drain.
-  const libraryThreads = createChatThreadStore(runtimePaths.runtimeCwd, identityKey(manifest.principal));
+  const libraryThreads = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   owned.push({
     close: async () => {
       libraryThreads.close?.();
@@ -310,6 +317,43 @@ function createTavernManagementDomains(
       return Object.freeze({ name: provision.companion.name });
     },
   });
+  /**
+   * New Chat (design/26 §4.4). The browser sends only the selection generation it read; the Host
+   * mints the thread identity, resolves the mounted companion's own greeting as the opening and
+   * projects the created Chat's metadata-only entry plus the durable message-zero text. The new
+   * Chat is not selected here: it joins the active list and becomes the mounted Chat only through
+   * the selection a later runtime start settles, so creation can never switch a running turn.
+   */
+  const newChatProvisioner = Object.freeze({
+    async create(command: CreateChatCommandV1): Promise<ChatCreateResultV1> {
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration)
+        throw new Error("chat_management_selection_conflict");
+      const suffix = randomUUID().replaceAll("-", "");
+      const chatThreadId = `chat-${suffix.slice(0, 16)}`;
+      const chatSurfaceSessionId = `surface-${suffix.slice(16, 32)}`;
+      let state;
+      try {
+        // The opening is omitted, not named: the library resolves the mounted
+        // companion's own greeting, which is the exact record the opening-variant
+        // route later pages through.
+        state = await libraryBase.createNewChat({ chatThreadId, chatSurfaceSessionId });
+      } catch (error) {
+        throw new Error(chatCreationFailureCode(error));
+      }
+      const opening = state.messages.find((message) => message.kind === "opening");
+      return Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        chat: Object.freeze({
+          handle: lease.browserProjection.projectChatHandle(chatThreadId, chatSurfaceSessionId),
+          title: state.thread.title ?? null,
+          status: "active" as const,
+          managementRevision: state.thread.managementRevision ?? 1,
+          isSelected: false,
+        }),
+        opening: opening === undefined ? null : opening.text,
+      });
+    },
+  });
   // Reviewed ST-card import pipeline: artifacts are persisted by the service
   // under the tavern import path; confirm re-reads the exact reviewed candidate
   // and provisions it (profile + reviewed world book) into a NEW Host-owned
@@ -349,6 +393,7 @@ function createTavernManagementDomains(
       libraryService,
       companionDetailService,
       newCompanionProvisioner,
+      newChatProvisioner,
       personaService,
       scenarioService,
       greetingService,
@@ -616,6 +661,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // The optional new-chat opening variant is declared after every other
       // group, in the dispatcher's own canonical group order.
       "chat.opening",
+      // New Chat follows the opening choice in that same canonical order.
+      "chat.create",
     ],
     operationIds: [
       "draft.save",
@@ -654,10 +701,24 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "character.import.confirm",
       "character.import.history",
       "chat.opening",
+      "chat.create",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The
     // characters item is paired with the companion library routes.
     navigationItemIds: ["chat", "memory", "characters"],
   });
+}
+
+
+/**
+ * The one bounded vocabulary a failed New Chat may report: a durable storage
+ * failure stays a storage failure, and nothing else escapes as a second
+ * invented code. The dispatcher's own `problemFor` maps these to
+ * `storage_unavailable` / `runtime_unavailable`.
+ */
+function chatCreationFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/storage|sqlite|eio|enoent/i.test(message)) return "chat_management_storage_unavailable";
+  return "chat_management_service_unavailable";
 }

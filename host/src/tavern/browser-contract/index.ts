@@ -565,6 +565,8 @@ const OperationId = Type.Union([
   // The new-chat opening variant choice: commits variant N of the mounted companion's greeting
   // set as the empty Chat's message zero, reusing `ChatThreadStore.commitOpening`.
   Type.Literal("chat.opening"),
+  // New Chat: creates a second conversation in the mounted companion/continuity.
+  Type.Literal("chat.create"),
   Type.Literal("chat.archive"),
   Type.Literal("chat.restore"),
   Type.Literal("chat.trash"),
@@ -608,6 +610,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.submit"),
   Type.Literal("tavern.operation.cancel"),
   Type.Literal("tavern.operation.chat.opening"),
+  Type.Literal("tavern.operation.chat.create"),
   Type.Literal("tavern.operation.draft.save"),
   Type.Literal("tavern.operation.draft.discard"),
   Type.Literal("tavern.operation.rename"),
@@ -1006,6 +1009,24 @@ export const ChatOpeningResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   openingVariant: BrowserOpeningVariantV1Schema,
 });
+/**
+ * New Chat (design/26 §4.4). The browser names nothing durable - no companion, continuity,
+ * greeting or Chat id: the Host mints the thread identity, resolves the mounted companion's own
+ * greeting as the opening, and answers with the created Chat's metadata-only list entry. `opening`
+ * is the durable message-zero text when the created Chat opened on a greeting, and null when its
+ * opening is genuinely blank, so the surface can render message 0 before it claims success
+ * (design/26 §4.4) without inventing one. The new Chat is NOT the mounted one: `isSelected` is
+ * false, and it becomes active only through the selection a later runtime start settles.
+ */
+export const CreateChatCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+});
+export const ChatCreateResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  chat: ChatListEntryV1Schema,
+  opening: Type.Union([Type.String({ minLength: 1, maxLength: 8192 }), Type.Null()]),
+});
 export const SubmitResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   disposition: Type.Union([Type.Literal("accepted"), Type.Literal("duplicate")]),
@@ -1276,6 +1297,21 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: ChatOpeningCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: ChatOpeningResultV1Schema },
+  }),
+  route({
+    routeId: "chat.create",
+    method: "POST",
+    path: "/api/tavern/v1/chats",
+    operationId: "chat.create",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: CreateChatCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatCreateResultV1Schema },
   }),
   route({
     routeId: "chat.cancel",
@@ -1892,6 +1928,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     BrowserOpeningVariantV1Schema,
     ChatOpeningCommandV1Schema,
     ChatOpeningResultV1Schema,
+    CreateChatCommandV1Schema,
+    ChatCreateResultV1Schema,
     TavernProblemV1Schema,
     BrowserEventV1Schema,
   }),
@@ -1932,6 +1970,8 @@ export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV
 export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
 export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
 export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
+export type CreateChatCommandV1 = Static<typeof CreateChatCommandV1Schema>;
+export type ChatCreateResultV1 = Static<typeof ChatCreateResultV1Schema>;
 export type MessageSubmissionStatusQueryV1 = Static<typeof MessageSubmissionStatusQueryV1Schema>;
 export type MessageSubmissionStatusV1 = Static<typeof MessageSubmissionStatusV1Schema>;
 export type CancelTurnCommandV1 = Static<typeof CancelTurnCommandV1Schema>;

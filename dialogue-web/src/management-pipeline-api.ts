@@ -52,6 +52,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "draft.discard"
     | "chat.rename"
     | "chat.opening"
+    | "chat.create"
     | "memory.mutate"
     | "world-info.bind"
     | "settings.voice.read"
@@ -93,6 +94,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.draft.discard"
     | "tavern.operation.rename"
     | "tavern.operation.chat.opening"
+    | "tavern.operation.chat.create"
     | "tavern.operation.memory.mutate"
     | "tavern.operation.world-info.bind"
     | "tavern.operation.settings.voice.read"
@@ -370,6 +372,20 @@ export type ChatOpeningResultV1 = Readonly<{
   openingVariant: BrowserOpeningVariantV1;
 }>;
 
+/** New Chat: the browser names nothing durable, only the selection generation it read. */
+type CreateChatCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
+
+/**
+ * The created Chat's metadata-only entry plus the durable message-zero text when the Host opened
+ * it on a greeting (`null` for a genuinely blank opening), so the surface can render message 0
+ * before it claims success (design/26 §4.4).
+ */
+export type ChatCreateResultV1 = Readonly<{
+  apiVersion: 1;
+  chat: ChatListEntryV1;
+  opening: string | null;
+}>;
+
 export type MemoryItemV1 = Readonly<{
   handle: string;
   title: string;
@@ -614,6 +630,7 @@ const OPERATION_IDS = [
   "draft.discard",
   "chat.rename",
   "chat.opening",
+  "chat.create",
   "memory.mutate",
   "world-info.bind",
   "settings.voice.read",
@@ -658,6 +675,7 @@ const LABEL_KEYS = [
   "tavern.operation.draft.discard",
   "tavern.operation.rename",
   "tavern.operation.chat.opening",
+  "tavern.operation.chat.create",
   "tavern.operation.memory.mutate",
   "tavern.operation.world-info.bind",
   "tavern.operation.settings.voice.read",
@@ -827,6 +845,8 @@ const RENAME_COMMAND_KEYS = [
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] as const;
 const CHAT_OPENING_RESULT_KEYS = ["apiVersion", "openingVariant"] as const;
+const CREATE_CHAT_COMMAND_KEYS = ["apiVersion", "selectionGeneration"] as const;
+const CHAT_CREATE_RESULT_KEYS = ["apiVersion", "chat", "opening"] as const;
 const OPENING_COMMAND_REQUIRED_KEYS = ["apiVersion", "selectionGeneration"] as const;
 const OPENING_COMMAND_ALLOWED_KEYS = ["apiVersion", "selectionGeneration", "direction", "targetIndex"] as const;
 const OPENING_VARIANT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -1957,6 +1977,30 @@ function validateChatList(value: unknown): ChatListV1 {
   return value;
 }
 
+function isCreateChatCommand(value: unknown): value is CreateChatCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CREATE_CHAT_COMMAND_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration)
+  );
+}
+
+function isChatCreateResult(value: unknown): value is ChatCreateResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, CHAT_CREATE_RESULT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isChatListEntry(value.chat) &&
+    (value.opening === null || isLengthBoundedString(value.opening, 1, 8192))
+  );
+}
+
+function validateChatCreateResult(value: unknown): ChatCreateResultV1 {
+  if (!isChatCreateResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 function validateChatTitle(value: unknown): ChatTitleV1 {
   if (!isChatTitle(value)) throw new TavernProtocolError();
   return value;
@@ -2002,6 +2046,11 @@ export type ManagementPipelineApi = Readonly<{
   readState(): Promise<TavernStateSnapshotV1>;
   /** GET /api/tavern/v1/chats (metadata-only list; no CSRF header). */
   listChats(query?: ChatListQueryV1): Promise<ChatListV1>;
+  /**
+   * POST /api/tavern/v1/chats: creates a second conversation in the mounted companion/continuity.
+   * The Host mints the thread identity and resolves the companion's own greeting as the opening.
+   */
+  createChat(command: CreateChatCommandV1, csrfToken: string): Promise<ChatCreateResultV1>;
   /** GET /api/tavern/v1/draft for the exact mounted Chat. */
   readDraft(): Promise<BrowserDraftV1>;
   /** PUT /api/tavern/v1/draft with durable revision CAS. */
@@ -2183,6 +2232,20 @@ export function createManagementPipelineApi(
       const params = new URLSearchParams({ apiVersion: String(TAVERN_BROWSER_API_VERSION) });
       if (query.state !== undefined) params.set("state", query.state);
       return exchange(fetchLike, "GET", `/api/tavern/v1/chats?${params.toString()}`, 200, validateChatList);
+    },
+    async createChat(command: CreateChatCommandV1, csrfToken: string): Promise<ChatCreateResultV1> {
+      if (!isCreateChatCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/chats",
+        200,
+        validateChatCreateResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("chat.create", "passed", result.chat.handle);
+      return result;
     },
     async readDraft(): Promise<BrowserDraftV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/draft", 200, validateDraft);

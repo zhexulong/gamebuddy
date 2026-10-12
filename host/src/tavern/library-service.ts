@@ -3,6 +3,7 @@ import type { IdentityProfileMetadata } from "../identity-profile.js";
 import { join } from "node:path";
 import { type TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
 import { createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import type {
   ChatThread,
   ChatThreadState,
@@ -72,7 +73,12 @@ type NewChatRequest = Readonly<{
   scenarioId?: string;
   dialogueExamplesId?: string;
   worldBookBinding?: TavernStableWorldBookBinding;
-  opening:
+  /**
+   * An omitted opening means the companion's own greeting: the reviewed card's `first_mes` became
+   * the greeting record's default variant at provisioning, so a card-provisioned companion HAS an
+   * opening. A caller that genuinely means an empty first screen still says `"blank"`.
+   */
+  opening?:
     | Readonly<{ kind: "blank" }>
     | Readonly<{ kind: "greeting"; greetingSetId: string; variantId: string; messageId?: string }>;
 }>;
@@ -177,15 +183,17 @@ export function createTavernLibraryService(
           ),
         );
       const opening =
-        input.opening.kind === "blank"
-          ? "blank"
-          : await greetingOpening(
-              store,
-              join(paths.companionRoot, "greetings", input.opening.greetingSetId),
-              companion,
-              scenario,
-              input.opening,
-            );
+        input.opening === undefined
+          ? ((await companionOwnOpening(store, paths.companionRoot, companion, scenario)) ?? "blank")
+          : input.opening.kind === "blank"
+            ? "blank"
+            : await greetingOpening(
+                store,
+                join(paths.companionRoot, "greetings", input.opening.greetingSetId),
+                companion,
+                scenario,
+                input.opening,
+              );
       const request: CreateChatThreadRequest = {
         chatThreadId: input.chatThreadId,
         companionId: companion.companionId,
@@ -351,6 +359,36 @@ async function stableBinding(
 ): Promise<TavernStableArtifactBinding> {
   const envelope = await store.read(path, validateTavernArtifact);
   return Object.freeze({ kind, sourceId, revision: envelope.revision, canonicalHash: envelope.canonicalHash });
+}
+/**
+ * The companion's own opening, for a thread creation that names none: the reviewed card's
+ * `first_mes` became the greeting record's default variant at provisioning, so a card-provisioned
+ * companion HAS an opening. It is drawn from the same durable record the new-chat variant choice
+ * later pages through, and the `sourceRevision` + `canonicalHash` it commits are that record's, so
+ * the browser's `< 1/N >` projection resolves against the set the opening actually came from.
+ *
+ * A missing greeting set is ordinary - a directly-named companion has no card - and yields
+ * nothing, which leaves the genuinely empty opening in place. A present but unreadable set fails
+ * closed rather than silently blanking the first screen.
+ */
+async function companionOwnOpening(
+  store: TavernArtifactStore,
+  companionRoot: string,
+  companion: TavernCompanion,
+  scenario: Scenario | undefined,
+): Promise<CreateChatThreadRequest["opening"] | undefined> {
+  const record = await createGreetingManagementService(store, companionRoot).readExact();
+  if (record === null || record.variants.length === 0) return undefined;
+  const variant = record.variants[0]!;
+  const source: GreetingSource = Object.freeze({
+    greetingSetId: record.greetingSetId,
+    sourceRevision: record.revision,
+    canonicalHash: record.canonicalHash,
+    variantId: variant.variantId,
+    profileRevision: companion.profileRevision,
+    scenarioRevision: scenario?.revision ?? null,
+  });
+  return Object.freeze({ messageId: randomUUID(), text: variant.text, source });
 }
 async function greetingOpening(
   store: TavernArtifactStore,

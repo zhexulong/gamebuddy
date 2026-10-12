@@ -6,11 +6,13 @@ import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player
 import {
   type ChatListQueryV1,
   type ChatOpeningCommandV1,
+  type ChatCreateResultV1,
   type ChatRetentionCommandV1,
   type CompanionDetailV1,
   type CompanionListV1,
   type ComposedTavernProfile,
   type CreateCompanionCommandV1,
+  type CreateChatCommandV1,
   type DiscardDraftCommandV1,
   type GreetingUpdateCommandV1,
   type GreetingV1,
@@ -181,6 +183,11 @@ const MANAGEMENT_IMPORT_ROUTES = [
  * in the frozen group order, so a profile that advertises it without the bound
  * Chat service fails closed at composition. */
 const MANAGEMENT_CHAT_OPENING_ROUTES = ["chat.opening"] as const;
+/** Optional New Chat extension: only a profile that declares this route mounts
+ * `POST /api/tavern/v1/chats`; every other profile keeps the exact prior surface. Like the
+ * opening choice it is declared after the core and in the frozen group order, so a profile that
+ * advertises it without the bound Chat creator fails closed at composition. */
+const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
 /**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
  * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
@@ -196,6 +203,7 @@ const draftSaveValidator = Compile(TavernBrowserContractV1.schemas.SaveDraftComm
 const draftDiscardValidator = Compile(TavernBrowserContractV1.schemas.DiscardDraftCommandV1Schema);
 const renameRequestValidator = Compile(TavernBrowserContractV1.schemas.RenameChatTitleCommandV1Schema);
 const chatOpeningValidator = Compile(TavernBrowserContractV1.schemas.ChatOpeningCommandV1Schema);
+const createChatValidator = Compile(TavernBrowserContractV1.schemas.CreateChatCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
 const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
@@ -300,6 +308,15 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    */
   newCompanionProvisioner?: Readonly<{
     create(name: string): Promise<Readonly<{ name: string }>>;
+  }>;
+  /**
+   * Host-owned New Chat creator (design/26 §4.4). The browser names nothing durable: the Host
+   * mints the thread identity, resolves the mounted companion's own greeting as the opening, and
+   * returns the created Chat's metadata-only entry plus the durable opening text. Present only
+   * when the mounted profile declares `chat.create`; the route stays unavailable otherwise.
+   */
+  newChatProvisioner?: Readonly<{
+    create(command: CreateChatCommandV1): Promise<ChatCreateResultV1>;
   }>;
   personaService?: Readonly<{
     read(): Promise<Readonly<{ revision: number; name: string; description?: string }> | null>;
@@ -485,6 +502,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const libraryService = options.libraryService;
   const companionDetailService = options.companionDetailService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
+  const newChatProvisioner = options.newChatProvisioner;
   const personaService = options.personaService;
   const scenarioService = options.scenarioService;
   const greetingService = options.greetingService;
@@ -591,6 +609,14 @@ export function createTavernManagementDialogueWebRequestHandler(
       throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
+  }
+
+  // The New Chat route is mounted only when the exact creator is injected; a
+  // profile that advertises `chat.create` without it fails closed before any
+  // dispatch, so the browser is never shown a control the Host cannot serve.
+  if (profile.routeIds.includes("chat.create")) {
+    if (newChatProvisioner === undefined) throw new Error("tavern_management_composition_unavailable");
+    if (!profile.operationIds.includes("chat.create")) throw new Error("tavern_management_composition_unavailable");
   }
 
   let browser: BrowserSession | undefined;
@@ -861,6 +887,28 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.ChatListV1Schema.Check(list))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, list);
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/chats") {
+        // chat.create (design/26 §4.4): creates a second conversation in the
+        // mounted companion/continuity. The browser names nothing durable; the
+        // creator mints the thread identity and resolves the opening.
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("chat.create") ||
+          !profile.operationIds.includes("chat.create") ||
+          newChatProvisioner === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!createChatValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const result = await newChatProvisioner.create(body as CreateChatCommandV1);
+        if (!TavernBrowserValidatorsV1.ChatCreateResultV1Schema.Check(result))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, result);
       }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/chat/title") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
@@ -1686,6 +1734,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_P9_ROUTES,
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
+    MANAGEMENT_CHAT_CREATE_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -1696,6 +1745,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_P9_ROUTES,
     MANAGEMENT_IMPORT_ROUTES,
     MANAGEMENT_CHAT_OPENING_ROUTES,
+    MANAGEMENT_CHAT_CREATE_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;

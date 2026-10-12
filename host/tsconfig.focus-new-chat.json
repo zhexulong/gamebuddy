@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/tavern-management-dialogue-web.new-chat.test.ts",
+    "src/tavern/browser-contract/index.test.ts",
+    "src/composition/desktop-presentation-admission-owner.test.ts",
+    "src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
+    "src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
+    "src/test-fixtures/desktop-presentation-admission-management-worker.ts"
+  ]
+}
