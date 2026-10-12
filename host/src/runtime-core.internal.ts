@@ -103,14 +103,25 @@ type InternalHistorianTestChannel = {
 };
 
 function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
+  // A fixture-only seam, and it says so on stderr when it is used. Silently honouring an environment
+  // variable that changes when a fold happens is how a test-only lever turns into an unexplained behaviour
+  // difference in a real run; a value that cannot be parsed is reported rather than dropped.
   const parse = (name: string): number | undefined => {
     const raw = process.env[name];
     if (raw === undefined || raw.trim() === "") return undefined;
     const value = Number.parseInt(raw, 10);
-    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      process.stderr.write(`[historian] ignoring ${name}=${JSON.stringify(raw)}: not a positive integer\n`);
+      return undefined;
+    }
+    return value;
   };
   const executeThresholdTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS");
   const protectedTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS");
+  if (executeThresholdTokens !== undefined || protectedTokens !== undefined)
+    process.stderr.write(
+      `[historian] fixture fold channel: execute_threshold_tokens=${executeThresholdTokens ?? "(default)"} protected_tokens=${protectedTokens ?? "(default)"}\n`,
+    );
   // Spread conditionally: this project compiles with `exactOptionalPropertyTypes`, so an explicit
   // `undefined` is not the same as an absent key.
   return {
