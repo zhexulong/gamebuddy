@@ -46,14 +46,17 @@ const STYLESHEET = join(SRC, "style.css");
 
 /**
  * Real findings this lane cannot fix (style.css belongs to another lane).
- * `{ selector, line, reason }`; the gate fails if one stops reproducing.
+ * `{ selector, declarations, reason }`: the declarations the finding is made of,
+ * so the gate follows the rule by its content rather than by its position in the
+ * stylesheet - an unrelated CSS edit shifts line numbers, never declarations.
+ * The gate fails if one stops reproducing.
  */
 const REPORTED_FOCUS_SITES = [
   {
     selector: ".surface-advanced-editor",
-    line: 2877,
+    declarations: [["outline", "none"]],
     reason:
-      "the advanced Pi JSON editor removes its outline and its only focus rule sets border-color, so keyboard focus reads as a 1px colour change; it is also the one control missing from the unified ring list at style.css:2681",
+      "the advanced Pi JSON editor removes its outline and its only focus rule sets border-color, so keyboard focus reads as a 1px colour change; it is also the one control missing from the stylesheet's unified ring list (`.form-input:focus, .form-textarea:focus, .form-select:focus, .composer-textarea:focus, ...` + `box-shadow`)",
   },
 ];
 
@@ -133,7 +136,7 @@ function hasRing(declarations) {
   return false;
 }
 
-/** Every `outline: none|0` site: `{ selector, line, classes }`, at the declaration. */
+/** Every `outline: none|0` site: `{ selector, line, classes, declarations }`, at the declaration. */
 export function outlineSites(css) {
   const found = [];
   for (const rule of rules(css)) {
@@ -142,6 +145,7 @@ export function outlineSites(css) {
         selector: rule.selector,
         line: declarationLine(rule, match.index),
         classes: classNames(rule.selector),
+        declarations: rule.declarations,
       });
     }
   }
@@ -222,7 +226,7 @@ export function unringedOutlineSites(css, files = tsxFiles()) {
       });
     });
     if (verified) continue;
-    failures.push({ line: site.line, selector: site.selector, classes: [...site.classes] });
+    failures.push({ line: site.line, selector: site.selector, classes: [...site.classes], declarations: site.declarations });
   }
   return failures;
 }
@@ -243,15 +247,20 @@ test("focus.1: every outline:none is replaced by a ring on focus", (t) => {
   assert.deepEqual(failures, [], "a control whose outline is removed must draw a ring when it is focused");
 });
 
-test("focus.2: every reported finding still reproduces, at the line it names", (t) => {
+test("focus.2: every reported finding still reproduces, and still declares what it names", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const found = unringedOutlineSites(css);
   for (const entry of REPORTED_FOCUS_SITES) {
     const match = found.find((failure) => failure.selector === entry.selector);
     assert.ok(match !== undefined, `${entry.selector} now draws a focus ring; remove the reported entry`);
-    assert.equal(match.line, entry.line, `${entry.selector} moved; update the reported line`);
+    for (const [property, value] of entry.declarations) {
+      assert.ok(
+        match.declarations.some(([name, declared]) => name === property && declared === value),
+        `${entry.selector} no longer declares \`${property}: ${value}\`; the finding changed and the reported entry must follow it`,
+      );
+    }
   }
-  t.diagnostic(`focus.2: ${REPORTED_FOCUS_SITES.length} reported finding(s) still reproduce`);
+  t.diagnostic(`focus.2: ${REPORTED_FOCUS_SITES.length} reported finding(s) still reproduce, by declaration`);
 });
 
 test("focus.3: the stylesheet's own baseline ring is present", (t) => {
@@ -278,7 +287,7 @@ test("focus.4: the composer's parent ring is verified against the JSX, not assum
 test("focus.5 (mutation): outline:none alone, and with only a colour change, both fail", (t) => {
   const bare = ".gate-probe-input {\n  outline: none;\n}\n";
   assert.deepEqual(unringedOutlineSites(bare, []), [
-    { line: 2, selector: ".gate-probe-input", classes: [".gate-probe-input"] },
+    { line: 2, selector: ".gate-probe-input", classes: [".gate-probe-input"], declarations: [["outline", "none"]] },
   ]);
 
   const colourOnly = [
