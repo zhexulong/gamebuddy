@@ -89,6 +89,65 @@
  * by digest anyway, so a card cannot be smuggled through them without changing
  * a fact the release already verifies.
  *
+ * Scan surface - what this gate reads, and what it deliberately does not:
+ *
+ * The surface is the WHOLE packaged tree given as `artifactRoot`: every byte
+ * reachable from it, at every path the artifact reaches it by. Concretely, the
+ * browser artifact (`browser/tavern/v1/**`), the emitted Host modules and the
+ * generation's own manifests, the packaged Mod (`native/stardew-mod/**`), the
+ * allowlisted resources, the voice gateway, the native helper pairs, the bundled
+ * Node distribution (`runtime/**`, whose own `node_modules/npm/**` is npm's), and
+ * the declared external runtime closure (`node_modules/**`).
+ *
+ * No path is excluded. Dependency trees are in scope ON PURPOSE:
+ *
+ *   - those bytes ship. They are the generation the player runs, which is this
+ *     gate's own premise, and nothing about being third-party changes what a
+ *     player receives;
+ *   - the artifact inventory does not answer this question. It records a
+ *     per-file digest under one tree-level `declared_external_runtime_closure`
+ *     claim, and `verifyExternalRuntimeClosure` checks reachability, module
+ *     ingress and link placement - not content. "Pinned" means a published
+ *     generation re-verifies byte-for-byte; it does not mean "no card in it".
+ *     Nothing in the pipeline compares a closure file against an upstream
+ *     published digest, so it cannot stand in for a content rule;
+ *   - part of that closure is repository-authored: `pnpm deploy` resolves `file:`
+ *     dependencies out of `vendor/**` (`production-artifact-closure-staging.mjs`),
+ *     so "it came from the registry" is not true of every closure byte;
+ *   - the false positive that motivates excluding `node_modules` was a RULE
+ *     defect - `name` plus a description of `MIN_CARD_CONTENT_CHARS` crosses the
+ *     threshold and every manifest has both - and it was fixed in the rule. A
+ *     future false positive in third-party bytes must be fixed the same way,
+ *     because a path left unread is a hole a card can sit in undetected;
+ *   - it costs no new I/O class: `createInventory` already reads and digests
+ *     every artifact file, and this gate reads each of them at most once.
+ *
+ * The only bytes not read are excluded by the ceilings, which are properties of
+ * the bytes and not of a path: a file larger than `MAX_SCANNED_BYTES` is checked
+ * by name only, a value larger than `MAX_JSON_PARSE_BYTES` is not parsed as a
+ * whole JSON value, and at most `MAX_BASE64_CANDIDATES` runs are decoded per
+ * file. The gate reports how much surface it covered (`assertReleasePersonaHygiene`
+ * returns a `surface` census and the CLI prints it), so what was read is visible
+ * in the CI log instead of inferred.
+ *
+ * Links, and why the walk is deterministic: the file set is a function of the
+ * packaged tree, never of how the local filesystem happens to represent it. A
+ * link - Windows junction, directory symlink, file symlink - is RESOLVED and its
+ * target's bytes are inspected exactly as if the bytes sat at that path; the
+ * reported path is the path the artifact reaches them by, so the same tree in two
+ * link representations reports the same findings. A hardlink is an ordinary file
+ * at each path it appears at and is inspected at each, as it always was. Each
+ * real directory is inspected once per tree, which makes a link back to an
+ * already-visited directory a cycle rather than a second scan, and a dangling
+ * link fails the gate (`release_persona_hygiene_unresolvable_link:<path>`) rather
+ * than being silently dropped. This is measured, not theorized: deciding by
+ * `readdir`'s entry type instead - which is what this gate did - sent a linked
+ * dependency directory to `inspectFile`, whose link guard threw
+ * `release_persona_hygiene_non_regular_entry`, so identical dependency bytes were
+ * REPORTED when the tree held real files and NOT READ when it held links. A
+ * pnpm-style tree and an unlinked copy of it gave different answers for the same
+ * content, which is a release gate whose verdict is a property of the checkout.
+ *
  * Honest limits: a card whose every prose field is shorter than
  * `MIN_CARD_CONTENT_CHARS` scores on its field weights alone (14 for a full
  * card), so it is still read - but a card that omits enough fields to score
@@ -103,7 +162,7 @@
  * build/recheck with `release_persona_hygiene_violation:<path>:<kind>`.
  */
 
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -333,16 +392,17 @@ function encodedCardKind(text) {
   return null;
 }
 
-async function inspectFile(absolutePath, name, findings, prefix) {
-  const path = prefix === "" ? name : `${prefix}/${name}`;
+async function inspectFile({ absolute, path, name, size, findings, surface }) {
   if (COMPANION_SEED_FILE.test(name)) {
     findings.push(Object.freeze({ path, kind: "companion_card_file" }));
     return;
   }
-  const state = await lstat(absolutePath);
-  if (!state.isFile() || state.isSymbolicLink()) throw new Error(`release_persona_hygiene_non_regular_entry:${path}`);
-  if (state.size === 0 || state.size > MAX_SCANNED_BYTES) return;
-  const bytes = await readFile(absolutePath);
+  if (size === 0 || size > MAX_SCANNED_BYTES) {
+    surface.filesNameCheckedOnly += 1;
+    return;
+  }
+  surface.filesInspected += 1;
+  const bytes = await readFile(absolute);
   if (hasPngSignature(bytes) && hasEmbeddedCardChunk(bytes)) {
     findings.push(Object.freeze({ path, kind: "embedded_card_png" }));
     return;
@@ -357,13 +417,67 @@ async function inspectFile(absolutePath, name, findings, prefix) {
     findings.push(Object.freeze({ path, kind: encoded }));
     return;
   }
-  if (state.size <= MAX_JSON_PARSE_BYTES) {
+  if (size <= MAX_JSON_PARSE_BYTES) {
     const value = parseJsonValue(bytes.toString("utf8"));
     if (value !== null) {
       const kind = jsonCardKind(value);
       if (kind !== null) findings.push(Object.freeze({ path, kind }));
     }
   }
+}
+
+/** What the walk covered, so the scan surface is reported rather than inferred. */
+function emptySurface() {
+  return { filesInspected: 0, filesNameCheckedOnly: 0, linksResolved: 0, duplicateDirectoriesSkipped: 0 };
+}
+
+/**
+ * The one walk. Returns the findings in deterministic (lexicographic, depth-first)
+ * order and fills `surface` with what it covered. See the scan-surface docstring:
+ * links are resolved, hardlinks are files, every real directory is visited once.
+ */
+async function walkArtifact({ root, surface }) {
+  const findings = [];
+  const inspected = new Set();
+  const walk = async (absolute, prefix) => {
+    const entries = await readdir(absolute, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name, "en"))) {
+      const child = join(absolute, entry.name);
+      const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const entryState = await lstat(child);
+      const link = entryState.isSymbolicLink();
+      let target = entryState;
+      if (link) {
+        surface.linksResolved += 1;
+        try {
+          target = await stat(child);
+        } catch {
+          throw new Error(`release_persona_hygiene_unresolvable_link:${path}`);
+        }
+      }
+      if (target.isDirectory()) {
+        const identity = await realpath(child);
+        if (inspected.has(identity)) {
+          surface.duplicateDirectoriesSkipped += 1;
+          continue;
+        }
+        inspected.add(identity);
+        await walk(child, path);
+        continue;
+      }
+      if (!target.isFile()) throw new Error(`release_persona_hygiene_non_regular_entry:${path}`);
+      await inspectFile({ absolute: child, path, name: entry.name, size: target.size, findings, surface });
+    }
+  };
+  inspected.add(await realpath(root));
+  await walk(root, "");
+  return findings;
+}
+
+function requireArtifactRoot(artifactRoot) {
+  if (typeof artifactRoot !== "string" || artifactRoot.length === 0)
+    throw new Error("release_persona_hygiene_root_required");
+  return resolve(artifactRoot);
 }
 
 /**
@@ -373,32 +487,23 @@ async function inspectFile(absolutePath, name, findings, prefix) {
  * deliberately out of scope.
  */
 export async function scanReleasePersonaHygiene({ artifactRoot }) {
-  if (typeof artifactRoot !== "string" || artifactRoot.length === 0)
-    throw new Error("release_persona_hygiene_root_required");
-  const root = resolve(artifactRoot);
-  const findings = [];
-  const walk = async (absolute, prefix) => {
-    const entries = await readdir(absolute, { withFileTypes: true });
-    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name, "en"))) {
-      const child = join(absolute, entry.name);
-      if (entry.isDirectory()) await walk(child, prefix === "" ? entry.name : `${prefix}/${entry.name}`);
-      else await inspectFile(child, entry.name, findings, prefix);
-    }
-  };
-  await walk(root, "");
-  return Object.freeze(findings);
+  const root = requireArtifactRoot(artifactRoot);
+  return Object.freeze(await walkArtifact({ root, surface: emptySurface() }));
 }
 
 /**
  * Fails the build with a bounded message naming the first offending asset. One
  * finding is enough to refuse the generation; the message stays a single line so
- * the CI log's reason is the reason.
+ * the CI log's reason is the reason. On success it returns the covered surface
+ * census alongside the (empty) findings.
  */
 export async function assertReleasePersonaHygiene({ artifactRoot }) {
-  const findings = await scanReleasePersonaHygiene({ artifactRoot });
+  const root = requireArtifactRoot(artifactRoot);
+  const surface = emptySurface();
+  const findings = await walkArtifact({ root, surface });
   if (findings.length > 0)
     throw new Error(`release_persona_hygiene_violation:${findings[0].path}:${findings[0].kind}`);
-  return Object.freeze({ findings, artifactRoot: resolve(artifactRoot) });
+  return Object.freeze({ findings: Object.freeze(findings), artifactRoot: root, surface: Object.freeze(surface) });
 }
 
 /** Human-readable report for the CLI; the assertion above stays the machine gate. */
@@ -408,13 +513,16 @@ export function describePersonaHygieneFindings(findings) {
 
 const scriptPath = fileURLToPath(import.meta.url);
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {
-  const target = process.argv[2] ?? resolve(scriptPath, "..", "..", "dist");
-  const findings = await scanReleasePersonaHygiene({ artifactRoot: target });
+  const target = resolve(process.argv[2] ?? resolve(scriptPath, "..", "..", "dist"));
+  const surface = emptySurface();
+  const findings = await walkArtifact({ root: requireArtifactRoot(target), surface });
+  const censused = `files=${surface.filesInspected}	name-only=${surface.filesNameCheckedOnly}\tlinks=${surface.linksResolved}\tduplicate-directories=${surface.duplicateDirectoriesSkipped}`;
   if (findings.length === 0) {
-    console.log(`release_persona_hygiene_ok\t${resolve(target).split(sep).join("/")}`);
+    console.log(`release_persona_hygiene_ok\t${target.split(sep).join("/")}\t${censused}`);
   } else {
     console.error(`release_persona_hygiene_violation:${findings[0].path}:${findings[0].kind}`);
     console.error(describePersonaHygieneFindings(findings));
+    console.error(censused);
     process.exitCode = 1;
   }
 }

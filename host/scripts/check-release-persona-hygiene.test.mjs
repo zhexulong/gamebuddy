@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -59,8 +59,26 @@ import {
  *    `spec` member deleted, so the card-only-field requirement cannot be
  *    traded for a gate that only reads typed cards.
  * 12. `a planted reviewed card that keeps its spec still fails` - the typed
- *    half, at a file name that is not card-shaped, so the pass in 10 is not
- *    bought by weakening the payload rule.
+ *     half, at a file name that is not card-shaped, so the pass in 10 is not
+ *     bought by weakening the payload rule.
+ * 13. `the same dependency bytes behind a link get the same verdict as real
+ *     files` - the determinism property. `readdir` reports a junction or symlink
+ *     as neither a file nor a directory, so the old walk sent a linked dependency
+ *     into `inspectFile`, whose link guard threw
+ *     `release_persona_hygiene_non_regular_entry`: identical bytes, two answers,
+ *     decided by the checkout's link representation. The fixture materializes the
+ *     same two files - the manifest of 10 and a card payload inlined beside it -
+ *     as real copies, as hardlinks, and behind every link kind the platform can
+ *     construct, and requires one verdict for all of them.
+ * 14. `a card inside the dependency closure is in scope` - the scan surface made
+ *     executable: dependency bytes ship, so they are read, and a card dropped
+ *     among them fails the build.
+ * 15. `a directory reached twice is read once and still fails once` - a link back
+ *     to an already-inspected directory is a cycle, not a second scan: one
+ *     finding, never a skipped byte.
+ * 16. `the scan reports the surface it covered` - the census IS the surface
+ *     statement: the same walk that decides the verdict says how many files it
+ *     read, how many it only name-checked, and how many links it resolved.
  */
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -93,6 +111,77 @@ async function generationRoot(t) {
   // ceiling, and legitimate.
   await writeFile(path.join(root, "assets", "large-binary-9999beef.js"), Buffer.alloc(9 * 1024 * 1024, 0x41));
   return root;
+}
+
+/** A directory link kind this platform can construct without elevation. */
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
+
+/** The dependency manifest of the reported false positive, verbatim. */
+const DEPENDENCY_MANIFEST = `${JSON.stringify(
+  {
+    name: "@aws/lambda-invoke-store",
+    version: "0.3.0",
+    description: "Invoke scoped data storage for AWS Lambda Node.js Runtime Environment",
+    main: "./dist-cjs/invoke-store.js",
+    license: "Apache-2.0",
+  },
+  null,
+  2,
+)}\n`;
+/** A card payload inlined in an admitted asset, as in test 4. */
+const INLINED_CARD = `export const bundled = ${JSON.stringify({
+  spec: "chara_card_v2",
+  data: {
+    name: "Kohaku",
+    description:
+      "A rival farmhand from another valley who talks about the weather and never about herself, and who is not the companion this product reviewed.",
+    personality: "warm, guarded",
+  },
+})};\n`;
+
+/**
+ * A generation whose dependency entry holds the same bytes in one of four forms:
+ * real copies, hardlinks, one directory link, or two file links. The store lives
+ * OUTSIDE the generation, as pnpm's does, so a link is the only route to the
+ * bytes. Returns `link` (the kind constructed, or null for real bytes) and
+ * `unavailable` when this platform cannot build that link.
+ */
+async function dependencyClosureRoot(t, kind) {
+  const scratch = await mkdtemp(path.join(tmpdir(), `release-hygiene-${kind}-`));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const root = path.join(scratch, "generation");
+  const store = path.join(scratch, "store", "@aws+lambda-invoke-store@0.3.0", "node_modules", "@aws", "lambda-invoke-store");
+  await mkdir(path.join(store, "assets"), { recursive: true });
+  await writeFile(path.join(store, "package.json"), DEPENDENCY_MANIFEST, "utf8");
+  await writeFile(path.join(store, "assets", "preset-abcdef12.js"), INLINED_CARD, "utf8");
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, "index.html"), "<!doctype html>\n", "utf8");
+  const visible = path.join(root, "node_modules", "@aws", "lambda-invoke-store");
+  await mkdir(path.join(root, "node_modules", "@aws"), { recursive: true });
+  if (kind === "real-files") {
+    await mkdir(path.join(visible, "assets"), { recursive: true });
+    await writeFile(path.join(visible, "package.json"), DEPENDENCY_MANIFEST, "utf8");
+    await writeFile(path.join(visible, "assets", "preset-abcdef12.js"), INLINED_CARD, "utf8");
+    return { root, link: null };
+  }
+  if (kind === "hardlinks") {
+    await mkdir(path.join(visible, "assets"), { recursive: true });
+    await link(path.join(store, "package.json"), path.join(visible, "package.json"));
+    await link(path.join(store, "assets", "preset-abcdef12.js"), path.join(visible, "assets", "preset-abcdef12.js"));
+    return { root, link: null };
+  }
+  try {
+    if (kind === "directory-link") {
+      await symlink(store, visible, DIRECTORY_LINK_TYPE);
+    } else {
+      await mkdir(path.join(visible, "assets"), { recursive: true });
+      await symlink(path.join(store, "package.json"), path.join(visible, "package.json"), "file");
+      await symlink(path.join(store, "assets", "preset-abcdef12.js"), path.join(visible, "assets", "preset-abcdef12.js"), "file");
+    }
+  } catch (error) {
+    return { root, link: null, unavailable: `${error.code ?? error.message}` };
+  }
+  return { root, link: kind };
 }
 
 test("a packaged generation with no character content passes", async (t) => {
@@ -350,4 +439,90 @@ test("a base64 run that decodes to ordinary bytes is not a finding", async (t) =
     "utf8",
   );
   assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), []);
+});
+
+test("the same dependency bytes behind a link get the same verdict as real files", async (t) => {
+  // The determinism property, over the exact bytes that started this: the
+  // dependency manifest, plus a card payload inlined beside it. Whatever the
+  // filesystem says about how those bytes are reached, the gate must read them
+  // and must report the card - and must never report the manifest.
+  const expected = [
+    { path: "node_modules/@aws/lambda-invoke-store/assets/preset-abcdef12.js", kind: "card_payload" },
+  ];
+  const linked = [];
+  for (const kind of ["real-files", "hardlinks", "directory-link", "file-links"]) {
+    const fixture = await dependencyClosureRoot(t, kind);
+    if (fixture.unavailable !== undefined) continue;
+    assert.deepEqual(
+      await scanReleasePersonaHygiene({ artifactRoot: fixture.root }),
+      expected,
+      `${kind} must reach the same verdict as real files (${fixture.unavailable ?? "constructed"})`,
+    );
+    if (fixture.link !== null) linked.push(kind);
+  }
+  assert.ok(linked.length > 0, "at least one link kind must be constructible here, or this test proves nothing");
+});
+
+test("a card inside the dependency closure is in scope and fails the build", async (t) => {
+  // The scan surface, made executable. Dependency bytes ship with the
+  // generation, the artifact inventory pins them by digest but does not judge
+  // their content, and part of the closure is vendored from this repository -
+  // so a card among them is third-party content we would ship.
+  const root = await generationRoot(t);
+  const dependency = path.join(root, "node_modules", "@aws", "lambda-invoke-store");
+  await mkdir(dependency, { recursive: true });
+  await writeFile(path.join(dependency, "package.json"), DEPENDENCY_MANIFEST, "utf8");
+  await writeFile(
+    path.join(dependency, "card.json"),
+    JSON.stringify({ spec: "chara_card_v2", data: { name: "Kohaku", description: "d" } }),
+    "utf8",
+  );
+  await assert.rejects(
+    assertReleasePersonaHygiene({ artifactRoot: root }),
+    /release_persona_hygiene_violation:node_modules\/@aws\/lambda-invoke-store\/card\.json:companion_card_file/,
+  );
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "node_modules/@aws/lambda-invoke-store/card.json", kind: "companion_card_file" },
+  ]);
+});
+
+test("a directory reached twice is read once and still fails once", async (t) => {
+  // Two links to one store directory are one directory, so the second is a cycle
+  // rather than a second scan: the finding is reported once, at the first path in
+  // walk order, and no byte is skipped.
+  const scratch = await mkdtemp(path.join(tmpdir(), "release-hygiene-twice-"));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const root = path.join(scratch, "generation");
+  const store = path.join(scratch, "store", "@aws", "lambda-invoke-store");
+  await mkdir(path.join(store, "assets"), { recursive: true });
+  await writeFile(path.join(store, "assets", "card.json"), JSON.stringify({ spec: "chara_card_v2", data: { name: "Kohaku" } }), "utf8");
+  await mkdir(path.join(root, "node_modules"), { recursive: true });
+  await symlink(store, path.join(root, "node_modules", "a-dependency"), DIRECTORY_LINK_TYPE);
+  await symlink(store, path.join(root, "node_modules", "b-dependency"), DIRECTORY_LINK_TYPE);
+  assert.deepEqual(await scanReleasePersonaHygiene({ artifactRoot: root }), [
+    { path: "node_modules/a-dependency/assets/card.json", kind: "companion_card_file" },
+  ]);
+});
+
+test("the scan reports the surface it covered", async (t) => {
+  // The census is how the surface is stated rather than inferred: the same walk
+  // that decides the verdict says how many files it read and how many links it
+  // resolved to read them. A linked dependency adds to `filesInspected` exactly
+  // as a real one does.
+  const scratch = await mkdtemp(path.join(tmpdir(), "release-hygiene-surface-"));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const root = path.join(scratch, "generation");
+  const store = path.join(scratch, "store", "lambda-invoke-store");
+  await mkdir(store, { recursive: true });
+  await writeFile(path.join(store, "package.json"), "{}\n", "utf8");
+  await mkdir(path.join(root, "node_modules", "@aws"), { recursive: true });
+  await writeFile(path.join(root, "index.html"), "<!doctype html>\n", "utf8");
+  await symlink(store, path.join(root, "node_modules", "@aws", "lambda-invoke-store"), DIRECTORY_LINK_TYPE);
+  const result = await assertReleasePersonaHygiene({ artifactRoot: root });
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(
+    result.surface,
+    { filesInspected: 2, filesNameCheckedOnly: 0, linksResolved: 1, duplicateDirectoriesSkipped: 0 },
+    "one generation file plus the linked dependency's manifest, read through one link",
+  );
 });
