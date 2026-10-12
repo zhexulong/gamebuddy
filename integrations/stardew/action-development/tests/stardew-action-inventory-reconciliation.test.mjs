@@ -167,8 +167,11 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // UPDATED 2026-10-11: 2 + the 9 the tier-B sweep found. The method layer's own two were already here (the
   // selector layer's were the ones the nine-predicate test could not see); the sweep added the nine menu units
   // that need a primitive, which is why the two numbers above and this one moved together.
-  // 12 since the owner ruled that NamingMenu's capability is approved (name_entity joins the candidates).
-  assert.equal(a.counts.methodNewPrimitiveUnits, 12);
+  // 10: twelve after the NamingMenu ruling, minus the two the LOOP-CLOSURE gate then corrected to
+  // menu-owned transactions (purchase_joja_upgrade, tailor_item - their write sits inside the menu own click
+  // handler, so the gate reads realtime input with no terminal write). A candidate that the gate refuses to call
+  // closable is not a candidate, and re-encoding them is the gate doing its job rather than a check to loosen.
+  assert.equal(a.counts.methodNewPrimitiveUnits, 10);
 
   // 但这些 primitive 全部已经登记为 action（本轮 loop-closure 波次把它们实现了），
   // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
@@ -191,13 +194,10 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
     "donate_bundle_item",
     "dye_item",
     "name_entity",
-    "purchase_joja_upgrade",
     "redeem_prize_ticket",
-    "tailor_item",
   ]);
-  // 10 since the NamingMenu ruling: the approved naming capability is a candidate primitive, and this field is
-  // exactly the list of candidates.
-  assert.equal(a.counts.newPrimitivesRequired, 10);
+  // 8: the candidate list after the two B1 corrections. This field IS the list of candidates, so it moves with it.
+  assert.equal(a.counts.newPrimitivesRequired, 8);
   // SIX units the sweep deliberately did NOT decide, and the count is the point: a shared number widget whose
   // effect belongs to its callers, a naming box whose product question is whether the companion may name the
   // player's entities, a member with two lives (live dyeing versus new-game world generation), and THREE festival
@@ -215,8 +215,8 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // 14 = the 10 candidates plus the 4 remaining questions: the same arithmetic as before the rulings, restated
   // rather than loosened - a pending question is an upper bound on ONE more primitive, never a claim that the
   // primitive is needed.
-  // 13 = the 10 candidates plus the 3 deferred questions: the same arithmetic, restated.
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 13);
+  // 11 = the 8 candidates plus the 3 deferred questions: the same arithmetic, restated.
+  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 11);
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
   const minecart = a.groups.selectorLayer.already_registered.find((r) =>
@@ -476,15 +476,13 @@ test("CLI：--remaining 与旧名 --candidates 指向同一输入槽位", async 
       execFileAsync(process.execPath, [...base, "--candidates", tmp], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: ROOT }),
     ]);
     assert.equal(a.stdout, b.stdout, "两个参数名必须产生逐字节相同的产物");
-    // UPDATED 2026-10-11 by the tier-B sweep, and this is the number the sweep was FOR: the 32 menu-tier-B
-    // units had no verdicts, so nothing could count what they need. Nine of them need a new primitive
-    // (build_farm_building, purchase_joja_upgrade, donate_bundle_item, dye_item, tailor_item,
-    // redeem_prize_ticket, clear_fish_pond, color_placed_object, accept_daily_quest); three are already
-    // covered by registered actions, five are pending a product decision, and fourteen are excluded as
-    // read-only or not-an-affordance.
-    // 10 with the NamingMenu ruling; this test is about the two argument spellings producing the SAME artifact, so
-    // it names the current count rather than a floor.
-    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 10);
+    // 8 with the 2026-10-11 tier-B sweep and the two corrections that followed it: the sweep is what made this
+    // number meaningful (the 32 menu-tier-B units had no verdicts, so nothing could count what they need), and the
+    // loop-closure gate then moved purchase_joja_upgrade and tailor_item OUT of the candidate set, because their
+    // world write sits inside the menu own click handler (B1_menu_owned_transaction). The remaining candidates are
+    // build_farm_building, donate_bundle_item, dye_item, redeem_prize_ticket, clear_fish_pond,
+    // color_placed_object, accept_daily_quest and name_entity.
+    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 8);
   } finally {
     await rm(tmp, { force: true });
   }

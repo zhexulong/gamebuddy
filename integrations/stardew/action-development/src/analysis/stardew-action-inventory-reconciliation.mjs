@@ -462,12 +462,13 @@ export const METHOD_VERDICTS = Object.freeze({
       "CarpenterMenu.cs:898 -> setUpForBuildingPlacement",
       "Menus/CarpenterMenu.cs:817",
     ),
-  "JojaCDMenu.receiveLeftClick@98": newPrimitive(
-      "purchase_joja_upgrade",
-      "the checkbox branch debits Game1.player.Money (JojaCDMenu.cs:115) and then writes addMailForTomorrow to unlock the community upgrades - money out, several world switches in, in one transaction.",
-      "JojaCDMenu.cs:115 -> Game1.player.Money -=",
-      "Menus/JojaCDMenu.cs:98",
-    ),
+  "JojaCDMenu.receiveLeftClick@98": {
+      group: "explicit_exclusion",
+      boundary: "B1_menu_owned_transaction",
+      reason:
+        "grouped as a candidate first, and the loop-closure gate corrected it: the write is INSIDE the menu own click handler (JojaCDMenu.cs:115 debits Game1.player.Money, then addMailForTomorrow unlocks the upgrades, all inside receiveLeftClick at :98), so the gate reads realtime input with no terminal write. No PUBLIC settlement was located for the purchase - the settlement IS this menu transaction - which is exactly B1. Revisitable: MineElevator carried the same verdict until Game1.enterMine was found, so this is a claim about the seam and not about the capability.",
+      anchor: "Menus/JojaCDMenu.cs:115",
+    },
   "MineElevatorMenu.receiveLeftClick@69": merge(
       ["select_mine_elevator_floor"],
       "the elevator branch sets Farmer.ridingMineElevator and calls the public Game1.enterMine(level) (MineElevatorMenu.cs:94-95, 86), which is exactly the seam select_mine_elevator_floor already drives - so this unit is covered, not a new primitive.",
@@ -476,7 +477,7 @@ export const METHOD_VERDICTS = Object.freeze({
   "JunimoNoteMenu.receiveLeftClick@430": newPrimitive(
       "donate_bundle_item",
       "HandlePartialDonation (JunimoNoteMenu.cs:459, defined :688) consumes the held item and credits the bundle, advancing a permanent community-centre chain. Nothing else in the surface can donate.",
-      "JunimoNoteMenu.cs:459 -> HandlePartialDonation",
+      "JunimoNoteMenu.cs:688 -> HandlePartialDonation",
       "Menus/JunimoNoteMenu.cs:430",
     ),
   "CraftingPage.receiveLeftClick@376": merge(
@@ -490,12 +491,13 @@ export const METHOD_VERDICTS = Object.freeze({
       "DyeMenu.cs:339",
       "Menus/DyeMenu.cs:339",
     ),
-  "TailoringMenu.receiveLeftClick@399": newPrimitive(
-      "tailor_item",
-      "confirming consumes cloth plus the input and grants the tailored item, changing equipment state and the inventory.",
-      "TailoringMenu.cs:399",
-      "Menus/TailoringMenu.cs:399",
-    ),
+  "TailoringMenu.receiveLeftClick@399": {
+      group: "explicit_exclusion",
+      boundary: "B1_menu_owned_transaction",
+      reason:
+        "grouped as a candidate first, and the loop-closure gate corrected it: confirming consumes cloth plus the input and grants the tailored item, all inside the menu own receiveLeftClick (TailoringMenu.cs:399), so the gate reads realtime input with no terminal write. No PUBLIC settlement was located - the settlement is the menu transaction - which is B1. Per-body rather than a class rule: the sibling dye_item (DyeMenu.cs:339) is judged closable on the same kind of line, so whichever seam exists for one may not exist for the other.",
+      anchor: "Menus/TailoringMenu.cs:399",
+    },
   "PrizeTicketMenu.receiveLeftClick@145": newPrimitive(
       "redeem_prize_ticket",
       "the reward branch adds the prize to the inventory and reduces the PrizeTicket stack (PrizeTicketMenu.cs:180-185): a two-sided item exchange.",
@@ -535,7 +537,8 @@ export const METHOD_VERDICTS = Object.freeze({
   "NamingMenu.receiveLeftClick@152": newPrimitive(
       "name_entity",
       "RULED 2026-10-11 (owner): the capability is approved. textBoxEnter -> doneNaming (NamingMenu.cs:158, :92) writes the name of an entity the game just created (pet, horse, animal, baby - callers Event.cs:13092, Horse.cs:637, QuestionEvent.cs:123, BirthingEvent), and the Basis already names this primitive (`name_entity`). A name is SAVED state, so it is not pure UI, and the owner's answer settles the product question this row was holding.",
-      "Menus/NamingMenu.cs:158",
+      "NamingMenu.cs:92 -> doneNaming",
+      "Menus/NamingMenu.cs:152",
     ),
   "CharacterCustomization.receiveLeftClick@2018": {
       group: "explicit_exclusion",
