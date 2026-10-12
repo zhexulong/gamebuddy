@@ -803,6 +803,23 @@ export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle
  * (`voice-gateway-client.ts`, `createVoiceSurfaceReader`) emits only `ready` and
  * `speaking`; an absent or null `voice` field is how "no usable audio surface" is
  * published today. The member stays declared for a producer that can say it.
+ *
+ * There is deliberately no `listening`/`capturing` member, and no producer for one could exist
+ * today: this product has no audio-capture path at all. Nothing in `host/`, `dialogue-web/` or
+ * `desktop/` opens a microphone - `MediaRecorder`, `getUserMedia`, speech-to-text and any
+ * audio-carrying request body appear nowhere in production code. The Desktop Voice lane is
+ * output-only (`VoiceLaunchCoordinator.cs` admits a TTS artifact and injects the loopback
+ * port/token so the Host can connect the gateway for SPEECH), and `voice-gateway-client.ts`'s
+ * audio-epoch admission fences outbound playback, not captured input. The front end's mic thus
+ * renders only what the Host reports, and the browser's own MediaRecorder is - correctly - not a
+ * Host fact (`dialogue-web/src/components/Composer.tsx`).
+ *
+ * Closing it would take, in order: a component that captures (browser `getUserMedia` +
+ * `MediaRecorder`, or a native desktop capture), a bounded Host route that carries the audio (a new
+ * operation with its own admission, byte bound and redaction), a Host action on that audio
+ * (speech-to-text into a player message, with the provider and the `chat.submit`-adjacent
+ * admission that implies), and a durable capture state with a deadline and a producer. Only then
+ * would the member mean something; declaring it first would be a state nobody can produce.
  */
 export const TavernVoiceSurfaceStateV1Schema = strictObject({
   state: Type.Union([Type.Literal("unavailable"), Type.Literal("ready"), Type.Literal("speaking")]),
