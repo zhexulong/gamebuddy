@@ -439,6 +439,9 @@ const en = {
   // One word naming the material the chips are made of (the card's own opening
   // lines), never a sentence explaining the product.
   openingChipsLabel: "Openings",
+  // The chip's own action, naming what a tap does; `{{opening}}` is the opening's
+  // own short label, never the whole paragraph.
+  openingChipUse: "Say this opening: {{opening}}",
   // The one control that holds the app bar's trailing peers on a 400 px strip.
   appBarMore: "More",
 
@@ -930,6 +933,7 @@ const zh: Messages = {
   gameDiagnosticsUnavailable: "该档案未发布游戏数据，因此没有可显示的内容。",
   // --- conversation-surface lane: the card's own openings -------------------
   openingChipsLabel: "开场白",
+  openingChipUse: "用这句开场：{{opening}}",
   appBarMore: "更多",
 
   // 伴玩能力台与三步起步指引。能力台由游戏投影真正发布的能力面推导而来

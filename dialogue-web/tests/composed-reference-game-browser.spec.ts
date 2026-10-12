@@ -1,4 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -3682,6 +3684,89 @@ test("a chat with no durable draft lets the player save the first one from the c
 });
 
 /**
+ * The shipped companion card's own openings, read from the asset the product
+ * installs. The defect this journey pins was measured on a fresh runtime root
+ * against exactly these three paragraphs - 4578 / 3161 / 3315 px of single-line
+ * chip text, one per variant - so the chip journeys run against the real
+ * material and not a comfortable fixture.
+ */
+const shippedCard = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL("../../assets/tavern/presets/default-companion/card.json", import.meta.url)),
+    "utf8",
+  ),
+) as Readonly<{ data: Readonly<{ first_mes: string; alternate_greetings: readonly string[] }> }>;
+
+/** The chip's own facts, read from the rendered DOM. */
+async function chipFacts(surface: Locator) {
+  return await surface.locator(".composer-chip").evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const chip = node as HTMLElement;
+      return {
+        text: (chip.textContent ?? "").trim(),
+        title: chip.getAttribute("title"),
+        name: chip.getAttribute("aria-label"),
+        width: chip.getBoundingClientRect().width,
+        clientWidth: chip.clientWidth,
+        scrollWidth: chip.scrollWidth,
+      };
+    }),
+  );
+}
+
+/** The width of the composer band the chips sit in: their own bound. */
+async function composerWidth(page: Page): Promise<number> {
+  return await page.locator(".composer-container").evaluate((node) => node.getBoundingClientRect().width);
+}
+
+/**
+ * The chip contract, asserted from the rendered DOM rather than from a second
+ * copy of the label rule: the *payload* stays the card's opening verbatim while
+ * the *label* is a short prefix of that opening, renders inside its own box, and
+ * fits the composer band; the accessible name is the tap's action, not prose.
+ *
+ * A chip that renders the paragraph (the measured 4578 / 3161 / 3315 px slab)
+ * fails the overflow and prefix assertions; a chip that quietly shortened the
+ * message fails the verbatim one; a chip named after the paragraph fails the
+ * name's own bound.
+ */
+function expectChipsCarryTheOpenings(
+  facts: readonly Readonly<{
+    text: string;
+    title: string | null;
+    name: string | null;
+    width: number;
+    clientWidth: number;
+    scrollWidth: number;
+  }>[],
+  openings: readonly Readonly<{ text: string }>[],
+  composerBandWidth: number,
+): void {
+  expect(facts.length, "one chip per opening the card carries").toBe(openings.length);
+  facts.forEach((chip, index) => {
+    const opening = openings[index]!.text;
+    // The opening as the label is derived from it: whitespace collapsed and a
+    // leading roleplay marker dropped. The label must be a prefix of *this* and
+    // not a summarised rewrite of it.
+    const source = opening.replace(/\s+/gu, " ").trim().replace(/^\*+/u, "");
+    expect(chip.title, `chip ${index} carries the card's opening verbatim as the text it sends`).toBe(opening);
+    const stem = chip.text.endsWith("…") ? chip.text.slice(0, -1).trimEnd() : chip.text;
+    expect(stem.length, `chip ${index} shows a label`).toBeGreaterThan(0);
+    expect(chip.text.length, `chip ${index}'s label is no longer than the opening`).toBeLessThanOrEqual(
+      opening.length,
+    );
+    expect(source.startsWith(stem), `chip ${index}'s label is the opening's own words, not a summary`).toBe(true);
+    expect(
+      chip.scrollWidth,
+      `chip ${index} renders exactly its label: nothing is hidden behind an ellipsis`,
+    ).toBeLessThanOrEqual(chip.clientWidth + 1);
+    expect(chip.width, `chip ${index} fits the composer band`).toBeLessThanOrEqual(composerBandWidth);
+    expect(chip.name ?? "", `chip ${index} is named by what a tap does`).toMatch(/^Say this opening: /u);
+    expect((chip.name ?? "").length, `chip ${index}'s accessible name is an action, not a paragraph`).toBeLessThan(80);
+  });
+}
+
+/**
  * The conversation's first screen: the card's own openings (owner's item 1).
  *
  * The owner looked at the first screen and found a void with one line in it -
@@ -3696,9 +3781,9 @@ test("a chat with no durable draft lets the player save the first one from the c
  * The failure each assertion catches, in order:
  *
  * 1. `reflects the card's own openings` - chips that carry reviewer prose
- *    (a generic "今天农场有什么要忙的") or a truncated variant label instead of
- *    the card's line fail; the visible chip text is compared to the greeting
- *    record, line for line.
+ *    (a generic "今天农场有什么要忙的") fail; each chip's payload is compared to
+ *    the greeting record, line for line, and its short label must be the
+ *    opening's own first words - never a summary and never the paragraph.
  * 2. `records the opening through the Host's own route` - a chip that only
  *    fills the composer, or that holds the chosen variant locally, fails; the
  *    route body, the CSRF header and the target index are asserted.
@@ -3848,11 +3933,12 @@ test("the first screen offers the card's own openings, and a tap says one and re
   await expect(surface).toBeVisible();
   await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
 
-  // 1. The chips are the greeting record's own variants, named by the card's line.
+  // 1. The chips are the greeting record's own variants: each carries the card's
+  // line verbatim as the payload it will send, while the visible label is the
+  // opening's own short first sentence so the row stays a row of invitations.
   const chips = surface.locator(".composer-chip");
   await expect(chips).toHaveCount(2);
-  await expect(chips.nth(0)).toHaveText(openings[0]!.text);
-  await expect(chips.nth(1)).toHaveText(openings[1]!.text);
+  expectChipsCarryTheOpenings(await chipFacts(surface), openings, await composerWidth(page));
   await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
   expect(greetingReads.length, "the card's opening record is read for the empty conversation").toBeGreaterThan(0);
 
@@ -3909,6 +3995,95 @@ test("the first screen offers the card's own openings, and a tap says one and re
   await expect(chips).toHaveCount(0, { timeout: 15_000 });
   await expect(surface.locator(".message-list > li")).toHaveCount(2);
   await expect(surface.locator(".message-bubble").first()).toContainText(openings[1]!.text);
+});
+
+/**
+ * The regression the lane measured on a fresh runtime root: the chip's rendered
+ * content was the whole opening, so the three shipped openings reached the first
+ * screen as single-line slabs - 4578 / 3161 / 3315 px, one per variant, exactly
+ * the card's paragraphs on one line. The owner's first screen must be a few
+ * tappable invitations, not a wall of prose.
+ *
+ * This journey mounts the shipped card's own openings and asserts the fix in the
+ * terms the defect was measured, without weakening the payload:
+ *
+ * 1. `a chip never carries the paragraph` - every chip renders its label inside
+ *    its own box (`scrollWidth <= clientWidth`, so nothing is hidden behind an
+ *    ellipsis) and no chip is wider than the composer band. The failure this
+ *    catches: the measured slab itself, and its cousin - a chip that looks short
+ *    only because the paragraph is clipped below the ellipsis.
+ * 2. `the payload is still the card's opening` - each chip's `title` is the
+ *    opening verbatim and the label is the opening's own first words, so a chip
+ *    whose short label quietly became the message fails.
+ * 3. `the whole opening is readable before it is sent` - hovering or focusing a
+ *    chip reveals the full text, verbatim, with nothing sent. The failure this
+ *    catches: a truncation that hides the payload from a pointer or keyboard
+ *    player, the one thing a short label must not do.
+ * 4. `the first screen does not overflow` - the document's own scroll width
+ *    stays inside the window, so the row wraps instead of running off the page.
+ */
+test("the shipped card's real openings stay short invitations, and hovering one shows what it will send", async ({
+  page,
+}) => {
+  const openings = [
+    { label: "Default", text: shippedCard.data.first_mes },
+    ...shippedCard.data.alternate_greetings.map((text, index) => ({ label: `Alternate ${index + 1}`, text })),
+  ];
+  const emptyRoot = {
+    ...root,
+    chat: {
+      ...chat,
+      operations: [
+        {
+          operationId: "chat.submit",
+          labelKey: "tavern.operation.submit",
+          availability: "available",
+          routeId: "chat.submit",
+        },
+      ],
+      chat: { ...chat.chat, transcript: [], draft: { revision: 0, present: false } },
+    },
+  };
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(emptyRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(emptyRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) =>
+    route.fulfill(
+      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
+    ),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  const chips = surface.locator(".composer-chip");
+  await expect(chips).toHaveCount(openings.length);
+
+  const composerBandWidth = await composerWidth(page);
+  const facts = await chipFacts(surface);
+  console.log(
+    `[chip-width] composer=${Math.round(composerBandWidth)} chips=${JSON.stringify(
+      facts.map((chip) => ({ width: Math.round(chip.width), scrollWidth: chip.scrollWidth, label: chip.text })),
+    )}`,
+  );
+  expectChipsCarryTheOpenings(facts, openings, composerBandWidth);
+
+  // 3. The whole opening is one hover - or one Tab - away, verbatim.
+  const preview = surface.locator("[data-chip-preview]");
+  await expect(preview).toHaveCount(0);
+  await chips.nth(2).hover();
+  expect(await preview.textContent(), "hovering a chip reveals the opening verbatim").toBe(openings[2]!.text);
+  await chips.nth(1).focus();
+  expect(await preview.textContent(), "focusing a chip reveals the opening verbatim").toBe(openings[1]!.text);
+
+  // 4. The row holds the page: no horizontal overflow anywhere.
+  const scroll = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    window: window.innerWidth,
+  }));
+  expect(scroll.document, "the first screen does not scroll sideways").toBeLessThanOrEqual(scroll.window);
 });
 
 /**
@@ -4069,8 +4244,7 @@ test("the first screen offers the card's openings when the companion's own openi
   // ... and the chips are the greeting record's own variants, still offered.
   const chips = surface.locator(".composer-chip");
   await expect(chips).toHaveCount(2);
-  await expect(chips.nth(0)).toHaveText(openings[0]!.text);
-  await expect(chips.nth(1)).toHaveText(openings[1]!.text);
+  expectChipsCarryTheOpenings(await chipFacts(surface), openings, await composerWidth(page));
   await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
   expect(greetingReads, "the card's opening record is read for the not-yet-started conversation").toBeGreaterThan(0);
 });

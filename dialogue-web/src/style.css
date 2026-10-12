@@ -3752,13 +3752,25 @@ body {
    record; tapping one says it and records it as the Chat's opening. They are
    not a second composer - they sit in the composer band, so the reading column
    stays the transcript and the composer and nothing else - and they leave with
-   the first message. Appended block; the rules above are untouched.
+   the first message.
+
+   The chip's visible line is the opening's own first words, never the whole
+   paragraph: as paragraphs the three shipped openings rendered as single-line
+   slabs (4578 / 3161 / 3315 px), a wall of prose rather than the row of
+   invitations this block is for. The whole opening stays one hover or one Tab
+   away, in `.composer-chip-preview`. Appended block; the rules above are
+   untouched.
    ========================================================================== */
 
 .composer-chips {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  /* The chips' own column is the composer's measure, so the preview below can be
+     bounded to it and the row can wrap instead of widening the page. */
+  width: 100%;
+  max-width: var(--timeline-reading-measure);
+  position: relative;
 }
 
 .composer-chips-label {
@@ -3767,13 +3779,12 @@ body {
   color: var(--text-secondary);
 }
 
-/* The row scrolls sideways inside itself: a card's opening line can be long, and
-   the conversation column must never grow a horizontal scrollbar for it. */
+/* The row wraps inside the composer band: a chip's own text can be long, and the
+   conversation column must never grow a horizontal scrollbar for it. */
 .composer-chips-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
-  overflow-x: auto;
-  padding-bottom: 2px;
 }
 
 .composer-chip {
@@ -3787,8 +3798,8 @@ body {
   color: var(--text-primary);
   font-family: inherit;
   font-size: 13px;
-  /* The visible line is the chip's own accessible name; `title` carries it whole
-     when this clamp cuts it short. */
+  /* The chip renders its short label; the unclamped opening it carries lives in
+     the tooltip and in the preview below, so this line never has to hold it. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3806,6 +3817,30 @@ body {
 .composer-chip:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* The whole opening, verbatim, revealed by the hover or focus on its chip. It
+   floats above the row rather than sitting in it, so reading what a chip would
+   send never moves the composer, and it is bounded to the composer's measure so
+   a paragraph reads as prose instead of widening the page. */
+.composer-chip-preview {
+  position: absolute;
+  inset-inline: 0;
+  bottom: calc(100% + var(--space-2));
+  z-index: 6;
+  margin: 0;
+  max-height: 12em;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
 /* --- game-surface lane: the companion capability board and the start guide ---
