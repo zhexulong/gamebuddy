@@ -1193,6 +1193,7 @@
         "sessionId",
         "capabilities",
         "catalogRevision",
+        "policyIdentity",
         "enabledActionIds",
         "presentationLocale",
         "registrations"
@@ -1212,6 +1213,25 @@
         "catalogRevision": {
           "type": "integer",
           "minimum": 0
+        },
+        "policyIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "capabilityRevision"
+          ],
+          "properties": {
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{32}$"
+            },
+            "capabilityRevision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
         },
         "enabledActionIds": {
           "type": "array",

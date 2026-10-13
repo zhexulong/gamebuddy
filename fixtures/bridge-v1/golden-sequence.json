@@ -46,6 +46,10 @@
           "inspect_self"
         ],
         "catalogRevision": 1,
+        "policyIdentity": {
+          "value": "5f0e6d3c9a2b4781ad3c0e5f7b9d1a24",
+          "capabilityRevision": 1
+        },
         "enabledActionIds": [
           "move_to_tile"
         ],
