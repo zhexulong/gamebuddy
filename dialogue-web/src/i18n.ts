@@ -195,7 +195,7 @@ const en = {
   connectionActiveLabel: "Active connection",
   connectionNoneActive: "No connection selected",
   connectionNoSelectionNotice: "No connection has been selected. Until one is activated, the assistant keeps using the built-in default connection.",
-  connectionActivationNotice: "Connection activated. It applies the next time the chat runtime starts; a running conversation is not switched.",
+  connectionActivationNotice: "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
   connectionRecommended: "recommended",
   connectionEscapeHatch: "OpenAI-compatible endpoint",
@@ -205,9 +205,9 @@ const en = {
   connectionBaseUrlHint: "For example http://127.0.0.1:11434/v1",
   connectionApiShape: "API shape",
   connectionApiShapeHint:
-    "The wire protocol this endpoint speaks. Only a shape the assistant runtime has an adapter for is accepted.",
+    "Which API shape this endpoint speaks. Your server has to offer it: anything else is refused.",
   connectionApiKey: "API key",
-  connectionApiKeyWriteOnly: "Write-only. It is stored for the assistant runtime and is never shown again.",
+  connectionApiKeyWriteOnly: "Write-only. It is stored for your companion and is never shown again.",
   connectionApiKeyLocalHint:
     "A local server that needs no key still needs some value here (for example `ollama`); the endpoint ignores it.",
   connectionModel: "Model",
@@ -474,20 +474,21 @@ const en = {
   gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
   gameGuideStepThreeTitle: "Your companion moves in",
   gameGuideStepThreeDetail: "Choose the cabin your companion settles into.",
-  /* The advanced Pi document (design/104 §3). `noRoute` is what a player reads
-     when this Host publishes no route for Pi's raw file, so it says what the
-     document *is* and who writes it instead of only that it is not editable. */
-  advancedPiSettingsTitle: "Advanced configuration (Pi JSON)",
+  /* The advanced configuration block (design/104 §3). This is player copy, so it names no
+     upstream tool, no file of another product and no route: it says which settings live in the
+     file, what the file is for the player, and - because this screen cannot change it -
+     that there is nothing to edit here. `advancedPiSettings*` are the key names, not the copy. */
+  advancedPiSettingsTitle: "Advanced configuration",
   advancedPiSettingsHint:
-    "Edit Pi's own models.json directly: each entry under providers is a provider record Pi reads (baseUrl, api, apiKey, models, …), with exactly Pi's fields.",
+    "Edit the full settings file directly: each entry under `providers` is one connection your companion reads (baseUrl, api, apiKey, models, …).",
   advancedPiSettingsSave: "Save advanced configuration",
-  advancedPiSettingsApplied: "Saved. It is read the next time a runtime starts.",
+  advancedPiSettingsApplied: "Saved. It is read the next time your companion starts.",
   advancedPiSettingsNoRoute:
-    "This is Pi's own models.json - the providers map, with each provider's baseUrl, api, apiKey and models. The Host writes that file itself from the provider you set above, and this Host publishes no route that reads or writes it, so there is nothing to edit here.",
+    "Your companion's model and connection settings live in one settings file. The provider, model and key you set above are written into it along with everything else, and this screen cannot change that file - so there is nothing to edit here.",
   advancedPiSettingsInvalidJson:
     "This is not valid JSON. Check brackets, commas and quotes and try again. Nothing was written.",
   advancedPiSettingsInvalidShape:
-    "This is not Pi's models.json: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
+    "This is not the settings file: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
 
   // --- endgame lane: the one deliberate complete-game-termination control ----
   // The terminal operation is set apart from Stop/Disconnect: it reads as its
@@ -706,7 +707,7 @@ const zh: Messages = {
   connectionActiveLabel: "当前连接",
   connectionNoneActive: "未选择连接",
   connectionNoSelectionNotice: "尚未选择连接。在启用之前，助手继续使用内置默认连接。",
-  connectionActivationNotice: "连接已启用。它将在聊天运行时下次启动时生效；正在进行的会话不会被切换。",
+  connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",
   connectionEscapeHatch: "OpenAI 兼容端点",
@@ -715,9 +716,9 @@ const zh: Messages = {
   connectionBaseUrl: "Base URL",
   connectionBaseUrlHint: "例如 http://127.0.0.1:11434/v1",
   connectionApiShape: "API 协议",
-  connectionApiShapeHint: "该端点使用的接口协议。只接受助手运行时支持（有适配器）的协议。",
+  connectionApiShapeHint: "该端点使用的接口协议。必须与你的服务端实际提供的协议一致，否则会被拒绝。",
   connectionApiKey: "API Key",
-  connectionApiKeyWriteOnly: "只写：它保存给助手运行时使用，之后不会再回显。",
+  connectionApiKeyWriteOnly: "只写：它保存给你的伙伴使用，之后不会再回显。",
   connectionApiKeyLocalHint:
     "不需要密钥的本地服务也需要在这里填一个占位值（例如 `ollama`），该端点会忽略它。",
   connectionModel: "模型",
@@ -969,15 +970,15 @@ const zh: Messages = {
   gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
   gameGuideStepThreeTitle: "同伴住进农舍",
   gameGuideStepThreeDetail: "选一间农舍，同伴就住进去。",
-  // 高级配置（Pi JSON）：没有路由时也要说清楚这份文档是什么、谁在写它，
-  // 而不是只说“这里不能改”。
-  advancedPiSettingsTitle: "高级配置（Pi JSON）",
-  advancedPiSettingsHint: "直接编辑 Pi 的 models.json：providers 下每个条目就是 Pi 读取的 provider 记录（baseUrl、api、apiKey、models 等），字段与 Pi 完全一致。",
+  // 高级配置：这里是玩家可见文案，不出现上游工具名、他人的文件名或路由；
+  // 只说清楚这些设置存在文件里、本页面不能改，以及因此没有可编辑的内容。
+  advancedPiSettingsTitle: "高级配置",
+  advancedPiSettingsHint: "直接编辑完整设置文件：`providers` 下每个条目就是伙伴读取的一条连接（baseUrl、api、apiKey、models 等）。",
   advancedPiSettingsSave: "保存高级配置",
-  advancedPiSettingsApplied: "已保存。将在下次启动运行时读取。",
-  advancedPiSettingsNoRoute: "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
+  advancedPiSettingsApplied: "已保存。将在伙伴下次启动时读取。",
+  advancedPiSettingsNoRoute: "伙伴的模型与连接设置保存在同一个设置文件里：你在上方设置的服务商、模型和密钥，会和其他设置一起写进这个文件。本页面无法修改该文件，所以这里没有可编辑的内容。",
   advancedPiSettingsInvalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
-  advancedPiSettingsInvalidShape: "这不是 Pi 的 models.json：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
+  advancedPiSettingsInvalidShape: "这不是合法的设置文件：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
 
   // --- 终局操作 lane：唯一会彻底结束游戏世界的刻意控件 ---
   gameEndgame: "结束游戏",

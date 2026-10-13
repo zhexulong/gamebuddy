@@ -11,9 +11,11 @@ import { expect, test, type Page } from "@playwright/test";
  *   2. The third guide step shows a fault and "reload the page" where the next
  *      action belongs. The failure this catches: "no game session yet" - a state
  *      - is rendered as a read failure.
- *   3. The advanced Pi JSON block is English inside an otherwise Chinese
- *      surface. The failure this catches: the block reads its own second
- *      catalogue with `locale ?? "en"` and no caller passes a locale.
+ *   3. The advanced configuration block is English inside an otherwise Chinese surface,
+ *      and its text explains the product's own topology ("Pi's own models.json", "the Host
+ *      publishes no route") instead of what the settings are for the player. The failure this
+ *      catches: the block reads its own second catalogue with `locale ?? "en"` and no caller
+ *      passes a locale, and once localised it still speaks to the player in internal vocabulary.
  *   4. The installation panel answers "not found" on one visit and "still
  *      searching" on another, and a scan that does not settle leaves the panel
  *      with no control that can end it. The failure this catches: the panel's
@@ -36,6 +38,9 @@ const ZH = {
   genericLoading: "加载中...",
   reloadAdvice: "重新加载页面",
   cabinAwaitingSession: "还没有可以读取小屋的游戏会话",
+  advancedTitle: "高级配置",
+  advancedSettings: "模型与连接设置",
+  advancedNotEditable: "本页面无法修改",
 } as const;
 
 type GameProjectionOverrides = Readonly<{ instanceStatus?: string; attachmentStatus?: string }>;
@@ -328,15 +333,19 @@ test("defect 2: a cabin read with no session reads as the prerequisite, not a fa
 // --- defect 3 -----------------------------------------------------------------
 
 /**
- * Defect 3. The advanced Pi JSON block renders from a second catalogue
- * (`pi-settings-model.ts`) that defaults to `en` because no caller passes a
- * locale, so a Chinese surface shows an English section.
+ * Defect 3. The advanced configuration block used to render from a second
+ * catalogue (`pi-settings-model.ts`) that defaults to `en` because no caller passed
+ * a locale, so a Chinese surface showed an English section; the surface now passes
+ * the block every sentence from its own catalogue.
  *
- * The failure this catches: player-facing text out of the message catalogue, and
- * a section whose whole content is "not editable here" - which tells the player
- * nothing about what the advanced JSON is or why it is out of reach here.
+ * The failures this catches: player-facing text out of the message catalogue, a
+ * section whose whole content is "not editable here" - which tells the player
+ * nothing about what the advanced settings are or why they are out of reach here
+ * - and copy that explains the product's own internals (which upstream tool's file
+ * format it is, which component writes it, that no route serves it) instead of
+ * what the player is looking at.
  */
-test("defect 3: the advanced Pi JSON block is localised and explains itself", async ({ page }) => {
+test("defect 3: the advanced configuration block is localised and speaks to the player", async ({ page }) => {
   await mountShell(page);
   await openSurface(page, "游戏", "game-surface");
   const block = page.locator(".surface-advanced-settings");
@@ -344,10 +353,11 @@ test("defect 3: the advanced Pi JSON block is localised and explains itself", as
   const text = ((await block.innerText()) ?? "").replace(/\s+/gu, " ").trim();
   console.log(`[defect-3] advanced block: ${JSON.stringify(text)}`);
 
-  expect(text, "the block's own title is the surface's language").toContain("高级配置");
+  expect(text, "the block's own title is the surface's language").toContain(ZH.advancedTitle);
   expect(text, "no English sentence survives in a Chinese surface").not.toMatch(/[A-Za-z] [a-z]+ [a-z]+ [a-z]+/u);
-  expect(text, "the block says what the advanced document is").toContain("models.json");
-  expect(text, "the block says why it is not editable from here").toMatch(/Host/u);
+  expect(text, "the block says which settings it holds").toContain(ZH.advancedSettings);
+  expect(text, "the block says why it is not editable from here").toContain(ZH.advancedNotEditable);
+  expect(text, "the block never explains the product's own internals to the player").not.toMatch(/Host|路由|models\.json|Pi/u);
 });
 
 // --- defect 4 -----------------------------------------------------------------
