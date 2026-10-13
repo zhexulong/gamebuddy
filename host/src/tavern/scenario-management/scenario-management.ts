@@ -27,6 +27,17 @@ export type ScenarioManagementService = Readonly<{
 }>;
 
 /**
+ * The ONE derivation of the companion's own scenario id.
+ *
+ * The reviewed card's scenario is written under this id at provisioning, and a Chat
+ * creation that names no scenario binds the same id, so the writer and every reader
+ * agree by construction rather than by two copies of a hash.
+ */
+export function companionScenarioId(companionRoot: string): string {
+  return `player-scenario-${digest(resolve(companionRoot))}`;
+}
+
+/**
  * Player-scoped Scenario metadata persistence. Only safe display metadata is
  * projected; artifact provenance, paths, identifiers, and materialized text
  * remain internal.
@@ -36,7 +47,7 @@ export function createScenarioManagementService(
   playerRoot: string,
 ): ScenarioManagementService {
   const root = resolve(playerRoot);
-  const scenarioId = `player-scenario-${digest(root)}`;
+  const scenarioId = companionScenarioId(root);
   const repository = store.openRevisionRepository({
     root: join(root, "scenarios", scenarioId),
     artifactKind: "scenario",

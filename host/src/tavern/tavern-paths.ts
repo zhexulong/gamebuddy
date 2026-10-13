@@ -8,6 +8,12 @@ import {
 
 export type TavernPaths = Readonly<{
   root: string;
+  /**
+   * The identity's runtime cwd. It is not under `tavern/v1`: the companion's own
+   * `worldbook.json` is a runtime-surface artifact the Game surface reads directly,
+   * and a Chat binds it, so the Tavern boundary needs the exact path it lives at.
+   */
+  runtimeCwd: string;
   playerRoot: string;
   companionRoot: string;
   continuityRoot: string;
@@ -23,6 +29,7 @@ export function resolveTavernPaths(paths: RuntimePaths, identity: CompanionIdent
   const root = join(resolve(paths.root), "tavern", "v1");
   return Object.freeze({
     root,
+    runtimeCwd: paths.runtimeCwd,
     playerRoot: join(root, "players", digest(identity.playerId)),
     companionRoot: join(root, "companions", digest(`${identity.playerId}\u001f${identity.companionId}`)),
     continuityRoot: join(root, "continuities", identityKey(identity)),

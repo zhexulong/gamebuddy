@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { IdentityProfileMetadata } from "../identity-profile.js";
 import { join } from "node:path";
+import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { type TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
 import { createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
@@ -13,6 +15,7 @@ import type {
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
+import { companionScenarioId } from "./scenario-management/scenario-management.js";
 import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import {
   type DialogueExamples,
@@ -139,6 +142,13 @@ export function createTavernLibraryService(
       if (companion.companionId !== paths.companionId || companion.continuityId !== paths.continuityId)
         throw new Error("tavern_companion_scope_mismatch");
       const profile = await metadataReader.readExact();
+      // A Chat that names no scenario takes the companion's own - the reviewed card's
+      // scenario, written at provisioning under the one derived id. Resolution lives
+      // in ONE place (`resolveCompanionOwnScenario` below), shared with the unmounted
+      // creation port, and is reached only when the caller names none: an explicitly
+      // selected scenario is the caller's, never replaced or added to.
+      const ownScenario =
+        input.scenarioId === undefined ? await resolveCompanionOwnScenario(store, paths.companionRoot) : undefined;
       const persona =
         input.personaId === undefined
           ? undefined
@@ -150,7 +160,7 @@ export function createTavernLibraryService(
             );
       const scenario =
         input.scenarioId === undefined
-          ? undefined
+          ? ownScenario?.artifact
           : await latestExact<Scenario>(
               store,
               join(paths.companionRoot, "scenarios", input.scenarioId),
@@ -173,12 +183,13 @@ export function createTavernLibraryService(
         );
       if (scenario !== undefined)
         stableArtifactBindings.push(
-          await stableBinding(
-            store,
-            scenarioPath(scenario.scenarioId, scenario.revision),
-            "scenario",
-            scenario.scenarioId,
-          ),
+          ownScenario?.binding ??
+            (await stableBinding(
+              store,
+              scenarioPath(scenario.scenarioId, scenario.revision),
+              "scenario",
+              scenario.scenarioId,
+            )),
         );
       if (examples !== undefined)
         stableArtifactBindings.push(
@@ -189,9 +200,15 @@ export function createTavernLibraryService(
             examples.examplesId,
           ),
         );
+      // The companion's own reviewed world book, for a Chat that names none: the Chat
+      // surface materializes only what the thread binds, so a card-provisioned
+      // companion used to carry its backdrop into the first Chat and lose it in every
+      // Chat the player opened afterwards.
+      const worldBookBinding =
+        input.worldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(paths.runtimeCwd));
       const opening =
         input.opening === undefined
-          ? ((await companionOwnOpening(store, paths.companionRoot, profile.revision, scenario)) ?? "blank")
+          ? ((await resolveCompanionOwnOpening(store, paths.companionRoot, profile.revision, scenario)) ?? "blank")
           : input.opening.kind === "blank"
             ? "blank"
             : await greetingOpening(
@@ -209,7 +226,7 @@ export function createTavernLibraryService(
         ...(persona === undefined ? {} : { personaId: persona.personaId }),
         ...(scenario === undefined ? {} : { scenarioId: scenario.scenarioId }),
         stableArtifactBindings,
-        ...(input.worldBookBinding === undefined ? {} : { worldBookBinding: input.worldBookBinding }),
+        ...(worldBookBinding === undefined ? {} : { worldBookBinding }),
         opening,
       };
       return threadCreation.createExplicit(request);
@@ -378,7 +395,7 @@ async function stableBinding(
  * nothing, which leaves the genuinely empty opening in place. A present but unreadable set fails
  * closed rather than silently blanking the first screen.
  */
-async function companionOwnOpening(
+export async function resolveCompanionOwnOpening(
   store: TavernArtifactStore,
   companionRoot: string,
   profileRevision: number,
@@ -397,6 +414,81 @@ async function companionOwnOpening(
   });
   return Object.freeze({ messageId: randomUUID(), text: variant.text, source });
 }
+
+/**
+ * The companion's own scenario: the reviewed card's scenario, persisted at
+ * provisioning under the ONE derived id (`companionScenarioId`), so the writer and
+ * every reader agree by construction instead of by two copies of a hash.
+ *
+ * Absent is ordinary - a directly-named companion has no card, and a card whose
+ * scenario was not approved has none - and yields nothing to bind. A present but
+ * unreadable scenario fails closed (the same bounded `invalid_tavern_selection` an
+ * explicitly selected one already reports) rather than opening a Chat that
+ * silently lost the card's setting.
+ *
+ * The binding is returned with the artifact because the caller must PERSIST it on
+ * the thread: the mount path materializes only what the thread binds, and an
+ * acceptance check refuses a source whose thread carries no binding.
+ */
+export async function resolveCompanionOwnScenario(
+  store: TavernArtifactStore,
+  companionRoot: string,
+): Promise<Readonly<{ artifact: Scenario; binding: TavernStableArtifactBinding }> | undefined> {
+  const sourceId = companionScenarioId(companionRoot);
+  const envelope = await selectionRepository<Scenario>(
+    store,
+    join(companionRoot, "scenarios", sourceId),
+    sourceId,
+    "invalid_tavern_selection",
+    (artifact) => artifact.scenarioId === sourceId,
+  ).readLatestArtifact();
+  if (envelope === undefined) return undefined;
+  return Object.freeze({
+    artifact: envelope.artifact,
+    binding: Object.freeze({
+      kind: "scenario" as const,
+      sourceId,
+      revision: envelope.revision,
+      canonicalHash: envelope.canonicalHash,
+    }),
+  });
+}
+
+/**
+ * The companion's own world book, for a Chat that names none.
+ *
+ * The reviewed ST-card import writes `<runtimeCwd>/worldbook.json`, and the Game
+ * surface compiles that file into its Tier 2 m[0] unconditionally. The Chat
+ * surface materializes only what the thread binds, so a companion provisioned from
+ * a card carried its backdrop in Game and, unless the thread bound the book, lost
+ * it in Chat.
+ *
+ * The binding is PERSISTED on the thread rather than injected when the catalog is
+ * materialized: acceptance re-materializes against the stored thread and refuses a
+ * world-info source whose thread carries no binding
+ * (`tavern_stable_context_worldbook_binding_mismatch`), so a transient override
+ * makes the two disagree and every turn fail closed. Defaulting it at creation
+ * keeps the stored thread, the materialized catalog and the acceptance check in
+ * agreement.
+ *
+ * A missing book is ordinary - a companion need not have one - and yields nothing
+ * to bind. A present but unreadable book fails closed rather than silently emptying
+ * the backdrop.
+ */
+export async function resolveCompanionOwnWorldBookBinding(
+  runtimeCwd: string,
+): Promise<TavernStableWorldBookBinding | undefined> {
+  const worldBookPath = join(runtimeCwd, "worldbook.json");
+  if (!existsSync(worldBookPath)) return undefined;
+  const metadata = worldBookMetadata(await readWorldBook(worldBookPath));
+  return Object.freeze({
+    worldBookId: metadata.worldBookId,
+    revision: metadata.revision,
+    canonicalHash: metadata.canonicalHash,
+    provenance: "reviewed-import" as const,
+  });
+}
+
 async function greetingOpening(
   store: TavernArtifactStore,
   directory: string,

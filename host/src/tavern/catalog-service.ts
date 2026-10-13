@@ -104,10 +104,17 @@ export async function materializeTavernAuthoredContextCatalog(
     throw new Error("tavern_stable_context_binding_mismatch");
   if ((thread.worldBookBinding === undefined) !== (worldInfoSource === undefined))
     throw new Error("tavern_stable_context_worldbook_binding_mismatch");
+  // The content this source will PUBLISH is `deriveStableWorldInfoContent`, not the
+  // raw premise: a reviewed card import lands its backdrop as the book's constant
+  // entries and writes an empty `alwaysOnPremise` (`new-companion-service.ts`), so
+  // gating on the premise alone refused every turn of a card-provisioned companion - 
+  // the book was bound, the entries were on disk, and the materialization failed
+  // closed before it ever reached them. A book with neither a premise nor any
+  // always-on entry still has no publishable content and is still refused here.
   if (
     worldInfoSource !== undefined &&
     (!sameWorldInfoBinding(thread.worldBookBinding!, worldInfoSource.binding) ||
-      !validSourceContent(worldInfoContent(worldInfoSource)) ||
+      !validSourceContent(deriveStableWorldInfoContent(worldInfoSource)) ||
       ("source" in worldInfoSource.binding &&
         hash(worldInfoContent(worldInfoSource)) !== worldInfoSource.binding.canonicalHash))
   )

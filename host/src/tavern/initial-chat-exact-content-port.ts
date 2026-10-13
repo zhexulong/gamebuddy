@@ -1,21 +1,17 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import {
-  DEFAULT_IDENTITY_PROFILE,
-  identityProfileMetadata,
-  readOrCreateIdentityProfile,
-} from "../identity-profile.js";
+import { identityProfileMetadata, readOrCreateIdentityProfile, DEFAULT_IDENTITY_PROFILE } from "../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
-import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { TavernArtifactStore } from "./artifact-store.js";
-import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import {
+  resolveCompanionOwnOpening,
+  resolveCompanionOwnScenario,
+  resolveCompanionOwnWorldBookBinding,
+} from "./library-service.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import {
   type ChatThreadState,
   type CreateChatThreadRequest,
-  type TavernStableWorldBookBinding,
   classifyInitialChatExactContentFailure,
   createChatThreadStore,
   createInitialChatExactContentCapability,
@@ -91,94 +87,9 @@ export type ManifestDerivedInitialChatExactContent = Readonly<{
 
 const trustedReceipts = new WeakSet<object>();
 
-/**
- * The companion's own reviewed world book, for a thread creation that names none.
- *
- * The reviewed ST-card import writes `<runtimeCwd>/worldbook.json`, and the Game
- * surface compiles that file into its Tier 2 m[0] unconditionally. The Chat
- * surface materializes only what the thread binds, so a companion provisioned
- * from a card carried its backdrop in Game and silently lost it in Chat.
- *
- * The binding is PERSISTED on the thread rather than injected when the catalog is
- * materialized: acceptance re-materializes against the stored thread and refuses
- * a world-info source whose thread carries no binding
- * (`tavern_stable_context_worldbook_binding_mismatch`), so a transient override
- * makes the two disagree and every turn fail closed. Defaulting it here keeps the
- * stored thread, the materialized catalog and the acceptance check in agreement.
- *
- * A missing book is ordinary - a companion need not have one - and yields nothing
- * to bind. A present but unreadable book fails closed rather than silently
- * emptying the backdrop.
- */
-async function companionOwnWorldBookBinding(
-  manifest: HostDeploymentManifest,
-): Promise<TavernStableWorldBookBinding | undefined> {
-  const worldBookPath = join(
-    resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).runtimeCwd,
-    "worldbook.json",
-  );
-  if (!existsSync(worldBookPath)) return undefined;
-  const book = await readWorldBook(worldBookPath);
-  const metadata = worldBookMetadata(book);
-  return Object.freeze({
-    worldBookId: metadata.worldBookId,
-    revision: metadata.revision,
-    canonicalHash: metadata.canonicalHash,
-    provenance: "reviewed-import" as const,
-  });
-}
-
 /** Matching data, cloning, serialization, and proxies never become trusted receipts. */
 export function isTrustedTavernExactContentReceipt(value: unknown): value is TavernExactContentReceipt {
   return !!value && typeof value === "object" && trustedReceipts.has(value);
-}
-
-/**
- * The companion's own opening, for a thread creation that names none.
- *
- * The reviewed card's `first_mes` becomes the greeting record's default variant
- * at provisioning (`new-companion-service.ts`), so a card-provisioned companion
- * HAS an opening; the saga used to hardcode `opening: "blank"` and the player's
- * first screen stayed empty while the card's own opening sat unread on disk.
- *
- * The opening is drawn from the same durable record the new-chat variant choice
- * later pages through (`library-service.ts`), and the `sourceRevision` +
- * `canonicalHash` it commits are that record's, so the browser's `< 1/N >`
- * projection resolves against the set the opening actually came from.
- *
- * A missing greeting set is ordinary - a directly-named companion has no card -
- * and yields nothing, which leaves the genuinely empty opening in place. A
- * present but unreadable set fails closed rather than silently blanking the
- * first screen, because a corrupt record must be reported, not hidden.
- */
-async function companionOwnOpening(
-  manifest: HostDeploymentManifest,
-): Promise<CreateChatThreadRequest["opening"] | undefined> {
-  const paths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot);
-  const tavernPaths = resolveTavernPaths(paths, manifest.principal);
-  const greetings = createGreetingManagementService(
-    new TavernArtifactStore(paths.root),
-    tavernPaths.companionRoot,
-  );
-  const record = await greetings.readExact();
-  if (record === null || record.variants.length === 0) return undefined;
-  const variant = record.variants[0]!;
-  // The same seeding helper the creation capability's own metadata reader uses:
-  // the source's `profileRevision` and the thread's `profileRevision` are then
-  // two reads of one file, never two different values.
-  const profile = await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
-  return Object.freeze({
-    messageId: `opening-${randomUUID()}`,
-    text: variant.text,
-    source: Object.freeze({
-      greetingSetId: record.greetingSetId,
-      sourceRevision: record.revision,
-      canonicalHash: record.canonicalHash,
-      variantId: variant.variantId,
-      profileRevision: profile.revision,
-      scenarioRevision: null,
-    }),
-  });
 }
 
 /** Accepts only an identity-branded capability minted by ChatThreadStore. */
@@ -189,6 +100,9 @@ async function companionOwnOpening(
 export function createManifestDerivedInitialChatExactContentPort(
   manifest: HostDeploymentManifest,
 ): ManifestDerivedInitialChatExactContent {
+  const runtimePaths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot);
+  const tavernPaths = resolveTavernPaths(runtimePaths, manifest.principal);
+  const artifacts = new TavernArtifactStore(runtimePaths.root);
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   const profileMetadataReader: IdentityProfileMetadataReader = Object.freeze({
     async readExact() {
@@ -207,10 +121,31 @@ export function createManifestDerivedInitialChatExactContentPort(
     port: Object.freeze({
       resumeExact: inner.resumeExact,
       createExplicit: async (request: InitialChatCreateRequest) => {
-        const binding = request.worldBookBinding ?? (await companionOwnWorldBookBinding(manifest));
-        const opening = request.opening ?? (await companionOwnOpening(manifest));
+        // The companion's own authored context is resolved by the ONE authority
+        // (`library-service.ts`), the same one the management surface's New Chat
+        // reaches: this port used to bind only the book and the opening, so the card's
+        // scenario reached no Chat at all, and the management surface's own Chat lost
+        // the book as well.
+        const profile = await profileMetadataReader.readExact();
+        const scenario =
+          request.scenarioId === undefined
+            ? await resolveCompanionOwnScenario(artifacts, tavernPaths.companionRoot)
+            : undefined;
+        const binding = request.worldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(runtimePaths.runtimeCwd));
+        const opening =
+          request.opening ??
+          (await resolveCompanionOwnOpening(artifacts, tavernPaths.companionRoot, profile.revision, scenario?.artifact));
         return inner.createExplicit({
           ...request,
+          ...(scenario === undefined
+            ? {}
+            : {
+                scenarioId: scenario.artifact.scenarioId,
+                stableArtifactBindings: Object.freeze([
+                  ...(request.stableArtifactBindings ?? []),
+                  scenario.binding,
+                ]),
+              }),
           ...(binding === undefined ? {} : { worldBookBinding: binding }),
           opening: opening ?? "blank",
         });
