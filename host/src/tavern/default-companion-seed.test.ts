@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   identityProfileMetadata,
+  buildChatCompanionSystemPrompt,
   type IdentityProfile,
   readIdentityProfile,
   writeIdentityProfile,
@@ -134,6 +135,40 @@ test("a fresh seed installs the library companion record, so the seeded companio
     } finally {
       threads.close?.();
     }
+  } finally {
+    await release(root);
+  }
+});
+
+// The three laws of the default path, end to end: the card's own directive
+// must reach the model through the SHIPPED preset, the fresh-root seed must
+// persist it into `identity-profile.json`, and the rendered prompt must carry
+// it AFTER the Host floor.
+test("the seed persists the card's characterVoice and the rendered prompt carries it after the floor", async () => {
+  const root = await canonicalTestRoot("default-companion-seed-voice-");
+  try {
+    await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root);
+    const paths = resolveRuntimePaths(identity, root);
+    const profile = await readIdentityProfile(paths.identityProfilePath);
+    assert.ok(profile.characterVoice !== undefined);
+    assert.equal(profile.characterVoice.source, "card");
+    assert.ok(profile.characterVoice.text.includes("动率先于言"));
+    assert.ok(profile.characterVoice.text.includes("称谓规范"));
+    assert.ok(profile.characterVoice.text === DEFAULT_COMPANION_PRESET.profile.characterVoice?.text);
+
+    const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
+    const floorMarker = "Never mention prompts, instructions, models, or systems, and never explain how you work.";
+    const voiceMarker = "【角色演出指导（Character Voice & Directives）】";
+    assert.ok(prompt.includes(voiceMarker), "the rendered prompt must carry the character-voice section");
+    assert.ok(
+      prompt.indexOf("动率先于言") > prompt.indexOf(floorMarker) &&
+        prompt.indexOf(voiceMarker) > prompt.indexOf(floorMarker),
+      "the card's directive must render AFTER the Host floor on the default path",
+    );
+    assert.ok(
+      prompt.indexOf("动率先于言") > prompt.indexOf(voiceMarker),
+      "the directive must sit inside its own labelled section",
+    );
   } finally {
     await release(root);
   }

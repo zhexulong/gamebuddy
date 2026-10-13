@@ -20,11 +20,16 @@
  *   npx tsc -p host/tsconfig.focus-persona-compile.json
  *   node host/scripts/compile-default-companion-preset.mjs
  *
+ * `--committed` reads the COMMITTED card + world book (`git show HEAD:...`)
+ * instead of the working tree. The working tree of the assets dir is routinely
+ * owned by a lane editing the terminology; the shipped compiled preset must
+ * reflect the committed review, so regeneration for a release uses `--committed`.
+ *
  * `host/src/tavern/default-companion-preset.test.ts` re-runs the same conversion
  * and fails if the committed module is stale, so an edited preset cannot ship
  * uncompiled.
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -33,6 +38,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const presetDirectory = join(repositoryRoot, "assets", "tavern", "presets", "default-companion");
 const compiledRoot = join(repositoryRoot, "host", ".tmp-persona-compile");
+const fromCommitted = process.argv.includes("--committed");
 
 if (!existsSync(join(compiledRoot, "st-card-import.js"))) {
   console.log("compiling the product converter (tsc -p host/tsconfig.focus-persona-compile.json)…");
@@ -44,8 +50,13 @@ const { previewStCard, candidateToIdentityProfile } = await import(buildUrl("st-
 const { validateIdentityProfile } = await import(buildUrl("identity-profile.js"));
 const { validateWorldBook } = await import(buildUrl("worldbook.js"));
 
-const card = JSON.parse(await readFile(join(presetDirectory, "card.json"), "utf8"));
-const rawBook = JSON.parse(await readFile(join(presetDirectory, "worldbook.json"), "utf8"));
+const readAsset = async (name) => {
+  if (!fromCommitted) return JSON.parse(await readFile(join(presetDirectory, name), "utf8"));
+  const bytes = execFileSync("git", ["show", `HEAD:assets/tavern/presets/default-companion/${name}`], { cwd: repositoryRoot, encoding: "utf8" });
+  return JSON.parse(bytes);
+};
+const card = await readAsset("card.json");
+const rawBook = await readAsset("worldbook.json");
 
 const preview = previewStCard(card, "gamebuddy.companion.default");
 const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
@@ -99,5 +110,5 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
 `;
 await writeFile(join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts"), source, "utf8");
 console.log(
-  `wrote default-companion-preset.ts: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length}`,
+  `wrote default-companion-preset.ts${fromCommitted ? " (from committed card)" : " (from working tree)"}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"}`,
 );
