@@ -155,9 +155,36 @@ test("language-neutral schema and Host share closed shapes for every published s
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       activeExecution: null,
     },
   };
+  // The family list is DERIVED from the Host, never hand-typed: every snapshot field
+  // the Host diagnoses by name (`invalid_snapshot:<field>`) must be declared by the
+  // language-neutral schema, whose `additionalProperties:false` makes a missing entry
+  // unshippable. A hand-written `targets` array below once claimed to cover "every
+  // published snapshot target family" while stopping at `shippingBinTargets`, so six
+  // real families (`fishPondTargets`, `farmBuildingTargets`, `dailyQuestTargets`,
+  // `specialOrderTargets`, `museumRewardTargets`, `tailoringTargets`) were never
+  // probed and the suite stayed green. The old snake_case tokens below
+  // (`missing_required_key`, `unexpected_keys`) come from the generic key helper, not
+  // from a field, so the negative lookahead keeps only the field tokens.
+  const protocolSource = await readFile(
+    fileURLToPath(new URL("../../host/src/protocol.ts", import.meta.url)),
+    "utf8",
+  );
+  const schemaDocument = JSON.parse(
+    await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
+  ) as { $defs: { snapshot: { properties: Record<string, unknown> } } };
+  const hostSnapshotFields = [
+    ...new Set([...protocolSource.matchAll(/invalid_snapshot:([a-z][A-Za-z0-9]*)(?![A-Za-z0-9_])/g)].map((match) => match[1])),
+  ];
+  const schemaSnapshotFields = new Set(Object.keys(schemaDocument.$defs.snapshot.properties));
+  for (const field of hostSnapshotFields)
+    assert.ok(
+      schemaSnapshotFields.has(field),
+      `the Host validates snapshot field ${field} but the language-neutral schema does not declare it`,
+    );
   const targets: readonly [string, Record<string, unknown>][] = [
     ["toolSlots", { slot: 1, label: "Axe" }],
     ["wateringCanFacts", { slot: 2, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
@@ -391,7 +418,53 @@ test("language-neutral schema and Host share closed shapes for every published s
       "shippingBinTargets",
       { targetId: "shipping_bin_0123456789abcdef", x: 71, y: 14, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 1 },
     ],
+    // The remaining published families. `tailoringTargets` and `farmBuildingTargets`
+    // carry a `kind` union; `tailoringTargets` also carries the two optional garment
+    // members the bridge omits rather than nulls.
+    [
+      "fishPondTargets",
+      { targetId: "fish_pond_deadbeef", location: "Farm", x: 10, y: 12, buildingType: "(BC)FishPond", occupants: 1, fishType: "(O)145" },
+    ],
+    [
+      "farmBuildingTargets",
+      {
+        targetId: "farm_building_deadbeef",
+        kind: "build_site",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        buildingType: "Coop",
+        displayName: "Coop",
+        buildCost: 4000,
+        buildDays: 3,
+        buildingId: "",
+        daysOfConstructionLeft: -1,
+      },
+    ],
+    ["dailyQuestTargets", { targetId: "daily_quest_deadbeef", questType: 1, title: "Bring Robin 10 Wood" }],
+    [
+      "specialOrderTargets",
+      { targetId: "special_order_deadbeef", questKey: "Robin", orderType: "Town", generationSeed: 1 },
+    ],
+    ["museumRewardTargets", { targetId: "museum_reward_deadbeef", location: "ArchaeologyHouse", rewardCount: 1 }],
+    [
+      "tailoringTargets",
+      {
+        targetId: "tailoring_deadbeef",
+        kind: "recipe",
+        leftSlot: 2,
+        rightSlot: 3,
+        leftQualifiedItemId: "(O)428",
+        rightQualifiedItemId: "(O)440",
+        outputQualifiedItemId: "(S)1000",
+      },
+    ],
   ];
+  for (const [field] of targets)
+    assert.ok(
+      hostSnapshotFields.includes(field),
+      `sample ${field} is not a snapshot field the Host diagnoses`,
+    );
   for (const [field, target] of targets) {
     const payload = { ...(snapshot.payload as Record<string, unknown>), [field]: [target] };
     assert.equal(validate({ ...snapshot, payload }), true, `${field}: ${JSON.stringify(validate.errors)}`);

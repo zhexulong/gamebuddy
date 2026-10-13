@@ -2858,6 +2858,59 @@
             "$ref": "#/$defs/shopTarget"
           },
           "maxItems": 32
+        },
+        "fishPondTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fishPondTarget"
+          },
+          "maxItems": 16
+        },
+        "farmBuildingTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/farmBuildingTarget"
+          },
+          "maxItems": 16
+        },
+        "dailyQuestTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dailyQuestTarget"
+          },
+          "maxItems": 16
+        },
+        "acceptedDailyQuest": {
+          "type": "boolean"
+        },
+        "specialOrderTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/specialOrderTarget"
+          },
+          "maxItems": 16
+        },
+        "activeSpecialOrderKeys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 16
+        },
+        "museumRewardTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/museumRewardTarget"
+          },
+          "maxItems": 16
+        },
+        "tailoringTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tailoringTarget"
+          },
+          "maxItems": 32
         }
       }
     },
@@ -7607,6 +7660,225 @@
             "maxLength": 256
           },
           "maxItems": 256
+        }
+      }
+    },
+    "fishPondTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "buildingType",
+        "occupants",
+        "fishType"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "buildingType": {
+          "type": "string"
+        },
+        "occupants": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fishType": {
+          "type": "string"
+        }
+      }
+    },
+    "farmBuildingTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "kind",
+        "location",
+        "x",
+        "y",
+        "buildingType",
+        "displayName",
+        "buildCost",
+        "buildDays",
+        "buildingId",
+        "daysOfConstructionLeft"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "kind": {
+          "enum": [
+            "build_site",
+            "built"
+          ]
+        },
+        "location": {
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "buildingType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "buildCost": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "buildDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "buildingId": {
+          "type": "string"
+        },
+        "daysOfConstructionLeft": {
+          "type": "integer",
+          "minimum": -1
+        }
+      }
+    },
+    "dailyQuestTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "questType",
+        "title"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "questType": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      }
+    },
+    "specialOrderTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "questKey",
+        "orderType",
+        "generationSeed"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "questKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "orderType": {
+          "type": "string"
+        },
+        "generationSeed": {
+          "type": "integer"
+        }
+      }
+    },
+    "museumRewardTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "rewardCount"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rewardCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "tailoringTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "kind",
+        "leftSlot",
+        "rightSlot",
+        "leftQualifiedItemId",
+        "rightQualifiedItemId",
+        "outputQualifiedItemId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "kind": {
+          "enum": [
+            "recipe",
+            "dye"
+          ]
+        },
+        "leftSlot": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rightSlot": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leftQualifiedItemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rightQualifiedItemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outputQualifiedItemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "garmentColour": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "garmentName": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

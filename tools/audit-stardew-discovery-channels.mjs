@@ -36,7 +36,7 @@ const TOOLS = "host/src/game-tools.ts";
  * tool prose: if the prose is wrong the audit must still catch it, which is
  * exactly how the craft_item/cook_recipe `recipeTargets` drift was found.
  */
-const TARGET_FIELD = Object.freeze({
+export const TARGET_FIELD = Object.freeze({
   pickup_forage: "ForageTargets",
   pickup_item: "ItemTargets",
   water_crop: "CropTargets",
@@ -133,6 +133,18 @@ const TARGET_FIELD = Object.freeze({
   pan_ore: "PanSites",
   use_warp_item: "WarpItemTargets",
   claim_mail_attachment: "MailboxTargets",
+  // The queue/museum/tailoring wave. The Mod publishes every one of these lists
+  // (BridgeProtocolModels.cs) and the Host validates every field, but this table had
+  // no row, so the audit bailed at `undeclared_target_field` without ever checking
+  // the Mod/Host/schema legs. `build_farm_building` already had its row and was the
+  // one that reached `missing_envelope_schema_field`.
+  clear_fish_pond: "FishPondTargets",
+  accept_daily_quest: "DailyQuestTargets",
+  accept_special_order: "SpecialOrderTargets",
+  claim_museum_reward: "MuseumRewardTargets",
+  // Both tailoring acts read the one sewing-machine projection.
+  tailor_clothing: "TailoringTargets",
+  dye_clothing_with_item: "TailoringTargets",
 });
 
 /** Actions that carry a target but whose target is not a snapshot list. */
