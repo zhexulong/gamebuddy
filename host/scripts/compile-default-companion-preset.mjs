@@ -58,6 +58,13 @@ const readAsset = async (name) => {
 const card = await readAsset("card.json");
 const rawBook = await readAsset("worldbook.json");
 
+// Provenance of the text this run compiled, stated on the line below so the
+// caller never has to remember which mode it invoked. `--committed` reads
+// `git show HEAD:...`, so the named revision is exactly HEAD.
+const sourceDescription = fromCommitted
+  ? `committed (HEAD ${execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim()})`
+  : "worktree";
+
 const preview = previewStCard(card, "gamebuddy.companion.default");
 const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
 const book = validateWorldBook(rawBook);
@@ -110,5 +117,5 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
 `;
 await writeFile(join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts"), source, "utf8");
 console.log(
-  `wrote default-companion-preset.ts${fromCommitted ? " (from committed card)" : " (from working tree)"}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"}`,
+  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"}`,
 );
