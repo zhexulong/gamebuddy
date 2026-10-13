@@ -285,6 +285,11 @@ test("chat list is metadata-only with opaque handles and an exact active status"
 });
 
 test("memory read projection contains only safe bounded rows and validates strict shape", () => {
+  // `chapters` is a real member of the read, not decoration: it is the continuity's narrative
+  // chapters. A young continuity legitimately has none - a chapter is folded only once the usable
+  // window is about 65% full (~487k tokens) - so an empty list is the expected, valid answer here.
+  // The fixture is not "missing" the member; it is asserting that the member exists and that an empty
+  // one is a honest projection of "no chapter yet".
   const memory = {
     apiVersion: 1,
     projectionRevision: handle,
@@ -299,8 +304,44 @@ test("memory read projection contains only safe bounded rows and validates stric
         pinned: false,
       },
     ],
+    chapters: [],
   };
   assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(memory), true);
+  // The member is required, not quietly relaxed: a read that omits the continuity's chapters is not a
+  // Memory read at all. Accepting one would leave a client unable to tell "no chapters yet" from "the
+  // Host dropped them".
+  const withoutChapters: Record<string, unknown> = { ...memory };
+  delete withoutChapters.chapters;
+  assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(withoutChapters), false);
+  // A chapter the fold itself wrote validates, ...
+  const chapter = {
+    handle,
+    title: "The first week on the farm",
+    span: "2026-10-01→2026-10-03",
+    content: "She remembers the first week.",
+    status: "sealed",
+    editedByPlayer: false,
+  };
+  assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [chapter] }), true);
+  // ... the player's own correction is the same shape, distinguished only by status/editedByPlayer, ...
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      chapters: [{ ...chapter, status: "edited", editedByPlayer: true }],
+    }),
+    true,
+  );
+  // ... and a chapter carrying a durable identifier the browser never sees is rejected by the same
+  // strict shape as a memory row.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [{ ...chapter, chapterId: 7 }] }),
+    false,
+  );
+  // The chapter status union stays closed.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [{ ...chapter, status: "folded" }] }),
+    false,
+  );
   // Raw stateToken is never a projected field.
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
