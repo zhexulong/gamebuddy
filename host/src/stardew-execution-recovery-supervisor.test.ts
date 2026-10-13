@@ -155,7 +155,13 @@ test("nonterminal exact receipt remains recoverable and query failure becomes du
   });
   assert.deepEqual(nonterminal, [{ requestId: "request_recovery_01", result: "admitted", state: "running" }]);
   assert.equal(journal.record("logical_recovery_01")?.state, "recovery_pending");
-  assert.equal(coordinator.uncertainDispatches().length, 0);
+  // A nonterminal receipt clears the in-memory uncertainty but leaves the
+  // durable record `recovery_pending`, so the dispatch stays in the
+  // journal-recoverable set and a later fresh binding still queries it
+  // (3eec6fc4 widened `ExecutionCorrelationLedger.uncertainDispatches()` to
+  // include `prepared`/`sent_unknown`/`recovery_pending` records).
+  assert.equal(coordinator.uncertainDispatches().length, 1);
+  assert.equal(coordinator.uncertainDispatches()[0]?.requestId, "request_recovery_01");
 
   const failedJournal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
   const failedCoordinator = coordinatorFixture({ recoveryJournal: failedJournal });
