@@ -4299,4 +4299,39 @@ body {
   white-space: nowrap;
 }
 
+/* ==========================================================================
+   The chips row's affordance, without the platform's own scrollbar
+   (ruling-and-ui-defects lane block, U-01)
+
+   The measured defect at 400x800: the row already scrolled (`overflow-x: auto`)
+   and already faded at its trailing edge, but it kept the platform's scrollbar
+   - a 4 px native track drawn inside the composer band, over the fade, in a
+   product that themes every other surface. Panning and the fade are the
+   affordance; the native bar is not part of it.
+
+   So the bar is retired (`scrollbar-width: none`, plus the WebKit pseudo-element
+   that `scrollbar-width` does not cover in this engine) and everything the row
+   actually does is kept: it still scrolls, a sideways swipe is still contained
+   rather than becoming the browser's back gesture, touch panning still has
+   momentum, and the 20 px trailing fade still says "there is more". A scroller
+   with a hidden bar is still a scroller for the keyboard and for AT: Tab walks
+   the chips and the browser scrolls the focused one into view.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+@media (max-width: 480px) {
+  .composer-chips-row {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .composer-chips-row::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
+
 } /* end @layer theme.polish */

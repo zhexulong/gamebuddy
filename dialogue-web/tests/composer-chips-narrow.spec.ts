@@ -383,3 +383,77 @@ test("the last chip is reachable, not merely clipped: a horizontal scroll reveal
   expect(scrolled.atEnd.scrollLeft, "the row scrolls to its end").toBe(scrolled.atEnd.maxScroll);
   expect(scrolled.atEnd.lastClearOfFade, "the last chip is not hidden under the trailing affordance").toBe(true);
 });
+
+/**
+ * U-01: the row's affordance is panning and the trailing fade, not the
+ * platform's own scrollbar.
+ *
+ * The measured defect at 400x800: `scrollbar-width: thin` painted a native track
+ * inside the composer band, over the fade, in a product that themes every other
+ * surface - a scrollbar under the chips rather than the affordance the row was
+ * built around.
+ *
+ * The assertions, and the failure each one catches:
+ *  - `offsetHeight - clientHeight` is 0: catches a scrollbar that still occupies
+ *    the row's own height (a retired scrollbar reserves no space);
+ *  - `overflow-x` is still `auto` and the row still has somewhere to pan to:
+ *    catches a "fix" that removed the scrollability instead of the bar;
+ *  - the trailing fade mask is still present: catches a fix that dropped the
+ *    affordance the panning relies on;
+ *  - every chip takes focus and, once focused, is inside the row's own client box
+ *    and is not hiding its own label: catches a row that pans only by pointer,
+ *    which would leave the last chip unreachable from the keyboard.
+ */
+test("the chips row pans without the platform scrollbar, and the keyboard reaches every chip", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await mountFirstScreen(page);
+  await expect(page.locator(".composer-chip")).toHaveCount(OPENINGS.length);
+
+  const before = await page.evaluate(() => {
+    const row = document.querySelector<HTMLElement>(".composer-chips-row");
+    if (row === null) throw new Error("composer-chips-narrow: the chip row is not rendered");
+    const style = getComputedStyle(row);
+    const last = row.querySelector<HTMLElement>(".composer-chip:last-of-type");
+    row.scrollLeft = row.scrollWidth;
+    return {
+      scrollbarWidth: style.scrollbarWidth,
+      reservedForScrollbar: row.offsetHeight - row.clientHeight,
+      overflowX: style.overflowX,
+      maskImage: style.maskImage,
+      scrollWidth: row.scrollWidth,
+      clientWidth: row.clientWidth,
+      lastClearOfFade: last !== null && row.getBoundingClientRect().right - last.getBoundingClientRect().right >= 8,
+    };
+  });
+
+  console.log(`[chips] hidden scrollbar: ${JSON.stringify(before)}`);
+  expect(before.scrollbarWidth, "the platform scrollbar is retired").toBe("none");
+  expect(before.reservedForScrollbar, "no scrollbar occupies the row's own height").toBe(0);
+  expect(before.overflowX, "the row still pans").toBe("auto");
+  expect(before.scrollWidth, "the row has content to pan to").toBeGreaterThan(before.clientWidth);
+  expect(before.maskImage, "the trailing fade is still the affordance").toContain("linear-gradient");
+  expect(before.lastClearOfFade, "the fade still covers padding, not the last chip").toBe(true);
+
+  const count = await page.locator(".composer-chip").count();
+  for (let index = 0; index < count; index += 1) {
+    const chip = page.locator(".composer-chip").nth(index);
+    await chip.focus();
+    const reached = await chip.evaluate((node) => {
+      const rowNode = node.parentElement as HTMLElement;
+      const rect = node.getBoundingClientRect();
+      const rowRect = rowNode.getBoundingClientRect();
+      return {
+        focused: document.activeElement === node,
+        // A chip whose own opening is wider than the row cannot fit by
+        // definition; reaching it means the row scrolled it into view, so the
+        // invariant is that it is at least partly inside the row's own box.
+        visibleInRow: rect.right > rowRect.left + 1 && rect.left < rowRect.left + rowNode.clientWidth - 1,
+        readable: node.scrollWidth <= node.clientWidth + 1,
+        label: (node.textContent ?? "").trim().slice(0, 24),
+      };
+    });
+    expect(reached.focused, `chip ${index} ("${reached.label}") is not reachable by keyboard`).toBe(true);
+    expect(reached.visibleInRow, `chip ${index} ("${reached.label}") is not scrolled into view by focus`).toBe(true);
+    expect(reached.readable, `chip ${index} ("${reached.label}") hides its own label`).toBe(true);
+  }
+});
