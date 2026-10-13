@@ -47,9 +47,13 @@ const MESSAGES: Readonly<Record<MemoryNotebookLabelKey, { en: string; zh: string
     zh: "这是她的手札。你告诉她值得留下的事，就会留在这里。",
   },
   count: { en: "{{count}} memories written down so far.", zh: "已经悄悄记下 {{count}} 件事。" },
+  // The empty sentence carries the same number the count sentence does. "Nothing yet"
+  // is information, and the number is part of it: the zero used to exist only as the
+  // element's `data-memory-count` attribute, so the one state a new player is most
+  // likely to be in was the one state that never showed a figure they could read.
   empty: {
-    en: "Nothing written down yet. Tell her something worth keeping whenever you like.",
-    zh: "还没有记下什么。你随时可以告诉她一件值得留下的事。",
+    en: "Nothing written down yet ({{count}} so far). Tell her something worth keeping whenever you like.",
+    zh: "还没有记下什么（{{count}} 件）。你随时可以告诉她一件值得留下的事。",
   },
   unavailable: { en: "The notebook is not open right now.", zh: "手札暂时打不开。" },
   failed: { en: "The notebook could not be opened.", zh: "手札没能打开。" },

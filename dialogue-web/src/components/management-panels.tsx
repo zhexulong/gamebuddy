@@ -955,7 +955,9 @@ export function MemoryPanel({
   // nothing written yet the card still says what the notebook is and how it
   // fills - the player asking her to keep something - so an empty projection
   // reads as "not yet" rather than as a blank form or as a promise of a writer
-  // production does not run.
+  // production does not run. Both sentences carry that number as text, because
+  // a count that exists only as an element attribute is not something a player
+  // can read.
   const notebookState: "ready" | "loading" | "empty" | "unavailable" | "error" =
     memoryView.kind === "loading"
       ? "loading"
@@ -974,7 +976,7 @@ export function MemoryPanel({
         : notebookState === "error"
           ? notebook.failed
           : notebookState === "empty"
-            ? notebook.empty
+            ? notebook.empty.replace("{{count}}", String(rows.length))
             : notebook.count.replace("{{count}}", String(rows.length));
   return (
     <section className="tavern-memory-section" aria-label={notebook.title} data-memory-panel>

@@ -2214,20 +2214,30 @@ test("the Memory surface reads as the companion's notebook, with a real count an
   const surface = page.getByTestId("memory-surface");
   await expect(surface).toBeVisible();
 
-  // 1. Zero memories still explains the notebook, with an honest zero - and it
-  // states the route that exists (the player telling her), not an automatic
-  // writer (see the file header and memory-notebook-promise-gate.test.mjs).
+  // 1. Zero memories still explains the notebook, and the zero is readable: the
+  // digits are in the sentence the player sees, not only in an element attribute
+  // (the attribute is kept in step with the words, and the words are what is
+  // asserted here). It states the route that exists (the player telling her), not
+  // an automatic writer (see the file header and memory-notebook-promise-gate.test.mjs).
   const notebook = surface.locator("[data-memory-notebook]");
   await expect(notebook).toBeVisible();
   await expect(notebook).toContainText("This is her notebook");
   await expect(notebook).not.toContainText("writes this down");
   await expect(notebook).not.toContainText("fills in as you talk");
-  await expect(notebook.locator("[data-memory-count]")).toHaveAttribute("data-memory-count", "0");
-  await expect(notebook.locator("[data-memory-count]")).toContainText("Nothing written down yet");
+  const notebookCount = notebook.locator("[data-memory-count]");
+  await expect(notebookCount).toContainText("Nothing written down yet (0 so far)");
+  await expect(notebookCount).toHaveAttribute("data-memory-count", "0");
 
   // 4. Authoring is secondary: it opens on demand and does not define the surface.
+  // Closed by default, but it is still a control a player finds without being told:
+  // it is visible, it is the surface's last line, and its own words say what it does.
   await expect(surface.getByRole("textbox", { name: "Memory content" })).toHaveCount(0);
-  await surface.locator("[data-memory-authoring-toggle]").click();
+  const authoringToggle = surface.locator("[data-memory-authoring-toggle]");
+  await expect(authoringToggle).toBeVisible();
+  await expect(authoringToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(authoringToggle).toContainText("Whisper something to your companion");
+  await authoringToggle.click();
+  await expect(authoringToggle).toHaveAttribute("aria-expanded", "true");
   await expect(surface.getByRole("textbox", { name: "Memory content" })).toBeVisible();
 
   // 2 + 3. Two rows, two life-flavoured badges, and a count that equals them.
@@ -2238,8 +2248,8 @@ test("the Memory surface reads as the companion's notebook, with a real count an
   await surface.getByRole("button", { name: "Refresh Memory" }).click();
   const rows = surface.locator("[data-memory-state=ready] [role=listitem]");
   await expect(rows).toHaveCount(2);
-  await expect(notebook.locator("[data-memory-count]")).toHaveAttribute("data-memory-count", "2");
-  await expect(notebook.locator("[data-memory-count]")).toContainText("2 memories written down");
+  await expect(notebookCount).toContainText("2 memories written down");
+  await expect(notebookCount).toHaveAttribute("data-memory-count", "2");
 
   const badges = surface.locator("[data-memory-category]");
   await expect(badges).toHaveCount(2);
