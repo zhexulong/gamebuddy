@@ -770,15 +770,20 @@ test("every registered action has a rule: nothing may fall to the adapter defaul
   // recorded as zero typed transitions and no test noticed. A fixture per action is not enough to prove coverage -
   // 43 fixtures existed while the switch covered 79 - so this reads the adapter's own switch and requires the arm
   // set to equal the registered set exactly.
-  const source = readFileSync(new URL("./stardew-game-integration-adapter.ts", import.meta.url), "utf8");
+  // The emitted artifact is what actually runs, and the compiled test artifact never carries source .ts
+  // files; the closing brace of the top-level rule function is at column zero in both forms.
+  const source = readFileSync(new URL("./stardew-game-integration-adapter.js", import.meta.url), "utf8");
   const switchAt = source.indexOf("function hasStardewCompletionEvidence(");
-  const switchEnd = source.indexOf("\n  }\n}", switchAt);
+  const switchEnd = source.indexOf("\n}", switchAt);
   assert.notEqual(switchAt, -1, "the completion switch must be findable");
   assert.notEqual(switchEnd, -1, "the completion switch must be closed");
-  const arms = new Set(
-    [...source.slice(switchAt, switchEnd).matchAll(/case "([a-z_0-9]+)":/g)].map((match) => match[1]),
-  );
-  const registered = new Set(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
+  const arms = new Set<string>();
+  for (const match of source.slice(switchAt, switchEnd).matchAll(/case "([a-z_0-9]+)":/g)) {
+    const armActionId = match[1];
+    assert.ok(armActionId !== undefined, "every case arm must name an action id");
+    arms.add(armActionId);
+  }
+  const registered = new Set<string>(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
   const uncovered = [...registered].filter((id) => !arms.has(id) && !actionsWithoutCompletionRule.includes(id));
   const unknown = [...arms].filter((id) => !registered.has(id));
   assert.deepEqual(uncovered, [], "these actions would fall to the default and lose their completion evidence");
@@ -787,7 +792,7 @@ test("every registered action has a rule: nothing may fall to the adapter defaul
 });
 
 test("every fixture's action is registered, and the table has not shrunk", () => {
-  const registered = new Set(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
+  const registered = new Set<string>(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
   for (const actionId of Object.keys(completionFixtures))
     assert.ok(registered.has(actionId), `${actionId} has a fixture but is not registered`);
   // The SOURCE assertion above is what proves every registered action has a rule; this one keeps the fixture table
@@ -826,7 +831,9 @@ test("shop_purchase: the shapes that made it unreadable are REFUSED, and the rea
   // The A/B that proves the producer fix was necessary and sufficient. Both refusals were real defects: with the
   // old diagnostics (`key=value;key=value` per entry) or an empty `owner=` for a tile-opened shop, the Host cannot
   // parse the detail at all - so NO rule could ever match a real purchase, however the rule was written.
-  const fields = completionFixtures.shop_purchase.fields;
+  const shopPurchase = completionFixtures.shop_purchase;
+  assert.ok(shopPurchase !== undefined, "the shop_purchase fixture must exist");
+  const fields = shopPurchase.fields;
   // REPLACE a field rather than appending a second copy: a duplicate key is itself unreadable, which would make
   // the rule look broken for a reason that has nothing to do with the rule.
   const withField = (key: string, value: string) =>
@@ -866,7 +873,9 @@ test("shop_purchase: the shapes that made it unreadable are REFUSED, and the rea
 test("shop_purchase: a receipt that spent nothing and gained nothing is not a purchase", () => {
   // The Mod mints `item_purchased` only when `moneyAfter < moneyBefore && gained > 0`; the rule restates that from
   // the evidence, so a receipt with the right code but an unchanged purse cannot complete an action.
-  const noop = completionFixtures.shop_purchase.fields.map(([key, value]) => {
+  const shopPurchase = completionFixtures.shop_purchase;
+  assert.ok(shopPurchase !== undefined, "the shop_purchase fixture must exist");
+  const noop = shopPurchase.fields.map(([key, value]) => {
     if (key === "money_after") return [key, "500"] as const;
     if (key === "gained") return [key, "0"] as const;
     return [key, value] as const;
