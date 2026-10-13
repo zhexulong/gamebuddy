@@ -40,6 +40,7 @@ function snapshot(revision = 3) {
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
+    weather: "sunny",
     activeExecution: null,
   } as const;
 }
@@ -404,12 +405,17 @@ test("integration client binds a typed cancel identity per request and validates
   assert.equal(client.cancel("request_01", "execution_01", "stop_requested", now), null);
   assert.equal(client.cancel("request_02", "execution_02", "stop_requested", now), null);
   assert.equal(cancelPayloads.length, 3);
+  const [firstCancel, secondCancel, thirdCancel] = cancelPayloads;
+  assert.ok(
+    firstCancel !== undefined && secondCancel !== undefined && thirdCancel !== undefined,
+    "three cancel payloads must have been sent",
+  );
   // One stable cancelId per request; cancelEpoch strictly increases per attempt.
-  assert.equal(cancelPayloads[0].cancelId, cancelPayloads[1].cancelId);
-  assert.equal(cancelPayloads[0].cancelEpoch, 1);
-  assert.equal(cancelPayloads[1].cancelEpoch, 2);
-  assert.notEqual(cancelPayloads[2].cancelId, cancelPayloads[0].cancelId);
-  assert.equal(cancelPayloads[2].cancelEpoch, 1);
+  assert.equal(firstCancel.cancelId, secondCancel.cancelId);
+  assert.equal(firstCancel.cancelEpoch, 1);
+  assert.equal(secondCancel.cancelEpoch, 2);
+  assert.notEqual(thirdCancel.cancelId, firstCancel.cancelId);
+  assert.equal(thirdCancel.cancelEpoch, 1);
   // Every cancel envelope carries the full typed identity and passes the
   // Host-side validator (the deterministic endpoint also rejects it on send).
   for (const payload of cancelPayloads) {
