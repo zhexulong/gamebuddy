@@ -1,14 +1,38 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./protocol.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
-const hostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+/**
+ * The Host source root, found by walking UP from this file rather than assuming
+ * the compiled file sits exactly one level under `host/`. A scoped compile that
+ * emits to `host/.tmp/<name>/` puts this file two levels down, so a `new URL("..")`
+ * root resolved to `host/.tmp/` and the test then looked for
+ * `host/integrations/...csproj`, failing with `MSBUILD : error MSB1009`. The
+ * marker is the Host root itself: a directory carrying `tsconfig.json` whose
+ * sibling `integrations/` exists. When even the repository cannot be located the
+ * walk stops at the filesystem root and fails with a bounded reason naming what
+ * it looked for.
+ */
+function findHostRoot(startDirectory: string): string {
+  for (let directory = startDirectory; ; ) {
+    if (existsSync(join(directory, "tsconfig.json")) && existsSync(resolve(directory, "..", "integrations")))
+      return directory;
+    const parent = resolve(directory, "..");
+    if (parent === directory)
+      throw new Error(
+        `host_root_not_found: looked for a directory holding "tsconfig.json" whose sibling "integrations/" exists, walking up from ${startDirectory}`,
+      );
+    directory = parent;
+  }
+}
+
+const hostRoot = findHostRoot(dirname(fileURLToPath(import.meta.url)));
 const scope: Scope = {
   integrationId: "stardew",
   saveId: "save_01",
