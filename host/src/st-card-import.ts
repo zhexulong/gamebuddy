@@ -12,6 +12,46 @@ const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 /** Bounded rejection code for a malformed `alternate_greetings` entry. */
 const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
 
+/**
+ * Bounded reasons an import can LOSE card material it was handed.
+ *
+ * A loss is a deliberate, bounded decision inside a field the card did supply -
+ * a cap (the key list), a label the speaker parser does not accept, an entry the
+ * macro set cannot render. Unlike `dispositions` (whole fields accepted, kept
+ * opaque or refused) a loss is *within* an accepted field, so it needs a count as
+ * well as a reason.
+ *
+ * The rule is "no import loss is silent": `st-card-import.test.ts` declares one
+ * fixture card per reason below and fails if a fixture's loss is not reported with
+ * its exact count, if a reported reason is not one the gate declares, or if the
+ * reported counts do not account for every droppable item in the card. A new drop
+ * that reports nothing, or reports a reason with no fixture, turns the gate red.
+ */
+const ST_CARD_IMPORT_LOSS_REASONS = ["unparsed_example_blocks"] as const;
+export type StCardImportLossReason = (typeof ST_CARD_IMPORT_LOSS_REASONS)[number];
+export type StCardImportLoss = Readonly<{
+  /** The card field the material came from, e.g. `mes_example`. */
+  field: string;
+  reason: StCardImportLossReason;
+  /** How many items were lost, always at least 1. */
+  count: number;
+}>;
+
+/** The one channel an import reports a loss through. */
+type StCardImportLossLedger = Readonly<{
+  record(field: string, reason: StCardImportLossReason, count: number): void;
+  entries(): readonly StCardImportLoss[];
+}>;
+function createLossLedger(): StCardImportLossLedger {
+  const entries: StCardImportLoss[] = [];
+  return Object.freeze({
+    record(field: string, reason: StCardImportLossReason, count: number): void {
+      if (count > 0) entries.push(Object.freeze({ field, reason, count }));
+    },
+    entries: (): readonly StCardImportLoss[] => Object.freeze([...entries]),
+  });
+}
+
 type StCardImportClassification =
   | "accepted_typed"
   | "preserved_opaque"
@@ -48,6 +88,8 @@ export type StCardImportReport = Readonly<{
   candidate?: StCardImportCandidate;
   /** Soft hints for a frontend notice (never a gate) - see StCardImportPreview. */
   softHints: readonly Readonly<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }>[];
+  /** Bounded, counted losses. An import that drops material says so here. */
+  losses: readonly StCardImportLoss[];
   dispositions: readonly StCardImportDisposition[];
 }>;
 
@@ -71,6 +113,8 @@ export type StCardImportPreview = Readonly<{
   extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
   unsupportedFields: readonly string[];
+  /** The bounded, counted losses this card's import took - never silent. */
+  losses: readonly StCardImportLoss[];
   /** Soft hints for a frontend notice (never a gate): unusually long persona
    *  fields that may raise per-turn token use. The player decides. */
   softHints: readonly Readonly<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }>[];
@@ -212,12 +256,14 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
       worldBookCandidates: preview.worldBookCandidates,
     }),
     softHints: preview.softHints,
+    losses: preview.losses,
     dispositions: Object.freeze(dispositions),
   });
 }
 
 function previewFromValue(value: Record<string, unknown>, fallbackProfileId: string): StCardImportPreview {
   const data = isRecord(value.data) ? value.data : value;
+  const losses = createLossLedger();
   const spec = typeof value.spec === "string" ? value.spec : typeof data.spec === "string" ? data.spec : undefined;
   const format = spec === "chara_card_v3" || spec === "ccv3" ? "st-v3" : "st-v2";
   const name = boundedText(data.name, ST_CARD_DECODER_LIMITS_V1.nameBytes) ?? "Imported Companion";
@@ -230,6 +276,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const alternateGreetings = readAlternateGreetings(data.alternate_greetings);
   const parsedExamples = parseExamples(
     boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes),
+    losses,
   );
   // Voice-anchor fallback: many ecosystem cards hand-write a first_mes but no
   // mes_example. Without few-shot teaching the dialogue style drifts once the
@@ -301,6 +348,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       ...(alternateGreetings === undefined ? {} : { alternateGreetings }),
     }),
     softHints: Object.freeze(longPersonaFields),
+    losses: losses.entries(),
     ...(scenario === undefined ? {} : { scenario }),
     ...(systemPrompt === undefined ? {} : { systemPrompt }),
     ...(extensions === undefined ? {} : { extensions }),
@@ -429,6 +477,7 @@ function rejected(source: "json" | "png", field: string, reason: string): StCard
   return Object.freeze({
     source,
     softHints: Object.freeze([]),
+    losses: Object.freeze([]),
     dispositions: Object.freeze([disposition(field, "rejected_invalid", reason)]),
   });
 }
@@ -501,28 +550,34 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3", charNam
     ];
   });
 }
-function parseExamples(value: string | undefined): readonly Readonly<{ user: string; companion: string }>[] {
+function parseExamples(
+  value: string | undefined,
+  losses: StCardImportLossLedger,
+): readonly Readonly<{ user: string; companion: string }>[] {
   if (value === undefined) return [];
-  return Object.freeze(
-    value
-      .split(/(?:<START>|\n{2,})/u)
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .flatMap((part) => {
-        const user = part
-          .match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]
-          ?.trim();
-        const companion = part
-          .match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]
-          ?.trim();
-        return user !== undefined &&
-          companion !== undefined &&
-          user.length > 0 &&
-          companion.length > 0
-          ? [Object.freeze({ user, companion })]
-          : [];
-      }),
-  );
+  const blocks = value
+    .split(/(?:<START>|\n{2,})/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const parsed = blocks.flatMap((part) => {
+    const user = part
+      .match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]
+      ?.trim();
+    const companion = part
+      .match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]
+      ?.trim();
+    return user !== undefined && companion !== undefined && user.length > 0 && companion.length > 0
+      ? [Object.freeze({ user, companion })]
+      : [];
+  });
+  // The accepted speaker labels are exactly `{{user}}`/`You`/`User` for the
+  // player and `{{char}}`/`Character`/`Assistant` for the companion (the ST
+  // spec's own two speakers, case-insensitively). A card whose examples use any
+  // other label - a literal character name is the common one - loses that block,
+  // and a card's own form teaching may be nothing BUT those blocks, so the loss
+  // is reported with its count rather than vanishing.
+  losses.record("mes_example", "unparsed_example_blocks", blocks.length - parsed.length);
+  return Object.freeze(parsed);
 }
 /**
  * Fields whose values are executable or prompt-placement controls: the Host

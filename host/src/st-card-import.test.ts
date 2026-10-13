@@ -683,7 +683,38 @@ test("preview folds first_mes into a reviewed example row when mes_example is mi
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.match(prompt, /\[Dialogue Examples\]/);
   assert.match(prompt, /Anchor Rae glances up/);
-});test("preview surfaces softHints for unusually long persona fields (frontend notice, never a gate)", () => {
+});test("an example block with a label outside the two ST speakers is reported, never silently dropped", () => {
+  // The failure this catches: `mes_example` split into blocks, a block whose
+  // labels were not `{{user}}/You/User` + `{{char}}/Character/Assistant` was
+  // discarded with no report at all - and a card's form teaching (exactly what
+  // its own system_prompt is about) can be nothing BUT those blocks.
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        description: "calm",
+        // The common real shape: the card labels the companion with her own name.
+        mes_example: "<START>\nRin: Let us slow down.\nYou: tired\n\n<START>\n{{user}}: ok\n{{char}}: good",
+      },
+    }),
+  );
+  assert.deepEqual(report.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
+  // The readable block still reaches the candidate; only the loss is new.
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [{ user: "ok", companion: "good" }]);
+  // A card that parses cleanly reports no loss at all, and a card without the
+  // field reports none either.
+  assert.deepEqual(
+    previewStCard({
+      spec: "chara_card_v3",
+      data: { name: "Rin", description: "calm", mes_example: "{{user}}: a\n{{char}}: b" },
+    }).losses,
+    [],
+  );
+  assert.deepEqual(previewStCard({ spec: "chara_card_v3", data: { name: "Rin", description: "calm" } }).losses, []);
+});
+
+test("preview surfaces softHints for unusually long persona fields (frontend notice, never a gate)", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
