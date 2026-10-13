@@ -134,28 +134,94 @@ async function expectOpaque(locator: Locator, what: string): Promise<string> {
 }
 
 /**
- * Every laid-out button/input under the surface keeps the 44 px touch floor. A
- * control the sheet has taken out of the visual flow (`clip-path: inset(50%)`)
- * is not a target at all: the themed trigger that drives it is, and it is
- * measured here instead.
+ * The interactive-control selector the touch floor measures: every element a
+ * player can press or type into, on whichever surface is mounted.
  */
-async function measureTouchFloor(page: Page, testId: string): Promise<{ checked: number; clipped: number; short: string[] }> {
-  const measured = await page.locator(`[data-testid="${testId}"] button, [data-testid="${testId}"] input`).evaluateAll(
-    (nodes) =>
-      nodes
-        .filter((node) => node.getClientRects().length > 0)
-        .map((node) => ({
-          tag: node.tagName.toLowerCase(),
-          label: node.getAttribute("aria-label") ?? (node.textContent ?? "").trim().slice(0, 40),
-          height: node.getBoundingClientRect().height,
-          clipped: getComputedStyle(node).clipPath === "inset(50%)",
-        })),
-  );
-  const targets = measured.filter((control) => !control.clipped);
-  const short = targets
+const INTERACTIVE_CONTROL = "button, input, select, textarea";
+
+/**
+ * Every laid-out interactive control under a surface keeps the 44 px touch floor.
+ *
+ * The explicit rule for what is NOT a target - so a control the player can never
+ * touch or reach is a false positive rather than a finding:
+ *
+ *  - **no client rects**: the element is not rendered (`display: none`, `hidden`,
+ *    detached). `getClientRects()` is the browser's own answer, never a
+ *    hand-written class list;
+ *  - **out of the visual flow**: `clip-path: inset(50%)`, which is how this
+ *    stylesheet hides a native control behind the product's own trigger. That is
+ *    the rule that excludes the card-import `input.card-import-file-input` on the
+ *    characters surface: a 1 px box with `tabIndex = -1`, untouchable and
+ *    unreachable, whose themed `[data-card-import-trigger]` button is the control
+ *    the player gets and is measured here instead. The 1 px size is NOT the
+ *    reason it is skipped - a real 1 px target would be a finding, which is
+ *    exactly why the rule is stated instead of a size threshold;
+ *  - everything else is a target, including a disabled control (still a real
+ *    target of its own size) and one with no label.
+ */
+async function touchFloor(
+  page: Page,
+  testId: string,
+): Promise<{ checked: number; excluded: string[]; short: string[] }> {
+  const measured = await page
+    .locator(`[data-testid="${testId}"] ${INTERACTIVE_CONTROL}`)
+    .evaluateAll((nodes) => {
+      const targets = [];
+      const excluded = [];
+      for (const node of nodes) {
+        const tag = node.tagName.toLowerCase();
+        const label = node.getAttribute("aria-label") ?? (node.textContent ?? "").trim().slice(0, 40);
+        if (node.getClientRects().length === 0) {
+          excluded.push(`${tag} "${label}" = not rendered (no client rects)`);
+          continue;
+        }
+        if (getComputedStyle(node).clipPath === "inset(50%)") {
+          excluded.push(`${tag} "${label}" = out of the visual flow (clip-path: inset(50%))`);
+          continue;
+        }
+        targets.push({ tag, label, height: node.getBoundingClientRect().height });
+      }
+      return { targets, excluded };
+    });
+  const short = measured.targets
     .filter((control) => control.height < 44)
     .map((control) => `${control.tag} "${control.label}" = ${Math.round(control.height)}px`);
-  return { checked: targets.length, clipped: measured.length - targets.length, short };
+  return { checked: measured.targets.length, excluded: measured.excluded, short };
+}
+
+/** The peer surfaces a player moves between, as `[panel id, test id]`; `null` is the conversation. */
+const PEER_SURFACES = [
+  [null, "chat-surface"],
+  ["chats", "chats-surface"],
+  ["characters", "characters-surface"],
+  ["settings", "settings-surface"],
+  ["memory", "memory-surface"],
+] as const;
+
+/** The chat list and memory routes those surfaces read; the rest mount with the shell. */
+async function mountPeerSurfaces(page: Page): Promise<void> {
+  await page.route("**/api/tavern/v1/chats*", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/memory", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: handle, memories: [], chapters: [] })),
+  );
+  await mountBothPanels(page);
+}
+
+/**
+ * Open one peer surface by the URL that names it: the shell reads `panel` from the
+ * fragment at bootstrap, so this reaches every surface whatever a viewport fold
+ * does with the navigation entries.
+ */
+async function openPeerSurface(page: Page, panel: string | null, testId: string): Promise<void> {
+  if (panel !== null) await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=${panel}`);
+  await expect(page.getByTestId(testId)).toBeVisible();
 }
 
 test("gate 3: the stop control and the card-import trigger are not transparent", async ({ page }) => {
@@ -231,20 +297,107 @@ test("gate 3 (file control): the card-import input is out of the visual flow, an
   expect(measured.trigger.width, "the trigger keeps the 44 px touch floor").toBeGreaterThanOrEqual(44);
 });
 
-test("gate 3 (touch floor): mounted buttons and inputs clear the 44 px target", async ({ page }) => {
-  await mountBothPanels(page);
+test("gate 3 (touch floor): every peer surface's interactive controls clear the 44 px target", async ({ page }) => {
+  await mountPeerSurfaces(page);
 
-  const chat = await measureTouchFloor(page, "chat-surface");
-  expect(chat.short, 'controls under [data-testid="chat-surface"] below the 44 px floor').toEqual([]);
+  const failures: string[] = [];
+  const summary: string[] = [];
+  for (const [panel, testId] of PEER_SURFACES) {
+    await openPeerSurface(page, panel, testId);
+    const measured = await touchFloor(page, testId);
+    summary.push(
+      `${testId} ${measured.checked} target(s), ${measured.excluded.length} excluded (${measured.excluded.join("; ") || "none"})`,
+    );
+    for (const control of measured.short) failures.push(`${testId}: ${control} is under the 44 px floor`);
+  }
 
-  await page.getByRole("button", { name: "Characters", exact: true }).click();
-  await expect(page.getByTestId("characters-surface")).toBeVisible();
-  const characters = await measureTouchFloor(page, "characters-surface");
-  expect(characters.short, 'controls under [data-testid="characters-surface"] below the 44 px floor').toEqual([]);
+  test.info().annotations.push({ type: "touch-floor", description: summary.join(" | ") });
+  console.log(`gate 3 touch floor: ${summary.join(" | ")}`);
+  expect(failures, "every interactive control on every peer surface clears the 44 px touch floor").toEqual([]);
+});
 
-  const summary = `chat-surface ${chat.checked} control(s) (${chat.clipped} out of the visual flow), characters-surface ${characters.checked} control(s) (${characters.clipped} out of the visual flow); all >= 44px`;
-  test.info().annotations.push({ type: "touch-floor", description: summary });
-  console.log(`gate 3 touch floor: ${summary}`);
+/**
+ * The exclusion rule, pinned to the control it exists for.
+ *
+ * `input.card-import-file-input` is a 1 px box the player can neither touch nor
+ * tab to; the themed trigger beside it is the control. Without an explicit rule
+ * the 1 px box would be a permanent false positive, and a rule of thumb ("ignore
+ * anything under 8 px") would hide a real 1 px target. So the rule is named -
+ * out of the visual flow, `clip-path: inset(50%)`, `tabIndex = -1` - and this
+ * test asserts that the browser really reports that shape for that element.
+ */
+test("gate 3 (touch floor, exclusion): the hidden card-import file input is excluded by the visual-flow rule", async ({
+  page,
+}) => {
+  await mountPeerSurfaces(page);
+  await openPeerSurface(page, "characters", "characters-surface");
+
+  const measured = await page.getByTestId("characters-surface").evaluate((surface) => {
+    const input = surface.querySelector<HTMLElement>(".card-import-file-input, [data-card-import-file]");
+    const trigger = surface.querySelector<HTMLElement>("[data-card-import-trigger]");
+    if (input === null || trigger === null) throw new Error("the card-import control pair is not rendered");
+    const box = input.getBoundingClientRect();
+    return {
+      input: {
+        clipPath: getComputedStyle(input).clipPath,
+        tabIndex: input.tabIndex,
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      },
+      trigger: { height: Math.round(trigger.getBoundingClientRect().height) },
+    };
+  });
+
+  const floor = await touchFloor(page, "characters-surface");
+  console.log(`gate 3 exclusion: ${JSON.stringify(measured)} | excluded: ${floor.excluded.join("; ")}`);
+  expect(measured.input.clipPath, "the native file control is out of the visual flow, not merely small").toBe(
+    "inset(50%)",
+  );
+  expect(measured.input.tabIndex, "the hidden file input is not a tab stop").toBe(-1);
+  expect(measured.input.height, "nothing of the platform's file widget is laid out").toBeLessThanOrEqual(1);
+  expect(
+    floor.short.some((control) => control.includes("file")),
+    "the hidden file input must not be measured as a target (it is skipped by the visual-flow rule, not by its size)",
+  ).toBe(false);
+  expect(
+    floor.excluded.some((control) => control.includes("out of the visual flow")),
+    "the hidden file input must appear under the visual-flow rule, so the exclusion is the rule and not luck",
+  ).toBe(true);
+  expect(measured.trigger.height, "the trigger the player gets keeps the 44 px floor").toBeGreaterThanOrEqual(44);
+});
+
+/**
+ * The mutation: a 20 px control planted on the Chats surface - one the gate never
+ * sampled before - is reported by the same measurement the gate asserts on. The
+ * planted control is a real finding under the rule (it has client rects and no
+ * clip-path); removing it leaves the surface clean, so the rule is not blanket.
+ */
+test("gate 3 (touch floor, mutation): a planted 20 px control on the Chats surface is reported", async ({ page }) => {
+  await mountPeerSurfaces(page);
+  await openPeerSurface(page, "chats", "chats-surface");
+
+  const before = await touchFloor(page, "chats-surface");
+  await page.getByTestId("chats-surface").evaluate((surface) => {
+    const planted = document.createElement("button");
+    planted.id = "planted-small-control";
+    planted.textContent = "Plant";
+    planted.style.cssText = "width: 20px; height: 20px; display: block;";
+    surface.append(planted);
+  });
+  const planted = await touchFloor(page, "chats-surface");
+  await page.getByTestId("chats-surface").evaluate((surface) => {
+    surface.querySelector("#planted-small-control")?.remove();
+  });
+  const restored = await touchFloor(page, "chats-surface");
+
+  console.log(`gate 3 mutation: before=${JSON.stringify(before.short)} planted=${JSON.stringify(planted.short)}`);
+  expect(before.short, "the Chats surface is clean before the plant").toEqual([]);
+  expect(
+    planted.short.some((control) => control.includes("Plant") && control.includes("20px")),
+    "the planted 20 px control must be reported by the measurement the gate asserts on",
+  ).toBe(true);
+  expect(planted.checked, "the planted control is counted, not skipped").toBe(before.checked + 1);
+  expect(restored.short, "removing the plant leaves the surface clean again").toEqual([]);
 });
 
 /**
