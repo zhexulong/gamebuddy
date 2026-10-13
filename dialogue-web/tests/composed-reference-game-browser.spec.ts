@@ -1908,9 +1908,14 @@ test("the AppBar Game entry selects the Game surface, the URL names it, and Back
   await entry.click();
   const surface = page.getByTestId("game-surface");
   await expect(surface).toBeVisible();
-  // A peer surface, not a modal overlay: it takes the main region, it is a
-  // region rather than a dialog, and nothing dims or covers the shell.
-  await expect(surface).toHaveAttribute("role", "region");
+  // A peer surface, not a modal overlay: it takes the main region, it is a named
+  // region rather than a dialog, and nothing dims or covers the shell. `region` is
+  // the implicit role of the surface's named `<section>` (`SurfaceView`), which is
+  // what names it for assistive technology alongside its heading - so the assertion
+  // is the role rather than a `role` attribute (removed as redundant by `0f6b09ec`,
+  // and `eslint.config.mjs` relies on the same implicit role).
+  await expect(surface).toHaveRole("region");
+  await expect(surface).toHaveAccessibleName("Game");
   await expect(page.locator("[aria-modal='true']")).toHaveCount(0);
   await expect(page.locator(".composed-drawer-backdrop")).toHaveCount(0);
   // The panel keeps its frozen anchors inside the surface.
