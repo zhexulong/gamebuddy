@@ -283,6 +283,12 @@ export class CompanionLoop {
         }
         if (event.type === "agent_settled" && accepted && !settled) {
           settled = true;
+          // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
+          // that never produced a final message left no recorded outcome, and the tail of this method
+          // returned `completed` for a run the player had cancelled. The content observer's own
+          // classification stays authoritative when it exists; this only fills the case where nothing
+          // classified the run (`turnOutcome ?? "completed"` below).
+          if (event.aborted && turnOutcome === undefined) turnOutcome = "aborted";
           if (sourceEventId !== undefined && batchId !== undefined)
             this.#emitLiveEvidence((sink) => sink.piTurnSettled({ batchId, sourceEventId, disposition }));
           resolveCompleted();

@@ -4,16 +4,17 @@ import { CompanionLoop } from "./companion-loop.js";
 
 function settledSession(
   handler: (text: string, options?: { deliverAs?: string }) => Promise<void> | void = async () => {},
+  settled: { aborted?: boolean } = {},
 ) {
   const listeners = new Set<(event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => void>();
-  const emit = (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => {
+  const emit = (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown; aborted?: boolean }) => {
     for (const listener of [...listeners]) listener(event);
   };
   return {
     async sendUserMessage(text: string, options?: { deliverAs?: string }) {
       emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
       await handler(text, options);
-      emit({ type: "agent_settled" });
+      emit({ type: "agent_settled", aborted: settled.aborted === true });
     },
     async abort() {},
     clearQueue() {},
@@ -939,6 +940,22 @@ test("CompanionLoop refuses presentation lineage for legacy player correlation w
   });
   await loop.flush();
   assert.deepEqual(observed, []);
+});
+
+test("CompanionLoop reports an aborted settlement as aborted, not completed", async () => {
+  // Pi 1.1.0 added `aborted` to agent_settled. Before this, an aborted run that produced no final
+  // message left no recorded outcome and the turn reported `completed` - a cancelled turn claimed as
+  // an answer, which is exactly what a settled-batch witness exists to prevent.
+  const loop = new CompanionLoop(settledSession(async () => {}, { aborted: true }) as never);
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_01",
+    eventId: "source_01",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  assert.equal(await loop.flush(), "aborted");
 });
 
 test("CompanionLoop binds acceptance and settlement to one Pi-runtime settled batch", async () => {
