@@ -30,6 +30,31 @@
  * every `labels.<key>` read in the source exists in one of the catalogues, which
  * catches a key read through a receiver the compiler cannot check (a dynamic
  * `labels[key]` lookup is skipped and counted instead).
+ *
+ * `i18n.7` adds the direction this gate was missing: a key a catalogue DECLARES
+ * that no source reads. That is how `worldInfoPanel` survived the six-surface
+ * convergence - nothing asserted the reverse direction, and `i18n.4` did not even
+ * count the composed shell's own access form (`labels().<key>`, whose receiver is
+ * a call rather than an identifier), so its reads were invisible too. The
+ * reverse direction therefore has an explicit false-positive boundary, stated
+ * once here because both directions share it:
+ *
+ *   - reads are gathered from `src` only, mirroring `i18n.4`; a key whose only
+ *     reader is a spec is a finding like any other (measured: none is today);
+ *   - both access forms count - `labels.<key>` on the identifier every component
+ *     holds, and `labels().<key>` on the composed shell's accessor - as does a
+ *     *string-literal* element access (`labels["key"]`), which a compiler cannot
+ *     see through either;
+ *   - a *computed* key (`labels[key]`, `labels[\`prefix${x}\`]`) is not a read,
+ *     because which key it names is not decidable from the syntax. A key
+ *     reachable only through one therefore needs an allowlist entry rather than
+ *     silence: `UNREAD_INDIRECT_READS` names the two sites and the reader each one
+ *     has;
+ *   - every other unread key must be recorded in `UNREAD_RECORDED_DEBT` with the
+ *     reason it may stay, so the direction is enforced instead of aspirational.
+ *     Both lists are checked in both directions: a recorded key that acquires a
+ *     reader, or that a catalogue stops declaring, is itself a failure, so
+ *     neither list can rot into a permanent exemption.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -70,8 +95,56 @@ function unwrap(node) {
   }
 }
 
+/**
+ * The script kind follows the extension: a `.tsx` file parsed as plain TS loses
+ * every read inside JSX, which is most of the reads in this tree. The catalogue
+ * files are `.ts` and are unaffected.
+ */
 function parse(file, text = readFileSync(file, "utf8")) {
-  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+}
+
+/** Is this expression the label catalogue object, however the site names it? */
+function isLabelObject(expression) {
+  if (ts.isIdentifier(expression)) return expression.text === "labels";
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text === "labels";
+  return (
+    ts.isCallExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    ["labels", "messages", "characterLabels"].includes(expression.expression.text)
+  );
+}
+
+/**
+ * The catalogue key a node reads, or null. Both access forms count: the
+ * identifier every component holds (`labels.<key>`) and the composed shell's
+ * accessor, whose receiver is a call (`labels().<key>`). A string-literal
+ * element access counts too; a computed one does not (see the header).
+ */
+function labelRead(node) {
+  if (ts.isPropertyAccessExpression(node) && isLabelObject(node.expression)) return node.name.text;
+  if (
+    ts.isElementAccessExpression(node) &&
+    isLabelObject(node.expression) &&
+    node.argumentExpression !== undefined &&
+    ts.isStringLiteral(node.argumentExpression)
+  )
+    return node.argumentExpression.text;
+  return null;
+}
+
+/** Every catalogue key a source under `src` reads, through either access form. */
+function readKeys() {
+  const keys = new Set();
+  for (const file of sourceFiles(SRC)) {
+    const sourceFile = parse(file);
+    walk(sourceFile, (node) => {
+      const key = labelRead(node);
+      if (key !== null) keys.add(key);
+    });
+  }
+  return keys;
 }
 
 function walk(node, visit) {
@@ -256,16 +329,16 @@ test("i18n.4: every labels.<key> a component reads is declared in a catalogue", 
   for (const file of sourceFiles(SRC)) {
     const sourceFile = parse(file);
     walk(sourceFile, (node) => {
-      if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return;
-      if (node.expression.text !== "labels") return;
+      const key = labelRead(node);
+      if (key === null) return;
       reads += 1;
-      if (!declared.has(node.name.text)) failures.push(`${at(node, sourceFile)} labels.${node.name.text} is not declared`);
+      if (!declared.has(key)) failures.push(`${at(node, sourceFile)} labels.${key} is not declared`);
     });
     const text = readFileSync(file, "utf8");
     dynamic += [...text.matchAll(/\blabels\[/gu)].length;
   }
   t.diagnostic(
-    `i18n.4: ${reads} labels.<key> read(s) checked against ${declared.size} declared key(s), ${dynamic} dynamic labels[...] read(s) skipped, ${failures.length} undeclared`,
+    `i18n.4: ${reads} labels.<key> read(s) (both access forms) checked against ${declared.size} declared key(s), ${dynamic} dynamic labels[...] read(s) skipped, ${failures.length} undeclared`,
   );
   assert.deepEqual(failures, [], "a key read through an untyped receiver is the one tsc cannot check");
 });
@@ -304,4 +377,214 @@ test("i18n.6 (mutation): a placeholder dropped in one language fails with file a
   assert.deepEqual(placeholdersOf(entry.value), []);
   assert.equal(entry.line, `src/i18n.ts:${lineOf(mutated, 'emptyChatOpening: "开启一段新的旅程…"')}`);
   t.diagnostic(`i18n.6: dropped placeholder reported at ${entry.line}`);
+});
+
+/**
+ * Keys a catalogue declares that a *computed* read reaches, which no syntax can
+ * name. Each group cites the reader; the key is not dead, it is just not
+ * statically visible.
+ */
+const UNREAD_INDIRECT_READS = [
+  {
+    reason:
+      "read through a computed key: `connectionFailureText`'s closed `labels[key]` union in components/management-panels.tsx",
+    keys: [
+      "connectionFailureInvalidEndpoint",
+      "connectionFailureInvalidResponse",
+      "connectionFailureNotConfigured",
+      "connectionFailureNotFound",
+      "connectionFailureTimeout",
+      "connectionFailureUnauthorized",
+      "connectionFailureUnreachable",
+    ],
+  },
+  {
+    reason:
+      "read through a computed key: the voice panel's `labels[`voiceConsent${...}`]` in components/management-panels.tsx",
+    keys: ["voiceConsentUndecided", "voiceConsentAccepted", "voiceConsentRevoked"],
+  },
+];
+
+/**
+ * Keys a catalogue declares that nothing under `src` reads at all. They are
+ * recorded here rather than removed, because a catalogue cleanup is its own
+ * change and this gate's job is to make the debt visible, not to silently
+ * delete copy a lane may be about to read. Remove a group and its keys together
+ * when the surface it names is gone; the reverse check below fails a group the
+ * moment any key in it is read again.
+ */
+const UNREAD_RECORDED_DEBT = [
+  {
+    reason:
+      "the Settings surface reads the `connection*`, `modelProfiles*`, `language*` and `advancedPiSettings*` keys it kept; these older Settings words have no reader",
+    keys: [
+      "active",
+      "back",
+      "chatModelProfile",
+      "chinese",
+      "connectionPending",
+      "connectionRecommended",
+      "english",
+      "gameModelProfile",
+      "high",
+      "independent",
+      "language",
+      "model",
+      "modelProfile",
+      "noWorldInfo",
+      "surface",
+      "theme",
+      "thinkingLevel",
+    ],
+  },
+  {
+    reason: "the live card import is `CharacterCardImport.tsx` over `character-domain-labels.ts`; this older wizard's vocabulary has no reader",
+    keys: [
+      "activeCharacter",
+      "allCharacters",
+      "characterName",
+      "confirmCharacter",
+      "import",
+      "importCharacterCard",
+      "newCharacter",
+      "pasteCardJson",
+      "reviewDetails",
+    ],
+  },
+  {
+    reason: "the converged World Info surface binds whole revisions (`WorldInfoBindingPanel`); the entry editor these named is gone",
+    keys: ["addEntry", "attachToChat", "entryContent", "entryKey", "entryTitle", "worldInfoEntries", "worldInfoLocked"],
+  },
+  {
+    reason:
+      "the live Characters surface reads `character-domain-labels.ts`, which carries this same vocabulary; the i18n.ts copy has no reader",
+    keys: [
+      "authoredContentError",
+      "authoredContentSaved",
+      "authoredContentSaving",
+      "cardImportConfirming",
+      "cardImportCreated",
+      "cardImportDispositionsTitle",
+      "cardImportError",
+      "cardImportFieldsTitle",
+      "cardImportHint",
+      "cardImportHistoryEmpty",
+      "cardImportHistoryFailed",
+      "cardImportHistoryHint",
+      "cardImportHistoryTitle",
+      "cardImportLongHint",
+      "cardImportReviewSelected",
+      "cardImportReviewSelectionTitle",
+      "cardImportStage",
+      "cardImportStaging",
+      "cardImportTitle",
+      "charactersTitle",
+      "charactersUnavailable",
+      "chatRetentionRestore",
+      "companionCreateHint",
+      "companionCreateSubmit",
+      "companionCreateTitle",
+      "companionDetailName",
+      "companionDetailTitle",
+      "companionListEmpty",
+      "companionListTitle",
+      "greetingAddVariant",
+      "greetingEditHint",
+      "greetingEditTitle",
+      "greetingNotPresent",
+      "greetingSave",
+      "greetingVariantLabel",
+      "greetingVariantText",
+      "personaEditHint",
+      "personaEditTitle",
+      "personaNotPresent",
+      "personaPresentHint",
+      "scenarioEditHint",
+      "scenarioEditTitle",
+      "scenarioNotPresent",
+    ],
+  },
+  {
+    reason: "the shell names each nav entry with its own `<surface>Panel` key (`labels().charactersPanel` ...); these bare words have no reader",
+    keys: ["characters", "memory", "persona", "settings", "worldInfo"],
+  },
+  {
+    reason: "the Chats surface reads `chatsPanel`/`chatRetention*`; these older action words have no reader",
+    keys: ["chatHistory", "deleteChat", "exportChat"],
+  },
+  {
+    reason:
+      "the shell's list vocabulary converged on `chatsPanel`/`memoryPanel`/`loading`, and the `voice*` trio duplicates `voiceConsent*`; none of these has a reader",
+    keys: ["chatsEmpty", "memoryEmpty", "selected", "untitled", "voiceAccepted", "voiceRevoked", "voiceUndecided"],
+  },
+  {
+    reason: "the live Memory surface reads `components/memory-notebook-labels.ts`; these older words have no reader",
+    keys: ["deleteMemory", "semanticMemory"],
+  },
+  {
+    reason: "the game facts row renders connection/instance/world/save/compatibility/outcome only; these two have no reader",
+    keys: ["gameFactCapabilities", "gameFactExecution"],
+  },
+  {
+    reason: "the bootstrap failure renders through `composed-problem-view.ts`; this older title/detail pair has no reader",
+    keys: ["problemBootstrapUnavailableTitle", "problemBootstrapUnavailableDetail"],
+  },
+  {
+    reason: "the live Persona editor reads `character-domain-labels.ts` (`personaTitle`/`personaHint`); the i18n.ts heading has no reader",
+    keys: ["userPersona"],
+  },
+  {
+    reason: "no surface renders a read-only chat badge; the word has no reader",
+    keys: ["readOnlyChat"],
+  },
+];
+
+/** Every allowed unread key, its reason, and the failures a list itself can have. */
+function unreadAllowlist() {
+  const recorded = new Map();
+  const failures = [];
+  for (const group of [...UNREAD_INDIRECT_READS, ...UNREAD_RECORDED_DEBT])
+    for (const key of group.keys) {
+      if (recorded.has(key)) failures.push(`${key} is allowlisted twice`);
+      recorded.set(key, group.reason);
+    }
+  return { recorded, failures };
+}
+
+test("i18n.7: a declared catalogue key is read by a source, or recorded as unread with a reason", (t) => {
+  const declared = new Map();
+  for (const catalogue of loadCatalogues())
+    for (const entry of catalogue.entries) if (!declared.has(entry.key)) declared.set(entry.key, entry.line);
+
+  const reads = readKeys();
+  const unread = [...declared.keys()].filter((key) => !reads.has(key)).sort();
+  const { recorded, failures: listFailures } = unreadAllowlist();
+  const failures = [...listFailures];
+  for (const key of unread) if (!recorded.has(key)) failures.push(`${declared.get(key)}: ${key} is declared and no source reads it`);
+  for (const key of recorded.keys()) {
+    if (!declared.has(key)) failures.push(`${key} is recorded as unread but no catalogue declares it; drop the stale entry`);
+    else if (reads.has(key)) failures.push(`${declared.get(key)}: ${key} is recorded as unread but a source reads it; drop the stale entry`);
+  }
+  t.diagnostic(
+    `i18n.7: ${declared.size} declared key(s), ${reads.size} read by a source, ${unread.length} unread (${UNREAD_INDIRECT_READS.reduce((total, group) => total + group.keys.length, 0)} indirect, ${UNREAD_RECORDED_DEBT.reduce((total, group) => total + group.keys.length, 0)} recorded debt), ${failures.length} unrecorded or stale`,
+  );
+  assert.deepEqual(failures, [], "a declared key no source reads must be recorded with a reason, and a recorded key must still be a real unread one");
+});
+
+test("i18n.8 (mutation): a key nothing reads is reported at its file:line", (t) => {
+  // The reverse direction's own mutation proof, kept as a permanent negative
+  // test: the real read set, and catalogue text carrying one extra key in both
+  // locales, so i18n.1's parity direction cannot be what fails.
+  const original = readFileSync(CATALOGUES[0].file, "utf8");
+  const mutated = original
+    .replace('  appName: "GameBuddy Tavern",', '  appName: "GameBuddy Tavern",\n  gateUnreadMutationKey: "nobody reads this",')
+    .replace('  appName: "GameBuddy 酒馆",', '  appName: "GameBuddy 酒馆",\n  gateUnreadMutationKey: "没有人读这个",');
+  assert.notEqual(mutated, original, "the mutation anchor must exist");
+  const en = catalogues(mutated, CATALOGUES[0].file).find((catalogue) => catalogue.name === "en");
+  const injected = en.entries.find((entry) => entry.key === "gateUnreadMutationKey");
+  assert.notEqual(injected, undefined, "the injected key must be parsed");
+  const reads = readKeys();
+  assert.ok(!reads.has(injected.key), "no source reads the injected key");
+  assert.equal(injected.line, `src/i18n.ts:${lineOf(mutated, "gateUnreadMutationKey")}`);
+  t.diagnostic(`i18n.8: injected unread key reported at ${injected.line}`);
 });
