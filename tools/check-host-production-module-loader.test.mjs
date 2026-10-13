@@ -21,7 +21,7 @@ const PRODUCTION_ROOT_REFERENCE = /\.\.\/host\/dist(?![-\w])|["']host\/dist\//;
 async function toolsReferencingProductionRoot() {
   const direct = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".mjs")) continue;
+    if (!(entry.isFile() && entry.name.endsWith(".mjs"))) continue;
     const source = await readFile(join(root, entry.name), "utf8");
     if (PRODUCTION_ROOT_REFERENCE.test(source)) direct.push(entry.name);
   }

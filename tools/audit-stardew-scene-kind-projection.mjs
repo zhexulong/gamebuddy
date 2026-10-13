@@ -51,8 +51,7 @@ const read = (relative, root = ROOT) => readFileSync(path.join(root, relative), 
  * doc comment quotes "we could not check" / "you cannot go there"; read as
  * literals those two phrases became kinds the Mod enum does not declare.
  */
-const commentFree = (source) =>
-  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+const commentFree = (source) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 
 /** PascalCase enum member -> lower snake wire value, applied to the C# wire rows. */
 function enumMembers(contractsSource) {
@@ -67,7 +66,9 @@ function enumMembers(contractsSource) {
 /** Parse `=> "wire"` rows from one `kind switch` helper, keyed by enum member. */
 function switchMap(contractsSource, helperName) {
   const block = contractsSource.match(
-    new RegExp(`internal static [A-Za-z<>?\\[\\] ]+ ${helperName}\\(\\s*SceneAffordanceKind kind\\)\\s*=>\\s*kind switch\\s*\\{([\\s\\S]*?)\\n\\s*\\};`),
+    new RegExp(
+      `internal static [A-Za-z<>?\\[\\] ]+ ${helperName}\\(\\s*SceneAffordanceKind kind\\)\\s*=>\\s*kind switch\\s*\\{([\\s\\S]*?)\\n\\s*\\};`,
+    ),
   );
   if (!block) throw new Error(`scene_kind_audit_switch_not_found:${helperName}`);
   const map = {};
@@ -136,7 +137,9 @@ function groundKindIsSet(contractsSource, helperName) {
 /** Parse the integer bodies of an `int` return switch (dense-kind priority). */
 function intSwitchMap(contractsSource, helperName) {
   const block = contractsSource.match(
-    new RegExp(`internal static int ${helperName}\\(SceneAffordanceKind kind\\)\\s*=>\\s*kind switch\\s*\\{([\\s\\S]*?)\\n\\s*\\};`),
+    new RegExp(
+      `internal static int ${helperName}\\(SceneAffordanceKind kind\\)\\s*=>\\s*kind switch\\s*\\{([\\s\\S]*?)\\n\\s*\\};`,
+    ),
   );
   if (!block) throw new Error(`scene_kind_audit_int_switch_not_found:${helperName}`);
   const map = {};
@@ -144,15 +147,6 @@ function intSwitchMap(contractsSource, helperName) {
     map[match[1]] = Number.parseInt(match[2], 10);
   }
   return map;
-}
-
-/** Extract the quoted strings of a C# `or`-joined string pattern. */
-function csharpStringPattern(source, marker) {
-  const index = source.indexOf(marker);
-  if (index < 0) throw new Error(`scene_kind_audit_marker_not_found:${marker}`);
-  const tail = source.slice(index, index + 4000);
-  const line = tail.split("\n").find((row) => row.includes("is ")) ?? tail;
-  return new Set([...line.matchAll(/"([^"]+)"/g)].map((m) => m[1]));
 }
 
 /**
@@ -189,13 +183,20 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
   const declaredWire = new Set();
   for (const member of members) {
     const wire = wireByMember[member];
-    if (wire === undefined) findings.push({ kind: member, hop: "ToWireValue", detail: "enum member has no wire value" });
-    else if (declaredWire.has(wire)) findings.push({ kind: member, hop: "ToWireValue", detail: `duplicate wire value ${wire}` });
+    if (wire === undefined)
+      findings.push({ kind: member, hop: "ToWireValue", detail: "enum member has no wire value" });
+    else if (declaredWire.has(wire))
+      findings.push({ kind: member, hop: "ToWireValue", detail: `duplicate wire value ${wire}` });
     else declaredWire.add(wire);
 
-    if (!isDefinedMembers.has(member)) findings.push({ kind: member, hop: "IsDefined", detail: "enum member is not accepted by IsDefined" });
-    if (refPrefixByMember[member] === undefined) findings.push({ kind: member, hop: "ToRefPrefix", detail: "enum member has no ref prefix" });
-    if (priorityByMember[member] === undefined && (densityCappedMembers.has(member) || priorityByMember[member] !== 0)) {
+    if (!isDefinedMembers.has(member))
+      findings.push({ kind: member, hop: "IsDefined", detail: "enum member is not accepted by IsDefined" });
+    if (refPrefixByMember[member] === undefined)
+      findings.push({ kind: member, hop: "ToRefPrefix", detail: "enum member has no ref prefix" });
+    if (
+      priorityByMember[member] === undefined &&
+      (densityCappedMembers.has(member) || priorityByMember[member] !== 0)
+    ) {
       // Dense kinds must carry an explicit demotion; sparse kinds default to 0.
     }
     if (densityCappedMembers.has(member) && priorityByMember[member] === undefined) {
@@ -219,7 +220,11 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
   for (const row of perKind) {
     if (row.refPrefix === null) continue;
     if (seenPrefixes.has(row.refPrefix)) {
-      findings.push({ kind: row.member, hop: "ToRefPrefix", detail: `ref prefix ${row.refPrefix} already used by ${seenPrefixes.get(row.refPrefix)}` });
+      findings.push({
+        kind: row.member,
+        hop: "ToRefPrefix",
+        detail: `ref prefix ${row.refPrefix} already used by ${seenPrefixes.get(row.refPrefix)}`,
+      });
     } else {
       seenPrefixes.set(row.refPrefix, row.member);
     }
@@ -245,10 +250,16 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
   // the affordance union wraps across lines in current formatting.
   const affordanceDecl = host.match(/export type ObserveSceneAffordance = Readonly<\{([\s\S]*?)\}>;/);
   const hostUnion = new Set(
-    affordanceDecl ? [...commentFree(affordanceDecl[1]).matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((v) => v !== "North" && v !== "South" && v !== "East" && v !== "West" && v !== "CurrentTile") : [],
+    affordanceDecl
+      ? [...commentFree(affordanceDecl[1]).matchAll(/"([^"]+)"/g)]
+          .map((m) => m[1])
+          .filter((v) => v !== "North" && v !== "South" && v !== "East" && v !== "West" && v !== "CurrentTile")
+      : [],
   );
   const hostSetMatch = host.match(/const OBSERVE_SCENE_KINDS = new Set\(\[([^\]]*)\]\)/);
-  const hostSet = new Set(hostSetMatch ? [...commentFree(hostSetMatch[1]).matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
+  const hostSet = new Set(
+    hostSetMatch ? [...commentFree(hostSetMatch[1]).matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [],
+  );
 
   const schema = JSON.parse(read(SCHEMA, root));
   const schemaEnum = new Set(schema?.$defs?.observeSceneAffordance?.properties?.kind?.enum ?? []);
@@ -266,12 +277,21 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
       if (!layerValues.has(wire)) findings.push({ kind: wire, hop: layerName, detail: "kind missing from this layer" });
     }
     for (const value of layerValues) {
-      if (!declaredWire.has(value)) findings.push({ kind: value, hop: layerName, detail: "layer admits a kind the Mod enum does not declare" });
+      if (!declaredWire.has(value))
+        findings.push({ kind: value, hop: layerName, detail: "layer admits a kind the Mod enum does not declare" });
     }
   }
 
   const runnerList = runnerSources(root);
-  const ground = auditGroundProjection({ contracts, projection: read(PROJECTION, root), bridge, host, schema, root, runners: runnerList });
+  const ground = auditGroundProjection({
+    contracts,
+    projection: read(PROJECTION, root),
+    bridge,
+    host,
+    schema,
+    root,
+    runners: runnerList,
+  });
   findings.push(...ground.findings);
 
   return {
@@ -302,10 +322,13 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
   const declaredWire = new Set();
   for (const member of members) {
     const wire = wireByMember[member];
-    if (wire === undefined) findings.push({ kind: member, hop: "ground ToWireValue", detail: "ground kind has no wire value" });
-    else if (declaredWire.has(wire)) findings.push({ kind: member, hop: "ground ToWireValue", detail: `duplicate ground wire value ${wire}` });
+    if (wire === undefined)
+      findings.push({ kind: member, hop: "ground ToWireValue", detail: "ground kind has no wire value" });
+    else if (declaredWire.has(wire))
+      findings.push({ kind: member, hop: "ground ToWireValue", detail: `duplicate ground wire value ${wire}` });
     else declaredWire.add(wire);
-    if (!isDefined.has(member)) findings.push({ kind: member, hop: "ground IsDefined", detail: "ground kind is not accepted by IsDefined" });
+    if (!isDefined.has(member))
+      findings.push({ kind: member, hop: "ground IsDefined", detail: "ground kind is not accepted by IsDefined" });
     perKind.push({ member, wire: wire ?? null });
   }
 
@@ -313,21 +336,36 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
   // default arm and so is not expected as a named key.
   for (const [backType, member] of Object.entries(fromBackType)) {
     if (!members.includes(member))
-      findings.push({ kind: backType, hop: "ground FromBackType", detail: `maps to SceneGroundKind.${member}, which the enum does not declare` });
+      findings.push({
+        kind: backType,
+        hop: "ground FromBackType",
+        detail: `maps to SceneGroundKind.${member}, which the enum does not declare`,
+      });
   }
 
   // The outbound path must derive its wire value from the enum, not from a literal.
   if (!/SceneGroundKindWire\.ToWireValue/.test(projection))
-    findings.push({ kind: "ground", hop: "BridgeProtocol", detail: "outbound path does not go through SceneGroundKindWire.ToWireValue" });
+    findings.push({
+      kind: "ground",
+      hop: "BridgeProtocol",
+      detail: "outbound path does not go through SceneGroundKindWire.ToWireValue",
+    });
 
   // truncatedReason is a closed three-value set wherever it is declared.
   const REASONS = ["maximum_affordances", "payload_limit", "ground_limit"];
-  const csharpReasons = new Set([...projection.matchAll(/"(maximum_affordances|payload_limit|ground_limit)"/g)].map((m) => m[1]));
+  const csharpReasons = new Set(
+    [...projection.matchAll(/"(maximum_affordances|payload_limit|ground_limit)"/g)].map((m) => m[1]),
+  );
   for (const reason of REASONS) {
-    if (!csharpReasons.has(reason)) findings.push({ kind: "ground", hop: "truncatedReason", detail: `C# does not accept ${reason}` });
+    if (!csharpReasons.has(reason))
+      findings.push({ kind: "ground", hop: "truncatedReason", detail: `C# does not accept ${reason}` });
   }
   if (!/ground_limit/.test(bridge))
-    findings.push({ kind: "ground", hop: "BridgeProtocol truncatedReason", detail: "bridge validator does not accept ground_limit" });
+    findings.push({
+      kind: "ground",
+      hop: "BridgeProtocol truncatedReason",
+      detail: "bridge validator does not accept ground_limit",
+    });
 
   // The Host declares the value set once as the SceneGroundKind alias and reuses
   // it, so the literals live there rather than in the ground object itself.
@@ -335,15 +373,25 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
   const hostGroundUnion = new Set(hostKindAlias ? [...hostKindAlias[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
   const hostGroundDecl = host.match(/export type ObserveSceneGround = Readonly<\{([\s\S]*?)\}>;/);
   if (!hostGroundDecl)
-    findings.push({ kind: "ground", hop: "host protocol ground declaration", detail: "ObserveSceneGround type not found" });
+    findings.push({
+      kind: "ground",
+      hop: "host protocol ground declaration",
+      detail: "ObserveSceneGround type not found",
+    });
   else if (!/dominantKind:\s*SceneGroundKind/.test(hostGroundDecl[1]))
-    findings.push({ kind: "ground", hop: "host protocol ground declaration", detail: "ObserveSceneGround.dominantKind does not reference SceneGroundKind" });
+    findings.push({
+      kind: "ground",
+      hop: "host protocol ground declaration",
+      detail: "ObserveSceneGround.dominantKind does not reference SceneGroundKind",
+    });
   const hostReason = host.match(/truncatedReason:\s*([^;]+);/);
   const hostReasons = new Set(hostReason ? [...hostReason[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
 
   const schemaGroundSet = new Set(schema?.$defs?.observeSceneGround?.properties?.dominantKind?.enum ?? []);
   const schemaReasons = new Set(
-    (schema?.$defs?.observeSceneResult?.properties?.truncatedReason?.anyOf ?? []).flatMap((branch) => branch?.enum ?? []),
+    (schema?.$defs?.observeSceneResult?.properties?.truncatedReason?.anyOf ?? []).flatMap(
+      (branch) => branch?.enum ?? [],
+    ),
   );
 
   // Reasons also appear in a conditional branch narrowing by `partial`, and that is
@@ -355,11 +403,19 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
     if (narrowed === undefined || narrowed.type === "null") continue;
     for (const reason of narrowed.enum ?? []) {
       if (!REASONS.includes(reason))
-        findings.push({ kind: "ground", hop: `envelope schema allOf[${index}]`, detail: `branch admits ${reason}, which the producer never emits` });
+        findings.push({
+          kind: "ground",
+          hop: `envelope schema allOf[${index}]`,
+          detail: `branch admits ${reason}, which the producer never emits`,
+        });
     }
     for (const reason of REASONS) {
       if (!(narrowed.enum ?? []).includes(reason))
-        findings.push({ kind: "ground", hop: `envelope schema allOf[${index}]`, detail: `branch omits ${reason}, which the producer can emit with partial=true` });
+        findings.push({
+          kind: "ground",
+          hop: `envelope schema allOf[${index}]`,
+          detail: `branch omits ${reason}, which the producer can emit with partial=true`,
+        });
     }
   }
 
@@ -368,18 +424,32 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
     ["envelope schema ground enum", schemaGroundSet],
   ]) {
     for (const wire of declaredWire) {
-      if (!layerValues.has(wire)) findings.push({ kind: wire, hop: layerName, detail: "ground kind missing from this layer" });
+      if (!layerValues.has(wire))
+        findings.push({ kind: wire, hop: layerName, detail: "ground kind missing from this layer" });
     }
     for (const value of layerValues) {
-      if (!declaredWire.has(value)) findings.push({ kind: value, hop: layerName, detail: "layer admits a ground kind the Mod enum does not declare" });
+      if (!declaredWire.has(value))
+        findings.push({
+          kind: value,
+          hop: layerName,
+          detail: "layer admits a ground kind the Mod enum does not declare",
+        });
     }
   }
 
   if (!hostReasons.has("ground_limit"))
-    findings.push({ kind: "ground", hop: "host protocol truncatedReason", detail: "host union does not accept ground_limit" });
+    findings.push({
+      kind: "ground",
+      hop: "host protocol truncatedReason",
+      detail: "host union does not accept ground_limit",
+    });
   for (const reason of REASONS) {
     if (!schemaReasons.has(reason))
-      findings.push({ kind: "ground", hop: "envelope schema truncatedReason", detail: `schema does not accept ${reason}` });
+      findings.push({
+        kind: "ground",
+        hop: "envelope schema truncatedReason",
+        detail: `schema does not accept ${reason}`,
+      });
   }
 
   // The ninth layer is not a declaration but a consumer: the native-local runners
@@ -413,7 +483,9 @@ function main() {
   console.log(`scene affordance kinds: ${report.kindCount}`);
   for (const row of report.perKind) {
     const flags = [row.densityCapped ? "dense" : "sparse", `priority=${row.priority}`].join(" ");
-    console.log(`  ${row.member.padEnd(14)} wire=${String(row.wire).padEnd(14)} ref=${String(row.refPrefix).padEnd(4)} ${flags}`);
+    console.log(
+      `  ${row.member.padEnd(14)} wire=${String(row.wire).padEnd(14)} ref=${String(row.refPrefix).padEnd(4)} ${flags}`,
+    );
   }
   if (report.findings.length === 0) {
     console.log("projection: ok (all nine hops agree with the Mod enum)");

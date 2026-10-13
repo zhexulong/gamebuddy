@@ -98,13 +98,24 @@ test("explicit chat-tavern-live profile skips security prerequisites without pas
       },
     ],
   );
-  assert.equal(report.checks.some((check) => check.status === "passed" && check.id.includes("reparse")), false);
+  assert.equal(
+    report.checks.some((check) => check.status === "passed" && check.id.includes("reparse")),
+    false,
+  );
   assert.deepEqual(
-    report.checks.filter((check) => check.id === "magic_context_stable_source" || check.id === "semantic_reference_attestation").map((check) => check.id),
+    report.checks
+      .filter((check) => check.id === "magic_context_stable_source" || check.id === "semantic_reference_attestation")
+      .map((check) => check.id),
     ["magic_context_stable_source", "semantic_reference_attestation"],
   );
-  assert.equal(calls.some(([, args]) => args.includes("build:test")), false);
-  assert.equal(calls.some(([, args]) => args.some((arg) => arg.endsWith("verify-tavern-semantic-references.mjs"))), true);
+  assert.equal(
+    calls.some(([, args]) => args.includes("build:test")),
+    false,
+  );
+  assert.equal(
+    calls.some(([, args]) => args.some((arg) => arg.endsWith("verify-tavern-semantic-references.mjs"))),
+    true,
+  );
 });
 
 test("default full Tavern profile still invokes and fails closed on security prerequisites", async () => {
@@ -124,7 +135,10 @@ test("default full Tavern profile still invokes and fails closed on security pre
   assert.equal(securityCalls, 1);
   assert.equal(report.verdict, "blocked");
   assert.equal(report.checks.find((check) => check.id === "windows_arbitrary_reparse_enforcement")?.status, "blocked");
-  assert.equal(report.checks.some((check) => check.status === "not_applicable"), false);
+  assert.equal(
+    report.checks.some((check) => check.status === "not_applicable"),
+    false,
+  );
 });
 
 test("Tavern prerequisite checker remains blocked unless the current live gate has exact success output", async () => {

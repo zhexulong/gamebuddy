@@ -36,9 +36,9 @@ import {
   parseArguments,
   parseSseFrame,
   prepareReportTarget,
-  projectStateSnapshot,
   probeTurnCommittedGate,
   probeVerdict,
+  projectStateSnapshot,
   validateAuditEvent,
   validateAuditTrace,
   writeAuditTrace,
@@ -67,7 +67,13 @@ function validTrace(events) {
       Object.freeze([
         { at: 0, kind: "lifecycle", actor: "harness", code: "run.started", meta: { status: "ready" } },
         { at: 5, kind: "provider", actor: "host", code: "request.sent" },
-        { at: 9, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { status: "collected", providerObservability: "observed" } },
+        {
+          at: 9,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { status: "collected", providerObservability: "observed" },
+        },
       ]),
   });
 }
@@ -128,11 +134,23 @@ test("probe events require their manifest binding and a breach names its distanc
     ]);
   const bound = { probeId: "p-turn-01", manifestDigest: DIGEST };
   // A probe result without its manifest binding is schema-invalid on both sides.
-  for (const meta of [{}, { probeId: "p-turn-01" }, { manifestDigest: DIGEST }, { ...bound, manifestDigest: "not-a-digest" }, { ...bound, probeId: "has space" }]) {
+  for (const meta of [
+    {},
+    { probeId: "p-turn-01" },
+    { manifestDigest: DIGEST },
+    { ...bound, manifestDigest: "not-a-digest" },
+    { ...bound, probeId: "has space" },
+  ]) {
     assert.equal(validateChatRunAudit(trace(meta)).valid, false, JSON.stringify(meta));
   }
   // A breach additionally has to place itself: distance + dimension=isolation.
-  for (const meta of [{ ...bound }, { ...bound, distance: "turn" }, { ...bound, dimension: "isolation" }, { ...bound, dimension: "retention", distance: "turn" }, { ...bound, dimension: "isolation", distance: "week" }]) {
+  for (const meta of [
+    { ...bound },
+    { ...bound, distance: "turn" },
+    { ...bound, dimension: "isolation" },
+    { ...bound, dimension: "retention", distance: "turn" },
+    { ...bound, dimension: "isolation", distance: "week" },
+  ]) {
     assert.equal(validateChatRunAudit(trace(meta, "isolation.breach")).valid, false, JSON.stringify(meta));
   }
   assert.equal(
@@ -194,7 +212,13 @@ test("audit trace self-validation agrees with the consumer on every malformed tr
         { at: 0, kind: "lifecycle", actor: "harness", code: "run.started", meta: { status: "ready" } },
         { at: 5, kind: "lifecycle", actor: "harness", code: "turn.submitted" },
         { at: 6, kind: "lifecycle", actor: "harness", code: "turn.terminal", meta: { state: "stopping" } },
-        { at: 9, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { providerObservability: "observed" } },
+        {
+          at: 9,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { providerObservability: "observed" },
+        },
       ]),
       false,
     ],
@@ -210,7 +234,13 @@ test("audit trace self-validation agrees with the consumer on every malformed tr
     [
       validTrace([
         { at: 0, kind: "lifecycle", actor: "harness", code: "run.started", meta: { status: "ready" } },
-        { at: 9, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { providerObservability: "observed", prompt: "x" } },
+        {
+          at: 9,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { providerObservability: "observed", prompt: "x" },
+        },
       ]),
       false,
     ],
@@ -273,7 +303,14 @@ function validProbeManifest(overrides = {}) {
         steps: [
           { kind: "seed", role: "player", text: "I used to be a postman for 8 years.", persistVia: "conversation" },
           { kind: "filler", role: "player", text: "Chowder and lighthouse duty?", persistVia: "conversation" },
-          { kind: "probe", role: "player", text: "What did I do before retiring?", requiredKeywords: ["postman"], forbiddenKeywords: ["mine", "truck"], minHitRate: 0.5 },
+          {
+            kind: "probe",
+            role: "player",
+            text: "What did I do before retiring?",
+            requiredKeywords: ["postman"],
+            forbiddenKeywords: ["mine", "truck"],
+            minHitRate: 0.5,
+          },
         ],
       },
     ],
@@ -283,7 +320,12 @@ function validProbeManifest(overrides = {}) {
   // exact canonical JSON so the fixture agrees with the loader by construction.
   // An explicit digest override (for mismatch tests) is preserved.
   if (overrides.manifestDigest === undefined) {
-    const canonical = JSON.stringify({ schema: "chat_memory_probe_manifest/v1", manifestId: merged.manifestId, continuityTopology: merged.continuityTopology, probes: merged.probes });
+    const canonical = JSON.stringify({
+      schema: "chat_memory_probe_manifest/v1",
+      manifestId: merged.manifestId,
+      continuityTopology: merged.continuityTopology,
+      probes: merged.probes,
+    });
     merged.manifestDigest = crypto.createHash("sha256").update(canonical).digest("hex");
   }
   return JSON.stringify(merged);
@@ -296,23 +338,49 @@ test("probe manifest loading validates the fixture sidecar shape and digest", ()
   assert.equal(loaded.probes[0].steps.length, 3);
   assert.throws(() => loadProbeManifest("not json"), /probe_manifest_invalid_json/);
   assert.throws(() => loadProbeManifest(JSON.stringify({ schema: "other" })), /probe_manifest_schema_mismatch/);
-  assert.throws(() => loadProbeManifest(validProbeManifest({ manifestDigest: "b".repeat(64) })), /probe_manifest_digest_mismatch/);
+  assert.throws(
+    () => loadProbeManifest(validProbeManifest({ manifestDigest: "b".repeat(64) })),
+    /probe_manifest_digest_mismatch/,
+  );
   assert.throws(() => loadProbeManifest(validProbeManifest({ probes: [] })), /probe_manifest_probes_missing/);
-  assert.throws(() => loadProbeManifest(validProbeManifest({ probes: [{ probeId: "x", distance: "week" }] })), /probe_manifest_probe_distance_invalid/);
+  assert.throws(
+    () => loadProbeManifest(validProbeManifest({ probes: [{ probeId: "x", distance: "week" }] })),
+    /probe_manifest_probe_distance_invalid/,
+  );
 });
 
 test("probe reply evaluation uses required + forbidden keywords at the design thresholds", () => {
   const step = { requiredKeywords: ["postman", "mail"], forbiddenKeywords: ["mine", "truck"], minHitRate: 0.5 };
-  assert.deepEqual(evaluateProbeReply({ transcriptText: "I was a postman delivering mail.", step }), { hit: true, forbiddenCount: 0 });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: "I was a postman delivering mail.", step }), {
+    hit: true,
+    forbiddenCount: 0,
+  });
   // Half of required suffices at the short-distance threshold.
-  assert.deepEqual(evaluateProbeReply({ transcriptText: "mail is what I did.", step }), { hit: true, forbiddenCount: 0 });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: "mail is what I did.", step }), {
+    hit: true,
+    forbiddenCount: 0,
+  });
   // Below the threshold is a miss.
-  assert.deepEqual(evaluateProbeReply({ transcriptText: "I delivered parcels.", step }), { hit: false, forbiddenCount: 0 });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: "I delivered parcels.", step }), {
+    hit: false,
+    forbiddenCount: 0,
+  });
   // Any forbidden keyword is a confused, regardless of required hits.
-  assert.deepEqual(evaluateProbeReply({ transcriptText: "I was a postman and I loved the mine.", step }), { hit: true, forbiddenCount: 1 });
-  assert.deepEqual(evaluateProbeReply({ transcriptText: "", step }), { hit: false, forbiddenCount: 0, reason: "no_presentation_text" });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: "I was a postman and I loved the mine.", step }), {
+    hit: true,
+    forbiddenCount: 1,
+  });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: "", step }), {
+    hit: false,
+    forbiddenCount: 0,
+    reason: "no_presentation_text",
+  });
   // No reply text at all must never be scored as a hit.
-  assert.deepEqual(evaluateProbeReply({ transcriptText: undefined, step }), { hit: false, forbiddenCount: 0, reason: "no_presentation_text" });
+  assert.deepEqual(evaluateProbeReply({ transcriptText: undefined, step }), {
+    hit: false,
+    forbiddenCount: 0,
+    reason: "no_presentation_text",
+  });
 });
 
 test("the probe committed-presentation gate requires a durable delta, never a stderr marker", () => {
@@ -356,10 +424,10 @@ test("a failed probe gate short-circuits to a gap and never scores keywords", ()
     probeVerdict({ gate: { ok: false, reason: "probe_turn_no_committed_presentation" }, keywords: wouldHit }),
     { event: "observability_gap", reason: "probe_turn_no_committed_presentation" },
   );
-  assert.deepEqual(
-    probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" }, keywords: wouldConfuse }),
-    { event: "observability_gap", reason: "probe_turn_not_terminal" },
-  );
+  assert.deepEqual(probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" }, keywords: wouldConfuse }), {
+    event: "observability_gap",
+    reason: "probe_turn_not_terminal",
+  });
   // A failure with no keyword read at all is still a gap, never a hit/miss.
   assert.deepEqual(probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" } }), {
     event: "observability_gap",
@@ -367,7 +435,9 @@ test("a failed probe gate short-circuits to a gap and never scores keywords", ()
   });
   // Only a passed gate scores, and then the keyword outcome decides.
   assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldHit }), { event: "needle.hit" });
-  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 0 } }), { event: "needle.miss" });
+  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: false, forbiddenCount: 0 } }), {
+    event: "needle.miss",
+  });
   assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: wouldConfuse }), {
     event: "distractor.confused",
     reason: "needle_only",
@@ -380,7 +450,10 @@ test("a failed probe gate short-circuits to a gap and never scores keywords", ()
     reason: "recall_failed",
   });
   // A passed gate with no keyword evidence is a gap, not a silent miss.
-  assert.deepEqual(probeVerdict({ gate: { ok: true } }), { event: "observability_gap", reason: "probe_keywords_missing" });
+  assert.deepEqual(probeVerdict({ gate: { ok: true } }), {
+    event: "observability_gap",
+    reason: "probe_keywords_missing",
+  });
 });
 
 test("the supersession dimension routes to its own frozen codes", () => {
@@ -404,14 +477,24 @@ test("the supersession dimension routes to its own frozen codes", () => {
     reason: "new_missing",
   });
   // A retention probe on the same keyword outcome must NOT take this branch.
-  assert.deepEqual(probeVerdict({ gate: { ok: true }, keywords: { hit: true, forbiddenCount: 0 }, dimension: "retention" }), {
-    event: "needle.hit",
-  });
+  assert.deepEqual(
+    probeVerdict({ gate: { ok: true }, keywords: { hit: true, forbiddenCount: 0 }, dimension: "retention" }),
+    {
+      event: "needle.hit",
+    },
+  );
   // The gate still short-circuits before the dimension is consulted.
-  assert.deepEqual(probeVerdict({ gate: { ok: false, reason: "probe_turn_not_terminal" }, keywords: { hit: true, forbiddenCount: 0 }, dimension }), {
-    event: "observability_gap",
-    reason: "probe_turn_not_terminal",
-  });
+  assert.deepEqual(
+    probeVerdict({
+      gate: { ok: false, reason: "probe_turn_not_terminal" },
+      keywords: { hit: true, forbiddenCount: 0 },
+      dimension,
+    }),
+    {
+      event: "observability_gap",
+      reason: "probe_turn_not_terminal",
+    },
+  );
 });
 
 test("audit harness writes the exact frozen schema-v2 deployment manifest for a chat-only run", () => {
@@ -436,7 +519,10 @@ test("audit recorder emits monotonic offsets and fails closed on an unknown code
     code: "run.started",
     meta: { status: "ready" },
   });
-  assert.throws(() => recorder.record("lifecycle", "harness", "run.invented"), /audit_event_emitted_invalid:event_code_unknown/);
+  assert.throws(
+    () => recorder.record("lifecycle", "harness", "run.invented"),
+    /audit_event_emitted_invalid:event_code_unknown/,
+  );
   // A clock that moves backwards cannot produce a non-monotonic trace.
   clock = 900;
   assert.equal(recorder.record("http", "harness", "state.read").at, 0);
@@ -457,18 +543,41 @@ test("audit event validation freezes the vocabulary, actor, and metadata surface
     reasonCode: "event_actor_mismatch",
   });
   // Only the frozen `meta` key set is expressible; a ninth key fails closed.
-  assert.deepEqual(validateAuditEvent({ at: 0, kind: "presentation", actor: "harness", code: "admitted", meta: { detail: "x" } }), {
-    ok: false,
-    reasonCode: "event_meta_key_unknown",
-  });
-  assert.equal(validateAuditEvent({ at: 0, kind: "presentation", actor: "harness", code: "admitted", meta: { status: "admission_ok" } }).ok, true);
+  assert.deepEqual(
+    validateAuditEvent({ at: 0, kind: "presentation", actor: "harness", code: "admitted", meta: { detail: "x" } }),
+    {
+      ok: false,
+      reasonCode: "event_meta_key_unknown",
+    },
+  );
+  assert.equal(
+    validateAuditEvent({
+      at: 0,
+      kind: "presentation",
+      actor: "harness",
+      code: "admitted",
+      meta: { status: "admission_ok" },
+    }).ok,
+    true,
+  );
   assert.deepEqual(
     validateAuditEvent({
       at: 0,
       kind: "http",
       actor: "harness",
       code: "state.read",
-      meta: { state: 1, reason: "a", problemCode: "b", disposition: "c", status: "d", count: 1, cursor: "e", generation: 1, providerObservability: "f", extra: 1 },
+      meta: {
+        state: 1,
+        reason: "a",
+        problemCode: "b",
+        disposition: "c",
+        status: "d",
+        count: 1,
+        cursor: "e",
+        generation: 1,
+        providerObservability: "f",
+        extra: 1,
+      },
     }),
     { ok: false, reasonCode: "event_meta_too_many_keys" },
   );
@@ -480,10 +589,19 @@ test("audit event validation freezes the vocabulary, actor, and metadata surface
     ok: false,
     reasonCode: "event_unknown_field",
   });
-  assert.deepEqual(validateAuditEvent({ at: 0, kind: "http", actor: "harness", code: "state.read", meta: { reason: "x".repeat(161) } }), {
-    ok: false,
-    reasonCode: "event_meta_value_invalid",
-  });
+  assert.deepEqual(
+    validateAuditEvent({
+      at: 0,
+      kind: "http",
+      actor: "harness",
+      code: "state.read",
+      meta: { reason: "x".repeat(161) },
+    }),
+    {
+      ok: false,
+      reasonCode: "event_meta_value_invalid",
+    },
+  );
 });
 
 test("audit trace self-validation rejects malformed traces so none can be written", async () => {
@@ -508,20 +626,40 @@ test("audit trace self-validation rejects malformed traces so none can be writte
       validTrace([
         { at: 5, kind: "http", actor: "harness", code: "state.read" },
         { at: 1, kind: "http", actor: "harness", code: "state.read" },
-        { at: 9, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { providerObservability: "observed" } },
+        {
+          at: 9,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { providerObservability: "observed" },
+        },
       ]),
     ),
     { ok: false, reasonCode: "trace_at_not_monotonic" },
   );
   assert.deepEqual(
-    validateAuditTrace(validTrace([{ at: 0, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { status: "collected" } }])),
+    validateAuditTrace(
+      validTrace([{ at: 0, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { status: "collected" } }]),
+    ),
     { ok: false, reasonCode: "event_provider_observability_missing" },
   );
   assert.deepEqual(
     validateAuditTrace(
       validTrace([
-        { at: 0, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { providerObservability: "observed" } },
-        { at: 1, kind: "lifecycle", actor: "harness", code: "run.finished", meta: { providerObservability: "observed" } },
+        {
+          at: 0,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { providerObservability: "observed" },
+        },
+        {
+          at: 1,
+          kind: "lifecycle",
+          actor: "harness",
+          code: "run.finished",
+          meta: { providerObservability: "observed" },
+        },
       ]),
     ),
     { ok: false, reasonCode: "trace_run_finished_invalid" },
@@ -540,7 +678,10 @@ test("content guard rejects a trace that leaked prompt material, message bodies,
       assert.equal(contentFree(JSON.stringify(leaked)), false, JSON.stringify(leaked));
     }
     const target = await prepareReportTarget(join(root, "leaked.json"));
-    await assert.rejects(writeAuditTrace(target, { ...validTrace(), leaked: "private prompt" }), /audit_trace_invalid:trace_category_invalid/);
+    await assert.rejects(
+      writeAuditTrace(target, { ...validTrace(), leaked: "private prompt" }),
+      /audit_trace_invalid:trace_category_invalid/,
+    );
     // A trace whose only defect is a smuggled content line is refused by the
     // content guard, and the refused trace leaves no file behind.
     await assert.rejects(
@@ -564,7 +705,10 @@ test("audit trace writer is create-only and refuses an invalid trace without wri
     await assert.rejects(writeAuditTrace(target, validTrace()), { code: "EEXIST" });
     // A malformed trace is refused before any file handle is opened.
     const invalidTarget = await prepareReportTarget(join(root, "invalid.json"));
-    await assert.rejects(writeAuditTrace(invalidTarget, { ...validTrace(), provider: { embedded: true, observed: "yes" } }), /audit_trace_invalid:/);
+    await assert.rejects(
+      writeAuditTrace(invalidTarget, { ...validTrace(), provider: { embedded: true, observed: "yes" } }),
+      /audit_trace_invalid:/,
+    );
     await assert.rejects(readFile(invalidTarget, "utf8"), { code: "ENOENT" });
     // `console` path only returns the serialized trace without touching disk.
     assert.match(await writeAuditTrace(undefined, validTrace()), /"schema": "chat_run_audit\/v1"/);
@@ -572,7 +716,10 @@ test("audit trace writer is create-only and refuses an invalid trace without wri
 
 test("report target preparation fails closed for a missing or non-directory parent", async () =>
   withRoot(async (root) => {
-    await assert.rejects(prepareReportTarget(join(root, "missing", "trace.json")), /report_parent_missing_or_unresolvable/);
+    await assert.rejects(
+      prepareReportTarget(join(root, "missing", "trace.json")),
+      /report_parent_missing_or_unresolvable/,
+    );
     const parentFile = join(root, "not-a-directory");
     await writeFile(parentFile, "not a directory");
     await assert.rejects(prepareReportTarget(join(parentFile, "trace.json")), /report_parent_not_real_directory/);
@@ -587,40 +734,69 @@ test("audit harness classifies bounded startup stderr for exit-before-ready fail
     classifyStartupFailure(new Error("dialogue_exited_before_ready:1"), "desktop_compose_runtime_admission_mismatch\n"),
     "dialogue_start_stderr:desktop_compose_runtime_admission_mismatch",
   );
-  assert.equal(classifyStartupFailure(new Error("desktop_compose_bootstrap_ack_invalid"), ""), "desktop_compose_bootstrap_ack_invalid");
+  assert.equal(
+    classifyStartupFailure(new Error("desktop_compose_bootstrap_ack_invalid"), ""),
+    "desktop_compose_bootstrap_ack_invalid",
+  );
   // Runtime content never becomes a reason code.
   assert.equal(classifyStartupStderr("Error: private prompt text\n"), undefined);
-  assert.equal(classifyStartupFailure(new Error("dialogue_exited_before_ready:1"), ""), "dialogue_exited_before_ready:1");
+  assert.equal(
+    classifyStartupFailure(new Error("dialogue_exited_before_ready:1"), ""),
+    "dialogue_exited_before_ready:1",
+  );
 });
 
 test("provider evidence requires the exact session identity, digest, and marker schema", () => {
-  assert.deepEqual(evaluateProviderRuntimeMarker({ schema: "gamebuddy-tavern-narrative-gate-runtime/v1", piSessionId: "pi_01" }), {
-    observed: true,
-    piSessionId: "pi_01",
+  assert.deepEqual(
+    evaluateProviderRuntimeMarker({ schema: "gamebuddy-tavern-narrative-gate-runtime/v1", piSessionId: "pi_01" }),
+    {
+      observed: true,
+      piSessionId: "pi_01",
+    },
+  );
+  assert.deepEqual(evaluateProviderRuntimeMarker(undefined), {
+    observed: false,
+    reasonCode: "provider_runtime_session_unavailable",
   });
-  assert.deepEqual(evaluateProviderRuntimeMarker(undefined), { observed: false, reasonCode: "provider_runtime_session_unavailable" });
   assert.deepEqual(evaluateProviderPreSendMarker(undefined, DIGEST, "pi_01"), {
     observed: false,
     reasonCode: "provider_marker_unavailable",
   });
   assert.deepEqual(
-    evaluateProviderPreSendMarker({ schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: DIGEST }, DIGEST, "pi_01"),
+    evaluateProviderPreSendMarker(
+      { schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: DIGEST },
+      DIGEST,
+      "pi_01",
+    ),
     { observed: true, preSendSerialized: true },
   );
   assert.equal(
-    evaluateProviderPreSendMarker({ schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: DIGEST }, DIGEST, "pi_02").reasonCode,
+    evaluateProviderPreSendMarker(
+      { schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: DIGEST },
+      DIGEST,
+      "pi_02",
+    ).reasonCode,
     "provider_marker_digest_mismatch",
   );
   assert.equal(
-    evaluateProviderPreSendMarker({ schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: "bad" }, DIGEST, "pi_01").reasonCode,
+    evaluateProviderPreSendMarker(
+      { schema: "gamebuddy-tavern-narrative-gate-marker/v1", sessionId: "pi_01", nonceSha256: "bad" },
+      DIGEST,
+      "pi_01",
+    ).reasonCode,
     "provider_marker_schema_invalid",
   );
 });
 
 test("presentation diagnostics read only the frozen production stderr markers", () => {
   assert.deepEqual(
-    classifyPresentationMarkers("[DEBUG-chat-live-p4c] admission_ok\n[DEBUG-chat-live-p4c] commit_done\n[DEBUG-chat-live-p4c] commit_rejected\n"),
-    [{ code: "admitted", status: "admission_ok" }, { code: "rejected", reason: "commit_rejected" }],
+    classifyPresentationMarkers(
+      "[DEBUG-chat-live-p4c] admission_ok\n[DEBUG-chat-live-p4c] commit_done\n[DEBUG-chat-live-p4c] commit_rejected\n",
+    ),
+    [
+      { code: "admitted", status: "admission_ok" },
+      { code: "rejected", reason: "commit_rejected" },
+    ],
   );
   // `native_final` and `commit_done` are not admission evidence and never become
   // a Class B fact; only the frozen marker shapes are read.
@@ -632,9 +808,7 @@ test("presentation diagnostics read only the frozen production stderr markers", 
 test("probe materialization markers are parsed strictly and never become frozen codes", () => {
   const digest = "a".repeat(64);
   assert.deepEqual(
-    classifyProbeMaterializationMarkers(
-      `[probe:m0_digest] ${digest} rev_7\n[probe:fold_committed] rev_123\n`,
-    ),
+    classifyProbeMaterializationMarkers(`[probe:m0_digest] ${digest} rev_7\n[probe:fold_committed] rev_123\n`),
     [
       { code: "m0_digest", digest, revision: "rev_7" },
       { code: "fold_committed", revision: "rev_123" },
@@ -654,12 +828,17 @@ test("probe materialization markers are parsed strictly and never become frozen 
 });
 
 test("SSE frames are parsed strictly and rejected frames are reported rather than dropped", () => {
-  assert.deepEqual(parseSseFrame('id: cur_01\nevent: turn.state_changed\ndata: {"eventType":"turn.state_changed","payload":{"state":"completed"}}'), {
-    ok: true,
-    cursor: "cur_01",
-    eventType: "turn.state_changed",
-    payload: { eventType: "turn.state_changed", payload: { state: "completed" } },
-  });
+  assert.deepEqual(
+    parseSseFrame(
+      'id: cur_01\nevent: turn.state_changed\ndata: {"eventType":"turn.state_changed","payload":{"state":"completed"}}',
+    ),
+    {
+      ok: true,
+      cursor: "cur_01",
+      eventType: "turn.state_changed",
+      payload: { eventType: "turn.state_changed", payload: { state: "completed" } },
+    },
+  );
   assert.deepEqual(parseSseFrame("event: turn.state_changed\n"), { ok: false, reason: "incomplete_frame" });
   assert.deepEqual(parseSseFrame("event: x\ndata: not-json"), { ok: false, reason: "invalid_json" });
   assert.deepEqual(parseSseFrame('event: x\ndata: {"eventType":"y"}'), { ok: false, reason: "event_type_mismatch" });
@@ -672,11 +851,7 @@ test("durable state projection and reload comparison use only the authoritative 
     chat: {
       draft: { revision: 3 },
       turn: { handle: "turn_01", state: "completed", projectionRevision: 1, canCancel: false },
-      transcript: [
-        { role: "player" },
-        { role: "companion" },
-        { role: "companion" },
-      ],
+      transcript: [{ role: "player" }, { role: "companion" }, { role: "companion" }],
     },
     memory: { readAvailable: true, mutationAvailable: false, projectionRevision: "h" },
   };
@@ -715,10 +890,7 @@ test("durable state projection and reload comparison use only the authoritative 
     selection: { generation: 7 },
     chat: {
       turn: { handle: "turn_03", state: "completed", canCancel: false },
-      transcript: [
-        { role: "companion", text: "earlier text" },
-        { role: "companion" },
-      ],
+      transcript: [{ role: "companion", text: "earlier text" }, { role: "companion" }],
     },
   });
   assert.equal(Object.hasOwn(nonTextLast, "committedCompanionText"), false);
@@ -797,8 +969,14 @@ test("a conversation turn contributes a boundary reason when it is unsettled or 
   // verdict must carry that fact; the per-turn state and its bounded problemCode stay in the trace.
   assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "completed" } }), undefined);
   assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "cancelled" } }), undefined);
-  assert.equal(conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "failed" } }), "conversation_turn_failed");
-  assert.equal(conversationTurnBoundaryReason({ terminal: false, projection: { turnState: "running" } }), "conversation_turn_not_terminal");
+  assert.equal(
+    conversationTurnBoundaryReason({ terminal: true, projection: { turnState: "failed" } }),
+    "conversation_turn_failed",
+  );
+  assert.equal(
+    conversationTurnBoundaryReason({ terminal: false, projection: { turnState: "running" } }),
+    "conversation_turn_not_terminal",
+  );
   assert.equal(conversationTurnBoundaryReason(undefined), "conversation_turn_not_terminal");
   const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
   assert.match(source, /conversationTurnBoundaryReason\(turn\)/);

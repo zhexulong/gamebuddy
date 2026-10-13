@@ -86,7 +86,11 @@ test("a kind dropped from the BridgeProtocol outbound allowlist is reported", ()
   box.write(BRIDGE, mutated);
 
   const named = box.audit().findings.filter((f) => f.hop === "BridgeProtocol outbound");
-  assert.deepEqual(named.map((f) => f.kind), ["water_source"], "audit must name the dropped kind");
+  assert.deepEqual(
+    named.map((f) => f.kind),
+    ["water_source"],
+    "audit must name the dropped kind",
+  );
 });
 
 test("a kind dropped from the BridgeProtocol inbound allowlist is reported", () => {
@@ -100,7 +104,11 @@ test("a kind dropped from the BridgeProtocol inbound allowlist is reported", () 
   box.write(BRIDGE, mutated);
 
   const named = box.audit().findings.filter((f) => f.hop === "BridgeProtocol inbound");
-  assert.deepEqual(named.map((f) => f.kind), ["water_source"], "audit must name the dropped kind");
+  assert.deepEqual(
+    named.map((f) => f.kind),
+    ["water_source"],
+    "audit must name the dropped kind",
+  );
 });
 
 test("a layer admitting an undeclared kind is reported as a superset", () => {
@@ -144,7 +152,10 @@ test("a ground kind missing from the Host union is reported", () => {
 test("a ground object that inlines its own value set instead of the alias is reported", () => {
   const box = sandbox();
   const original = box.original("host/src/protocol.ts");
-  const mutated = original.replace("dominantKind: SceneGroundKind;", 'dominantKind: "grass" | "dirt" | "stone" | "wood" | "other";');
+  const mutated = original.replace(
+    "dominantKind: SceneGroundKind;",
+    'dominantKind: "grass" | "dirt" | "stone" | "wood" | "other";',
+  );
   assert.notEqual(mutated, original, "mutation must actually change the source");
   box.write("host/src/protocol.ts", mutated);
 
@@ -165,9 +176,9 @@ test("an outbound path that bypasses the ground wire helper is reported", () => 
   assert.notEqual(mutated, original, "mutation must actually change the source");
   box.write(relative, mutated);
 
-  const named = box.audit().findings.filter(
-    (f) => f.hop === "BridgeProtocol" && f.detail.includes("SceneGroundKindWire.ToWireValue"),
-  );
+  const named = box
+    .audit()
+    .findings.filter((f) => f.hop === "BridgeProtocol" && f.detail.includes("SceneGroundKindWire.ToWireValue"));
   assert.equal(named.length, 1, "audit must report an outbound path that bypasses the wire helper");
 });
 
@@ -178,8 +189,8 @@ test("an outbound path that bypasses the ground wire helper is reported", () => 
 test("a truncation reason missing from the schema's conditional branch is reported", () => {
   const box = sandbox();
   const schema = JSON.parse(box.original(SCHEMA));
-  const branch = (schema.$defs?.observeSceneResult?.allOf ?? []).find(
-    (candidate) => Array.isArray(candidate?.then?.properties?.truncatedReason?.enum),
+  const branch = (schema.$defs?.observeSceneResult?.allOf ?? []).find((candidate) =>
+    Array.isArray(candidate?.then?.properties?.truncatedReason?.enum),
   );
   assert.ok(branch, "the partial branch must declare its fixed reason set");
   assert.deepEqual(
@@ -190,7 +201,9 @@ test("a truncation reason missing from the schema's conditional branch is report
   branch.then.properties.truncatedReason.enum = ["maximum_affordances", "payload_limit"];
   box.write(SCHEMA, `${JSON.stringify(schema, null, 2)}\n`);
 
-  const named = box.audit().findings.filter((f) => f.hop === "envelope schema allOf[0]" && f.detail.includes("ground_limit"));
+  const named = box
+    .audit()
+    .findings.filter((f) => f.hop === "envelope schema allOf[0]" && f.detail.includes("ground_limit"));
   assert.equal(named.length, 1, "audit must report the omitted reason on the branch that narrows by partial");
 });
 
@@ -219,10 +232,7 @@ test("a runner that enumerates a subset of the truncation reasons is reported", 
   const dir = path.join(box.dir, "tools");
   mkdirSync(dir, { recursive: true });
   const runner = "run-stardew-native-local-player-probe-smoke.mjs";
-  writeFileSync(
-    path.join(dir, runner),
-    'const PARTIAL = new Set(["maximum_affordances", "payload_limit"]);\n',
-  );
+  writeFileSync(path.join(dir, runner), 'const PARTIAL = new Set(["maximum_affordances", "payload_limit"]);\n');
   const named = box.audit().findings.filter((f) => f.hop === `runner ${runner}`);
   assert.deepEqual(
     named.map((f) => f.detail.includes("ground_limit")),
@@ -230,4 +240,3 @@ test("a runner that enumerates a subset of the truncation reasons is reported", 
     "audit must name the omitted reason",
   );
 });
-

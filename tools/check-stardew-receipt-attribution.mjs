@@ -5,7 +5,7 @@
  * compute it: the evidence must carry the measurement that made the label true.
  * Unknown attribution remains `undecided`.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,18 +38,23 @@ export function validateReceiptAttribution(evidence) {
     const value = fields.get(key);
     if (value === undefined) continue;
     if (key === "arrival") {
-      if (!isUndecided(value) && (!fields.has("tile") || !fields.has("target") || fields.get("tile") === "none" || fields.get("target") === "none")) {
+      if (
+        !isUndecided(value) &&
+        (!(fields.has("tile") && fields.has("target")) ||
+          fields.get("tile") === "none" ||
+          fields.get("target") === "none")
+      ) {
         violations.push({ key, issue: "missing_run_measurement", value });
       }
       continue;
     }
     if (key === "stalled_by") {
-      if (!isUndecided(value) && (!fields.has("stalled_ticks") || !fields.has("stopped_by"))) {
+      if (!isUndecided(value) && !(fields.has("stalled_ticks") && fields.has("stopped_by"))) {
         violations.push({ key, issue: "missing_run_measurement", value });
       }
       continue;
     }
-    if (!isUndecided(value) && !fields.has("measurement")) {
+    if (!(isUndecided(value) || fields.has("measurement"))) {
       violations.push({ key, issue: "missing_run_measurement", value });
     }
   }
@@ -58,8 +63,10 @@ export function validateReceiptAttribution(evidence) {
 
 function shouldScan(path) {
   const lower = path.toLowerCase();
-  return [...SOURCE_EXTENSIONS].some((extension) => lower.endsWith(extension))
-    && !lower.split(/[\\/]/u).some((part) => EXCLUDED_PARTS.has(part));
+  return (
+    [...SOURCE_EXTENSIONS].some((extension) => lower.endsWith(extension)) &&
+    !lower.split(/[\\/]/u).some((part) => EXCLUDED_PARTS.has(part))
+  );
 }
 
 function collectFiles(root) {
@@ -75,9 +82,7 @@ function collectFiles(root) {
 }
 
 function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//gu, "")
-    .replace(/(^|\s)\/\/.*$/gmu, "$1");
+  return source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|\s)\/\/.*$/gmu, "$1");
 }
 
 /**
@@ -107,7 +112,12 @@ function scanProductionSource(source, path) {
     const match = field.exec(clean);
     if (!match) continue;
     if (measured || (undecided !== null && undecided.test(clean))) continue;
-    findings.push({ path, line: clean.slice(0, match.index).split("\n").length, key, issue: "producer_has_no_measurement_field" });
+    findings.push({
+      path,
+      line: clean.slice(0, match.index).split("\n").length,
+      key,
+      issue: "producer_has_no_measurement_field",
+    });
   }
   return findings;
 }
@@ -119,8 +129,13 @@ export function checkStardewReceiptAttribution({ sourceOverrides = {}, root = SO
     // Receipt-producing code is the narrow authority for attribution labels. Logs,
     // fixture setup and persistence codecs may mention the vocabulary without
     // publishing a receipt fact and are deliberately outside this source gate.
-    const source = Object.hasOwn(sourceOverrides, relativePath) ? sourceOverrides[relativePath] : readFileSync(path, "utf8");
-    if (!/LocalExecutionReceipt|RememberTerminal|ExecutionState\.(Succeeded|Rejected|Uncertain|Cancelled)/u.test(source)) continue;
+    const source = Object.hasOwn(sourceOverrides, relativePath)
+      ? sourceOverrides[relativePath]
+      : readFileSync(path, "utf8");
+    if (
+      !/LocalExecutionReceipt|RememberTerminal|ExecutionState\.(Succeeded|Rejected|Uncertain|Cancelled)/u.test(source)
+    )
+      continue;
     findings.push(...scanProductionSource(source, relativePath));
   }
   return Object.freeze({
@@ -132,7 +147,8 @@ export function checkStardewReceiptAttribution({ sourceOverrides = {}, root = SO
 
 function main() {
   const report = checkStardewReceiptAttribution();
-  for (const finding of report.findings) process.stdout.write(`  ${finding.path}:${finding.line} ${finding.key} ${finding.issue}\n`);
+  for (const finding of report.findings)
+    process.stdout.write(`  ${finding.path}:${finding.line} ${finding.key} ${finding.issue}\n`);
   process.stdout.write(`stardew receipt attribution gate: ${report.findings.length} finding(s)\n`);
   process.exit(report.ok ? 0 : 1);
 }
