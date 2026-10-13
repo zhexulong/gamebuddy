@@ -604,6 +604,21 @@ async function withScriptedMod(
   }
 }
 
+async function reportRefusal(
+  tools: readonly ToolDefinition[],
+  requestId: string,
+  executionId: string,
+): Promise<string> {
+  return await invoke(tools, "report_to_parent", {
+    state: "completed",
+    reasonCode: "done",
+    evidence: { requestId, executionId },
+  }).then(
+    () => "not_refused",
+    (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  );
+}
+
 function testDispatchAdmissionFactory(mounted: { cancel?: (...args: any[]) => any }) {
   let generation = 0;
   return () => {
@@ -877,6 +892,64 @@ test("Gameplay worker fake session blocks a second action until the owned receip
       worker.lastTaskSteps.map((step) => step.name),
       ["worker_finished", "worker_reported_completed", "authoritatively_completed"],
     );
+  });
+});
+
+// This is the direction the report-boundary reconcile must not move: the guard is
+// the reason the defect above was visible at all, so a completion with no
+// authoritative task-owned receipt keeps being refused by the same bounded name -
+// both when the owned receipt is still nonterminal and when the task never
+// dispatched the execution the report names.
+test("report rejection keeps refusing a completion with no authoritative task-owned receipt", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool"],
+    snapshot: liveSnapshot(["equip_tool"]),
+    latestReceipt: null,
+    latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  await withScriptedMod(state, calls, async (mod) => {
+    const mounted = mod.connection;
+    const worker = new GameplayTaskSubagent(
+      paths,
+      mounted,
+      undefined,
+      {
+        create: async ({ customTools }) =>
+          fakeSession(customTools, async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              tool: "axe",
+              requestId: "request_unsettled",
+              idempotencyKey: "key_unsettled",
+            });
+            // The dispatch response settled this execution as accepted and the
+            // Mod publishes no durable receipt for it, so nothing authoritative
+            // ever reaches the lineage cache. The verdict is refused by name.
+            assert.equal(
+              await reportRefusal(tools, "request_unsettled", "execution_1"),
+              "authoritative_completion_receipt_required",
+            );
+            // A report naming an execution this task never dispatched is not a
+            // lineage this task may borrow either.
+            assert.equal(
+              await reportRefusal(tools, "request_foreign", "execution_foreign"),
+              "authoritative_completion_receipt_required",
+            );
+          }),
+      },
+      undefined,
+      testDispatchAdmissionFactory(mounted),
+    );
+    const result = await worker.run("unproven completion");
+    // The worker finished without ever producing an accepted report, so the task
+    // ends blocked; the exact refusal above is what kept it that way.
+    assert.equal(result.state, "blocked");
+    assert.equal(worker.lastTaskRecord?.terminalReasonCode, "missing_terminal_report");
+    assert.deepEqual(calls.execute, ["equip_tool"]);
   });
 });
 

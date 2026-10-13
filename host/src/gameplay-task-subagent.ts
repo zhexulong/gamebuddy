@@ -348,6 +348,16 @@ export class GameplayTaskSubagent {
               ? {}
               : { evidence: params.evidence }),
           });
+          // The action branch reconciles the owned execution immediately before
+          // admission; the report boundary is the other place a verdict is
+          // decided and must reconcile too. An execute RESPONSE can settle the
+          // pending correlation as accepted while the authoritative receipt for
+          // that same execution arrives moments later, and only
+          // reconcileKnownExecution moves it into this task's lineage cache. With
+          // no reconcile here, a task that has just watched its last receipt
+          // succeed can never prove the completion it is reporting.
+          if (report.state === "completed")
+            reconcileKnownExecution(record, this.integration);
           if (
             report.state === "completed" &&
             !hasAuthoritativeCompletion(
