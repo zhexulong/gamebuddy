@@ -2,7 +2,12 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { TSchema } from "typebox";
 import { Compile } from "typebox/compile";
-import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
+import { ModelProfileRevisionConflict } from "./settings/model-profile-store.js";
+import {
+  PlayerPreferenceRevisionConflict,
+  type PlayerPreference,
+  type PlayerPreferenceUpdate,
+} from "./settings/player-preference-store.js";
 import {
   type ChatListQueryV1,
   type ChatOpeningCommandV1,
@@ -53,6 +58,7 @@ import {
   type TavernVoiceDevicesV1,
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
+import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
@@ -2010,17 +2016,17 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "memory_read_storage_unavailable") return { status: 503, code: "storage_unavailable" };
-  if (message === "model_profile_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
+  if (error instanceof ModelProfileRevisionConflict) return { status: 409, code: "settings_revision_conflict" };
   if (message === "invalid_model_profile_update") return { status: 400, code: "invalid_request" };
   if (message === "invalid_model_profile_store" || message === "model_profile_readback_mismatch")
     return { status: 503, code: "storage_unavailable" };
   if (message === "model_profile_store_unavailable") return { status: 503, code: "runtime_unavailable" };
-  if (message === "player_preference_revision_conflict") return { status: 409, code: "settings_revision_conflict" };
+  if (error instanceof PlayerPreferenceRevisionConflict) return { status: 409, code: "settings_revision_conflict" };
   if (message === "invalid_player_preference_update") return { status: 400, code: "invalid_request" };
   if (message === "player_preference_store_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "dialogue_busy") return { status: 409, code: "dialogue_busy" };
   if (message === "connection_limit_reached") return { status: 409, code: "connection_limit_reached" };
-  if (message === "tavern_connection_revision_conflict") return { status: 409, code: "connection_conflict" };
+  if (error instanceof TavernConnectionRevisionConflict) return { status: 409, code: "connection_conflict" };
   if (
     message === "provider_unknown" ||
     message === "api_key_required" ||

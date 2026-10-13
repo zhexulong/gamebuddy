@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
-import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
+import { PlayerPreferenceRevisionConflict, type PlayerPreference, type PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import {
   composeTavernProfile,
   type MemoryMutationCommandV1,
@@ -1708,7 +1708,7 @@ test("management handler exposes the Host-owned language preference read and upd
   const preferenceStore = {
     read: async () => languageState,
     update: async (expectedRevision: number, update: PlayerPreferenceUpdate) => {
-      if (expectedRevision !== languageState.revision) throw new Error("player_preference_revision_conflict");
+      if (expectedRevision !== languageState.revision) throw new PlayerPreferenceRevisionConflict();
       languageState = { ...languageState, revision: languageState.revision + 1 };
       if (update.action === "setLocale") languageState = { ...languageState, locale: update.locale };
       return languageState;
@@ -1847,7 +1847,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
         return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
-        throw new Error("player_preference_revision_conflict");
+        throw new PlayerPreferenceRevisionConflict();
       },
     }),
     profile,

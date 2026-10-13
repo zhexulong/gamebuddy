@@ -41,6 +41,44 @@ test("flags a cross-module comparison against another module's typed error messa
   assert.equal(findings[0].definedIn, "a.ts");
 });
 
+test("flags a local copy of another module's typed error message", () => {
+  const { findings } = withFixtureRoot(() => ({
+    "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
+    "b.ts":
+      'export function classify(error: unknown): boolean {\n  const message = error instanceof Error ? error.message : "";\n  return message === "foo_failed";\n}\n',
+  }));
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, "b.ts");
+  assert.equal(findings[0].line, 3);
+  assert.equal(findings[0].form, "aliased-local");
+  assert.equal(findings[0].local, "message");
+  assert.equal(findings[0].literal, "foo_failed");
+  assert.equal(findings[0].definedIn, "a.ts");
+});
+
+test("does not flag a local copy compared against a literal that is not an error identity", () => {
+  const { findings } = withFixtureRoot(() => ({
+    "b.ts": 'export function classify(error: Error): boolean {\n  const message = error.message;\n  return message === "not_an_identity";\n}\n',
+  }));
+  assert.deepEqual(findings, []);
+});
+
+test("does not follow an alias declared after the comparison", () => {
+  const { findings } = withFixtureRoot(() => ({
+    "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
+    "b.ts": 'export function classify(error: Error): boolean {\n  const hit = message === "foo_failed";\n  const message = error.message;\n  return hit;\n}\n',
+  }));
+  assert.deepEqual(findings, []);
+});
+
+test("does not follow a local copy of a property other than .message", () => {
+  const { findings } = withFixtureRoot(() => ({
+    "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
+    "b.ts": 'export function classify(error: { name: string }): boolean {\n  const label = error.name;\n  return label === "foo_failed";\n}\n',
+  }));
+  assert.deepEqual(findings, []);
+});
+
 test("does not flag a module matching its own typed error message", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts":
@@ -91,6 +129,23 @@ test("the CLI reports the planted violation and exits non-zero", () => {
       'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
     );
     writeFileSync(join(root, "b.ts"), 'export const x = (error: Error): boolean => error.message === "foo_failed";\n');
+    assert.equal(main([root]), 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the CLI reports the planted aliased violation and exits non-zero", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-error-identity-alias-"));
+  try {
+    writeFileSync(
+      join(root, "a.ts"),
+      'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
+    );
+    writeFileSync(
+      join(root, "b.ts"),
+      'export const classify = (error: Error): boolean => {\n  const message = error.message;\n  return message === "foo_failed";\n};\n',
+    );
     assert.equal(main([root]), 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
