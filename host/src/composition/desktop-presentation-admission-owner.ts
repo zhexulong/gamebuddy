@@ -5,6 +5,8 @@ import { identityProfileMetadata, readIdentityProfile } from "../identity-profil
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
+import { mergeMountedCompanionList } from "./companion-library-list.js";
+
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { settleMountedAuthoredContext } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -279,29 +281,10 @@ function createTavernManagementDomains(
         mountedNamePromise,
         libraryBase.listCompanions(),
       ]);
-      return [
-        // The unchanged mounted companion is always first with its projected
-        // handle and current marker; a provisioning failure of the identity
-        // profile would leave the name undefined, but the runtime always writes
-        // the profile at mount, so this is only a defense-in-depth guard, never
-        // the normal path.
-        ...(mountedName === undefined
-          ? []
-          : [
-              Object.freeze({
-                handle: companionHandleFor(currentCompanionId),
-                name: mountedName,
-                isCurrent: true,
-              }),
-            ]),
-        ...companions.map((companion: Readonly<{ companionId: string; name: string }>) =>
-          Object.freeze({
-            handle: companionHandleFor(companion.companionId),
-            name: companion.name,
-            isCurrent: companion.companionId === currentCompanionId,
-          }),
-        ),
-      ];
+      // The mounted companion is spliced in exactly once by its own
+      // `companionId`; the library carries it too, so a plain concat renders the
+      // current companion twice (same handle, same name).
+      return mergeMountedCompanionList(companions, currentCompanionId, mountedName, companionHandleFor);
     },
   });
   const companionDetailService = Object.freeze({
