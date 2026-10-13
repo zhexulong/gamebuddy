@@ -171,9 +171,8 @@ export async function runMountedProviderStart(
 ): Promise<ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
-    scope.assertAdmission();
-    process.stderr.write("[DEBUG-chat-live-p4c] admission_ok\\n");
-    const runtimeSession = scope.runtimeSession;
+  scope.assertAdmission();
+  const runtimeSession = scope.runtimeSession;
   const installObserver =
     typeof runtimeSession.installTavernProviderStartObserver === "function"
       ? runtimeSession.installTavernProviderStartObserver
@@ -260,7 +259,6 @@ export async function runMountedProviderStart(
         previewPublished = true;
       },
       onFinalText: async (text) => {
-        process.stderr.write("[DEBUG-chat-live-p4c] native_final\\n");
         // Also finalize the voice sink so the speech job is settled.
         if (speechSink !== undefined) {
           try {
@@ -273,13 +271,8 @@ export async function runMountedProviderStart(
         // observer continuation writes durable `running`. The content callback
         // therefore waits for that exact barrier; it never commits early.
         if (!(await runningBarrier)) return;
-        process.stderr.write("[DEBUG-chat-live-p4c] commit_begin\\n");
         const reservation = scope.reserveNativeContentCommit();
-        if (reservation === undefined) {
-          process.stderr.write("[DEBUG-chat-live-p4c] commit_rejected\\n");
-          return;
-        }
-        process.stderr.write("[DEBUG-chat-live-p4c] commit_reserved\\n");
+        if (reservation === undefined) return;
         try {
           const committedAtMs = Date.now();
           const committed = await scope.transitionPresentation({
@@ -294,9 +287,7 @@ export async function runMountedProviderStart(
           });
           if (committed.status !== "presentation_committed")
             throw new Error("native_content_presentation_commit_rejected");
-          process.stderr.write("[DEBUG-chat-live-p4c] commit_done\\n");
         } catch (error) {
-          process.stderr.write("[DEBUG-chat-live-p4c] commit_error\\n");
           // Observer callback failure is not a terminal authority. Preserve a
           // Stop winner when one exists; otherwise let the ordinary P5 failure
           // transition below terminalize the already-durable running attempt.
@@ -306,7 +297,6 @@ export async function runMountedProviderStart(
         }
       },
       onRejected: async (reason) => {
-        process.stderr.write(`[DEBUG-chat-live-p4c] native_rejected_${reason}\\n`);
         // A rejected/error turn must not leave a speech job half-open.
         if (speechSink !== undefined) {
           try {
@@ -363,7 +353,6 @@ export async function runMountedProviderStart(
       await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() }),
       "arm",
     );
-    process.stderr.write("[DEBUG-chat-live-p4c] arm_done\\n");
     // Invocation linearization: only while prompt has not begun may a failed
     // revalidation become a durable not_started.
     try {
@@ -379,17 +368,12 @@ export async function runMountedProviderStart(
       );
       return { outcome: "not_started", ledger };
     }
-    process.stderr.write("[DEBUG-chat-live-p4c] preinvoke_begin\\n");
     const plan = await scope.readAcceptedAuthoredContextPlan();
-    process.stderr.write("[DEBUG-chat-live-p4c] plan_done\\n");
     const refs = plan.stableSources.map((source) => Object.freeze({ ...source }));
     const volatileRefs = plan.volatileSources.map((source) => Object.freeze({ ...source }));
     if (typeof scope.authoredContextCapability.assertInstall !== "function") throw new Error("semantic_chat_runtime_authored_context_unavailable");
-    process.stderr.write("[DEBUG-chat-live-p4c] context_begin\\n");
     scope.authoredContextCapability.assertInstall(scope.facts.turnId, refs, volatileRefs);
-    process.stderr.write("[DEBUG-chat-live-p4c] context_done\\n");
     const text = await scope.readAcceptedMessageText();
-    process.stderr.write("[DEBUG-chat-live-p4c] text_done\\n");
     // The message read is asynchronous, so it cannot share the previous
     // linearization point. Revalidate immediately before the Host invocation.
     try {
@@ -426,7 +410,6 @@ export async function runMountedProviderStart(
         return Promise.resolve("rejected");
       }
     };
-    process.stderr.write("[DEBUG-chat-live-p4c] prompt_begin\\n");
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([

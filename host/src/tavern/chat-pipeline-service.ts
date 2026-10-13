@@ -567,22 +567,19 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
    */
   async function startOnce(): Promise<void> {
     try {
-      process.stderr.write("[DEBUG-chat-live-p4] claim_begin\\n");
       await claim.claim();
-      process.stderr.write("[DEBUG-chat-live-p4] claim_done\\n");
       await start.start();
-      process.stderr.write("[DEBUG-chat-live-p4] start_done\\n");
-  		} catch (error) {
-			process.stderr.write("[DEBUG-chat-live-p4] continuation_error\\n");
-			// The submit caller must not learn the cause - the durable ledger and the status read-back
-			// are the authority for what happened. An OPERATOR must, though: without this line a failed
-		// turn leaves no trace but "continuation_error", which is how a keyword-matching message
-			// looked like a runtime outage. Message only, bounded, no stack and no content.
-			process.stderr.write(
-				`[continuation] failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown"}\n`,
-			);
-			throw new Error("chat_pipeline_continuation_failed");
-		}
+    } catch (error) {
+      // The submit caller must not learn the cause - the durable ledger and the status read-back
+      // are the authority for what happened. An OPERATOR must, though: without this line a failed
+      // turn leaves no trace but the generic "chat_pipeline_continuation_failed", which is how a
+      // keyword-matching message looked like a runtime outage. Bounded: message only, sliced to
+      // 200 characters, no stack and no content.
+      process.stderr.write(
+        `[continuation] failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown"}\n`,
+      );
+      throw new Error("chat_pipeline_continuation_failed");
+    }
     if (eventStream !== undefined && profile.routeIds.includes("events")) {
       const state = await resumeState();
       if (state.turnLedger !== null) {
