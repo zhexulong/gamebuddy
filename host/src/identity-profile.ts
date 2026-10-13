@@ -13,11 +13,22 @@ export type IdentityProfile = Readonly<{
     role: string;
     continuity: string;
   }>;
-  /** A short, user-reviewed persona guide; not game state or inferred memory. */
+  /**
+   * A short, user-reviewed persona guide; not game state or inferred memory.
+   *
+   * Each dimension is optional and only what the card actually wrote is
+   * carried. The three are orthogonal (who she is / how she treats the player /
+   * her tone), so a card that says nothing about tone carries no tone line
+   * rather than a Host-authored sentence: importing a Chinese card used to pad
+   * its persona with English Host prose ("Use natural player-facing language…")
+   * that then rendered into the Tier-1 prefix of a Chinese companion as a
+   * stiff English framework. A dimension the card did not write is absent, and
+   * `renderIdentityProfile` prints only the lines that exist.
+   */
   persona?: Readonly<{
-    core: string;
-    interactionStyle: string;
-    expressionStyle: string;
+    core?: string;
+    interactionStyle?: string;
+    expressionStyle?: string;
   }>;
   examples?: readonly Readonly<{ user: string; companion: string }>[];
 }>;
@@ -74,9 +85,13 @@ function canonicalIdentityProfile(profile: IdentityProfile): string {
       ? {}
       : {
           persona: {
-            core: profile.persona.core,
-            interactionStyle: profile.persona.interactionStyle,
-            expressionStyle: profile.persona.expressionStyle,
+            ...(profile.persona.core === undefined ? {} : { core: profile.persona.core }),
+            ...(profile.persona.interactionStyle === undefined
+              ? {}
+              : { interactionStyle: profile.persona.interactionStyle }),
+            ...(profile.persona.expressionStyle === undefined
+              ? {}
+              : { expressionStyle: profile.persona.expressionStyle }),
           },
         }),
     ...(profile.examples === undefined
@@ -105,9 +120,11 @@ export function renderIdentityProfile(profile: IdentityProfile): string {
   ];
 
   if (profile.persona !== undefined) {
-    lines.push(`Core disposition: ${profile.persona.core}`);
-    lines.push(`Interaction style: ${profile.persona.interactionStyle}`);
-    lines.push(`Expression style: ${profile.persona.expressionStyle}`);
+    if (profile.persona.core !== undefined) lines.push(`Core disposition: ${profile.persona.core}`);
+    if (profile.persona.interactionStyle !== undefined)
+      lines.push(`Interaction style: ${profile.persona.interactionStyle}`);
+    if (profile.persona.expressionStyle !== undefined)
+      lines.push(`Expression style: ${profile.persona.expressionStyle}`);
   }
 
   if (profile.examples !== undefined && profile.examples.length > 0) {
@@ -333,9 +350,11 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
     !isBoundedText(value.identity.continuity, MAX_PROFILE_TEXT_CHARS) ||
     (value.persona !== undefined &&
       (!isRecord(value.persona) ||
-        !isBoundedText(value.persona.core, MAX_PROFILE_TEXT_CHARS) ||
-        !isBoundedText(value.persona.interactionStyle, MAX_PROFILE_TEXT_CHARS) ||
-        !isBoundedText(value.persona.expressionStyle, MAX_PROFILE_TEXT_CHARS))) ||
+        (value.persona.core !== undefined && !isBoundedText(value.persona.core, MAX_PROFILE_TEXT_CHARS)) ||
+        (value.persona.interactionStyle !== undefined &&
+          !isBoundedText(value.persona.interactionStyle, MAX_PROFILE_TEXT_CHARS)) ||
+        (value.persona.expressionStyle !== undefined &&
+          !isBoundedText(value.persona.expressionStyle, MAX_PROFILE_TEXT_CHARS)))) ||
     (value.examples !== undefined &&
       (candidateExamples === undefined ||
         candidateExamples.length > MAX_EXAMPLES ||
@@ -361,9 +380,9 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
       ? {}
       : {
           persona: Object.freeze({
-            core: value.persona.core,
-            interactionStyle: value.persona.interactionStyle,
-            expressionStyle: value.persona.expressionStyle,
+            ...(value.persona.core === undefined ? {} : { core: value.persona.core }),
+            ...(value.persona.interactionStyle === undefined ? {} : { interactionStyle: value.persona.interactionStyle }),
+            ...(value.persona.expressionStyle === undefined ? {} : { expressionStyle: value.persona.expressionStyle }),
           }),
         }),
     ...(candidateExamples === undefined

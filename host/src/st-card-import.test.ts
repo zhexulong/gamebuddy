@@ -4,9 +4,11 @@ import { deflateSync } from "node:zlib";
 import {
   buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
+  renderIdentityProfile,
   validateIdentityProfile,
 } from "./identity-profile.js";
 import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-card-import.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import fc from "fast-check";
 
@@ -165,9 +167,10 @@ test("a card's {{user}} renders in the run's own language, and never as a raw ma
   assert.equal(chinese.persona?.core, "玩家的农场搭档。");
   assert.equal(chinese.persona?.interactionStyle, "严厉收缴玩家手里的工具。");
   assert.equal(chinese.examples?.[0]?.user, "玩家把工具递过去。");
-  // The card's OWN prose, which is what the macro table renders. The identity role,
-  // continuity and the expression-style default are Host-authored English schema text,
-  // not card prose, so they are deliberately outside this assertion.
+  // The card's OWN prose, which is what the macro table renders. The identity role
+  // and continuity are Host-authored schema text (they are the same for every
+  // companion); the persona dimensions are not, so this asserts that nothing
+  // Host-authored leaked into the card's own persona.
   const cardProse = JSON.stringify({
     core: chinese.persona?.core,
     interactionStyle: chinese.persona?.interactionStyle,
@@ -184,6 +187,47 @@ test("a card's {{user}} renders in the run's own language, and never as a raw ma
   const english = candidateToIdentityProfile(preview, 1, "en-US");
   assert.equal(english.persona?.core, "the player的农场搭档。");
   assert.equal(english.examples?.[0]?.user, "the player把工具递过去。");
+});
+
+test("a card that writes no interaction/expression material carries no persona dimension, and never English Host prose", () => {
+  // The failure this catches: when a card provided no `personality` the importer
+  // synthesized "Respect the player's agency…" and always synthesized "Use natural
+  // player-facing language…", so a Chinese card's Tier-1 prefix carried English
+  // Host prose (the "stiff English framework" the owner reported).
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "琥珀",
+      description: "{{user}}的农场搭档，起得比鸡早。",
+      mes_example: "{{user}}: 今天先做什么？\n{{char}}: 先把西边的荒地清了。",
+    },
+  });
+  assert.equal("interactionStyle" in (preview.profileCandidate.persona ?? {}), false);
+  assert.equal("expressionStyle" in (preview.profileCandidate.persona ?? {}), false);
+
+  const chinese = candidateToIdentityProfile(preview, 1, "zh-CN");
+  // The whole frozen persona, not just the core: no Host-authored English prose
+  // may appear in a Chinese companion's Tier-1 prefix.
+  assert.doesNotMatch(
+    [chinese.persona?.core, chinese.persona?.interactionStyle, chinese.persona?.expressionStyle]
+      .filter((dimension) => dimension !== undefined)
+      .join("\n"),
+    /[A-Za-z]/u,
+  );
+  assert.deepEqual(chinese.persona, { core: "玩家的农场搭档，起得比鸡早。" });
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(chinese), /player-facing language|Respect the player/u);
+  assert.doesNotMatch(buildGameCompanionSystemPrompt(chinese), /player-facing language|Respect the player/u);
+  // A card that DOES carry a personality still carries it, verbatim.
+  const withPersonality = candidateToIdentityProfile(
+    previewStCard({ spec: "chara_card_v3", data: { name: "琥珀", description: "搭档", personality: "嘴硬心软" } }),
+    1,
+    "zh-CN",
+  );
+  assert.deepEqual(withPersonality.persona, { core: "搭档", interactionStyle: "嘴硬心软" });
+  // And the shipped default companion preset is compiled through this same path,
+  // so its persona no longer carries the English sentence either.
+  assert.equal("expressionStyle" in (DEFAULT_COMPANION_PRESET.profile.persona ?? {}), false);
+  assert.doesNotMatch(renderIdentityProfile(DEFAULT_COMPANION_PRESET.profile), /Expression style:/u);
 });
 
 test("imported character-book entries are macro-rendered and an unrenderable entry is dropped", () => {

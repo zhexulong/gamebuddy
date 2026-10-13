@@ -318,16 +318,20 @@ function reviewedProfile(
   const core = fields.get("persona_core");
   const interactionStyle = fields.get("persona_interaction_style");
   const expressionStyle = fields.get("persona_expression_style");
+  // Only the reviewed dimensions the card actually wrote. The missing ones used
+  // to be padded from `DEFAULT_IDENTITY_PROFILE` (or an inline English sentence),
+  // so importing a Chinese card into a Chinese run froze English Host prose into
+  // the companion's own Tier-1 persona. The card either says how she interacts
+  // or it does not; the Host's floor lives in the system prompt, not in a
+  // third-party card's persona.
   const persona =
     core === undefined && interactionStyle === undefined && expressionStyle === undefined
       ? undefined
-       : Object.freeze({
-           core: render(core ?? base.persona?.core ?? "Maintain a stable, player-reviewed companion disposition."),
-           interactionStyle: render(
-             interactionStyle ?? base.persona?.interactionStyle ?? "Be helpful, calm, and direct.",
-           ),
-           expressionStyle: render(expressionStyle ?? base.persona?.expressionStyle ?? "Use clear, natural language."),
-         });
+      : Object.freeze({
+          ...(core === undefined ? {} : { core: render(core) }),
+          ...(interactionStyle === undefined ? {} : { interactionStyle: render(interactionStyle) }),
+          ...(expressionStyle === undefined ? {} : { expressionStyle: render(expressionStyle) }),
+        });
   // Reviewed example dialogues: fields are "example_N" with a JSON-encoded
   // {user, companion} pair written by candidateFromReport. Only approved rows
   // are consumed, each rendered through the same card macros as the persona.

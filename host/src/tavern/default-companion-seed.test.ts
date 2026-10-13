@@ -52,7 +52,7 @@ test("a fresh runtime root presents as 琥珀 with the preset's opening and worl
     const profile = await readIdentityProfile(paths.identityProfilePath);
     assert.equal(profile.identity.name, "琥珀");
     assert.notEqual(profile.identity.name, "GameBuddy Companion");
-    assert.ok(profile.persona !== undefined && profile.persona.core.length > 0);
+    assert.ok(profile.persona?.core !== undefined && profile.persona.core.length > 0);
 
     const book = JSON.parse(await readFile(join(paths.runtimeCwd, "worldbook.json"), "utf8")) as {
       worldBookId: string;

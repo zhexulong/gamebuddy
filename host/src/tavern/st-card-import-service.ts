@@ -129,13 +129,27 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...(profile.persona === undefined
       ? []
       : [
-          field("persona_core", profile.persona.core, "profile_eligible_after_explicit_review"),
-          field(
-            "persona_interaction_style",
-            profile.persona.interactionStyle,
-            "profile_eligible_after_explicit_review",
-          ),
-          field("persona_expression_style", profile.persona.expressionStyle, "profile_eligible_after_explicit_review"),
+          ...(profile.persona.core === undefined
+            ? []
+            : [field("persona_core", profile.persona.core, "profile_eligible_after_explicit_review")]),
+          ...(profile.persona.interactionStyle === undefined
+            ? []
+            : [
+                field(
+                  "persona_interaction_style",
+                  profile.persona.interactionStyle,
+                  "profile_eligible_after_explicit_review",
+                ),
+              ]),
+          ...(profile.persona.expressionStyle === undefined
+            ? []
+            : [
+                field(
+                  "persona_expression_style",
+                  profile.persona.expressionStyle,
+                  "profile_eligible_after_explicit_review",
+                ),
+              ]),
         ]),
     ...profile.examples.map((example, index) =>
       field(`example_${index + 1}`, JSON.stringify(example), "profile_eligible_after_explicit_review"),

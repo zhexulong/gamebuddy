@@ -51,14 +51,20 @@ test("ST card application import persists hash-verified inert candidate/report a
         "continuity",
         "scenario",
         "persona_core",
-        "persona_interaction_style",
-        "persona_expression_style",
+        // The card wrote only `description`: no `personality`, and the ST spec has
+        // no expression-style field at all, so there is no interaction/expression
+        // field to carry. These used to be padded with English Host prose, which
+        // froze into the Tier-1 persona of a Chinese companion.
         // first_mes with no mes_example folds into one reviewed example row
         // (voice-anchor fallback); the greeting field remains too.
         "example_1",
         "first_greeting",
         "worldbook_st-st-v3-1",
       ],
+    );
+    assert.equal(
+      result.candidate.artifact.fields.some((entry) => entry.field === "persona_interaction_style"),
+      false,
     );
     // S3: the card's world book travels with the candidate so the reviewed
     // import can bind it as the companion's WorldBookBinding at provision.

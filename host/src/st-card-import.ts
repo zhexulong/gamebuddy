@@ -137,9 +137,13 @@ export function candidateToIdentityProfile(
     profileCandidate.persona === undefined
       ? undefined
       : Object.freeze({
-          core: render(profileCandidate.persona.core),
-          interactionStyle: render(profileCandidate.persona.interactionStyle),
-          expressionStyle: render(profileCandidate.persona.expressionStyle),
+          ...(profileCandidate.persona.core === undefined ? {} : { core: render(profileCandidate.persona.core) }),
+          ...(profileCandidate.persona.interactionStyle === undefined
+            ? {}
+            : { interactionStyle: render(profileCandidate.persona.interactionStyle) }),
+          ...(profileCandidate.persona.expressionStyle === undefined
+            ? {}
+            : { expressionStyle: render(profileCandidate.persona.expressionStyle) }),
         });
   const examples =
     profileCandidate.examples === undefined || profileCandidate.examples.length === 0
@@ -238,13 +242,21 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       : Object.freeze([
           Object.freeze({ user: "(starts the journey)", companion: greeting }),
         ]);
-  const persona =
+  // The card's OWN material and nothing else. `description` is who she is
+  // (core); `personality` is how she treats the player (interactionStyle). The
+  // ST v2/v3 spec has no expression-style field at all, so a card that never
+  // wrote one simply carries none. This used to pad both missing dimensions
+  // with English Host prose ("Respect the player's agency…", "Use natural
+  // player-facing language…"), which rendered into the Tier-1 prefix of a
+  // Chinese companion as a stiff English framework. The Host composes the
+  // floor (buildCompanionSystemPrompt); a card's persona is only what the card
+  // wrote.
+  const persona: IdentityProfile["persona"] =
     description === undefined && personality === undefined
       ? undefined
       : Object.freeze({
           core: description ?? personality!,
-          interactionStyle: personality ?? "Respect the player's agency and do not invent shared experiences.",
-          expressionStyle: "Use natural player-facing language; do not use system or tool language.",
+          ...(description === undefined || personality === undefined ? {} : { interactionStyle: personality }),
         });
   const worldBookCandidates = extractCharacterBook(data.character_book, format, name);
   // `system_prompt` is a standard v2/v3 card field and `extensions` is open by
@@ -264,11 +276,14 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const longPersonaFields: Array<{ field: "core" | "interactionStyle" | "expressionStyle"; chars: number }> =
     persona === undefined
       ? []
-      : ([
-          ["core", persona.core.length],
-          ["interactionStyle", persona.interactionStyle.length],
-          ["expressionStyle", persona.expressionStyle.length],
-        ] as const)
+      : (
+          [
+            ["core", persona.core],
+            ["interactionStyle", persona.interactionStyle],
+            ["expressionStyle", persona.expressionStyle],
+          ] as const
+        )
+          .flatMap(([field, text]) => (text === undefined ? [] : [[field, text.length] as const]))
           .filter(([, length]) => length > LONG_FIELD_SOFT_HINT_CHARS)
           .map(([field, length]) => Object.freeze({ field, chars: length }));
   return Object.freeze({
