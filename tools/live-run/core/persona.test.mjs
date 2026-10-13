@@ -144,6 +144,43 @@ test(
   },
 );
 
+test(
+  "provisioning seeds the scenario record the character panel reads",
+  { skip: REQUIRES_HOST_BUILD },
+  async () => {
+    // The third block of an empty character panel: the panel renders the scenario record, so a run
+    // that never creates one answers 还没有保存场景 for a card that carries a scenario - which reads
+    // as "this card has none" rather than "the run did not install it".
+    const { root, identity, runtimeCwd } = await runtimeRoot();
+    try {
+      const card = JSON.parse(await readFile(path.join(LIVE_RUN_PERSONA_DIR, "card.json"), "utf8"));
+      const provisioned = await provisionLiveRunPersona(runtimeCwd, { identity, root });
+      assert.notEqual(provisioned.scenario, null);
+      assert.equal(provisioned.scenario.created, true);
+      const mounted = await assertLiveRunPersonaMounted(runtimeCwd, { identity, root });
+      assert.deepEqual(mounted.problems, []);
+      assert.deepEqual(mounted.scenario, { revision: provisioned.scenario.revision, name: "Default Scenario" });
+      // The stored text is the decoder's own, unmodified: a harness that rewrote the card's scenario
+      // would make a live run and a player's import disagree about what the same card means.
+      const companions = [];
+      for await (const match of glob(path.join(root, "tavern", "v1", "companions", "*"))) companions.push(match);
+      const scenarioFiles = [];
+      for await (const match of glob(path.join(companions[0], "scenarios", "*", "revisions", "*.json")))
+        scenarioFiles.push(match);
+      assert.equal(scenarioFiles.length, 1);
+      const stored = JSON.parse(await readFile(scenarioFiles[0], "utf8"));
+      assert.equal((stored.artifact ?? stored).description, card.data.scenario);
+      // And the record's absence is what the mount assertion is for.
+      await rm(path.join(companions[0], "scenarios"), { recursive: true, force: true });
+      const unmounted = await assertLiveRunPersonaMounted(runtimeCwd, { identity, root });
+      assert.equal(unmounted.problems.includes("scenario_record_absent"), true, JSON.stringify(unmounted.problems));
+      assert.equal(unmounted.scenario, null);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test("an unmounted run is a failure that names itself, never a bland companion", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "persona-empty-"));
   try {

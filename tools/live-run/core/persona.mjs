@@ -28,6 +28,11 @@
  * variant (`host/src/tavern/initial-chat-exact-content-port.ts`). A run that seeds only the card files
  * therefore opens on an empty transcript instead of the card's opening.
  *
+ * So does the scenario: the card's `scenario` field becomes a durable player-scenario record
+ * (`scenarioService.create`), which is what the character panel shows in its Scenario block. A run
+ * that skips it renders 还没有保存场景 for a card that carries one, which reads as "this card has no
+ * scenario" rather than "the run did not install it".
+ *
  * This module is the one place that knows:
  *   - WHICH card (the reviewed live-run card, `assets/tavern/presets/default-companion`),
  *   - that the card itself is copied **byte for byte, with no modification or preprocessing** (the
@@ -247,9 +252,57 @@ export async function seedLiveRunGreetingRecord(runtimeCwd, { cardPath, hostBuil
 }
 
 /**
+ * Seeds the companion's durable scenario record, the text the character panel shows under "Scenario".
+ *
+ * Product provisioning writes it (`new-companion-service.ts:216-219`, `scenarioService.create`) from
+ * the card's own `scenario` field for a card-imported companion; a live-run root has no provisioning
+ * step, so without this the panel answers `scenarioNotPresent` (还没有保存场景) for a card that
+ * carries one. The text is the decoder's, unmodified — the card's field verbatim, exactly the value
+ * the product's import path stores, so a live run and a player's import cannot disagree.
+ */
+export async function seedLiveRunScenarioRecord(runtimeCwd, { cardPath, hostBuildRoot, identity, root } = {}) {
+  if (identity === undefined || typeof root !== "string" || root.length === 0)
+    throw new Error("live_run_persona_identity_required");
+  const card = JSON.parse(await readFile(cardPath, "utf8"));
+  const host = await loadHostBuild(hostBuildRoot);
+  await bindHostPathLock(hostBuildRoot);
+  const buildRoot = hostBuildUrl(hostBuildRoot);
+  const [{ resolveRuntimePaths }, { resolveTavernPaths }, { TavernArtifactStore }, { createScenarioManagementService }] =
+    await Promise.all([
+      import(new URL("runtime-identity.js", buildRoot)),
+      import(new URL("tavern/tavern-paths.js", buildRoot)),
+      import(new URL("tavern/artifact-store.js", buildRoot)),
+      import(new URL("tavern/scenario-management/scenario-management.js", buildRoot)),
+    ]);
+  const paths = resolveRuntimePaths(identity, root);
+  if (path.resolve(paths.runtimeCwd) !== path.resolve(runtimeCwd))
+    throw new Error("live_run_persona_runtime_cwd_mismatch");
+  const tavernPaths = resolveTavernPaths(paths, identity);
+  const service = createScenarioManagementService(
+    new TavernArtifactStore(paths.root),
+    tavernPaths.companionRoot,
+  );
+  const existing = await service.read();
+  if (existing !== null) {
+    // A resumed run keeps the record it already has, for the same reason the greeting does: the
+    // player's own edit must not be rewritten by a re-provision.
+    return Object.freeze({ created: false, revision: existing.revision, name: existing.name });
+  }
+  // The card's field is candidate-only (`st-card-import.ts:66-67`): it lives beside the profile
+  // candidate, never inside it. A card WITHOUT one is a real answer, and the named failure here is
+  // what keeps an empty scenario field from being read as a populated one.
+  const scenario = host.previewStCard(card).scenario;
+  if (typeof scenario !== "string" || scenario.trim() === "") throw new Error("live_run_persona_scenario_missing");
+  await service.create({ name: "Default Scenario", description: scenario });
+  const written = await service.read();
+  if (written === null) throw new Error("live_run_persona_scenario_unreadable");
+  return Object.freeze({ created: true, revision: written.revision, name: written.name, preview: written.preview });
+}
+
+/**
  * Places the card in a runtime cwd exactly as provisioning does — byte for byte — and compiles the
- * identity profile and greeting record the Host actually reads. Returns the evidence so the caller
- * can put it in its own report.
+ * identity profile, greeting record and scenario record the Host actually reads. Returns the evidence
+ * so the caller can put it in its own report.
  */
 export async function provisionLiveRunPersona(
   runtimeCwd,
@@ -269,7 +322,11 @@ export async function provisionLiveRunPersona(
     identity === undefined
       ? null
       : await seedLiveRunGreetingRecord(runtimeCwd, { cardPath, hostBuildRoot, identity, root });
-  return Object.freeze({ identity: identityFacts, cardPath, worldbookPath, profile, greeting });
+  const scenario =
+    identity === undefined
+      ? null
+      : await seedLiveRunScenarioRecord(runtimeCwd, { cardPath, hostBuildRoot, identity, root });
+  return Object.freeze({ identity: identityFacts, cardPath, worldbookPath, profile, greeting, scenario });
 }
 
 /**
@@ -326,24 +383,38 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
     }
   }
   let greeting = null;
+  let scenario = null;
   if (identity !== undefined && typeof root === "string" && root.length > 0) {
     try {
       const buildRoot = hostBuildUrl(hostBuildRoot);
-      const [{ resolveRuntimePaths }, { resolveTavernPaths }, { TavernArtifactStore }, { createGreetingManagementService }] =
-        await Promise.all([
-          import(new URL("runtime-identity.js", buildRoot)),
-          import(new URL("tavern/tavern-paths.js", buildRoot)),
-          import(new URL("tavern/artifact-store.js", buildRoot)),
-          import(new URL("tavern/greeting-management/greeting-management.js", buildRoot)),
-        ]);
+      const [
+        { resolveRuntimePaths },
+        { resolveTavernPaths },
+        { TavernArtifactStore },
+        { createGreetingManagementService },
+        { createScenarioManagementService },
+      ] = await Promise.all([
+        import(new URL("runtime-identity.js", buildRoot)),
+        import(new URL("tavern/tavern-paths.js", buildRoot)),
+        import(new URL("tavern/artifact-store.js", buildRoot)),
+        import(new URL("tavern/greeting-management/greeting-management.js", buildRoot)),
+        import(new URL("tavern/scenario-management/scenario-management.js", buildRoot)),
+      ]);
       const paths = resolveRuntimePaths(identity, root);
       const tavernPaths = resolveTavernPaths(paths, identity);
-      const record = await createGreetingManagementService(
-        new TavernArtifactStore(paths.root),
-        tavernPaths.companionRoot,
-      ).readExact();
+      const artifacts = new TavernArtifactStore(paths.root);
+      const record = await createGreetingManagementService(artifacts, tavernPaths.companionRoot).readExact();
       if (record === null || record.variants.length === 0) problems.push("greeting_record_absent");
       else greeting = Object.freeze({ greetingSetId: record.greetingSetId, revision: record.revision, variants: record.variants.length });
+      // The character panel answers from this record, so its absence is the "还没有保存场景" panel
+      // on a card that carries a scenario: a defect, not a neutral empty state.
+      try {
+        const scenarioRecord = await createScenarioManagementService(artifacts, tavernPaths.companionRoot).read();
+        if (scenarioRecord === null) problems.push("scenario_record_absent");
+        else scenario = Object.freeze({ revision: scenarioRecord.revision, name: scenarioRecord.name });
+      } catch {
+        problems.push("scenario_record_unreadable");
+      }
     } catch {
       problems.push("greeting_record_unreadable");
     }
@@ -361,5 +432,6 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
     worldBookEntries: entries,
     macroTokens,
     greeting,
+    scenario,
   });
 }
