@@ -16,10 +16,7 @@ import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
-import {
-  readStardewInstallationRegistration,
-  withStardewLifecycleInstallationRegistrationOwner,
-} from "./stardew-installation-registration.internal.js";
+import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
@@ -1278,17 +1275,16 @@ function createCoordinator(
    * attempt's owner record are mid-transition. Marker presence is never evidence
    * of a holder, so this fails closed rather than adopting a correlation it
    * cannot trust; a missing, non-ready or attempt-less pointer fails closed the
-   * same way. The read itself stays inside the registration's own exclusive lock,
-   * so the correlation cannot be re-bound between the check and the read.
+   * same way. This is the registration module's own read-only selector - the
+   * interface the registration plan names as the coordinator's - and it holds
+   * the registration's own exclusive lock, so the correlation cannot be re-bound
+   * between the check and the read, and it refuses a marker or a malformed
+   * record under its own bounded code instead of handing back a mid-transition
+   * pointer. This path only reads: binding and releasing the pointer stay with
+   * the bootstrap owner (stardew-private-bootstrap-composer.core).
    */
   const readWorldBindingHolderHandle = async (): Promise<string> => {
-    const registration = await withStardewLifecycleInstallationRegistrationOwner(
-      runtimeRoot,
-      async (storage) => {
-        if (await storage.readMarker() !== null) return null;
-        return await storage.readRegistration();
-      },
-    );
+    const registration = await readStardewInstallationRegistration(runtimeRoot);
     if (registration === null || registration.state !== "ready" || registration.activeAttempt === null)
       throw new Error("stardew_game_create_holder_unavailable");
     return registration.activeAttempt.bootstrapCorrelation;
