@@ -3460,6 +3460,194 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
 });
 
 /**
+ * The fallback poll is the *fallback*: while the event stream is connected and
+ * delivering, it must not run at all.
+ *
+ * The measured defect: one turn opened two overlapping channels - the SSE stream
+ * and the 250 ms/1000 ms poll - and every poll hop read `/draft` as well, so a
+ * single regeneration cost a full authoritative `/state` read, a submission-status
+ * read and a draft read per second for as long as the turn ran, on top of the
+ * frames the stream was already delivering. The failure each direction catches:
+ *
+ *  - a healthy stream that still polls: the surface pays a second full
+ *    authoritative reread every second for a turn the stream is delivering, and
+ *    two channels race to settle the same turn;
+ *  - a stream that fails with a poll that does not resume: the composer stays
+ *    locked because nothing reads the turn's terminal state - the one job the
+ *    fallback exists for.
+ *
+ * A submission-status read is the poll's exclusive signature: nothing else in
+ * this shell performs one (`handleEvent` rereads `/state` and the draft; the chat
+ * mutations reread the same pair). So `statusReads` is what tells a poll hop
+ * apart from the stream's own work.
+ */
+test("a healthy event stream suspends the fallback poll, and a stream that fails resumes it", async ({ page }) => {
+  test.setTimeout(90_000);
+  const streamEpoch = `${"E".repeat(42)}A`;
+  const cursor = `${"F".repeat(42)}A`;
+  const frameId = `${"H".repeat(42)}A`;
+  const { idleRoot, runningRoot, settledRoot } = regenerationProjections();
+  const streamed = (value: typeof idleRoot) => ({
+    ...value,
+    chat: { ...value.chat, eventStream: { epoch: streamEpoch, cursor } },
+  });
+  let stateReads = 0;
+  let draftReads = 0;
+  let statusReads = 0;
+  let regenerateRequests = 0;
+  // The authoritative read that first answers with the settled turn. Direction 1
+  // settles on the stream's own reread; direction 2 settles on the recovery read
+  // and then on the poll's hop, so the hop is the read that carries it.
+  let settledFromRead = Number.POSITIVE_INFINITY;
+
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      __instances: Array<{ onerror: ((event: unknown) => void) | null }>;
+      __handlers: Array<Map<string, Array<(raw: unknown) => void>>>;
+      __emit: (index: number, type: string, data: string, id: string) => void;
+      __fail: (index: number) => void;
+    };
+    state.__instances = [];
+    state.__handlers = [];
+    class SyntheticEventSource {
+      onerror: ((event: unknown) => void) | null = null;
+      __index = -1;
+      constructor(url: string | URL) {
+        void url;
+        this.__index = state.__instances.length;
+        state.__instances.push(this);
+        state.__handlers.push(new Map());
+      }
+      addEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__handlers[this.__index]!;
+        entry.set(type, [...(entry.get(type) ?? []), handler]);
+      }
+      removeEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__handlers[this.__index]!;
+        entry.set(type, (entry.get(type) ?? []).filter((candidate) => candidate !== handler));
+      }
+      close(): void {
+        this.onerror = null;
+      }
+    }
+    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+    state.__emit = (index, type, data, id) => {
+      for (const handler of state.__handlers[index]?.get(type) ?? []) handler({ data, lastEventId: id, type });
+    };
+    state.__fail = (index) => {
+      state.__instances[index]?.onerror?.(new Event("error"));
+    };
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk(streamed(idleRoot))),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill(jsonOk(streamed(stateReads >= settledFromRead ? settledRoot : runningRoot)));
+  });
+  await page.route("**/api/tavern/v1/draft", (route) => {
+    draftReads += 1;
+    return route.fulfill(jsonOk(draft));
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) => {
+    statusReads += 1;
+    return route.fulfill(jsonOk({ apiVersion: 1, disposition: "terminal" }));
+  });
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/messages/regenerate", async (route) => {
+    regenerateRequests += 1;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: runningRoot.chat.chat.transcript[1],
+        turn: runningRoot.chat.chat.turn,
+      }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const chatSurface = page.getByTestId("chat-surface");
+  await expect(chatSurface).toBeVisible();
+  const composer = chatSurface.locator(".composer-textarea");
+  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __instances: unknown[] }).__instances.length)).toBe(1);
+
+  // Direction 1: a live stream suspends the poll. The click's own reread is the
+  // only authoritative read there is; the poll's first tick and a full interval
+  // after it add nothing at all.
+  settledFromRead = stateReads + 2;
+  await bubble.getByRole("button", { name: "Regenerate" }).click();
+  await expect.poll(() => regenerateRequests).toBe(1);
+  await expect.poll(() => stateReads).toBeGreaterThan(0);
+  await expect(composer).toBeDisabled();
+  await page.waitForTimeout(2_500);
+  // The measurement: every HTTP request this turn made under a live stream.
+  console.log(
+    `poll-measure: live stream, one turn -> state=${stateReads} draft=${draftReads} status=${statusReads}`,
+  );
+  expect({ stateReads, draftReads, statusReads }).toEqual({ stateReads: 1, draftReads: 2, statusReads: 0 });
+
+  // The stream settles the turn itself: one frame, one authoritative reread, and
+  // still no status read - so the settle came from the stream, not from a poll.
+  const settledTurn = settledRoot.chat.chat.turn;
+  await page.evaluate(
+    (input: { data: string; id: string }) =>
+      (window as unknown as { __emit: (index: number, type: string, data: string, id: string) => void }).__emit(
+        0,
+        "turn.state_changed",
+        input.data,
+        input.id,
+      ),
+    {
+      data: JSON.stringify({
+        apiVersion: 1,
+        epoch: streamEpoch,
+        sequence: 1,
+        selectionGeneration: 1,
+        eventType: "turn.state_changed",
+        payload: settledTurn,
+      }),
+      id: frameId,
+    },
+  );
+  await expect(bubble).toContainText(regenerationNewVariant);
+  await expect(composer).toBeEnabled();
+  expect(statusReads).toBe(0);
+  expect(stateReads).toBe(2);
+
+  // Direction 2: the stream fails. The next turn is admitted under the same
+  // suspension, and once the stream is gone it is the poll that has to settle the
+  // turn - the recovery read still sees the running projection, and only the
+  // poll's own hop sees the settled one.
+  settledFromRead = stateReads + 3;
+  await bubble.getByRole("button", { name: "Regenerate" }).click();
+  await expect.poll(() => regenerateRequests).toBe(2);
+  await expect.poll(() => stateReads).toBe(3);
+  await expect(composer).toBeDisabled();
+  await page.waitForTimeout(1_500);
+  expect(statusReads).toBe(0);
+
+  const draftsBeforeFailure = draftReads;
+  await page.evaluate(() => (window as unknown as { __fail: (index: number) => void }).__fail(0));
+  await expect.poll(() => statusReads).toBeGreaterThan(0);
+  await expect(composer).toBeEnabled();
+  // The only submission-status read in this whole journey is the poll's own, so
+  // this settle came from the fallback rather than from the stream - and the
+  // authoritative read it needed was the one the recovery had just performed.
+  expect(statusReads).toBe(1);
+  expect(stateReads).toBe(settledFromRead);
+  // The recovery read spends one `/draft`; the poll's hop reuses what that
+  // snapshot described instead of spending a second read on it.
+  expect(draftReads).toBe(draftsBeforeFailure + 1);
+});
+
+/**
  * The fallback poll's own budget, and the last thing it must do.
  *
  * `startPolling` is the only reader of a turn's terminal state when no event
