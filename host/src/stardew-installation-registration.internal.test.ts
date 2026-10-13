@@ -423,7 +423,11 @@ test("product registration and lifecycle composition do not accept legacy action
   ]);
   const legacyProfileAuthority = /gamebuddy-action-target-profile\/v1|action-development(?:[\\/]|\b)|profileFile|gameInstallPath|modsPath|releaseDir|fixtureTransactionRoot|nativeFixtureRoot|runtimeLeaseRoot|runtimeLeaseIdentity|nativeClientConfigFile|--profile/;
   for (const source of sources) assert.doesNotMatch(source, legacyProfileAuthority);
-  assert.doesNotMatch(sources[1], /replaceStardewInstallationRegistrationLocator|bootstrapId/);
+  // `bootstrapId` is the current bootstrap owner record's own identity, read by
+  // the crashed-world-slot recovery path (`bootstrapFacts: { bootstrapId:
+  // holder.holderHandle }`, 0c798cb8/d78c142d); it is not legacy profile
+  // authority. The removed locator-replacement seam stays forbidden.
+  assert.doesNotMatch(sources[1], /replaceStardewInstallationRegistrationLocator/);
 });
 
 async function rejectsRedacted(work: () => Promise<unknown>, secret: string): Promise<void> {
