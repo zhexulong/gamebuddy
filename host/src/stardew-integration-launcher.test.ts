@@ -4,7 +4,6 @@ import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
 import { TERMINAL_EXECUTION_STATES } from "./execution-correlation-ledger.js";
-import type { MoveCapableIntegration } from "./game-tools.js";
 import type { ExecutionWake } from "./integration-launcher.js";
 import type { BridgeMessage, ExecutionState, Scope } from "./protocol.js";
 import {
@@ -118,7 +117,7 @@ test("Stardew launcher never publishes an execution wake for progress receipts",
   }
 });
 
-test("Stardew launcher freezes the execution gate and publishes an invalidated wake on an invalidated receipt", async () => {
+test("Stardew launcher publishes an invalidated wake and freezes the launcher-owned projection without closing the execution gate", async () => {
   const { launch, mod } = await launchWithFakeMod();
   try {
     assert.ok(launch.events.onExecutionWake);
@@ -126,25 +125,18 @@ test("Stardew launcher freezes the execution gate and publishes an invalidated w
     mod.sendInbound(receiptMessage("invalidated"));
     assert.deepEqual(await wake, { kind: "invalidated", reasonCode: "reason_invalidated" });
     assert.ok(launch.connection.executionGate);
-    assert.equal(launch.connection.executionGate.executable, false);
+    // 52866c06 (decided option b): an invalidated receipt freezes the
+    // launcher-owned records (asserted below) but deliberately does NOT close
+    // the execution gate. A native modal interruption produces exactly an
+    // invalidated receipt, and closing the gate refused the very action that
+    // clears the interruption (ladder 6: five `dismiss_modal` calls, all
+    // `integration_not_ready`). `disconnect()` is what still closes the gate.
+    assert.equal(launch.connection.executionGate.executable, true);
     // Native invalidation also closes the launcher-owned preview projection:
     // the record behind it reports closed immediately, not merely non-executable.
     assert.throws(
       () => getAuthenticatedStardewPresentationPortForPreview(launch),
       /authenticated_stardew_presentation_port_required/,
-    );
-    const connection = launch.connection as MoveCapableIntegration;
-    await assert.rejects(
-      () =>
-        connection.execute({
-          requestId: "request_2",
-          idempotencyKey: "idem_2",
-          action: "move_to_tile",
-          args: {},
-          expectedRevision: 1,
-          deadlineMs: Date.now() + 5_000,
-        }),
-      /integration_not_ready/,
     );
   } finally {
     launch.close();
