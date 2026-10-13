@@ -126,6 +126,12 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...(value.scenario === undefined
       ? []
       : [field("scenario", value.scenario, "profile_eligible_after_explicit_review")]),
+    // The card's own performance directive, shown in review beside the persona
+    // and examples. It becomes the profile's `characterVoice` (rendered after
+    // the Host floor), so it is reviewed like the other profile-eligible fields.
+    ...(value.systemPrompt === undefined
+      ? []
+      : [field("system_prompt", value.systemPrompt, "profile_eligible_after_explicit_review")]),
     ...(profile.persona === undefined
       ? []
       : [

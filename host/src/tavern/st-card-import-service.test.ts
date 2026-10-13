@@ -50,6 +50,9 @@ test("ST card application import persists hash-verified inert candidate/report a
         "identity_role",
         "continuity",
         "scenario",
+        // The card's own performance directive, shown in review beside the
+        // persona and carried into the profile as `characterVoice`.
+        "system_prompt",
         "persona_core",
         // The card wrote only `description`: no `personality`, and the ST spec has
         // no expression-style field at all, so there is no interaction/expression
@@ -103,8 +106,14 @@ test("ST card application import persists hash-verified inert candidate/report a
     const exported = await service.export("import_01");
     assert.deepEqual(exported, result);
     const candidateRaw = await readFile(tavernImportPath(paths, "import_01", "candidate.json"), "utf8");
-    assert.ok(
-      !candidateRaw.includes("ignore this") && !candidateRaw.includes("<script>") && !candidateRaw.includes("bad()"),
+    // Dropped executable/prompt-control fields never reach the persisted
+    // candidate...
+    assert.ok(!candidateRaw.includes("<script>") && !candidateRaw.includes("bad()"));
+    // ...while the card's own `system_prompt` is now a reviewed field, so it does.
+    assert.ok(candidateRaw.includes("ignore this"));
+    assert.equal(
+      result.candidate.artifact.fields.find((entry) => entry.field === "system_prompt")?.eligibility,
+      "profile_eligible_after_explicit_review",
     );
   } finally {
     await rm(root, { recursive: true, force: true });

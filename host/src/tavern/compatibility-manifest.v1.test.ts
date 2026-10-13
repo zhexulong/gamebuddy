@@ -15,7 +15,8 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   // A standard field and an open-by-design field are carried in the reviewed
   // candidate; only executable / prompt-control fields are dropped.
   assert.equal(fields.system_prompt.decision, "accepted_typed");
-  assert.equal(fields.system_prompt.eligibility, "candidate_only");
+  assert.equal(fields.system_prompt.eligibility, "profile_eligible_after_explicit_review");
+  assert.equal(fields.system_prompt.maxBytes, ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes);
   assert.equal(fields.extensions.decision, "accepted_typed");
   assert.equal(fields.creator_notes.decision, "preserved_opaque");
   assert.equal(fields.post_history_instructions.decision, "preserved_opaque");
@@ -32,12 +33,14 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes, 16_384);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes, 256);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntries, Number.POSITIVE_INFINITY);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes, 8_192);
 });
 
 test("selected L3 contract limits profile use and interchange to the version-locked inert subset", () => {
   assert.deepEqual(COMPATIBILITY_MANIFEST_V1.profileContract.profileEligibleAfterExplicitReview, [
     "description",
     "personality",
+    "system_prompt",
   ]);
   assert.equal(COMPATIBILITY_MANIFEST_V1.profileContract.worldBook, "candidate_only_not_bound");
   assert.equal(

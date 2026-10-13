@@ -32,6 +32,7 @@ const ST_CARD_IMPORT_LOSS_REASONS = [
   "worldbook_keys_truncated",
   "unrenderable_worldbook_entry",
   "worldbook_entry_content_unreadable",
+  "character_voice_too_long",
 ] as const;
 export type StCardImportLossReason = (typeof ST_CARD_IMPORT_LOSS_REASONS)[number];
 export type StCardImportLoss = Readonly<{
@@ -72,10 +73,10 @@ export type StCardImportCandidate = Readonly<{
   /** Candidate-only scenario retained for review/import reporting; never profile input. */
   scenario?: string;
   /**
-   * The card's standard `system_prompt` (v2/v3), carried as bounded, inert
-   * candidate text. The Host NEVER injects a card-supplied system prompt — the
-   * runtime composes its own prompt from the profile (`buildCompanionSystemPrompt`)
-   * — so this lands as REVIEW-VISIBLE candidate data, not as a prompt source.
+   * The card's standard `system_prompt` (v2/v3), carried as bounded candidate
+   * text and copied into the profile as the companion's `characterVoice` so the
+   * card's own performance directive reaches the model. Rendered AFTER the Host
+   * floor, in its own labelled section, and never able to loosen it.
    */
   systemPrompt?: string;
   /**
@@ -112,7 +113,8 @@ export type StCardImportPreview = Readonly<{
   }>;
   /** Candidate-only scenario is deliberately outside the profile candidate. */
   scenario?: string;
-  /** The card's standard `system_prompt`, review-visible candidate data only. */
+  /** The card's standard `system_prompt`, review-visible candidate data that
+   *  becomes the companion's `characterVoice` (rendered after the floor). */
   systemPrompt?: string;
   /** The card's open-by-design `extensions` object, carried inert and verbatim. */
   extensions?: Readonly<Record<string, unknown>>;
@@ -158,7 +160,8 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
 }
 
 /**
- * Maps an imported candidate's static persona and identity into a Host IdentityProfile,
+ * Maps an imported candidate's static persona, identity and the card's own
+ * performance directive into a Host IdentityProfile,
  * ensuring 100% Prefix Caching in m[0]. Card macros are rendered deterministically
  * ({{char}} → name, {{user}} → the run's own word for the player) before the profile is
  * frozen, so a card writer can use the standard ST token set without leaking raw
@@ -202,6 +205,12 @@ export function candidateToIdentityProfile(
             Object.freeze({ user: render(example.user), companion: render(example.companion) }),
           ),
         );
+  // The card's own performance directive. Macros are rendered the same way the
+  // persona and examples are; provenance is `card` until the player edits it.
+  const characterVoice =
+    typeof previewOrCandidate.systemPrompt === "string" && previewOrCandidate.systemPrompt.length > 0
+      ? Object.freeze({ text: render(previewOrCandidate.systemPrompt), source: "card" as const })
+      : undefined;
   return Object.freeze({
     schemaVersion: 1,
     profileId: profileCandidate.profileId,
@@ -213,6 +222,7 @@ export function candidateToIdentityProfile(
     }),
     ...(persona === undefined ? {} : { persona }),
     ...(examples === undefined ? {} : { examples }),
+    ...(characterVoice === undefined ? {} : { characterVoice }),
   });
 }
 
@@ -311,12 +321,18 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           ...(description === undefined || personality === undefined ? {} : { interactionStyle: personality }),
         });
   const worldBookCandidates = extractCharacterBook(data.character_book, format, name, losses);
-  // `system_prompt` is a standard v2/v3 card field and `extensions` is open by
-  // design; neither is executable, so neither is dropped. `system_prompt`
-  // survives as review-visible candidate text (the Host composes its own prompt
-  // from the profile and never injects a card-supplied one); `extensions` rides
-  // through verbatim so a consumer can read `gamebuddy.stardew`.
-  const systemPrompt = boundedMultilineText(data.system_prompt, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  // `system_prompt` is a standard v2/v3 card field: it carries the card's own
+  // performance directive (the `characterVoice` the profile renders after the
+  // floor) and is review-visible. It is bounded tighter than the generic text
+  // ceiling because it lands in the stable Tier-1 prefix on every turn; a longer
+  // directive is refused, never truncated, and the refusal is counted below.
+  const rawSystemPrompt = boundedMultilineText(data.system_prompt, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const systemPrompt =
+    rawSystemPrompt !== undefined && utf8Bytes(rawSystemPrompt) > ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes
+      ? undefined
+      : rawSystemPrompt;
+  if (rawSystemPrompt !== undefined && systemPrompt === undefined)
+    losses.record("system_prompt", "character_voice_too_long", 1);
   const extensions = readInertExtensions(data.extensions);
   const unsupportedFields = Object.keys(data).filter(isExecutableControlField).sort();
   // Product policy: limits only prevent physical blowup, never the player's
@@ -618,9 +634,10 @@ function parseExamples(
  * are the only fields the decoder drops.
  *
  * `system_prompt` and `extensions` are deliberately NOT here: `system_prompt` is
- * a standard card field carried as review-visible candidate text, `extensions`
- * is open by design and carried verbatim, and any other field that maps nowhere
- * is classified `preserved_opaque` rather than silently dropped.
+ * a standard card field carried as the companion's `characterVoice` (and review-
+ * visible), `extensions` is open by design and carried verbatim, and any other
+ * field that maps nowhere is classified `preserved_opaque` rather than silently
+ * dropped.
  */
 function isExecutableControlField(key: string): boolean {
   return /^(?:regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|prompt_?order)$/iu.test(key);

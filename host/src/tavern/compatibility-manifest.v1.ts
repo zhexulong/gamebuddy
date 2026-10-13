@@ -15,6 +15,13 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
   characterBookEntryBytes: 16_384,
   characterBookTitleBytes: 256,
   characterBookEntries: Number.POSITIVE_INFINITY,
+  /**
+   * The card's own `system_prompt`, carried as the companion's performance
+   * directive. Tighter than `textBytes` on purpose: this text lands in the
+   * stable Tier-1 prefix sent on every turn, and it is third-party input. A
+   * longer directive is refused (not truncated) and the refusal is counted.
+   */
+  cardVoiceBytes: 8_192,
 });
 
 /**
@@ -30,7 +37,10 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
  */
 const SELECTED_L3_PROFILE_CONTRACT_V1 = Object.freeze({
   candidateOnly: Object.freeze(["name", "scenario", "first_mes", "first_message", "mes_example", "character_book"]),
-  profileEligibleAfterExplicitReview: Object.freeze(["description", "personality"]),
+  // `system_prompt` is profile-eligible as the companion's `characterVoice` (the
+  // card's own performance directive, rendered after the Host floor), not as a
+  // persona dimension; it is listed here so the profile boundary stays truthful.
+  profileEligibleAfterExplicitReview: Object.freeze(["description", "personality", "system_prompt"]),
   worldBook: "candidate_only_not_bound",
   chatTransfer: "tavern-interchange-v1_st-jsonl-player-visible-selected-bubbles_only",
 });
@@ -88,10 +98,21 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
         first_message: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.textBytes),
         mes_example: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.examplesBytes),
         creator_notes: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
-        // A standard v2/v3 field. It is carried as bounded, review-visible
-        // candidate text and never injected: the runtime composes its own prompt
-        // from the profile (`buildCompanionSystemPrompt`).
-        system_prompt: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.textBytes),
+        // A standard v2/v3 field. It carries the card's own performance
+        // directive into the profile (`characterVoice`), rendered AFTER the Host
+        // floor and never able to loosen it.
+        system_prompt: entry(
+          "accepted_typed",
+          "profile_eligible_after_explicit_review",
+          ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes,
+        ),
+        // `post_history_instructions` is deliberately still never_runtime: the ST
+        // spec injects it AFTER the history precisely to steer the model, which
+        // makes it an override channel rather than a statement of voice. The
+        // companion already receives the card's own directive through
+        // `system_prompt`; carrying a second, deeper override slot into a
+        // third-party card's hands would add attack surface and no voice the
+        // directive does not already provide.
         post_history_instructions: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
         character_book: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.characterBookBytes),
         // Open by design. Carried verbatim as bounded inert data (never executed);

@@ -357,12 +357,21 @@ function reviewedProfile(
         }
       }),
   );
+  // The card's own performance directive, from the reviewed `system_prompt`
+  // field. Only an approved field is consumed (like every other reviewed field),
+  // and it renders AFTER the Host floor in `buildCompanionSystemPrompt`.
+  const reviewedVoice = fields.get("system_prompt");
+  const characterVoice =
+    reviewedVoice === undefined || reviewedVoice.trim().length === 0
+      ? undefined
+      : Object.freeze({ text: render(reviewedVoice), source: "card" as const });
   return Object.freeze({
     ...base,
     profileId: `gamebuddy.${companionId}`,
     identity,
     ...(persona === undefined ? {} : { persona }),
     ...(examples.length === 0 ? {} : { examples }),
+    ...(characterVoice === undefined ? {} : { characterVoice }),
   });
 }
 function validateMetadata(value: NewCompanionMetadata): void {
