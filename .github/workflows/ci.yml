@@ -45,7 +45,11 @@ jobs:
       - run: pnpm check:script-entries
       - run: pnpm check:complexity-gate
       - run: pnpm check:workspace-debris
+      # The formatter step is a ratchet, not a repo-wide reformat demand: it fails only on a file
+      # that newly joins the recorded red set (682 files at 2516ffa4) and prints that total on every
+      # run, so the debt stays visible while a violation in the change under test still fails.
       - run: pnpm format:check
+      - run: pnpm test:format-ratchet
       - run: pnpm lint
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
