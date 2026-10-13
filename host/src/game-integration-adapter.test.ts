@@ -382,21 +382,21 @@ test("module tools require their owning module and scope identity", () => {
       }),
     /integration_adapter_scope_mismatch/,
   );
-  assert.doesNotThrow(() =>
-    module.assertIdentityBinding(connection, {
-      companionId: "companion_01",
-      saveId: "save_01",
-      worldId: "world_01",
-    }),
-  );
+  // Identity binding is reachable only through the connection the authenticated
+  // Stardew launch minted: a caller-built connection is refused before any scope
+  // is compared, so a hand-built object can no longer claim a matching (or
+  // mismatching) save/world identity here. The owning suite asserts that exact
+  // match/mismatch set on a real launch connection —
+  // local-stardew-bridge-attestation.test.ts, "enforces the exact
+  // save/world/companion identity binding".
   assert.throws(
     () =>
       module.assertIdentityBinding(connection, {
         companionId: "companion_01",
-        saveId: "other_save",
+        saveId: "save_01",
         worldId: "world_01",
       }),
-    /integration_identity_binding_mismatch/,
+    /stardew_connection_not_authenticated_or_not_live/,
   );
 });
 
