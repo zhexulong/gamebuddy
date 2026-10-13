@@ -80,6 +80,20 @@ function bracketBody(source, open, close, from = 0) {
   let depth = 0;
   for (let index = start; index < source.length; index += 1) {
     const char = source[index];
+    // Comments outrank quotes. A doc comment's apostrophe ("the holder's PHASE")
+    // otherwise opens a phantom string literal that swallows the closing brace,
+    // so a balanced type reads as `decision_closure_type_unbalanced`. Skipping
+    // comments first is safe: a quote inside one never reaches the quote branch.
+    if (char === "/" && source[index + 1] === "/") {
+      const newline = source.indexOf("\n", index);
+      index = newline < 0 ? source.length : newline;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const terminator = source.indexOf("*/", index + 2);
+      index = terminator < 0 ? source.length : terminator + 1;
+      continue;
+    }
     if (char === '"' || char === "'" || char === "`") {
       const quote = char;
       index += 1;

@@ -80,21 +80,34 @@ function stripComments(source) {
     .replace(/(^|\s)\/\/.*$/gmu, "$1");
 }
 
+/**
+ * One attribution label as a producer actually writes it: the key begins a field
+ * inside a receipt evidence string, so it follows the opening quote or a `;`
+ * separator. Without the boundary `int budget = TailoringPairScanBudget;` reads
+ * as a `budget` label with no measurement -- a local variable, not a receipt
+ * fact -- and the finding's "line" was computed from a needle that never
+ * occurred (indexOf -1), so it pointed past the end of the file.
+ */
+const EVIDENCE_FIELD = (key) => new RegExp(`(?:["']|;)\\s*${key}\\s*=`, "u");
+
+const ATTRIBUTION_LABELS = Object.freeze([
+  { key: "path_search", field: EVIDENCE_FIELD("path_search"), undecided: /path_search\s*=\s*undecided/u },
+  { key: "route_exists", field: EVIDENCE_FIELD("route_exists\\w*"), undecided: null },
+  { key: "budget", field: EVIDENCE_FIELD("budget"), undecided: /budget\s*=\s*undecided/u },
+  { key: "derived", field: EVIDENCE_FIELD("derived"), undecided: null },
+]);
+
 function scanProductionSource(source, path) {
   const clean = stripComments(source);
   const findings = [];
-  const line = (needle) => clean.slice(0, clean.indexOf(needle)).split("\n").length;
-  if (/path_search\s*=/u.test(clean) && !/measurement\s*=|path_search\s*=\s*undecided/u.test(clean)) {
-    findings.push({ path, line: line("path_search"), key: "path_search", issue: "producer_has_no_measurement_field" });
-  }
-  if (/route_exists\w*\s*=/u.test(clean) && !/measurement\s*=/u.test(clean)) {
-    findings.push({ path, line: line("route_exists"), key: "route_exists", issue: "producer_has_no_measurement_field" });
-  }
-  if (/\bbudget\s*=/u.test(clean) && !/measurement\s*=|budget\s*=\s*undecided/u.test(clean)) {
-    findings.push({ path, line: line("budget="), key: "budget", issue: "producer_has_no_measurement_field" });
-  }
-  if (/\bderived\s*=/u.test(clean) && !/measurement\s*=/u.test(clean)) {
-    findings.push({ path, line: line("derived="), key: "derived", issue: "producer_has_no_measurement_field" });
+  // A receipt is measured as a whole: if the producer publishes any run
+  // measurement, the labels in that same evidence string are backed by it.
+  const measured = /measurement\s*=/u.test(clean);
+  for (const { key, field, undecided } of ATTRIBUTION_LABELS) {
+    const match = field.exec(clean);
+    if (!match) continue;
+    if (measured || (undecided !== null && undecided.test(clean))) continue;
+    findings.push({ path, line: clean.slice(0, match.index).split("\n").length, key, issue: "producer_has_no_measurement_field" });
   }
   return findings;
 }

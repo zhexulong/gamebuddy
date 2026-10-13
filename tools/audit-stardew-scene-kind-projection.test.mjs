@@ -177,10 +177,18 @@ test("an outbound path that bypasses the ground wire helper is reported", () => 
 // unschema-valid.
 test("a truncation reason missing from the schema's conditional branch is reported", () => {
   const box = sandbox();
-  const original = box.original(SCHEMA);
-  const fixed = `"truncatedReason": { "enum": ["maximum_affordances", "payload_limit", "ground_limit"] }`;
-  assert.ok(original.includes(fixed), "the branch must start in its fixed form");
-  box.write(SCHEMA, original.replace(fixed, `"truncatedReason": { "enum": ["maximum_affordances", "payload_limit"] }`));
+  const schema = JSON.parse(box.original(SCHEMA));
+  const branch = (schema.$defs?.observeSceneResult?.allOf ?? []).find(
+    (candidate) => Array.isArray(candidate?.then?.properties?.truncatedReason?.enum),
+  );
+  assert.ok(branch, "the partial branch must declare its fixed reason set");
+  assert.deepEqual(
+    branch.then.properties.truncatedReason.enum,
+    ["maximum_affordances", "payload_limit", "ground_limit"],
+    "the branch must start in its fixed form",
+  );
+  branch.then.properties.truncatedReason.enum = ["maximum_affordances", "payload_limit"];
+  box.write(SCHEMA, `${JSON.stringify(schema, null, 2)}\n`);
 
   const named = box.audit().findings.filter((f) => f.hop === "envelope schema allOf[0]" && f.detail.includes("ground_limit"));
   assert.equal(named.length, 1, "audit must report the omitted reason on the branch that narrows by partial");

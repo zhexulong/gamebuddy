@@ -12,7 +12,7 @@ const exactLiveGateSuccess = () => ({
   signal: null,
   stderr: "",
   stdout:
-    '{"schemaVersion":1,"gate":"windows_reparse_live_gate/v1","status":"passed","reason":"passed","helperSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","probes":{"regular":"passed","junction":"passed","directorySymlink":"passed","nonLinkReparse":"passed"},"consumers":{"browserGenerator":"passed","hostStaticVerifier":"passed"}}\n',
+    '{"schemaVersion":1,"gate":"windows_reparse_live_gate/v1","status":"passed","reason":"passed","helperSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","probes":{"regular":"passed","junction":"passed","directorySymlink":"passed"},"consumers":{"browserGenerator":"passed","hostStaticVerifier":"passed"}}\n',
 });
 
 const blockedLiveGate = () => ({ status: 2, signal: null, stderr: "", stdout: "" });

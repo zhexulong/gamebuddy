@@ -45,6 +45,15 @@ const SCHEMA = "protocol/bridge-v1.schema.json";
 const DEFAULT_ROOT = ROOT;
 const read = (relative, root = ROOT) => readFileSync(path.join(root, relative), "utf8");
 
+/**
+ * Drop comments from a captured declaration body before scraping its quoted
+ * strings. The Host protocol documents scene kinds in prose, and the reachability
+ * doc comment quotes "we could not check" / "you cannot go there"; read as
+ * literals those two phrases became kinds the Mod enum does not declare.
+ */
+const commentFree = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
 /** PascalCase enum member -> lower snake wire value, applied to the C# wire rows. */
 function enumMembers(contractsSource) {
   const block = contractsSource.match(/internal enum SceneAffordanceKind\s*\{([\s\S]*?)\}/);
@@ -236,10 +245,10 @@ export function auditSceneKindProjection({ root = DEFAULT_ROOT } = {}) {
   // the affordance union wraps across lines in current formatting.
   const affordanceDecl = host.match(/export type ObserveSceneAffordance = Readonly<\{([\s\S]*?)\}>;/);
   const hostUnion = new Set(
-    affordanceDecl ? [...affordanceDecl[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((v) => v !== "North" && v !== "South" && v !== "East" && v !== "West" && v !== "CurrentTile") : [],
+    affordanceDecl ? [...commentFree(affordanceDecl[1]).matchAll(/"([^"]+)"/g)].map((m) => m[1]).filter((v) => v !== "North" && v !== "South" && v !== "East" && v !== "West" && v !== "CurrentTile") : [],
   );
   const hostSetMatch = host.match(/const OBSERVE_SCENE_KINDS = new Set\(\[([^\]]*)\]\)/);
-  const hostSet = new Set(hostSetMatch ? [...hostSetMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
+  const hostSet = new Set(hostSetMatch ? [...commentFree(hostSetMatch[1]).matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
 
   const schema = JSON.parse(read(SCHEMA, root));
   const schemaEnum = new Set(schema?.$defs?.observeSceneAffordance?.properties?.kind?.enum ?? []);
