@@ -615,6 +615,11 @@ activeExecution?: ActiveExecution | null;
   farmBuildingTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
     y: number; buildingType: string; displayName: string; buildCost: number; buildDays: number;
     buildingId: string; daysOfConstructionLeft: number }>[];
+  /** The day's posted help-wanted quests the actor can name, and whether today's has already been
+   * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
+   * offered twice; `questType` is the native `Quest.questType`. */
+  dailyQuestTargets?: readonly Readonly<{ targetId: string; questType: number; title: string }>[];
+  acceptedDailyQuest?: boolean;
   /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
    * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
   wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
@@ -1275,6 +1280,8 @@ const SNAPSHOT_KEYS = [
 
   "worldObjectTargets",
   "farmBuildingTargets",
+  "dailyQuestTargets",
+  "acceptedDailyQuest",
   "wearableTargets",
   "warpItemTargets",
   "panSites",
@@ -1292,6 +1299,8 @@ const SNAPSHOT_KEYS = [
 
     "worldObjectTargets",
     "farmBuildingTargets",
+    "dailyQuestTargets",
+    "acceptedDailyQuest",
   "wearableTargets",
   "warpItemTargets",
   "panSites",
@@ -2496,6 +2505,15 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:farmBuildingTargets";
   if (
+    value.dailyQuestTargets !== undefined &&
+    (!Array.isArray(value.dailyQuestTargets) ||
+      value.dailyQuestTargets.length > 16 ||
+      !value.dailyQuestTargets.every(isDailyQuestTargetFact))
+  )
+    return "invalid_snapshot:dailyQuestTargets";
+  if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
+    return "invalid_snapshot:acceptedDailyQuest";
+  if (
     value.wearableTargets !== undefined &&
     (!Array.isArray(value.wearableTargets) ||
       value.wearableTargets.length > 16 ||
@@ -2990,6 +3008,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   if (worldObjectTargetsVerdict !== null) return worldObjectTargetsVerdict;
   const farmBuildingTargetsVerdict = farmBuildingTargetsError(value);
   if (farmBuildingTargetsVerdict !== null) return farmBuildingTargetsVerdict;
+  const dailyQuestVerdict = dailyQuestError(value);
+  if (dailyQuestVerdict !== null) return dailyQuestVerdict;
   return hasOnlyKeys(value, SNAPSHOT_KEYS) &&
     Number.isSafeInteger(value.revision) &&
     typeof value.location === "string" &&
@@ -4867,6 +4887,34 @@ function farmBuildingTargetsError(value: Record<string, unknown>): string | null
   )
     return "invalid_snapshot:farmBuildingTargets";
   return null;
+}
+
+function dailyQuestError(value: Record<string, unknown>): string | null {
+  if (value.dailyQuestTargets !== undefined) {
+    if (
+      !Array.isArray(value.dailyQuestTargets) ||
+      value.dailyQuestTargets.length > 16 ||
+      !value.dailyQuestTargets.every(isDailyQuestTargetFact)
+    )
+      return "invalid_snapshot:dailyQuestTargets";
+  }
+  if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
+    return "invalid_snapshot:acceptedDailyQuest";
+  return null;
+}
+
+/** One posted help-wanted quest the actor can name: the opaque id it was published under, the native
+ * quest type, and the title a human would recognize. */
+function isDailyQuestTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "questType", "title"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.questType === "number" &&
+    Number.isSafeInteger(value.questType) &&
+    typeof value.title === "string"
+  );
 }
 
 function isFarmBuildingTargetFact(value: unknown): boolean {

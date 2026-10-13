@@ -21,10 +21,13 @@ const MAX_REQUEST_TIMEOUT_MS = 600_000;
 const MAX_TERMINAL_WAIT_MS = 600_000;
 
 export class NativeSmokeHarnessError extends Error {
-  constructor(code) {
-    super(code);
+  /** `code` stays the exact, pinned identity; `detail` (when given) is appended to the MESSAGE only, so a
+   * runner that reports `error.message` shows the diagnosis while every `code ===` assertion keeps working. */
+  constructor(code, detail) {
+    super(detail === undefined ? code : `${code}:${detail}`);
     this.name = "NativeSmokeHarnessError";
     this.code = code;
+    if (detail !== undefined) this.detail = String(detail);
   }
 }
 
@@ -151,8 +154,15 @@ export function assertExactCapabilities(snapshot, expectedCapabilities) {
     throw new NativeSmokeHarnessError("invalid_native_expected_capabilities");
   const actual = [...(Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [])].sort();
   const expected = [...expectedCapabilities].sort();
-  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index]))
-    throw new NativeSmokeHarnessError("native_capability_surface_mismatch");
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    // Name what differed, bounded, so a blocked gate is diagnosable from its own output.
+    const missing = expected.filter((value) => !actual.includes(value)).slice(0, 5).join(",");
+    const unexpected = actual.filter((value) => !expected.includes(value)).slice(0, 5).join(",");
+    throw new NativeSmokeHarnessError(
+      "native_capability_surface_mismatch",
+      `actual=${actual.length}:expected=${expected.length}:missing=${missing}:unexpected=${unexpected}`,
+    );
+  }
   return snapshot;
 }
 
