@@ -41,6 +41,7 @@ const baseSnapshot: Snapshot = {
   catalogRevision: 3,
   enabledActionIds: ["pet_animal"],
   presentationLocale: "en-US",
+  weather: "sunny",
   timeOfDay: 600,
   dayOfMonth: 1,
   seasonIndex: 0,

@@ -23,6 +23,7 @@ const snapshot = {
 catalogRevision: 1,
   enabledActionIds: ["move_to_tile"],
   presentationLocale: "en-US",
+  weather: "sunny",
   timeOfDay: 600,
   dayOfMonth: 1,
   seasonIndex: 0,

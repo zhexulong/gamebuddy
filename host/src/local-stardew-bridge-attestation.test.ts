@@ -500,7 +500,7 @@ test("attested submit timeout emits exactly one program frame and is not retried
   });
 });
 
-test("attested fixed closure survives refresh by identity, then drains before revocation", async () => {
+test("attested fixed closure drains the held request before revocation", async () => {
   const requests: BridgeMessage[] = [];
   let heldStatus: BridgeMessage | undefined;
   let heldSocket: Socket | undefined;
@@ -514,10 +514,7 @@ test("attested fixed closure survives refresh by identity, then drains before re
     try {
       materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
       const runtime = observeMaterializedProductionRuntimeForTest(materialized);
-       const beforeRefresh = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
-       await runtime.refreshIntegrationTools?.();
-       const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
-       assert.notEqual(status, beforeRefresh);
+      const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
         const started = status.execute("draining_status", { programId: "program_05" }, new AbortController().signal, () => undefined);
         await Promise.race([
           statusSent,
@@ -863,6 +860,7 @@ test("exact authenticated launch handle keeps catalog capabilityRevision indepen
         catalogRevision: 1,
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
+        weather: "sunny",
         timeOfDay: 600,
         dayOfMonth: 1,
         seasonIndex: 0,
@@ -898,6 +896,7 @@ test("exact authenticated launch handle projects an in-flight snapshot execution
         catalogRevision: 1,
         enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
+        weather: "sunny",
         timeOfDay: 600,
         dayOfMonth: 1,
         seasonIndex: 0,

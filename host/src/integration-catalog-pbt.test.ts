@@ -64,6 +64,7 @@ function sendSnapshot(
         catalogRevision,
         enabledActionIds: enabled ? ["move_to_tile"] : [],
         presentationLocale: "en-US",
+        weather: "sunny",
         timeOfDay: 600,
         dayOfMonth: 1,
         seasonIndex: 0,

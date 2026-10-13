@@ -40,6 +40,7 @@ function integration(overrides: Partial<StardewBridgeConnection["state"]> = {}):
         catalogRevision: 1,
         enabledActionIds: [],
         presentationLocale: "en-US",
+        weather: "sunny",
         timeOfDay: 600,
         dayOfMonth: 1,
         seasonIndex: 0,
