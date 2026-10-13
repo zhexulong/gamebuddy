@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { validateIdentityProfile } from "../identity-profile.js";
@@ -19,14 +20,23 @@ import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
  * SAME product functions (`previewStCard` + `candidateToIdentityProfile`) and
  * fails if the shipped copy no longer equals them.
  *
- * The compile sources are the COMMITTED card + world book, not the working
- * tree: the working tree of the assets dir is routinely owned by a lane
- * editing the terminology, and the shipped preset must reflect the committed
- * review (`host/scripts/compile-default-companion-preset.mjs --committed`).
- * This test reads `git show HEAD:...` the same way, so the two sides always
- * measure the same text. A lane that edits the card commits the card edit AND
- * regenerates the preset in the same commit; until then this parity test stays
- * red for them on purpose.
+ * Two measurements live here, each named for the text it actually reads:
+ *
+ *  - COMMITTED parity (the gate). The shipped preset is produced from the
+ *    committed card + world book — `host/scripts/compile-default-companion-preset.mjs
+ *    --committed` exists for exactly that reason, because the working tree of the
+ *    assets dir is routinely owned by a lane editing the terminology. So the gate
+ *    reads that same text with `git show HEAD:...` and NEVER the file on disk. A
+ *    lane that edits the card commits the card edit AND the regenerated preset in
+ *    the same commit; until then this parity test stays red for them on purpose.
+ *    If git cannot be reached the gate fails with `committed_asset_unreadable`
+ *    instead of falling back to the working tree, because such a fallback makes
+ *    the gate compare the working tree against itself and enforce nothing.
+ *
+ *  - WORKING-TREE parity (an editing-time check, not the gate). While a card edit
+ *    is in flight, "the preset matches the files on disk" is the question that
+ *    separates "I regenerated after my edit" from "I forgot to"; it is named for
+ *    the text it reads and it is never the assertion that guards a release.
  */
 function presetDirectory(): string {
   for (const candidate of [process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "..", "..")]) {
@@ -40,25 +50,30 @@ function repositoryRoot(): string {
   return resolve(presetDirectory(), "..", "..", "..");
 }
 
-async function committedAsset(name: string): Promise<unknown> {
-  const bytes = execFileSync("git", ["show", `HEAD:assets/tavern/presets/default-companion/${name}`], {
-    cwd: repositoryRoot(),
-    encoding: "utf8",
-  });
+/** The COMMITTED text of one preset asset, read from git at HEAD. */
+function committedAsset(name: string): unknown {
+  const spec = `HEAD:assets/tavern/presets/default-companion/${name}`;
+  let bytes: string;
+  try {
+    bytes = execFileSync("git", ["show", spec], { cwd: repositoryRoot(), encoding: "utf8" });
+  } catch (error) {
+    throw new Error(
+      `committed_asset_unreadable: git could not show ${spec} (${error instanceof Error ? error.message : String(error)}); ` +
+        "reading the file on disk here would compare the working tree against itself",
+    );
+  }
   return JSON.parse(bytes);
 }
 
-test("the shipped compiled preset equals the product converter's output for the committed card", async () => {
-  const card = await committedAsset("card.json");
-  const rawBook = await committedAsset("worldbook.json");
+/** The WORKING TREE's text of one preset asset. */
+async function workingTreeAsset(name: string): Promise<unknown> {
+  return JSON.parse(await readFile(join(presetDirectory(), name), "utf8"));
+}
 
+/** What the product converter produces for a given card + world book. */
+function convertedPreset(card: unknown, rawBook: unknown) {
   const preview = previewStCard(card, "gamebuddy.companion.default");
   const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
-  assert.equal(profile.identity.name, "琥珀");
-  assert.deepEqual(DEFAULT_COMPANION_PRESET.profile, profile);
-
-  assert.deepEqual(DEFAULT_COMPANION_PRESET.worldBook, validateWorldBook(rawBook));
-
   const candidate = preview.profileCandidate;
   const greetings: Array<Readonly<{ label: string; text: string }>> = [];
   if (typeof candidate.firstGreeting === "string" && candidate.firstGreeting.trim() !== "")
@@ -67,14 +82,23 @@ test("the shipped compiled preset equals the product converter's output for the 
     if (typeof text === "string" && text.trim() !== "")
       greetings.push(Object.freeze({ label: `Alternate ${index + 1}`, text }));
   });
-  assert.deepEqual(DEFAULT_COMPANION_PRESET.greetings, greetings);
+  return { profile, worldBook: validateWorldBook(rawBook), greetings };
+}
+
+function assertPresetMatches(expected: ReturnType<typeof convertedPreset>): void {
+  assert.deepEqual(DEFAULT_COMPANION_PRESET.profile, expected.profile);
+  assert.deepEqual(DEFAULT_COMPANION_PRESET.worldBook, expected.worldBook);
+  assert.deepEqual(DEFAULT_COMPANION_PRESET.greetings, expected.greetings);
+}
+
+test("the shipped compiled preset equals the product converter's output for the COMMITTED card", () => {
+  const expected = convertedPreset(committedAsset("card.json"), committedAsset("worldbook.json"));
+  assert.equal(expected.profile.identity.name, "琥珀");
+  assertPresetMatches(expected);
 });
 
-test("the committed card's system_prompt is carried into the shipped profile as characterVoice", async () => {
-  const card = await committedAsset("card.json");
-
-  const preview = previewStCard(card, "gamebuddy.companion.default");
-  const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
+test("the committed card's system_prompt is carried into the shipped profile as characterVoice", () => {
+  const profile = convertedPreset(committedAsset("card.json"), committedAsset("worldbook.json")).profile;
   // The card's own performance directive — including "动率先于言" and the rule
   // that the companion never calls the player 搭档 — must reach the model on
   // the DEFAULT path too, exactly the way an imported card's directive does.
@@ -83,7 +107,10 @@ test("the committed card's system_prompt is carried into the shipped profile as 
     source: "card",
   });
   assert.ok(profile.characterVoice !== undefined);
-  assert.ok(profile.characterVoice.text.includes("动率先于言"), "the card's own 动率先于言 rule reaches the default path");
+  assert.ok(
+    profile.characterVoice.text.includes("动率先于言"),
+    "the card's own 动率先于言 rule reaches the default path",
+  );
   assert.ok(
     profile.characterVoice.text.includes("称谓规范"),
     "the card's own 称谓规范 directive reaches the default path",
@@ -95,4 +122,8 @@ test("the committed card's system_prompt is carried into the shipped profile as 
   // asserted by st-card-import.test.ts, this half by the deepEqual above.
   assert.equal(DEFAULT_COMPANION_PRESET.profile.profileId, "gamebuddy.companion.default");
   assert.equal(profile.profileId, "gamebuddy.companion.default");
+});
+
+test("the shipped compiled preset also matches the WORKING-TREE card and world book (editing-time check, not committed parity)", async () => {
+  assertPresetMatches(convertedPreset(await workingTreeAsset("card.json"), await workingTreeAsset("worldbook.json")));
 });
