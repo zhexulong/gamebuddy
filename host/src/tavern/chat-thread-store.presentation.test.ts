@@ -71,7 +71,27 @@ const continuityKey = createHash("sha256")
   .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
   .digest("hex");
 
+/**
+ * Every store this file opens, closed before its root is removed.
+ *
+ * The failure this prevents: a store left open holds the continuity SQLite file
+ * (`tavern.sqlite`, its `-wal` and `-shm`) against deletion, and `fs.rm` on
+ * Windows then blocks forever instead of failing - so this file printed
+ * `TAP version 13` and nothing else, for four minutes, every test hanging in
+ * its own `finally` and the runner never reaching the first result.
+ */
+const openStores: Array<ReturnType<typeof createChatThreadStore>> = [];
+
+/** Opens a store on `root` and remembers it, so this file always closes what it opened. */
+function openStore(root: string, now?: () => number): ReturnType<typeof createChatThreadStore> {
+  const store =
+    now === undefined ? createChatThreadStore(root, continuityKey) : createChatThreadStore(root, continuityKey, now);
+  openStores.push(store);
+  return store;
+}
+
 async function removeTestRoot(root: string) {
+  for (const store of openStores.splice(0)) store.close?.();
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 }
 
@@ -95,9 +115,8 @@ test.after(() => {
 async function prepareRunning(
   root: string,
 ): Promise<Readonly<{ attemptId: string; store: ReturnType<typeof createChatThreadStore>; base: number }>> {
-  const store = createChatThreadStore(
+  const store = openStore(
     root,
-    continuityKey,
     (() => {
       let current = 100;
       return () => current++;
@@ -170,7 +189,7 @@ test("presentation commits exactly one durable presentation from running and reo
     assert.equal(bubble?.text, "I am here.");
     assert.equal(state.messages.filter((message) => message.kind === "player").length, 1);
     assert.equal(state.messages.filter((message) => message.kind === "response").length, 1);
-    const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
     assert.deepEqual(reopened.turnLedger, committed);
     assert.deepEqual(reopened.messages, state.messages);
   } finally {
@@ -191,7 +210,7 @@ test("presentation commit retry with the identical message is idempotent and nev
     const first = await transitionMountedPresentation({ ...bindingFor(root), attemptId }, command);
     const retried = await transitionMountedPresentation({ ...bindingFor(root), attemptId }, command);
     assert.deepEqual(retried, first);
-    const state = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const state = await openStore(root).resumeThread("thread_01", "surface_01");
     assert.equal(state.turnLedger?.status ?? null, "presentation_committed");
     assert.equal(state.messages.filter((message) => message.kind === "response").length, 1);
     await assert.rejects(
@@ -250,7 +269,7 @@ test("presentation completion claims and completes only from an exact committed 
       { operation: "complete", completedAtMs: base + 14 },
     );
     assert.equal(completed.status, "completed");
-    const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
     assert.deepEqual(reopened.turnLedger, completed);
     await assert.rejects(
       () =>
@@ -290,7 +309,7 @@ test("presentation cancel after commit keeps the bubble historical and terminali
       { operation: "cancel", cancelledAtMs: base + 12 },
     );
     assert.equal(cancelled.status, "cancelled");
-    const state = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const state = await openStore(root).resumeThread("thread_01", "surface_01");
     assert.equal(state.messages.filter((message) => message.kind === "response").length, 1);
     const repeated = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
@@ -350,7 +369,7 @@ test("presentation fails from a live running attempt and rejects attempt-startin
       assert.equal(failed.reasonCode, "no_visible_presentation");
       assert.equal(failed.presentation, null);
     }
-    const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
     assert.deepEqual(reopened.turnLedger, failed);
     await assert.rejects(
       () =>
@@ -368,9 +387,8 @@ test("presentation fails from a live running attempt and rejects attempt-startin
 test("presentation fail is not reachable before the provider start observation", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-fail-early-");
   try {
-    const store = createChatThreadStore(
+    const store = openStore(
       root,
-      continuityKey,
       (() => {
         let current = 100;
         return () => current++;
@@ -510,7 +528,7 @@ test("the Chat persistence path stores the model's own text, action beat include
     assert.equal(committed.status, "presentation_committed");
 
     // What the player's transcript is built from: the durable store, reopened.
-    const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
     const row = reopened.messages.find((message) => message.messageId === messageId);
     assert.equal(row?.role, "companion");
     assert.equal(row?.kind, "response");
