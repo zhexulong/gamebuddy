@@ -174,6 +174,7 @@ function createIntegration(options: {
               dayOfMonth: 1,
               seasonIndex: 0,
               year: 1,
+              weather: "sunny",
               activeExecution: null,
             }
           : null,
@@ -480,16 +481,14 @@ test("candidate actions marked 'published' but lacking complete descriptor are e
   };
 
   // Descriptor missing native binding
+  const { nativeBinding: _droppedNativeBinding, ...descriptorWithoutNativeBinding } = VALID_EXPRESS_EMOTE_DESCRIPTOR;
   const missingNative: ActionRegistration = {
     actionId: "express_emote",
     familyId: "expression",
     identityVersion: 1,
     lifecycle: "published",
     kind: "execution",
-    descriptor: {
-      ...VALID_EXPRESS_EMOTE_DESCRIPTOR,
-      nativeBinding: undefined,
-    },
+    descriptor: descriptorWithoutNativeBinding,
   };
 
   const catalog = [noDescriptor, missingEnum, emptyEnum, missingNative];
@@ -713,6 +712,7 @@ test("pre-dispatch recheck: disconnected integration fails closed at execution t
               dayOfMonth: 1,
               seasonIndex: 0,
               year: 1,
+              weather: "sunny",
               activeExecution: null,
             }
           : null,
