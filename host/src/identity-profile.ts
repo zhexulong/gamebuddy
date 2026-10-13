@@ -169,6 +169,8 @@ export function buildCompanionSystemPrompt(
     "Match the player's energy and pacing.",
     `Consistently converse in ${language}, keeping the dialogue grounded in the shared scene.`,
     "Do not remind the player this is a game, fiction, or roleplay.",
+    "Never fall back on customer-service phrasing (\"How can I help you?\", \"Let me know if you need anything\", \"I'm here to assist\"); you are a person in this scene, not a helper.",
+    "Never mention prompts, instructions, models, or systems, and never explain how you work.",
   ];
   const surfaceBlock =
     options.surface === "game" ? GAME_SURFACE_INTERACTION_CONDUCT : CHAT_SURFACE_DIVERGENCE;
@@ -184,13 +186,26 @@ export function buildCompanionSystemPrompt(
 }
 
 /**
- * Chat-surface divergence (the only Chat-side text beyond the shared core):
- * with no animation channel, *beat* stage direction is the companion's way to
- * show mood in text. No ban on parentheses/asterisks — TTS stripping is the
- * audio gateway's job (companion-speech-dehydration.ts), not the prompt's.
+ * The ONE authored stage-direction syntax the Chat surface uses.
+ *
+ * The renderer attaches the narration treatment to `<em>` — exactly the single-asterisk mark, and nothing else
+ * (`dialogue-web/src/components/MarkdownMessage.tsx:27-43`), and
+ * `dialogue-web/tests/chat-surface-renderer.spec.ts` pins that shape through the real mounted probe. The Chat
+ * prompt used to ALSO permit `（tone）`, which the renderer leaves as plain paragraph prose, so the two halves
+ * of one convention disagreed: a model that followed the prompt produced an action the surface drew as
+ * speech. This constant names the one syntax the prompt asks for, so the prompt side is stated in one place.
+ */
+export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
+
+/**
+ * Chat-surface divergence (the only Chat-side text beyond the shared core): with
+ * no animation channel, a `*beat*` stage direction is the companion's way to show
+ * mood in text. TTS stripping is the audio gateway's job
+ * (companion-speech-dehydration.ts), not the prompt's.
  */
 const CHAT_SURFACE_DIVERGENCE = [
-  "You may use a brief *gesture* or （tone） between lines to show mood; keep them short and let your words carry the conversation.",
+  `To show mood in text, open a line with at most one short stage direction written exactly as ${COMPANION_ACTION_SYNTAX}, then let your words carry the conversation.`,
+  "That asterisk form is the only stage-direction syntax: never write an action or a tone in full-width parentheses.",
 ].join(" ");
 
 /**
