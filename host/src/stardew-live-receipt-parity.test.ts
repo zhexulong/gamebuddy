@@ -35,7 +35,12 @@ function wireDetail(evidence: Record<string, string>): string {
 
 /** Every action the completion switch names, read from the source so a new rule is covered without editing a list. */
 function actionsWithARule(): string[] {
-  return [...new Set([...ADAPTER.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]))];
+  const actions = new Set<string>();
+  for (const match of ADAPTER.matchAll(/case "([a-z_]+)":/g)) {
+    const action = match[1];
+    if (action !== undefined) actions.add(action);
+  }
+  return [...actions];
 }
 
 const receipts = CORPUS.receipts as Array<{ actionId: string; state: string; reasonCode: string; evidence: Record<string, string> }>;
