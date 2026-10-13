@@ -37,7 +37,9 @@ test("ST card application import persists hash-verified inert candidate/report a
           html: "<script>bad()</script>",
           presets: { unsafe: true },
           extensions: { script: "bad" },
-          character_book: { entries: [{ comment: "Lore", content: "inert background" }] },
+          character_book: {
+            entries: [{ comment: "Lore", content: "inert background", keys: ["harvest", "spring"] }],
+          },
           metadata: { untouched: true },
         },
       }),
@@ -74,6 +76,15 @@ test("ST card application import persists hash-verified inert candidate/report a
     assert.equal(result.candidate.artifact.worldBookCandidates?.length, 1);
     assert.equal(result.candidate.artifact.worldBookCandidates?.[0]?.entryId, "st-st-v3-1");
     assert.equal(result.candidate.artifact.worldBookCandidates?.[0]?.content, "inert background");
+    // The card's own trigger words are a real ST v3 world-book field, not a
+    // decoration: they are what a keyword-gated entry fires on, so they must
+    // survive the persistence boundary. Before this assertion the candidate's
+    // `only()` allowlist refused `keys` and the whole import died with a bare
+    // `invalid_tavern_artifact` — the shipped default card carries `keys`.
+    const candidateJson = JSON.parse(await readFile(tavernImportPath(paths, "import_01", "candidate.json"), "utf8")) as {
+      artifact: { worldBookCandidates: readonly { keys?: readonly string[] }[] };
+    };
+    assert.deepEqual(candidateJson.artifact.worldBookCandidates[0]?.keys, ["harvest", "spring"]);
     assert.equal(
       result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.eligibility,
       "profile_eligible_after_explicit_review",

@@ -24,6 +24,12 @@ export type CharacterCandidate = ArtifactRevision &
       provenance: "authored" | "st-card-import" | "reviewed-import";
       tokenBudget: "small" | "medium";
       constant?: boolean;
+      /**
+       * The card's own trigger words, carried through review like the worldbook's
+       * own `keys`: volatile selection matches them against what the player said,
+       * so a keyword-gated entry is unreachable without them.
+       */
+      keys?: readonly string[];
     }>[];
   }>;
 /**
@@ -174,7 +180,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       : array(v.worldBookCandidates, 128).map((x) => {
           if (
             !record(x) ||
-            !only(x, ["entryId", "title", "content", "scope", "provenance", "tokenBudget", "constant"])
+            !only(x, ["entryId", "title", "content", "scope", "provenance", "tokenBudget", "constant", "keys"])
           )
             fail();
           const scope = x.scope;
@@ -196,6 +202,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
             provenance: provenance as "authored" | "st-card-import" | "reviewed-import",
             tokenBudget: tokenBudget as "small" | "medium",
             ...(x.constant === undefined ? {} : { constant: requiredConstant(x.constant) }),
+            ...(x.keys === undefined ? {} : { keys: requiredWorldBookKeys(x.keys) }),
           });
         });
   const candidateId = requiredId(v.candidateId);
@@ -533,4 +540,15 @@ function fail(): never {
 function requiredConstant(v: unknown): boolean {
   if (typeof v !== "boolean") fail();
   return v;
+}
+/**
+ * A candidate's world-book trigger words. Bounded exactly as the persisted
+ * worldbook bounds them (`worldbook.ts` `validateEntry`): the decoder trims and
+ * caps a card's `keys` to 16 words of 64 chars, and an empty list must read as
+ * "no trigger words" (absent) rather than a malformed entry.
+ */
+function requiredWorldBookKeys(v: unknown): readonly string[] {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 16) fail();
+  if (!v.every((key) => typeof key === "string" && key.trim().length > 0 && key.length <= 64)) fail();
+  return freeze([...v] as string[]);
 }

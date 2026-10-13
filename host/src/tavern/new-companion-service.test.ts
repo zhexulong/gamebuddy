@@ -405,6 +405,7 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
         scope: "setting" as const,
         provenance: "reviewed-import" as const,
         tokenBudget: "small" as const,
+        keys: ["下雨", "雨天"],
       },
     ],
   };
@@ -427,6 +428,10 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
       assert.equal(worldbook.entries.length, 2);
       assert.equal(worldbook.entries[0].constant, true);
       assert.equal(worldbook.entries[1].constant, undefined);
+      // A keyword-gated entry's trigger words are the card's own and must reach
+      // the persisted worldbook: the volatile selector matches them against what
+      // the player said, so dropping them makes the entry unreachable.
+      assert.deepEqual(worldbook.entries[1].keys, ["下雨", "雨天"]);
       // The binding a chat creator will mount (createNewChat already carries
       // TavernStableWorldBookBinding) is exactly the on-disk revision metadata.
       assert.match(worldbook.canonicalHash, /^[a-f0-9]{64}$/);

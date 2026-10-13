@@ -194,6 +194,7 @@ async function provisionNewCompanionNamespace(
                   provenance: entry.provenance,
                   tokenBudget: entry.tokenBudget,
                   ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+                  ...(entry.keys === undefined ? {} : { keys: entry.keys }),
                 }),
               ),
             ),
