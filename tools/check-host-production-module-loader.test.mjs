@@ -5,26 +5,37 @@ import test from "node:test";
 
 const root = resolve(import.meta.dirname, ".");
 const moduleLoader = await readFile(join(root, "lib", "host-production-module.mjs"), "utf8");
-const allowedDirectReferences = new Set([
-  "check-text-hygiene.mjs", // literal deny-list strings, not a loader/import
-  "run-stardew-native-local-player-navigation-mutation-smoke.mjs", // live gate loads the emitted dist-test Host client, same as companion-live
-]);
+// The only tool allowed to name the mutable production generation root directly:
+// it carries `host/dist/` as a literal deny-list string, not a loader or import.
+const allowedProductionRootReferences = new Set(["check-text-hygiene.mjs"]);
 
-test("normal Host runners resolve inventory-pinned production modules instead of mutable host/dist", async () => {
-  assert.match(moduleLoader, /resolveProductionEntry/);
-  assert.match(moduleLoader, /recheckProductionEntry/);
-  assert.match(moduleLoader, /resolveProductionModule/);
+// The mutable production root is exactly `host/dist`. `host/dist-test` and
+// `host/dist-reference-check` are test infrastructure, not the generation
+// pointer, so a live gate that loads the emitted test client is not a direct
+// reference to production. Match the root itself, never a hyphenated sibling:
+// the previous `includes("../host/dist")` test also matched `../host/dist-test/`
+// and pinned the allowlist to the handful of files that existed when it was
+// written, so thirteen later live gates each looked like new violations.
+const PRODUCTION_ROOT_REFERENCE = /\.\.\/host\/dist(?![-\w])|["']host\/dist\//;
+
+async function toolsReferencingProductionRoot() {
   const direct = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".mjs")) continue;
     const source = await readFile(join(root, entry.name), "utf8");
-    if (source.includes("../host/dist") || source.includes('"host/dist/') || source.includes("'host/dist/"))
-      direct.push(entry.name);
+    if (PRODUCTION_ROOT_REFERENCE.test(source)) direct.push(entry.name);
   }
-  assert.deepEqual(
-    direct.filter((name) => name !== "check-host-production-module-loader.test.mjs").sort(),
-    [...allowedDirectReferences].sort(),
-  );
+  return direct.filter((name) => name !== "check-host-production-module-loader.test.mjs").sort();
+}
+
+test("normal Host runners resolve inventory-pinned production modules instead of the mutable host/dist root", async () => {
+  assert.match(moduleLoader, /resolveProductionEntry/);
+  assert.match(moduleLoader, /recheckProductionEntry/);
+  assert.match(moduleLoader, /resolveProductionModule/);
+  // Derived from the tree rather than pinned to a count or a stale name list: a
+  // tool that starts reaching into the mutable production root fails here until
+  // it is accounted for, and an allowance cannot outlive the reference it excuses.
+  assert.deepEqual(await toolsReferencingProductionRoot(), [...allowedProductionRootReferences].sort());
 });
 
 test("the production module loader does not reconstruct current.json or a generation path", () => {

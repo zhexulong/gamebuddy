@@ -755,7 +755,11 @@ test("audit harness stays on the composition bootstrap and authenticated Chat AP
   assert.match(source, /surface: AUDIT_SURFACE/);
   assert.match(source, /const AUDIT_SURFACE = "chat-only";/);
   assert.match(source, /outputRoot: AUDIT_OUTPUT_ROOT/);
-  assert.match(source, /\/api\/tavern\/v1\/bootstrap/);
+  // The composition launch performs the bootstrap handshake (see the two
+  // assertions above); the harness only talks to the authenticated Chat API and
+  // must never hand-call the bootstrap endpoint. This replaces a positive
+  // `/api/tavern/v1/bootstrap` regex that froze the pre-38b19a64 shape.
+  assert.doesNotMatch(source, /\/api\/tavern\/v1\/bootstrap/);
   assert.match(source, /\/api\/tavern\/v1\/messages/);
   assert.match(source, /\/api\/tavern\/v1\/events\?apiVersion=1/);
   assert.match(source, /\/api\/tavern\/v1\/turns\/\$\{encodeURIComponent\(turnHandle\)\}\/cancel/);
