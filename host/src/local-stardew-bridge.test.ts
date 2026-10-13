@@ -227,10 +227,6 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
 test("local Stardew bridge advances the admitted snapshot revision on an unsolicited execution receipt", async () => {
   const pipeName = `gamebuddy_execution_receipt_revision_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
-  let snapshotsWritten: (() => void) | undefined;
-  const written = new Promise<void>((resolvePromise) => {
-    snapshotsWritten = resolvePromise;
-  });
   const server = createServer((socket: Socket) => {
     peer = socket;
     socket.once("data", (chunk: Buffer) => {
@@ -325,8 +321,6 @@ test("local Stardew bridge advances the admitted snapshot revision on an unsolic
           // Ignore malformed probe frames; the bridge itself fails closed.
         }
       });
-      // Allow the client's first post-hello requests to flow.
-      setTimeout(() => snapshotsWritten?.(), 20);
     });
   });
   await new Promise<void>((resolvePromise, reject) =>
@@ -1292,12 +1286,17 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
     const replay = await client.cancel("cancel_request_01", "cancel_execution_01", "stop_requested");
     const other = await client.cancel("cancel_request_02", "cancel_execution_02", "stop_requested");
     assert.equal(cancelPayloads.length, 3);
+    const [firstCancel, secondCancel, thirdCancel] = cancelPayloads;
+    assert.ok(
+      firstCancel !== undefined && secondCancel !== undefined && thirdCancel !== undefined,
+      "three cancel payloads must have been sent",
+    );
     // One stable cancelId per request; cancelEpoch strictly increases per attempt.
-    assert.equal(cancelPayloads[0].cancelId, cancelPayloads[1].cancelId);
-    assert.equal(cancelPayloads[0].cancelEpoch, 1);
-    assert.equal(cancelPayloads[1].cancelEpoch, 2);
-    assert.notEqual(cancelPayloads[2].cancelId, cancelPayloads[0].cancelId);
-    assert.equal(cancelPayloads[2].cancelEpoch, 1);
+    assert.equal(firstCancel.cancelId, secondCancel.cancelId);
+    assert.equal(firstCancel.cancelEpoch, 1);
+    assert.equal(secondCancel.cancelEpoch, 2);
+    assert.notEqual(thirdCancel.cancelId, firstCancel.cancelId);
+    assert.equal(thirdCancel.cancelEpoch, 1);
     for (const payload of cancelPayloads) {
       assert.equal(
         payload.requestId,
