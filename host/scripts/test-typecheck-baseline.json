@@ -1,0 +1,21 @@
+{
+  "note": "Per-code error counts of host/tsconfig.test.json, recorded from the committed tree. Update deliberately, in its own commit.",
+  "revision": "d0859860",
+  "total": 167,
+  "codes": {
+    "TS6133": 14,
+    "TS2379": 16,
+    "TS2345": 26,
+    "TS2352": 4,
+    "TS2769": 6,
+    "TS7006": 7,
+    "TS2322": 35,
+    "TS18048": 14,
+    "TS2532": 25,
+    "TS2741": 11,
+    "TS2339": 1,
+    "TS2375": 1,
+    "TS2740": 5,
+    "TS2307": 2
+  }
+}
