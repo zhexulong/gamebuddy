@@ -29,7 +29,7 @@ function settledSession(
 }
 
 test("CompanionLoop explicitly steers player input and includes the latest snapshot", async () => {
-  const received: Array<{ text: string; deliverAs?: string }> = [];
+  const received: Array<{ text: string; deliverAs?: string | undefined }> = [];
   const loop = new CompanionLoop(
     settledSession(async (text, options) => {
       received.push({ text, deliverAs: options?.deliverAs });
@@ -898,7 +898,7 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
 });
 
 test("CompanionLoop steers a busy Pi session without aborting it", async () => {
-  const received: Array<{ deliverAs?: string }> = [];
+  const received: Array<{ deliverAs?: string | undefined }> = [];
   let aborts = 0;
   const session = settledSession(async (_text, options) => {
     received.push({ deliverAs: options?.deliverAs });
@@ -1333,7 +1333,7 @@ test("CompanionLoop STOP waits for in-flight Pi delivery and Pi idle", async () 
 });
 
 test("CompanionLoop explicitly follows up an ordinary fact-only batch", async () => {
-  const received: Array<{ deliverAs?: string }> = [];
+  const received: Array<{ deliverAs?: string | undefined }> = [];
   const loop = new CompanionLoop(
     settledSession(async (_text, options) => {
       received.push({ deliverAs: options?.deliverAs });

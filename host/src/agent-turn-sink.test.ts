@@ -3,7 +3,7 @@ import test from "node:test";
 import { createAgentTurnSink } from "./agent-turn-sink.js";
 
 test("Agent turn sink forwards a classified labelled fact batch with explicit Pi delivery", async () => {
-  const received: Array<{ text: string; deliverAs?: string }> = [];
+  const received: Array<{ text: string; deliverAs?: string | undefined }> = [];
   const sink = createAgentTurnSink({
     async sendUserMessage(text: string | unknown[], options?: { deliverAs?: string }) {
       received.push({ text: text as string, deliverAs: options?.deliverAs });

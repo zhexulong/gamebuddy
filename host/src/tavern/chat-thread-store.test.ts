@@ -139,7 +139,7 @@ test("greeting openings require an exact canonical hash on write and reject inva
     assert.equal(created.thread.title, null);
     assert.deepEqual(created.thread.openingSelection, { kind: "greeting", messageId: "opening_01", source });
     assert.equal(created.messages.length, 1);
-    assert.equal(created.messages[0].messageId, "opening_01");
+    assert.equal(created.messages[0]?.messageId, "opening_01");
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });
@@ -158,7 +158,7 @@ test("duplicate thread creation is rejected with exact error", async () => {
 });
 
 test("missing thread resume fails closed with not_found", async () => {
-  const { root, store: s, creation } = await store();
+  const { root, store: s } = await store();
   try {
     await assert.rejects(() => s.resumeThread("missing_01", "surface_01"), /chat_thread_not_found/);
   } finally {
@@ -176,7 +176,7 @@ test("blank opening creates empty transcript and switches to greeting atomically
 
     const greeting = await s.commitOpening("thread_01", opening);
     assert.equal(greeting.messages.length, 1);
-    assert.equal(greeting.messages[0].messageId, "opening_01");
+    assert.equal(greeting.messages[0]?.messageId, "opening_01");
 
     const blank = await s.commitOpening("thread_01", "blank");
     assert.deepEqual(blank.thread.openingSelection, { kind: "blank" });
@@ -507,7 +507,7 @@ test("World Info desired edits preserve applied revision, pending unbind is dura
       () => import("./chat-thread-store.js").then(({ acceptMountedPlayerMessage }) => acceptMountedPlayerMessage({ runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", selectionGeneration: 1 }, { text: "blocked", locale: "en", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0, authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 } })),
       /context_unavailable/,
     );
-    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: undefined });
+    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs });
     assert.equal(state.thread.worldBookBinding, undefined);
     assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
     s.close?.();
@@ -832,8 +832,8 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
 
     const state = await s.resumeThread("thread_01", "surface_01");
     assert.equal(state.messages.length, 2);
-    assert.equal(state.messages[0].text, "Hello from P4");
-    assert.equal(state.messages[1].text, "Response from P5");
+    assert.equal(state.messages[0]?.text, "Hello from P4");
+    assert.equal(state.messages[1]?.text, "Response from P5");
 
     s.close?.();
   } finally {
