@@ -752,6 +752,7 @@
               "$ref": "#/$defs/bodyNodeAdmissionGrant"
             },
             {
+              "type": "object",
               "required": [
                 "result"
               ],
@@ -769,6 +770,7 @@
               "$ref": "#/$defs/bodyNodeAdmissionChallenge"
             },
             {
+              "type": "object",
               "required": [
                 "result",
                 "code"
@@ -790,6 +792,7 @@
               "$ref": "#/$defs/bodyNodeAdmissionChallenge"
             },
             {
+              "type": "object",
               "required": [
                 "result",
                 "code"
@@ -4466,6 +4469,27 @@
         }
       }
     },
+    "minecartRideArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "type": "string",
+          "pattern": "^minecart_[a-f0-9]{16}$"
+        }
+      }
+    },
     "slotXYArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5472,7 +5496,7 @@
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/xyTargetArgs"
+                "$ref": "#/$defs/minecartRideArgs"
               }
             }
           }
@@ -5938,6 +5962,13 @@
             "properties": {
               "action": {
                 "const": "ride_bus"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/empty"
               }
             }
           }
@@ -7397,7 +7428,9 @@
       "additionalProperties": false,
       "required": [
         "targetId",
-        "bodySlot"
+        "bodySlot",
+        "occupantQualifiedItemId",
+        "occupantDisplayName"
       ],
       "properties": {
         "targetId": {
@@ -7626,46 +7659,6 @@
       }
     },
     "animalDoorTarget": {
-      "wearableTarget": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "targetId",
-          "bodySlot",
-          "occupantQualifiedItemId",
-          "occupantDisplayName"
-        ],
-        "properties": {
-          "targetId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "bodySlot": {
-            "type": "string",
-            "enum": [
-              "hat",
-              "boots",
-              "shirt",
-              "pants",
-              "left_ring",
-              "right_ring"
-            ]
-          },
-          "occupantQualifiedItemId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "occupantDisplayName": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "type": "object",
       "additionalProperties": false,
       "required": [
