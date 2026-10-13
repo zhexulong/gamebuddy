@@ -114,7 +114,7 @@ test("one exact-node admission state machine grants controller-named source and 
 
 test("node admission binds grants to opaque Mod policy identity and rejects mismatched replay", async () => {
   const journal = new StardewLogicalActionRecoveryJournal();
-  const service = new HostNodeAdmissionService(journal, (item) => ({
+  const service = new HostNodeAdmissionService(journal, (_item) => ({
     result: "granted",
     attachmentGeneration: "attachment_01",
      policyRevision: "host-policy_01",

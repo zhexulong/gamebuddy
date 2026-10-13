@@ -19,7 +19,7 @@ async function fixture() {
   const store = createChatThreadStore(root, "a".repeat(64), () => time++);
   const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
   const create = async (id: string, title?: string) => {
-    const _state = await creation.createExplicit({
+    await creation.createExplicit({
       chatThreadId: id,
       companionId: "companion_01",
       continuityId: "continuity_01",

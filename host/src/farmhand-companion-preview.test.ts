@@ -5,7 +5,6 @@ import test from "node:test";
 import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
 import {
   FARMHAND_COMPANION_PREVIEW_READY_MARKER,
-  type FarmhandCompanionPreview,
   parseFarmhandCompanionPreviewConfig,
 } from "./farmhand-companion-preview.js";
 import {
@@ -370,17 +369,6 @@ function gameRuntimeWithCoordinator(events: string[]) {
   return { runtime, uncertain: () => coordinator.uncertainDispatches() };
 }
 
-function _predecessorPreview(events: string[]): FarmhandCompanionPreview {
-  const { runtime } = gameRuntimeWithCoordinator(events);
-  return {
-    host: {} as never,
-    runtime,
-    identity: config.identity,
-    close: async () => {
-      events.push("close");
-    },
-  };
-}
 
 test("relaunch is explicit only: a non-game predecessor never reaches the launcher", async () => {
   const events: string[] = [];

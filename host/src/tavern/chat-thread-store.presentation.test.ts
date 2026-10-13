@@ -96,14 +96,6 @@ async function removeTestRoot(root: string) {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 }
 
-function _runningStore() {
-  return {
-    root: undefined as unknown as string,
-    store: undefined as unknown as ReturnType<typeof createChatThreadStore>,
-    attemptId: "",
-  };
-}
-
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 });

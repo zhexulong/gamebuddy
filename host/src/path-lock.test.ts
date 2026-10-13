@@ -320,7 +320,6 @@ test("atomic writer cleans its original temporary when rename fails", async () =
 test("atomic writer preserves a primary write failure when temporary cleanup fails", async () => {
   const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
-  const _uuid = "00000000-0000-4000-8000-000000000004";
   const writeFailure = new Error("write failed");
   const cleanupFailure = new Error("cleanup failed");
   try {
