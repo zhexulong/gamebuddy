@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-late-switch",
+    "noEmit": false,
+    "noUnusedLocals": false
+  },
+  "include": [],
+  "files": [
+    "src/continuity-semantic-production-coordinator/continuity-semantic-chat-switch.test.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
+    "src/continuity-semantic-store/continuity-semantic-production-store.ts",
+    "src/deployment-manifest.ts",
+    "src/path-lock.ts",
+    "src/windows-stale-lock-reclaimer/index.ts",
+    "src/runtime.ts",
+    "src/tavern/chat-thread-store.ts",
+    "src/tavern/player-turn-acceptance.ts",
+    "src/tavern/provider-attempt-claim.ts",
+    "src/tavern/initial-chat-exact-content-port.ts",
+    "src/tavern/p4-provider-start-execution.ts",
+    "src/tavern/p4-provider-start-execution.test.ts",
+    "src/tavern/provider-invocation.ts",
+    "src/native-companion-content.ts"
+  ]
+}

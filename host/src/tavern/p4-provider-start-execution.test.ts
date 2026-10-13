@@ -136,6 +136,13 @@ type ScopeOverrides = Readonly<{
   /** Simulates an ordinary SQLite Stop winning just before completion. */
   stopWinsCompletionClaim?: boolean;
   terminalLedger?: () => ChatTurnLedger | undefined;
+  /**
+   * The durable winner a mounted Stop published for this invocation, read
+   * exactly as the coordinator's own `record.cancellation` promise exposes it.
+   * Absent reproduces a scope whose owner never published one - the reading this
+   * runner's cancellation settlement exists to replace.
+   */
+  finalizeCancellation?: () => Promise<Awaited<ReturnType<ProviderInvocationScope["finalizeCancellation"]>>>;
 }>;
 
 function createScope(overrides: ScopeOverrides = {}) {
@@ -289,11 +296,21 @@ function createScope(overrides: ScopeOverrides = {}) {
       return durablePresentation;
     }
     if (command.operation === "fail") {
-      if (durablePresentation.status !== "running") throw new Error("p5_presentation_terminal_immutable");
+      // Mirrors the store's own CAS: a failure is refused from an attempt that never
+      // armed and from an already-terminal ledger. It is deliberately NOT refused
+      // over a claimed cancel, because the store does not refuse it either - that
+      // gap is reproduced here so the pre-fix reading can be driven to its real
+      // outcome. (Reported to the store's owner.)
+      if (
+        durablePresentation.status === "cancelled" ||
+        durablePresentation.status === "completed" ||
+        durablePresentation.status === "failed"
+      )
+        throw new Error("p5_presentation_terminal_immutable");
       durablePresentation = Object.freeze({
         ...durableRunning,
         status: "failed" as const,
-        presentation: null,
+        presentation: "presentation" in durablePresentation ? durablePresentation.presentation : null,
         reasonCode: command.reasonCode,
         failedAtMs: command.failedAtMs,
       });
@@ -332,7 +349,7 @@ function createScope(overrides: ScopeOverrides = {}) {
     canPreviewNativeContent: () => true,
     reserveNativeContentCommit:
       overrides.reserveNativeContentCommit ?? (() => Object.freeze({ cancelEpoch: 1, release: () => undefined })),
-    finalizeCancellation: async () => undefined,
+    finalizeCancellation: overrides.finalizeCancellation ?? (async () => undefined),
   }) as ProviderInvocationScope;
   return { scope, transitions, presentationTransitions };
 }
@@ -789,4 +806,124 @@ test("P4c rereads a normal Stop winner after provider settlement", async () => {
   assert.equal(result.ledger.status, "cancelled");
   assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
   assert.deepEqual(presentationTransitions, []);
+});
+
+/**
+ * One published durable winner, two readings of it. The mounted cancel seam
+ * publishes `record.cancellation` and then aborts the prompt it owns, so the
+ * rejection this runner sees is the stop's own act - never evidence of a failed
+ * runtime. `consumePublishedClaim: false` is the planted pre-fix reading: the
+ * scope holds the claim, the runner never asks for it, and its only evidence is
+ * the abort it just caused, which it classifies as the turn's failure.
+ */
+async function driveClaimedCancel(
+  phase: "running" | "presentation_committed",
+  consumePublishedClaim: boolean,
+): Promise<{
+  outcome: string;
+  ledgerStatus: string;
+  reasonCode: string | null;
+  presentation: boolean | null;
+  operationsAfterClaim: readonly string[];
+}> {
+  let observer: Observer | undefined;
+  let abortPrompt!: (error: Error) => void;
+  const promptOutcome = new Promise<never>((_resolve, reject) => {
+    abortPrompt = reject;
+  });
+  let published: Awaited<ReturnType<ProviderInvocationScope["finalizeCancellation"]>>;
+  const { scope, transitions, presentationTransitions } = createScope({
+    finalizeCancellation: consumePublishedClaim ? async () => published : async () => undefined,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: Object.freeze({
+        prompt() {
+          observer?.(Object.freeze({ statusClass: "success" as const }));
+          return promptOutcome;
+        },
+      }),
+    }),
+  });
+  const run = runMountedProviderStart(scope);
+  // The runner's own durable running write, then - when the phase has one - the
+  // presentation commit whose reservation let it land before the stop.
+  await waitForProviderStartOperation(transitions, "running");
+  if (phase === "presentation_committed") {
+    await scope.transitionPresentation({
+      operation: "commit_presentation",
+      cancelEpoch: 1,
+      message: { messageId: "response_01", text: "Half a thought, kept.", occurredAtMs: Date.now() },
+      committedAtMs: Date.now(),
+    });
+  }
+  published = (await scope.transitionPresentation({
+    operation: "claim_cancel",
+    claimedAtMs: Date.now(),
+  })) as typeof published;
+  const claimIndex = presentationTransitions.length;
+  abortPrompt(new Error("aborted_by_the_stop"));
+  const result = await run;
+  const ledger = result.ledger;
+  return {
+    outcome: result.outcome,
+    ledgerStatus: ledger.status,
+    reasonCode: ledger.status === "failed" ? ledger.reasonCode : null,
+    presentation: "presentation" in ledger ? ledger.presentation !== null : null,
+    operationsAfterClaim: presentationTransitions.slice(claimIndex).map(({ operation }) => operation),
+  };
+}
+
+async function waitForProviderStartOperation(
+  transitions: readonly ProviderStartTransition[],
+  operation: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (transitions.some((entry) => entry.operation === operation)) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`waitForProviderStartOperation_timeout_${operation}`);
+}
+
+test("Chat settles a Stop's own abort as the cancel it published, keeping the committed text", async () => {
+  const settled = await driveClaimedCancel("presentation_committed", true);
+  assert.equal(settled.outcome, "cancelled");
+  assert.equal(settled.ledgerStatus, "cancelled");
+  assert.equal(settled.reasonCode, null);
+  assert.deepEqual(settled.operationsAfterClaim, ["cancel"]);
+  // The text the provider had already produced is the cancelled ledger's own
+  // presentation: an interruption settles what was produced, it does not drop it.
+  assert.equal(settled.presentation, true);
+});
+
+test("Chat settles a Stop's own abort as a cancel before any presentation too", async () => {
+  const settled = await driveClaimedCancel("running", true);
+  assert.equal(settled.outcome, "cancelled");
+  assert.equal(settled.ledgerStatus, "cancelled");
+  assert.equal(settled.reasonCode, null);
+  assert.deepEqual(settled.operationsAfterClaim, ["cancel"]);
+  // ADR-0010:62 keeps committed presentation content and discards never-durable
+  // preview deltas; a turn interrupted before its commit presents nothing, and that
+  // is asserted as intended rather than left to chance.
+  assert.equal(settled.presentation, false);
+});
+
+/**
+ * The planted failure this gate is sensitive to, at both cancellable phases a
+ * claim can reach: with nobody consuming the published winner, the stop's own
+ * abort becomes `failed` / `runtime_unavailable` - the exact durable shape the real
+ * run read back (`cancel_claimed_at_ms` null, the player told to retry a reply that
+ * did not fail). Every assertion below is the inverse of the two tests above.
+ */
+test("the pre-fix reading is what this gate catches: a Stop's own abort becomes a false failure", async () => {
+  for (const phase of ["running", "presentation_committed"] as const) {
+    const planted = await driveClaimedCancel(phase, false);
+    assert.equal(planted.outcome, "failed", `planted ${phase}`);
+    assert.equal(planted.ledgerStatus, "failed", `planted ${phase}`);
+    assert.equal(planted.reasonCode, "runtime_unavailable", `planted ${phase}`);
+    assert.deepEqual(planted.operationsAfterClaim, ["fail"], `planted ${phase}`);
+    assert.equal(planted.presentation, phase === "presentation_committed", `planted ${phase}`);
+  }
 });

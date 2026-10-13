@@ -53,7 +53,7 @@ function cleanup(root: string): void {
 }
 
 const switchScript = `
-  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, contentPortUrl, manifestPath, scenario] =
+  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, contentPortUrl, providerStartUrl, manifestPath, scenario] =
     process.argv.slice(1);
   const { bindWindowsStaleLockReclaimer } = await import(pathLockUrl);
   const { createBuildWindowsStaleLockReclaimer } = await import(reclaimerUrl);
@@ -70,6 +70,9 @@ const switchScript = `
   const { createPlayerTurnAcceptor } = await import(acceptanceUrl);
   const { createProviderAttemptClaimer } = await import(claimUrl);
   const { createManifestDerivedInitialChatExactContentPort } = await import(contentPortUrl);
+  // The production runner's one settlement authority for a published cancel claim:
+  // the gate drives the real function, not a copy of it.
+  const { settlePublishedCancellation } = await import(providerStartUrl);
   const { DatabaseSync } = await import("node:sqlite");
   const { readdirSync } = await import("node:fs");
   const { join } = await import("node:path");
@@ -188,6 +191,31 @@ const switchScript = `
     });
   };
 
+  /**
+   * The durable terminal shape of the conversation switched away from, read from
+   * the store: one class at every phase, and never a failure for a turn whose
+   * provider answered. companionMessages is the text ADR-0010:62 keeps (committed
+   * presentation content) or legitimately discards (volatile preview deltas that
+   * were never durable).
+   */
+  const readInterruptedTerminal = (state) => {
+    const ledger = state.turnLedger;
+    return {
+      turnId: ledger === null ? null : ledger.turnId,
+      status: ledger === null ? null : ledger.status,
+      observation:
+        ledger !== null && "observation" in ledger && ledger.observation !== undefined
+          ? ledger.observation.phase
+          : null,
+      presentation: ledger !== null && ledger.status === "cancelled" ? ledger.presentation !== null : null,
+      cancelClaimedAtMs: ledger !== null && ledger.status === "cancelled" ? ledger.cancelClaimedAtMs : null,
+      cancelledAtMs: ledger !== null && ledger.status === "cancelled" ? ledger.cancelledAtMs : null,
+      reasonCode: ledger !== null && ledger.status === "failed" ? ledger.reasonCode : null,
+      failedAtMs: ledger !== null && ledger.status === "failed" ? ledger.failedAtMs : null,
+      companionMessages: state.messages.filter((message) => message.kind === "response").length,
+    };
+  };
+
   if (scenario === "select-created" || scenario === "select-created-create-only") {
     const target = await createSecondChat();
     const before = readDurable();
@@ -299,11 +327,15 @@ const switchScript = `
         if (committed.status !== "presentation_committed") throw new Error("expected_presentation_committed");
         releasePrompt = scope.beginActivePrompt();
         await gate;
-        // The aborted turn's own runner settles it: the durable cancel winner was
-        // already claimed by the selection's abort, so this only terminalizes it.
-        const cancelled = await scope.transitionPresentation({ operation: "cancel", cancelledAtMs: Date.now() });
+        // The aborted turn's own runner settles it through the production
+        // settlement authority: the durable cancel winner was already published by
+        // the selection's abort, so this only terminalizes it - the stop's own
+        // abort is never reported as this turn's failure.
+        const settled = await settlePublishedCancellation(scope);
         releasePrompt();
-        return cancelled;
+        if (settled === undefined || settled.outcome !== "cancelled")
+          throw new Error("expected_published_cancel_winner");
+        return settled.ledger;
       }),
     );
     await waitFor(() => releasePrompt !== undefined);
@@ -352,11 +384,102 @@ const switchScript = `
       (message) => message.kind === "response" && message.text === producedText,
     );
     out.interruptedMessageCount = interrupted.messages.length;
+    out.interruptedTerminal = readInterruptedTerminal(interrupted);
+    // The terminal shape every phase must share: cancelled, claimed, never failed.
+    out.interruptedCancelClaimedAtMs =
+      interrupted.turnLedger !== null && interrupted.turnLedger.status === "cancelled"
+        ? interrupted.turnLedger.cancelClaimedAtMs
+        : null;
+    out.interruptedCancelledAtMs =
+      interrupted.turnLedger !== null && interrupted.turnLedger.status === "cancelled"
+        ? interrupted.turnLedger.cancelledAtMs
+        : null;
+    out.interruptedReasonCode =
+      interrupted.turnLedger !== null && interrupted.turnLedger.status === "failed"
+        ? interrupted.turnLedger.reasonCode
+        : null;
+    out.interruptedFailedAtMs =
+      interrupted.turnLedger !== null && interrupted.turnLedger.status === "failed"
+        ? interrupted.turnLedger.failedAtMs
+        : null;
 
     const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
     out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
     out.firstThreadStillReadable = interrupted.thread.chatThreadId === firstThread;
+  } else if (scenario === "in-flight-armed" || scenario === "in-flight-running") {
+    // The two phases a switch reaches through the mounted cancel seam before any
+    // presentation exists: a durable pre-invocation armed observation, and a turn
+    // whose provider has already answered (durable running observation). The real
+    // admission scope is consumed here, so the published claim's own settlement
+    // authority is the production code under test, not a copy of it.
+    const accepted = await createPlayerTurnAcceptor(manifest, first).accept({
+      text: "Hello",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+    });
+    await createProviderAttemptClaimer(manifest, first).claim();
+    let releasePrompt;
+    let releaseGate;
+    const gate = new Promise((resolve) => { releaseGate = resolve; });
+    const startTask = internal.startMountedAttempt(manifest, first, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
+        if (scenario === "in-flight-running") {
+          await sleep(4);
+          await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: Date.now() });
+        }
+        releasePrompt = scope.beginActivePrompt();
+        await gate;
+        const settled = await settlePublishedCancellation(scope);
+        releasePrompt();
+        if (settled === undefined || settled.outcome !== "cancelled")
+          throw new Error("expected_published_cancel_winner");
+        return settled.ledger;
+      }),
+    );
+    await waitFor(() => releasePrompt !== undefined);
+    const generating = await store.resumeThread(firstThread, firstSurface);
+    out.generatingLedgerStatus = generating.turnLedger === null ? null : generating.turnLedger.status;
+    out.generatingObservation =
+      generating.turnLedger !== null && "observation" in generating.turnLedger && generating.turnLedger.observation !== undefined
+        ? generating.turnLedger.observation.phase
+        : null;
+
+    const selection = authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
+    // The abort publishes its durable winner before it aborts anything: armed is
+    // terminalized by the seam in one step, while running gets the non-terminal
+    // claim the turn's own runner has to finish.
+    const wonStatus = scenario === "in-flight-armed" ? "cancelled" : "cancel_claimed";
+    await waitFor(async () => (await store.resumeThread(firstThread, firstSurface)).turnLedger?.status === wonStatus);
+    out.cancelWonWhileGenerating = true;
+    releaseGate();
+    const outcome = await selection;
+    await startTask;
+
+    out.outcomeStatus = outcome.status;
+    out.outcomeThread = outcome.chatThreadId;
+    out.firstSuperseded = isCurrentMountedChatRuntimeLease(first);
+    const second = await authority.startMountedChatRuntime();
+    out.secondThread = second.chatThreadId;
+    out.secondSurface = second.chatSurfaceSessionId;
+    out.secondCurrent = isCurrentMountedChatRuntimeLease(second);
+    out.successorIsSelectedChat = second.chatThreadId === outcome.chatThreadId;
+    out.successorThreadReadable = true;
+    out.acceptedTurnId = accepted.turnId;
+
+    const interrupted = await store.resumeThread(firstThread, firstSurface);
+    out.firstThreadStillReadable = interrupted.thread.chatThreadId === firstThread;
+    out.interruptedTurnId = interrupted.turnLedger === null ? null : interrupted.turnLedger.turnId;
+    out.interruptedKeptPlayerText = interrupted.messages.some(
+      (message) => message.kind === "player" && message.text === "Hello",
+    );
+    out.interruptedMessageCount = interrupted.messages.length;
+    out.interruptedTerminal = readInterruptedTerminal(interrupted);
+
+    const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
+    out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
   } else if (scenario === "durable-unstarted") {
     // A durable turn with no attempt at all: the player's message is committed
     // and nothing was ever scheduled for it - no claim, no prompt, no start
@@ -401,6 +524,7 @@ const switchScript = `
       (message) => message.kind === "player" && message.text === "Never started.",
     );
     out.interruptedMessageCount = firstState.messages.length;
+    out.interruptedTerminal = readInterruptedTerminal(firstState);
 
     const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
@@ -467,6 +591,7 @@ const switchScript = `
       (message) => message.kind === "player" && message.text === "Never began.",
     );
     out.interruptedMessageCount = firstState.messages.length;
+    out.interruptedTerminal = readInterruptedTerminal(firstState);
 
     const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
@@ -501,6 +626,8 @@ async function runSwitchScenario(
     | "switch"
     | "in-flight"
     | "in-flight-created"
+    | "in-flight-armed"
+    | "in-flight-running"
     | "durable-unstarted"
     | "durable-not-started"
     | "select-created"
@@ -534,6 +661,7 @@ async function runSwitchScenario(
       new URL("../tavern/player-turn-acceptance.js", import.meta.url).href,
       new URL("../tavern/provider-attempt-claim.js", import.meta.url).href,
       new URL("../tavern/initial-chat-exact-content-port.js", import.meta.url).href,
+      new URL("../tavern/p4-provider-start-execution.js", import.meta.url).href,
       manifestPath,
       scenario,
     ],
@@ -610,6 +738,106 @@ test(
       assert.equal(observed.interruptedProducedTextKept, true);
       assert.equal(observed.interruptedLedgerPresentation, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 2);
+      // ...and the terminal it settled on is the cancel, not a failure: the row is
+      // cancelled, it carries both cancel timestamps, and it names no reason.
+      const terminal = observed.interruptedTerminal as Readonly<Record<string, unknown>>;
+      assert.equal(terminal.status, "cancelled");
+      assert.equal(terminal.presentation, true);
+      assert.equal(terminal.companionMessages, 1);
+      assert.equal(terminal.reasonCode, null);
+      assert.equal(terminal.failedAtMs, null);
+      assert.ok(Number(terminal.cancelClaimedAtMs) > 0);
+      assert.ok(Number(terminal.cancelledAtMs) >= Number(terminal.cancelClaimedAtMs));
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The rule this file gates, phase by phase: the same gesture must have the same
+ * outcome at every phase of a turn. A switch that lands after the provider has
+ * already answered is the phase the real run got wrong - the store read back
+ * `failed`/`runtime_unavailable` with `cancel_claimed_at_ms` null and no text,
+ * because the cancel the switch had already published was never consumed and the
+ * stop's own abort was reported as this turn's failure. The phase below asserts
+ * the honest terminal instead: the published claim wins, the runner finishes it as
+ * `cancelled`, and the surface has no failure to report.
+ */
+test(
+  "a switch after the provider answered settles the turn as the cancel it published",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-turn-level-in-flight-running-");
+    try {
+      const observed = await runSwitchScenario(root, "in-flight-running");
+      // The turn really had crossed its provider boundary: durable running with the
+      // provider's own success observation, and no presentation yet.
+      assert.equal(observed.generatingLedgerStatus, "running");
+      assert.equal(observed.generatingObservation, "running");
+      // The abort is the one cancel path, and its durable winner is claimed while
+      // the turn is still mounted.
+      assert.equal(observed.cancelWonWhileGenerating, true);
+      // The player gets the switch, never a refusal and never a wait.
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.firstSuperseded, false);
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.successorThreadReadable, true);
+      assert.equal(observed.firstThreadStillReadable, true);
+      // One class at every phase: cancelled, never failed, no reason code, no
+      // failed timestamp - the player is not told to retry something that did not
+      // fail, and the surface reads chatStopped rather than chatFailed.
+      const terminal = observed.interruptedTerminal as Readonly<Record<string, unknown>>;
+      assert.equal(terminal.status, "cancelled");
+      assert.equal(terminal.observation, "running");
+      assert.equal(terminal.reasonCode, null);
+      assert.equal(terminal.failedAtMs, null);
+      assert.ok(Number(terminal.cancelClaimedAtMs) > 0);
+      assert.ok(Number(terminal.cancelledAtMs) >= Number(terminal.cancelClaimedAtMs));
+      // ADR-0010:62: only never-durable volatile preview deltas are discarded, so a
+      // turn interrupted before its presentation commit holds no reply and no
+      // presentation - asserted as intended, not as an accident.
+      assert.equal(terminal.presentation, false);
+      assert.equal(terminal.companionMessages, 0);
+      assert.equal(observed.interruptedKeptPlayerText, true);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The same gesture at the phase before the provider answers. The seam terminalizes
+ * this one in a single step, so the assertion is that both phases land on the SAME
+ * class of terminal: this is the pair that makes the rule a rule rather than a
+ * single-case fix.
+ */
+test(
+  "a switch while the turn is armed settles the turn as the same cancel",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-turn-level-in-flight-armed-");
+    try {
+      const observed = await runSwitchScenario(root, "in-flight-armed");
+      assert.equal(observed.generatingLedgerStatus, "attempt_starting");
+      assert.equal(observed.generatingObservation, "armed");
+      assert.equal(observed.cancelWonWhileGenerating, true);
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.firstSuperseded, false);
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.firstThreadStillReadable, true);
+      const terminal = observed.interruptedTerminal as Readonly<Record<string, unknown>>;
+      assert.equal(terminal.status, "cancelled");
+      assert.equal(terminal.observation, "armed");
+      assert.equal(terminal.reasonCode, null);
+      assert.equal(terminal.failedAtMs, null);
+      // The armed phase terminalizes claim and cancel in one transition.
+      assert.equal(terminal.cancelClaimedAtMs, terminal.cancelledAtMs);
+      assert.equal(terminal.presentation, false);
+      assert.equal(terminal.companionMessages, 0);
+      assert.equal(observed.interruptedKeptPlayerText, true);
     } finally {
       cleanup(root);
     }
@@ -654,6 +882,13 @@ test(
       // for a turn no provider ever saw.
       assert.equal(observed.interruptedKeptPlayerText, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 1);
+      // The accepted phase joins the same class as every other phase, with no
+      // failure recorded for a turn nothing ever failed at.
+      const terminal = observed.interruptedTerminal as Readonly<Record<string, unknown>>;
+      assert.equal(terminal.status, "cancelled");
+      assert.equal(terminal.reasonCode, null);
+      assert.equal(terminal.failedAtMs, null);
+      assert.ok(Number(terminal.cancelClaimedAtMs) > 0);
     } finally {
       cleanup(root);
     }
@@ -698,6 +933,11 @@ test(
       // for a prompt the provider never saw.
       assert.equal(observed.interruptedKeptPlayerText, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 1);
+      const terminal = observed.interruptedTerminal as Readonly<Record<string, unknown>>;
+      assert.equal(terminal.status, "cancelled");
+      assert.equal(terminal.reasonCode, null);
+      assert.equal(terminal.failedAtMs, null);
+      assert.ok(Number(terminal.cancelClaimedAtMs) > 0);
     } finally {
       cleanup(root);
     }

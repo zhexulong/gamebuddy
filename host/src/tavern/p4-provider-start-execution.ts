@@ -88,7 +88,58 @@ function nativeResponseMessageId(attemptId: string): string {
   return `chat_native_${attemptId}`;
 }
 
+/**
+ * The one settlement authority for a published cancel claim, and the only
+ * consumer of `record.cancellation`. The mounted cancel seam
+ * (`stopMountedChatPresentationEpoch`) publishes the durable winner before it
+ * aborts the prompt, and for a turn that already crossed its provider boundary
+ * that winner is `cancel_claimed` - deliberately non-terminal, because the
+ * mount's transition authority is revoked when the mount is released and this
+ * runner is the writer that owns the prompt drain. So the runner asks this
+ * before every terminal write: the stop's own abort must never resurface as
+ * this turn's failure. `undefined` means no stop raced this invocation, and
+ * every other winner is already a durable representation to preserve.
+ */
+export async function settlePublishedCancellation(
+  scope: ProviderInvocationScope,
+): Promise<ProviderStartResult | undefined> {
+  const winner = await scope.finalizeCancellation();
+  if (winner === undefined) return undefined;
+  switch (winner.status) {
+    case "cancelled":
+      return { outcome: "cancelled", ledger: winner };
+    case "failed":
+      return { outcome: "failed", ledger: winner };
+    case "completed":
+      return { outcome: "completed", ledger: winner };
+    case "cancel_claimed": {
+      const cancelled = await scope.transitionPresentation({
+        operation: "cancel",
+        cancelledAtMs: Date.now(),
+      });
+      if (cancelled.status !== "cancelled") throw new Error("p5_presentation_cancelled_required");
+      return { outcome: "cancelled", ledger: cancelled };
+    }
+    case "completion_claimed": {
+      const completed = await scope.transitionPresentation({
+        operation: "complete",
+        completedAtMs: Date.now(),
+      });
+      if (completed.status !== "completed") throw new Error("p5_presentation_completed_required");
+      return { outcome: "completed", ledger: completed };
+    }
+  }
+}
+
+/**
+ * The durable terminal winner for this exact turn: the published cancel claim
+ * if one raced this invocation, otherwise the fresh ledger. A non-terminal
+ * `cancel_claimed` is a winner this runner must terminalize, not an
+ * absence of a winner.
+ */
 async function currentTerminalResult(scope: ProviderInvocationScope): Promise<ProviderStartResult | undefined> {
+  const settled = await settlePublishedCancellation(scope);
+  if (settled !== undefined) return settled;
   const ledger = await scope.readCurrentTurnLedger();
   if (ledger.status === "cancelled") return { outcome: "cancelled", ledger };
   if (ledger.status === "completed") return { outcome: "completed", ledger };
