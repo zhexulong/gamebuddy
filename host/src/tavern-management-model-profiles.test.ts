@@ -112,6 +112,9 @@ const managementService: ChatManagementService = Object.freeze({
   async transitionLifecycle() {
     throw new Error("retention_not_used");
   },
+  async commitOpeningVariant() {
+    throw new Error("opening_variant_not_used");
+  },
   async close() {},
 });
 

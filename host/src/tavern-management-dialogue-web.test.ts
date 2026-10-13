@@ -190,8 +190,8 @@ function worldInfoService(recorder?: {
   reads?: number;
   sets?: number;
   closes?: number;
-  readError?: Error;
-  setError?: Error;
+  readError?: Error | undefined;
+  setError?: Error | undefined;
 }): WorldInfoBindingManagementService {
   const counters = recorder ?? { reads: 0, sets: 0, closes: 0 };
   return Object.freeze({
@@ -235,8 +235,8 @@ function service(recorder: {
   draftSaves: number;
   draftDiscards: number;
   closes: number;
-  renameError?: Error;
-  draftError?: Error;
+  renameError?: Error | undefined;
+  draftError?: Error | undefined;
 }): ChatManagementService {
   return Object.freeze({
     async readDraft() {
@@ -264,6 +264,12 @@ function service(recorder: {
       if (recorder.renameError !== undefined) throw recorder.renameError;
       assert.equal(command.title, "New Farm Chat");
       return renameResult;
+    },
+    async transitionLifecycle() {
+      throw new Error("chat_retention_route_not_mounted");
+    },
+    async commitOpeningVariant() {
+      throw new Error("chat_opening_route_not_mounted");
     },
     async close() {
       recorder.closes += 1;

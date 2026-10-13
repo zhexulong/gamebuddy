@@ -137,6 +137,9 @@ function managementService(): ChatManagementService {
     async transitionLifecycle() {
       throw new Error("retention_not_used");
     },
+    async commitOpeningVariant() {
+      throw new Error("opening_variant_not_used");
+    },
     async readDraft() {
       return { apiVersion: 1 as const, revision: 0, text: null };
     },
