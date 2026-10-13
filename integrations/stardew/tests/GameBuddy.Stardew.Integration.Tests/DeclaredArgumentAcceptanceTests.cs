@@ -61,6 +61,8 @@ public sealed class DeclaredArgumentAcceptanceTests
                 // Opaque ids are [A-Za-z0-9_-]{1,128}; a 16-hex suffix matches production shape.
                 "expectedTargetId" => "test_0000000000000000",
                 "responseKey" => "yes",
+                // A Data/Buildings type id: non-blank, within the 1..128 bound.
+                "buildingType" => "Coop",
                 // One native chat line. Any non-blank text within the bound is valid; the bound itself is what
                 // the invalid case below perturbs.
                 "text" => "hello farm",                _ => "value",
@@ -96,6 +98,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             {
                 // An opaque id forbids characters outside [A-Za-z0-9_-] and forbids emptiness.
                 "expectedTargetId" => "not a valid id!",
+                "buildingType" => "",              // the rule refuses blank; the invalid case perturbs to empty
                 // One character past the bound the wire and the handler both read. Emptiness is the rule's other
                 // half and is covered where it belongs: the action's own test suite has
                 // Refusal_EmptyOrBlankText_IsChatMessageInvalid, so this perturbation spends itself on the bound.
@@ -130,6 +133,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         string? direction = null;
         string? responseKey = null;
         string? text = null;
+        string? buildingType = null;
         BridgeNavigationDestinationSelector? destination = null;
 
         foreach ((string name, string value) in declared)
@@ -148,6 +152,7 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "direction": direction = effective; break;
                 case "responseKey": responseKey = effective; break;
                 case "text": text = effective; break;
+                case "buildingType": buildingType = effective; break;
                 case "destination":
                     // The only label-shaped combination the converter accepts carries the label
                     // and no ref; the invalid case sends both.
@@ -177,6 +182,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             Direction = direction,
             ResponseKey = responseKey,
             Text = text,
+            BuildingType = buildingType,
             Destination = destination,
             // A descriptor declaring a scene binding must receive a well-formed one: the
             // acceptance layer validates it as its own contract member, so omitting it fails

@@ -82,6 +82,8 @@ public sealed class ModEntryFixtureBoundaryTests
 
         "InstallNativeLocalWorldObjectFixture",
         "InitializeNativeLocalBuildFarmBuildingFixture",
+        "InitializeNativeLocalNameEntityFixture",
+        "FindNativeLocalNameEntityStandingTile",
         "FindNativeLocalBuildFarmBuildingSite", "FindNativeLocalBuildFarmBuildingStandingTile",
         "IsNativeLocalBuildFarmBuildingFootprintFree", "NativeLocalBuildFarmBuildingFootprintCovers",
         "InitializeNativeLocalEquipWearableFixture",

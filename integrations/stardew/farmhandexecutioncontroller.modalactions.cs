@@ -215,9 +215,30 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
 
         bool answered = false;
+        Response answer = new Response(responseKey, responseKey);
         try
         {
-            answered = Game1.currentLocation.answerDialogue(new Response(responseKey, responseKey));
+            if (dialogue.characterDialogue is not null)
+            {
+                // An NPC face-to-face question is answered on the speaker's own Dialogue (DialogueBox.cs:401);
+                // the location has no matching afterQuestion/lastQuestionKey and returns false for it.
+                dialogue.characterDialogue.chooseResponse(answer);
+                answered = true;
+            }
+            else if (Game1.eventUp && Game1.currentLocation.afterQuestion is null)
+            {
+                // A question raised inside a cutscene is answered on the event, by the offered index (DialogueBox.cs:387).
+                Game1.currentLocation.currentEvent.answerDialogue(
+                    Game1.currentLocation.lastQuestionKey,
+                    Array.FindIndex(offeredResponses, offered => string.Equals(offered.responseKey, responseKey, StringComparison.Ordinal)));
+                answered = true;
+            }
+            else
+            {
+                // A plain location question settles through the location (DialogueBox.cs:392).
+                answered = Game1.currentLocation.answerDialogue(answer);
+            }
+
             if (!answered)
             {
                 return this.RememberTerminal(

@@ -785,6 +785,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("clear_fish_pond")) return "native_clear_fish_pond_v1";
   if (actions.includes("build_farm_building")) return "native_build_farm_building_v1";
   if (actions.includes("name_entity")) return "native_name_entity_v1";
+  if (actions.includes("accept_daily_quest")) return "native_accept_daily_quest_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
   if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
   if (action === "talk_to_npc") return "native_talk_to_npc_v1";

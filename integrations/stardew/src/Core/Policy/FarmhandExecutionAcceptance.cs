@@ -73,6 +73,7 @@ public static class FarmhandExecutionAcceptance
         bool tool = args.Tool is not null;
         bool responseKey = args.ResponseKey is not null;
         bool quantity = args.Quantity.HasValue;
+        bool buildingType = args.BuildingType is not null;
         bool text = args.Text is not null;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
@@ -86,7 +87,8 @@ public static class FarmhandExecutionAcceptance
             && tool == HasArgument(descriptor, "tool")
             && responseKey == HasArgument(descriptor, "responseKey")
             && quantity == HasArgument(descriptor, "quantity")
-            && text == HasArgument(descriptor, "text");
+            && text == HasArgument(descriptor, "text")
+            && buildingType == HasArgument(descriptor, "buildingType");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -108,6 +110,8 @@ public static class FarmhandExecutionAcceptance
         "expectedTargetId" => BridgeProtocol.IsOpaqueId(args.ExpectedTargetId),
         // One chat line: non-blank, and no longer than the native ingress can carry. The bound is the Mod's own
         // constant (the one the handler enforces), so the two cannot disagree about what a chat line is.
+        "buildingType" => args.BuildingType is { Length: > 0 } buildingTypeId
+            && buildingTypeId.Length <= 128, // mirrors the Host wire validator (>128 is rejected the same way)
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum

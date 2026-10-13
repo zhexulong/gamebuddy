@@ -396,6 +396,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
+  // build-farm-building lane (2026-10-12): one Experimental registration shipping with its own
+  // shared-harness runner and its own fixture scenario. A runner is neither a capability grant nor
+  // a success claim: promotion moves it into STARDEW_PUBLISHED_ACTION_GATES and out of this map.
+  build_farm_building: "run-stardew-native-local-player-build-farm-building-smoke.mjs",
+  name_entity: "run-stardew-native-local-player-name-entity-smoke.mjs",
+  accept_daily_quest: "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
   // Item/tile lane (2026-10-07): three Experimental registrations, each shipping with its own
   // shared-harness runner and its own fixture scenario. A runner is neither a capability grant
   // nor a success claim: each still owes its own native-local live gate, and promotion moves it

@@ -118,9 +118,14 @@ namespace GameBuddy.Stardew;
 // the letter and then letting the letter finish the way its own exit path does
 // (`IClickableMenu.exitThisMenu` -> `cleanupBeforeExit`, IClickableMenu.cs:866-884) is
 // the whole claim: the letter is consumed, the mail id is recorded, the attachment is
-// delivered, and the body is not left holding a modal. `Game1.exitActiveMenu()` is NOT
-// the step here: it only nulls `activeClickableMenu` (Game1.cs:6128-6131) and would
-// discard the attachment, which is exactly the difference this action's evidence names.
+// delivered. An attachment the inventory cannot take is not lost -- the letter turns it
+// into an `ItemGrabMenu.CreateOverflowMenu` residual -- but because the letter is still
+// the active menu while its cleanup runs, that residual is QUEUED in
+// `Game1.nextClickableMenu` (Farmer.cs:4512-4522) and drains into the active menu on the
+// next tick (Game1.cs:1711-1715), freezing the actor. The body therefore clears the
+// residual AFTER the delivery (`Game1.exitActiveMenu` plus the queue) so the actor is
+// actionable again; the clearance never runs INSTEAD of the letter's own exit, which is
+// what would discard the attachment.
 //
 // DISCOVERY does not hardcode a coordinate. The mailbox is a Buildings-layer Action
 // tile; this action walks the location's own map layer and reads the tile's own `Action`
@@ -762,10 +767,10 @@ internal sealed partial class ExecutionManager
                 // The native exit step of the menu the seam just opened: it runs
                 // `LetterViewerMenu.cleanupBeforeExit`, which hands the letter's
                 // `itemsToGrab` to the player (LetterViewerMenu.cs:1010-1041) and closes
-                // the menu, so the claim leaves neither an undelivered attachment nor an
-                // open modal. The `Game1.exitActiveMenu()` shop_purchase uses for its
-                // ShopMenu is NOT equivalent here: it only nulls the menu (:6128-6131)
-                // and would discard the attachment.
+                // the menu, so the attachment is not left undelivered. Its exit path is
+                // NOT `Game1.exitActiveMenu()` (which only nulls the menu, :6128-6131, and
+                // would discard the attachment); the residual cleanup below runs
+                // afterwards, under the overflow guard.
                 openedLetter.exitThisMenu();
             }
         }
@@ -781,7 +786,24 @@ internal sealed partial class ExecutionManager
 
         int pendingAfter = Game1.mailbox.Count;
         bool letterClosed = Game1.activeClickableMenu is not StardewValley.Menus.LetterViewerMenu;
-        bool claimOverflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;
+        // The letter's own exit (above) handed its `%item` attachment to the player through
+        // `Farmer.addItemsByMenuIfNecessary`, so nothing is discarded here -- but what the
+        // inventory could not take became an `ItemGrabMenu.CreateOverflowMenu` residual.
+        // Because the letter is STILL the active menu while its `cleanupBeforeExit` runs
+        // (IClickableMenu.cs:868 runs it before :875 nulls the menu), that residual is
+        // appended to `Game1.nextClickableMenu` (Farmer.cs:4512-4522) and only drains into
+        // the active menu on the next tick (Game1.cs:1711-1715); either way it freezes the
+        // actor until it is cleared. Clear it AFTER the delivery, so the attachment is not
+        // what gets discarded.
+        bool claimOverflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu
+            // Only the overflow ItemGrabMenu is this action's residual; a different queued menu is not ours
+            // to clear (lane 3 flagged the count check as too broad).
+            || Game1.nextClickableMenu.Any(menu => menu is StardewValley.Menus.ItemGrabMenu);
+        if (claimOverflowPending)
+        {
+            Game1.exitActiveMenu();
+            Game1.nextClickableMenu.Clear();
+        }
         bool removed = pendingAfter == pendingBefore - 1 && !Game1.mailbox.Contains(mailId);
         bool recorded = !recordedNatively || recordedBefore || player.mailReceived.Contains(mailId);
         int occupiedAfter = CountOccupiedInventorySlots(player);

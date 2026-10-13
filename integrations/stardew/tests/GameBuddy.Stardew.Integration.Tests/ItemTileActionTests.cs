@@ -27,8 +27,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// own <c>orePanPoint</c>, so the published tile is re-resolved against that state rather
 /// than trusted.</item>
 /// <item>`claim_mail_attachment` drives <c>GameLocation.mailbox()</c> (GameLocation.cs:10547)
-/// and then lets the letter it opened finish the way its own exit path does, because
-/// <c>Game1.exitActiveMenu()</c> alone discards the letter's `%item` attachment.</item>
+/// and then lets the letter it opened finish the way its own exit path does (that exit
+/// delivers the `%item` attachment), and ONLY AFTERWARDS clears the overflow residual the
+/// letter leaves queued in <c>Game1.nextClickableMenu</c> -- so the actor stays actionable.
+/// Running <c>Game1.exitActiveMenu()</c> INSTEAD of the letter's own exit is what would
+/// discard the attachment.</item>
 /// </list>
 ///
 /// Structural assertions run without a Game1 harness (world-not-ready path); the native
@@ -195,8 +198,12 @@ public sealed class ItemTileActionTests
         // cleanupBeforeExit (which hands its itemsToGrab to the player).
         body.Should().Contain("location.mailbox();");
         body.Should().Contain("openedLetter.exitThisMenu();");
-        // Game1.exitActiveMenu only nulls the menu: it would discard the attachment.
-        bodyCode.Should().NotContain("Game1.exitActiveMenu()");
+        // The residual cleanup runs ONLY after that delivery and ONLY under the overflow
+        // guard: Game1.exitActiveMenu() INSTEAD of exitThisMenu would discard the
+        // attachment, and an unguarded close would evict a menu the claim never opened.
+        bodyCode.Should().Contain("if (claimOverflowPending)");
+        bodyCode.Should().Contain("Game1.exitActiveMenu()");
+        bodyCode.Should().Contain("Game1.nextClickableMenu.Clear()");
 
         // The decision is the OBSERVED queue write, re-read after the call.
         int nativeCall = body.IndexOf("location.mailbox();", StringComparison.Ordinal);

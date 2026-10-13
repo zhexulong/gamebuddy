@@ -291,6 +291,35 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return null;
     }
 
+    /// <summary>
+    /// The currency the shop's menu prices in, read from the same shop data the menu is built from:
+    /// <c>Utility.TryOpenShopMenu</c> constructs the <c>ShopMenu</c> from <c>DataLoader.Shops</c> and
+    /// <c>ShopMenu.Initialize</c> stores <c>shopData.Currency</c> (ShopMenu.cs:304, :371). Reading it before
+    /// the menu opens lets the affordability gate use the field the native charge will move.
+    /// </summary>
+    private static int ShopCurrencyFor(string shopId)
+    {
+        return DataLoader.Shops(Game1.content).TryGetValue(shopId, out ShopData? shopData) && shopData is not null
+            ? shopData.Currency
+            : 0;
+    }
+
+    /// <summary>
+    /// A name for the currency a <c>ShopMenu</c> charges in, for the refusal evidence. The values are the
+    /// fields <c>ShopMenu.getPlayerCurrencyAmount</c> reads (ShopMenu.cs:881-891): money, star tokens
+    /// (festivalScore), club coins / Qi coins (clubCoins), and Qi gems.
+    /// </summary>
+    private static string ShopCurrencyName(int currency)
+    {
+        return currency switch
+        {
+            1 => "star_tokens",
+            2 => "club_coins",
+            4 => "qi_gems",
+            _ => "money",
+        };
+    }
+
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -450,7 +479,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
 
         int unitPrice = offer.salePrice();
-        long affordable = actor.Money / Math.Max(1, unitPrice);
+        // A ShopMenu prices every entry in the currency its own ShopData declares: Utility.TryOpenShopMenu
+        // builds the menu from that ShopData and Initialize stores shopData.Currency (ShopMenu.cs:304, :371),
+        // and ShopMenu.getPlayerCurrencyAmount (ShopMenu.cs:881-891) is the native map from that value to the
+        // player field the charge actually moves (0 money, 1 festivalScore, 2 clubCoins, 4 QiGems). Gating and
+        // judging the purchase against actor.Money would refuse an affordable club-coin or Qi-gem trade and
+        // then read the real one as having spent nothing.
+        int shopCurrency = ShopCurrencyFor(target.ShopId);
+        long currencyHeld = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
+        long affordable = currencyHeld / Math.Max(1, unitPrice);
         int purchasable = (int)Math.Min(Math.Min(quantity, stock[offer].Stock), affordable);
         if (affordable < 1)
         {
@@ -459,7 +496,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Rejected,
                 "insufficient_money",
-                $"shop={target.ShopId};item={expectedItemId};price={unitPrice};money={actor.Money}");
+                $"shop={target.ShopId};item={expectedItemId};price={unitPrice};currency={ShopCurrencyName(shopCurrency)};available={currencyHeld}");
         }
         if (purchasable < 1)
         {
@@ -471,7 +508,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"shop={target.ShopId};item={expectedItemId};stock={stock[offer].Stock}");
         }
 
-        long moneyBefore = actor.Money;
+        long currencyBefore = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
         int ownedBefore = actor.Items.Where(i => i is not null)
             .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
             .Sum(i => i.Stack);
@@ -583,7 +620,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 ClickableComponent button = menu.forSaleButtons[index];
                 // Record the state the native handler will read, and what it did, instead of
                 // guessing which gate refused. These are all public members.
-                long moneyBeforeClick = actor.Money;
+                long currencyBeforeClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
                 int stockBeforeClick = stock.TryGetValue(offer, out ItemStockInformation? s0) && s0 is not null ? s0.Stock : -1;
                 int safetyBefore = menu.safetyTimer;
                 bool heldNull = menu.heldItem is null;
@@ -646,12 +683,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 dropDiagnostics.Add(
                     $"drop{bought}:empty_slot={emptySlotIndex}|at={dropAt}|held={heldBeforeDrop}->{heldAfterDrop}");
 
-                long moneyAfterClick = actor.Money;
+                long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
                 int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
                 clickDiagnostics.Add(
                     $"click{bought}:button={index}|at={clickX},{clickY}|addressed={addressedToButton}|"
                     + $"safety_before={safetyBefore}|held_null={heldNull}|"
-                    + $"money={moneyBeforeClick}->{moneyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
+                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
                     + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
             }
         }
@@ -679,7 +716,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
         }
 
-        long moneyAfter = actor.Money;
+        long currencyAfter = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
         int ownedAfter = actor.Items.Where(i => i is not null)
             .Where(i => string.Equals(i.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
             .Sum(i => i.Stack);
@@ -688,7 +725,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         string entryKind = tileOpened ? "tile_action" : "npc_owner";
         // The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail
-        // on `;` and requires every field to be a non-empty `key=value`:
+        // on `;` and requires every field to be a non-empty `key=value`. money_before/money_after are frozen key
+        // NAMES that the Host's shop_purchase completion rule requires
+        // (host/src/stardew-game-integration-adapter.ts:1914-1949, exactEvidence, money_after < money_before);
+        // their values now carry the amount of the CURRENCY the native charge moved, so a club-coin or Qi-gem
+        // purchase reports the decrease that rule looks for:
         //   * a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects -
         //     so an absent owner is spelled `none`, the same way other optional values are spelled here;
         //   * the two diagnostics below are lists, and their entries used to embed `;`, which split each entry into
@@ -698,19 +739,19 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string evidence =
             $"shop={target.ShopId};owner={ownerName};entry={entryKind};item={expectedItemId};"
             + $"requested={quantity};purchased={purchasable};unit_price={unitPrice};"
-            + $"money_before={moneyBefore};money_after={moneyAfter};"
+            + $"money_before={currencyBefore};money_after={currencyAfter};"
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
             + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
             + $"clicks={clickDiagnostics.Count}[{string.Join("||", clickDiagnostics)}];"
             + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]";
 
-        // Success is the world fact: money left the purse AND the item entered the inventory.
+        // Success is the world fact: the shop's own currency left the purse AND the item entered the inventory.
         // A receipt that spent nothing and gained nothing is not a purchase.
-        if (moneyAfter < moneyBefore && gained > 0)
+        if (currencyAfter < currencyBefore && gained > 0)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "item_purchased", evidence, this.TryCreateLocalObservation(actor));
 
-        if (moneyAfter < moneyBefore || gained > 0)
+        if (currencyAfter < currencyBefore || gained > 0)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Uncertain, "purchase_partial", evidence);
 
         return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, "purchase_not_effective", evidence);

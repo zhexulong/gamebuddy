@@ -187,12 +187,21 @@ internal sealed partial class ExecutionManager
         chest.GetItemsForPlayer().Remove(target);
         chest.clearNulls();
         Item? leftover = Game1.player.addItemToInventory(target);
+        // An unaccepted remainder means the player inventory could not take the whole stack. Returning
+        // it to the same chest keeps the item in the world instead of letting the reference fall out of
+        // scope; `retrieved` still requires leftover is null, so a rolled-back attempt stays Uncertain.
+        bool leftoverReturned = false;
+        if (leftover is not null && leftover.Stack > 0)
+        {
+            chest.addItem(leftover);
+            leftoverReturned = true;
+        }
         bool menuAfter = Game1.activeClickableMenu is not null;
 
         int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
         int inventoryAfter = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         bool retrieved = leftover is null && chestStackAfter == chestStackBefore - target.Stack && inventoryAfter == inventoryBefore + target.Stack;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};item={expectedQualifiedItemId};chest_stack_before={chestStackBefore};chest_stack_after={chestStackAfter};inventory_before={inventoryBefore};inventory_after={inventoryAfter};leftover_returned={leftoverReturned.ToString().ToLowerInvariant()};native_menu_opened={(menuAfter && !menuBefore).ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, retrieved ? ExecutionState.Succeeded : ExecutionState.Uncertain, retrieved ? "chest_retrieved" : "chest_retrieve_postcondition_unavailable", evidence);
     }
 
