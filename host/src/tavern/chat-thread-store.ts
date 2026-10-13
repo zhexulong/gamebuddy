@@ -674,7 +674,6 @@ type IdempotencyRecord = Readonly<{ key: string; fingerprint: string; result: Ac
 
 const genuineChatThreadStores = new WeakSet<object>();
   const storeRouteKey = (root: string, continuityKey: string): string => `${root}\u001f${continuityKey}`;
-const acceptanceByRoute = new Map<string, (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>>();
 type MountedAttemptClaimInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -685,25 +684,19 @@ type MountedAttemptClaimInput = Readonly<{
   runtimeBindingDigest: string;
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
 }>;
-const attemptClaimByRoute = new Map<string, (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>>();
 
 /**
- * Read-only route-registration probe: how many of the five mounted-route maps
- * currently hold a registration for this (root, continuity key) pair.
+ * Read-only route-registration probe: the five mounted-route closures a live
+ * store registers for this (root, continuity key) pair, or zero when the route
+ * has no live registrant.
  *
  * Test-visible only; it neither grants nor revokes any authority. It lets a
- * test prove that `store.close()` unregistered exactly this store's closures,
- * without exposing the module-level maps themselves.
+ * test prove that `store.close()` removed exactly this store's registration
+ * while another live store keeps the route registered, without exposing the
+ * module-level map itself.
  */
 export function countMountedRouteRegistrations(root: string, continuityKey: string): number {
-  const route = storeRouteKey(root, continuityKey);
-  let count = 0;
-  if (acceptanceByRoute.has(route)) count += 1;
-  if (attemptClaimByRoute.has(route)) count += 1;
-  if (providerStartByRoute.has(route)) count += 1;
-  if (presentationByRoute.has(route)) count += 1;
-  if (worldInfoApplyByRoute.has(route)) count += 1;
-  return count;
+  return activeMountedRoute(storeRouteKey(root, continuityKey)) === undefined ? 0 : 5;
 }
 
 /**
@@ -763,10 +756,6 @@ type MountedPresentationInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const presentationByRoute = new Map<
-  string,
-  (input: MountedPresentationInput, command: PresentationTransition) => Promise<ChatTurnLedger>
->();
 type MountedWorldInfoApplyInput = Readonly<{
   authority: MountedTurnTransitionAuthority;
   operationAuthority: MountedTurnTransitionOperationAuthority;
@@ -777,7 +766,6 @@ type MountedWorldInfoApplyInput = Readonly<{
   binding?: TavernStableWorldInfoBinding;
   expectedOldAppliedBinding?: TavernStableWorldInfoBinding;
 }>;
-const worldInfoApplyByRoute = new Map<string, (input: MountedWorldInfoApplyInput) => Promise<ChatThreadState>>();
 type MountedProviderStartInput = Readonly<{
   authority: MountedTurnTransitionAuthority;
   operationAuthority: MountedTurnTransitionOperationAuthority;
@@ -791,13 +779,35 @@ type MountedProviderStartInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const providerStartByRoute = new Map<
-  string,
-  (
+/**
+ * The mounted-route dispatch slot for one (root, continuity key). More than one
+ * store may legitimately live on the same route at once - the mounted Chat
+ * authority's own store, a transient content port, a management lane store - and
+ * each registers its five closures here. The slot is therefore reference-counted:
+ * dispatch resolves to the newest live registration, and a store's close removes
+ * only its own entry. A closer that does not own the mounted turn can no longer
+ * detach the route a live turn reaches its cancel path through.
+ */
+type MountedRouteRegistration = Readonly<{
+  acceptance: (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>;
+  attemptClaim: (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>;
+  providerStart: (
     input: MountedProviderStartInput,
     command: ProviderStartTransition,
-  ) => Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn>
->();
+  ) => Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn>;
+  presentation: (input: MountedPresentationInput, command: PresentationTransition) => Promise<ChatTurnLedger>;
+  worldInfoApply: (input: MountedWorldInfoApplyInput) => Promise<ChatThreadState>;
+}>;
+
+const mountedRoutes = new Map<string, MountedRouteRegistration[]>();
+
+/** The newest live registration on a route, or none once every store has closed. */
+const activeMountedRoute = (route: string): MountedRouteRegistration | undefined => {
+  const registrations = mountedRoutes.get(route);
+  return registrations === undefined || registrations.length === 0
+    ? undefined
+    : registrations[registrations.length - 1];
+};
 
 /**
  * Host-private P4 store ingress. Its binding input has no exported type and is
@@ -827,7 +837,7 @@ export async function acceptMountedPlayerMessage(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const accept = acceptanceByRoute.get(route);
+  const accept = activeMountedRoute(route)?.acceptance;
   if (accept === undefined) throw new Error("p4_acceptance_port_unavailable");
 
   let authoredContextPreparation = command.authoredContextPreparation;
@@ -878,7 +888,7 @@ export async function claimMountedAttempt(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const claim = attemptClaimByRoute.get(route);
+  const claim = activeMountedRoute(route)?.attemptClaim;
   if (claim === undefined) throw new Error("p4_attempt_claim_port_unavailable");
   return await claim(Object.freeze({ ...binding }));
 }
@@ -911,7 +921,7 @@ export async function transitionMountedProviderStart(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = providerStartByRoute.get(route);
+  const transition = activeMountedRoute(route)?.providerStart;
   if (transition === undefined) throw new Error("p4_provider_start_port_unavailable");
   return await transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
 }
@@ -944,7 +954,7 @@ export async function transitionMountedPresentation(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = presentationByRoute.get(route);
+  const transition = activeMountedRoute(route)?.presentation;
   if (transition === undefined) throw new Error("p5_presentation_port_unavailable");
   return await transition(asMountedPresentationInput(binding), validatePresentationTransition(command));
 }
@@ -970,7 +980,7 @@ export async function acknowledgeMountedWorldInfoBinding(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const acknowledge = worldInfoApplyByRoute.get(route);
+  const acknowledge = activeMountedRoute(route)?.worldInfoApply;
   if (acknowledge === undefined) throw new Error("world_info_apply_port_unavailable");
   return await acknowledge(Object.freeze({ ...binding }));
 }
@@ -1470,15 +1480,16 @@ export function createChatThreadStore(
   function closeConnection(): void {
     if (closed) return;
     closed = true;
-    // Release this store's five module-level route registrations. Each delete
-    // is guarded by an identity check, so a store reopened on the same
-    // root/continuity key is never detached by its predecessor's close.
+    // Release this store's own mounted-route registration. A route is detached
+    // only when its last live registrant closes, so a closer that does not own
+    // the mounted turn cannot detach the route a live turn's cancel path uses.
     const route = storeRouteKey(root, continuityKey);
-    if (acceptanceByRoute.get(route) === acceptMounted) acceptanceByRoute.delete(route);
-    if (attemptClaimByRoute.get(route) === claimMountedAttempt) attemptClaimByRoute.delete(route);
-    if (providerStartByRoute.get(route) === transitionMountedProviderStart) providerStartByRoute.delete(route);
-    if (presentationByRoute.get(route) === transitionMountedPresentation) presentationByRoute.delete(route);
-    if (worldInfoApplyByRoute.get(route) === acknowledgeWorldInfoBinding) worldInfoApplyByRoute.delete(route);
+    const registrations = mountedRoutes.get(route);
+    if (registrations !== undefined) {
+      const index = registrations.indexOf(registration);
+      if (index !== -1) registrations.splice(index, 1);
+      if (registrations.length === 0) mountedRoutes.delete(route);
+    }
     const db = connection;
     connection = undefined;
     if (db === undefined) return;
@@ -1936,11 +1947,16 @@ export function createChatThreadStore(
   initialExactContentCapabilityByStore.set(store, initialCapability);
   createProfileAwareByStore.set(store, createProfileAware);
   const route = storeRouteKey(root, continuityKey);
-  acceptanceByRoute.set(route, acceptMounted);
-  attemptClaimByRoute.set(route, claimMountedAttempt);
-  providerStartByRoute.set(route, transitionMountedProviderStart);
-  presentationByRoute.set(route, transitionMountedPresentation);
-  worldInfoApplyByRoute.set(route, acknowledgeWorldInfoBinding);
+  const registration: MountedRouteRegistration = Object.freeze({
+    acceptance: acceptMounted,
+    attemptClaim: claimMountedAttempt,
+    providerStart: transitionMountedProviderStart,
+    presentation: transitionMountedPresentation,
+    worldInfoApply: acknowledgeWorldInfoBinding,
+  });
+  const registrations = mountedRoutes.get(route);
+  if (registrations === undefined) mountedRoutes.set(route, [registration]);
+  else registrations.push(registration);
   return store;
 
   async function acceptMounted(input: MountedAcceptanceInput): Promise<AcceptedQueuedTurn> {
