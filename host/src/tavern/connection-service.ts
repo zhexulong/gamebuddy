@@ -39,8 +39,6 @@ import {
  *   §1): the store keeps a URL only for the escape-hatch entry.
  */
 
-export type TavernTurnStateSignal = Readonly<{ turnActive: boolean }>;
-
 export type TavernConnectionService = Readonly<{
   read(): Promise<TavernConnectionStateV1>;
   create(command: TavernConnectionCreateCommandV1): Promise<TavernConnectionStateV1>;
@@ -53,16 +51,8 @@ export type TavernConnectionService = Readonly<{
 
 export type TavernConnectionServiceOptions = Readonly<{
   agentDir: string;
-  /** Host-owned durable turn state: an activation may not switch a running turn. */
-  readTurnState: () => Promise<TavernTurnStateSignal>;
   probe?: TavernConnectionProbe;
 }>;
-
-export class TavernDialogueBusyError extends Error {
-  constructor() {
-    super("dialogue_busy");
-  }
-}
 
 export function createTavernConnectionService(options: TavernConnectionServiceOptions): TavernConnectionService {
   const store = new TavernConnectionStore(options.agentDir);
@@ -152,9 +142,6 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
     },
     async activate(connectionId: string, expectedRevision: number): Promise<TavernConnectionStateV1> {
       return await guarded(async () => {
-        // design/28 §5.3: an activation cannot switch a running turn.
-        const turnState = await options.readTurnState();
-        if (turnState.turnActive) throw new TavernDialogueBusyError();
         await store.activate(connectionId, expectedRevision);
         return await project();
       });
@@ -190,11 +177,7 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
  * it to one problem code.
  */
 function mapStoreError(error: unknown): Error {
-  if (
-    error instanceof TavernConnectionInputError ||
-    error instanceof TavernConnectionRevisionConflict ||
-    error instanceof TavernDialogueBusyError
-  )
+  if (error instanceof TavernConnectionInputError || error instanceof TavernConnectionRevisionConflict)
     return error;
   const message = error instanceof Error ? error.message : "";
   if (message === "invalid_tavern_connection_store" || message === "invalid_tavern_auth_store")

@@ -47,7 +47,6 @@ const observedProfileIds: Record<string, string | null> = {
   memory: null,
   worldInfo: null,
 };
-let connectionSawTurnState = false;
 let tavernProfileIdObservedByFacade: string | null = null;
 let tavernProfileIdObservedByService: string | null = null;
 let facadeSawSharedStream = false;
@@ -393,11 +392,8 @@ async function main(): Promise<void> {
     pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href,
     {
       namedExports: {
-        createTavernConnectionService: (options: { readonly readTurnState?: () => Promise<unknown> }) => {
+        createTavernConnectionService: () => {
           counts.connectionCreated += 1;
-          // The reader must be bound to the exact mounted Chat; proving it is a
-          // function is enough here because the facade itself is the stub.
-          connectionSawTurnState = typeof options?.readTurnState === "function";
           return fakeConnectionService;
         },
       },
@@ -494,7 +490,6 @@ async function main(): Promise<void> {
     `${JSON.stringify({
       ...counts,
       observedProfileIds,
-      connectionSawTurnState,
       tavernProfileIdObservedByFacade,
       tavernProfileIdObservedByService,
       facadeSawSharedStream,

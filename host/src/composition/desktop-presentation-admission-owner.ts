@@ -12,7 +12,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
-import { type ComposedTavernProfile, composeTavernProfile, type BrowserTurnV1 } from "../tavern/browser-contract/index.js";
+import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
 import {
   type ChatCreateResultV1,
   type ChatSelectResultV1,
@@ -208,22 +208,6 @@ function createTavernManagedWorldInfoService(
  */
 function managementAgentDir(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): string {
   return resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId).agentDir;
-}
-
-/**
- * The connection service's one activation rule: only a turn that is still in
- * flight blocks activation; a terminal ledger entry (completed / cancelled /
- * failed) is a settled turn (design/28 §5.3: "While a turn is active... returns
- * dialogue_busy").
- */
-function mountedTurnActive(turn: BrowserTurnV1 | null): boolean {
-  return (
-    turn !== null &&
-    (turn.state === "queued" ||
-      turn.state === "running" ||
-      turn.state === "response_visible" ||
-      turn.state === "stopping")
-  );
 }
 
 /**
@@ -585,14 +569,11 @@ export async function startDesktopPresentationAdmission(
       const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
       owned.push(...domainOwned);
       // The connection service owns the player's provider/model/credential
-      // selection for the exact mounted Chat runtime. Its turn-state reader is
-      // this lane's own state facade: the same durable turn the composed broker
-      // already projects, so an activation cannot switch a running turn.
+      // selection for the exact mounted Chat runtime. ADR-0010 makes a connection
+      // switch Class B: it never disturbs the running turn; the next turn reads
+      // the new selection, so this service is not wired to turn state at all.
       const connectionService = createTavernConnectionService({
         agentDir: managementAgentDir(input.manifest, lease),
-        readTurnState: async () => ({
-          turnActive: mountedTurnActive((await referenceStateFacade.read()).turn),
-        }),
       });
       owned.push(connectionService);
       const management = Object.freeze({

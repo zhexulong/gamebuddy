@@ -33,7 +33,6 @@ type PresentationAdmissionObservations = Readonly<{
   memoryClosed: number;
   worldInfoClosed: number;
   connectionClosed: number;
-  connectionSawTurnState: boolean;
   observedProfileIds: Readonly<{
     management: string | null;
     memory: string | null;
@@ -126,7 +125,6 @@ type ManagementPresentationAdmissionObservations = Readonly<{
   facadeSawSharedStream: boolean;
   serviceSawSharedStream: boolean;
   connectionAgentDir: string | null;
-  connectionSawTurnState: boolean;
   repositoryRuntimeRoot: string | null;
   runtimeRoot?: string;
   propagatedOriginalFailure?: boolean;
@@ -224,7 +222,6 @@ test("presentation admission owner serves the composed reference-game shell over
   assert.equal(observed.worldInfoCreated, 1);
   assert.equal(observed.repositoryCreated, 1);
   assert.equal(observed.connectionCreated, 1);
-  assert.equal(observed.connectionSawTurnState, true);
   const managementProfileId = "gamebuddy.tavern-management.chat-list-title";
   assert.equal(observed.observedProfileIds.management, managementProfileId);
   assert.equal(observed.observedProfileIds.memory, managementProfileId);
@@ -349,15 +346,14 @@ test("management presentation entry point serves the one composed shell over its
   assert.equal(observed.observedProfileIds.worldInfo, managementProfileId);
   assert.equal(observed.repositoryRuntimeRoot, observed.runtimeRoot);
   // The connection service receives the exact agent directory of the mounted
-  // Chat runtime - the identity's own context root, not a shared one - and a
-  // turn-state reader bound to this admission's own reference facade, so
-  // activation can refuse a running turn.
+  // Chat runtime - the identity's own context root, not a shared one. ADR-0010
+  // makes a connection switch Class B, so the service is not wired to turn
+  // state and never refuses a running turn.
   assert.equal(observed.connectionCreated, 1);
   const agentDir = (observed.connectionAgentDir ?? "").replaceAll("\\", "/");
   const runtimeRoot = (observed.runtimeRoot ?? "").replaceAll("\\", "/");
   assert.match(agentDir, /\/contexts\/[a-f0-9]{64}\/pi-agent$/);
   assert.ok(agentDir.startsWith(`${runtimeRoot}/`), `expected ${agentDir} under ${runtimeRoot}`);
-  assert.equal(observed.connectionSawTurnState, true);
   // The verified browser artifact is served by the real listener under the one
   // product profile marker, and the waiter carries the one-time token.
   assert.equal(observed.launchUrlMatchesToken, true);

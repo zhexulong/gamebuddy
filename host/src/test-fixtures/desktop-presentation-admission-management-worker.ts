@@ -52,7 +52,6 @@ const observedProfileIds: Record<string, string | null> = {
 let facadeSawSharedStream = false;
 let serviceSawSharedStream = false;
 let connectionAgentDir: string | null = null;
-let connectionSawTurnState = false;
 let repositoryRuntimeRoot: string | null = null;
 let eventStream: ReturnType<typeof createChatEventStream> | undefined;
 
@@ -308,13 +307,9 @@ async function main(): Promise<void> {
       namedExports: {
         createTavernConnectionService: (options: {
           readonly agentDir?: string;
-          readonly readTurnState?: () => Promise<unknown>;
         }) => {
           counts.connectionCreated += 1;
           connectionAgentDir = options?.agentDir ?? null;
-          // The reader must be the facade-bound one; proving it resolves is
-          // enough here because the facade itself is the fixture's stub.
-          connectionSawTurnState = typeof options?.readTurnState === "function";
           return fakeConnectionService;
         },
       },
@@ -419,7 +414,6 @@ async function main(): Promise<void> {
       facadeSawSharedStream,
       serviceSawSharedStream,
       connectionAgentDir,
-      connectionSawTurnState,
       repositoryRuntimeRoot,
       ...observations,
     })}\n`,

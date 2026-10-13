@@ -178,14 +178,13 @@ async function withHandler(
   const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-connection-routes-"));
   const service: TavernConnectionService = createTavernConnectionService({
     agentDir: root,
-    readTurnState: async () => ({ turnActive: options.turnActive ?? false }),
     ...(options.probe === undefined ? {} : { probe: options.probe }),
   });
   const handler = createTavernManagementDialogueWebRequestHandler({
     managementStateFacade: facade(options.turnActive ?? false),
     managementService,
     worldInfoService,
-    voicePreferenceStore: Object.freeze({
+    playerPreferenceStore: Object.freeze({
       async read() {
         return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
@@ -687,26 +686,47 @@ test("model selection is restricted to the catalog and to the model's own thinki
   });
 });
 
-test("activation is refused with dialogue_busy while a turn is active", async () => {
-  await withHandler({ turnActive: true }, async (_root, request, bootstrap) => {
-    await bootstrap();
-    const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "deepseek",
-      apiKey: "sk-synthetic-credential",
-    });
-    const revision = (created.body as { revision: number }).revision;
-    const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
-      .connectionId;
-    const activate = await request(
-      "POST",
-      `/api/tavern/v1/settings/connections/${connectionId}/activate`,
-      {},
-      { apiVersion: 1, expectedRevision: revision },
-    );
-    assert.equal(activate.status, 409);
-    assert.equal((activate.body as { code: string }).code, "dialogue_busy");
-  });
+test("a connection activation during a running turn is Class B: it succeeds and leaves the turn untouched", async () => {
+  await withHandler(
+    { turnActive: true, probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4-flash") })) },
+    async (_root, request, bootstrap) => {
+      await bootstrap();
+      const before = await request("GET", "/api/tavern/v1/state");
+      const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+        apiVersion: 1,
+        providerId: "deepseek",
+        apiKey: "sk-synthetic-credential",
+      });
+      const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
+        .connectionId;
+      const probed = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: (created.body as { revision: number }).revision },
+      );
+      const revision = (probed.body as { state: { revision: number } }).state.revision;
+
+      // A turn is running: ADR-0010 Class B means the activation is never refused
+      // for it, and it is persisted so the next turn reads the new selection.
+      const activated = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+        {},
+        { apiVersion: 1, expectedRevision: revision },
+      );
+      assert.equal(activated.status, 200);
+      assert.equal((activated.body as { active: { connectionId: string } }).active.connectionId, connectionId);
+
+      // The running turn is undisturbed: the durable projection still shows it.
+      const after = await request("GET", "/api/tavern/v1/state");
+      assert.equal((after.body as { chat: { turn: { state: string } } }).chat.turn.state, "running");
+      assert.deepEqual(
+        (after.body as { chat: { turn: unknown } }).chat.turn,
+        (before.body as { chat: { turn: unknown } }).chat.turn,
+      );
+    },
+  );
 });
 
 test("removal needs the exact revision, cannot drop the active connection, and deletes the stored key", async () => {
@@ -888,7 +908,7 @@ test("a profile that advertises connection routes without the Host service fails
         managementStateFacade: facade(false),
         managementService,
         worldInfoService,
-        voicePreferenceStore: Object.freeze({
+        playerPreferenceStore: Object.freeze({
           async read() {
             return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
           },
