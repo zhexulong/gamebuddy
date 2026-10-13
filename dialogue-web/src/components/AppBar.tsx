@@ -155,10 +155,11 @@ export function AppBar({
         <span className="app-bar-title">{companionName}</span>
         {/* One polite live region announces the connection/turn status once
             (design/26 §7.3); `role="status"` is that region. The word is a
-            child of its own so a narrow bar can retire the visible copy to
-            the status dot without taking the fact away from a screen reader
-            (style.css). */}
-        <span className="app-bar-status" role="status">
+            child of its own so a narrow bar can retire the visible copy to the
+            status dot without taking the fact away from a screen reader
+            (style.css); `aria-label` and `title` name the badge at every width,
+            so "a coloured dot" is never the whole of it. */}
+        <span className="app-bar-status" role="status" aria-label={statusLabel} title={statusLabel}>
           <span
             className="status-dot"
             {...(statusTone === "progress" ? { "data-tone": "progress" } : {})}

@@ -1265,6 +1265,9 @@ body {
   cursor: pointer;
   padding: 0;
   color: inherit;
+  /* The row's select control is the whole title line, so it carries the touch
+     floor itself; without it the pressable target is the 16px text box. */
+  min-height: var(--touch-target-min);
 }
 
 .chat-item-title {
@@ -4331,6 +4334,45 @@ body {
     display: none;
     width: 0;
     height: 0;
+  }
+}
+
+/* ==========================================================================
+   The status stays a named badge on the companion, not a floating dot
+   (ruling-and-ui-defects lane block, U-02)
+
+   The measured defect at 400px: the bar's status word was retired with
+   `clip-path: inset(50%)` to buy the companion's name its width, which left a
+   dot alone in the bar. A dot on its own is not a status a player can read, and
+   it reads as a rendering fault rather than as a decision.
+
+   At this width the status becomes what the earlier lane intended: a badge on
+   the companion's own monogram, which frees exactly the horizontal space the
+   name needed. Nothing about the fact changes - it is the same live region, the
+   dot keeps its tone and its pulse, and the word stays in the DOM - and
+   `aria-label`/`title` on `.app-bar-status` name the badge at every width, so
+   the state is never carried by colour alone.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+@media (max-width: 480px) {
+  .app-bar-companion {
+    position: relative;
+  }
+
+  /* The badge sits on the monogram's lower-right corner: `avatar-small` is
+     28 px, and the 7 px dot lands inside it. */
+  .app-bar-status {
+    position: absolute;
+    top: auto;
+    right: auto;
+    bottom: 1px;
+    left: 17px;
+    margin: 0;
+    padding: 0;
+    border-left: 0;
+    gap: 0;
   }
 }
 
