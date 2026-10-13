@@ -296,11 +296,13 @@ function createScope(overrides: ScopeOverrides = {}) {
       return durablePresentation;
     }
     if (command.operation === "fail") {
-      // Mirrors the store's own CAS: a failure is refused from an attempt that never
-      // armed and from an already-terminal ledger. It is deliberately NOT refused
-      // over a claimed cancel, because the store does not refuse it either - that
-      // gap is reproduced here so the pre-fix reading can be driven to its real
-      // outcome. (Reported to the store's owner.)
+      // Mirrors the store's own CAS as it stood while this defect was live: a failure
+      // was refused from an attempt that never armed and from an already-terminal
+      // ledger, but NOT over a claimed cancel - which is how the pre-fix reading could
+      // replace a claimed interruption with a failure. The store refuses that now
+      // (`chat-thread-store.cancel-authority.test.ts`), and this double keeps the
+      // permissive shape on purpose: the planted test below drives that reading to its
+      // real outcome instead of letting a fixed store hide it.
       if (
         durablePresentation.status === "cancelled" ||
         durablePresentation.status === "completed" ||
