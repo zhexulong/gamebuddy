@@ -174,7 +174,10 @@ public sealed class BuildFarmBuildingActionTests
         entry.Should().Contain("\"x\"");
         entry.Should().Contain("\"y\"");
         entry.Should().Contain("\"expectedTargetId\"");
-        entry.Should().Contain("FarmhandActionLifecycle.Experimental", "the action has no live gate yet");
+        // Promoted 2026-10-13: its native-local gate passed (`farm_building_built` - money fell by exactly the
+        // declared cost, the declared materials were consumed, and the tile held the commissioned type with a
+        // durable id). The assertion still pins the ONE lifecycle the catalog declares.
+        entry.Should().Contain("FarmhandActionLifecycle.LiveVerified", "a promoted action must declare the lifecycle its live gate earned");
 
         string protocol = ReadRepositoryFile(Path.Combine("integrations", "stardew", "src", "Core", "Protocol", "BridgeProtocol.cs"));
         protocol.Should().Contain("\"build_farm_building\" => new[] { \"buildingType\", \"x\", \"y\", \"expectedTargetId\" }",
@@ -198,8 +201,13 @@ public sealed class BuildFarmBuildingActionTests
         string fixture = ReadRepositoryFile(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.BuildFarmBuilding.cs"));
         fixture.Should().Contain("ExecutionManager.TryDescribeBuildFarmBuildingSite(",
             "the fixture's Given must be asserted through the product's own admission predicate");
-        fixture.Should().Contain("ExecutionManager.DiscoverBuildFarmBuildingTargets(",
+        // The advertisement moved to the RUNNER: the published site is a function of where the actor STANDS while
+        // the fixture's warp is queued, so asserting it in the fixture raced between two correct searches. The runner
+        // reads `farmBuildingTargets` from a fresh observation, which is the only honest moment to check it.
+        fixture.Should().NotContain("ExecutionManager.DiscoverBuildFarmBuildingTargets(",
             "and through the same discovery the snapshot publishes");
+        fixture.Should().Contain("ExecutionManager.FindFarmBuildingSite(", "the fixture must ask the SAME search the product advertises from");
+        fixture.Should().Contain("ExecutionManager.IsFarmBuildingFootprintFree(", "and the ONE predicate, not a second copy of the rule");
         fixture.Should().NotContain("RequestLocalBuildFarmBuilding",
             "the fixture must never call the action");
 

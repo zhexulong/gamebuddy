@@ -126,7 +126,7 @@ public sealed class AcceptDailyQuestActionTests
     }
 
     [Fact]
-    public void Action_IsRegisteredAsAnExperimentalExecutionWithTheSingleArgument()
+    public void Action_IsRegisteredAsALiveVerifiedExecutionWithTheSingleArgument()
     {
         string definitions = ReadRepositoryFile(Path.Combine("integrations", "stardew", "src", "Core", "Policy", "FarmhandActionDefinitions.cs"));
         definitions.Should().Contain("\"accept_daily_quest\"");
@@ -136,7 +136,10 @@ public sealed class AcceptDailyQuestActionTests
         int at = definitions.IndexOf("\"accept_daily_quest\"", StringComparison.Ordinal);
         string entry = definitions[at..Math.Min(definitions.Length, at + 700)];
         entry.Should().Contain("\"expectedTargetId\"");
-        entry.Should().Contain("FarmhandActionLifecycle.Experimental", "an action with no live gate must not claim otherwise");
+        // Promoted 2026-10-13: its native-local gate passed (`daily_quest_accepted`, quest log +1 and both day flags
+        // true). The assertion keeps its teeth - it still pins the ONE lifecycle the catalog declares - it just pins
+        // the value the action has earned.
+        entry.Should().Contain("FarmhandActionLifecycle.LiveVerified", "a promoted action must declare the lifecycle its live gate earned");
 
         string protocol = ReadRepositoryFile(Path.Combine("integrations", "stardew", "src", "Core", "Protocol", "BridgeProtocol.cs"));
         protocol.Should().Contain("\"accept_daily_quest\" => new[] { \"expectedTargetId\" }",
@@ -153,7 +156,8 @@ public sealed class AcceptDailyQuestActionTests
             .FirstOrDefault(candidate => candidate.ActionId == "accept_daily_quest");
 
         registration.Should().NotBeNull();
-        registration!.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // Promoted 2026-10-13 after its native-local gate passed.
+        registration!.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.WorldLifecycle);
         registration.Descriptor!.Arguments.Should().ContainSingle()
             .Which.Name.Should().Be("expectedTargetId");

@@ -331,6 +331,18 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["chat"],
   ),
   actionAdapter(
+    "build_farm_building",
+    "Commission a farm building",
+    "Commission a farm building through the game own GameLocation.buildStructure settlement, which charges the Data/Buildings build cost and materials the game itself declares and leaves a freshly placed building with a durable id. Read the opaque site id, its tile and the building type from the `farmBuildingTargets` projection; a site the game no longer accepts is refused by name rather than built.",
+    ["buildings"],
+  ),
+  actionAdapter(
+    "accept_daily_quest",
+    "Accept the day's posted quest",
+    "Accept the help-wanted quest the town has posted for today through the game own Quest.accept settlement, which writes the quest log and the day flag. The board is only where a player reads the offer; the action names the quest by the opaque id the `dailyQuestTargets` projection published and refuses by name when there is nothing acceptable or it was already accepted.",
+    ["quests"],
+  ),
+  actionAdapter(
     "name_entity",
     "Name your horse",
     "Give the farm's own horse its name through the game's own naming settlement (Horse.nameHorse), the very body the naming menu's callback is bound to. The subject is the ACTOR'S OWN horse - it takes no target id - and the name is its only input. A horse that already has a name is refused by name, and the receipt reports the name READ BACK from the entity.",
@@ -568,6 +580,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   clear_fish_pond: "stardew_clear_fish_pond",
   send_multiplayer_chat: "stardew_send_multiplayer_chat",
   name_entity: "stardew_name_entity",
+  build_farm_building: "stardew_build_farm_building",
+  accept_daily_quest: "stardew_accept_daily_quest",
 
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
@@ -728,6 +742,8 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "use_warp_item",
   "pan_ore",
   "claim_mail_attachment",
+  "build_farm_building",
+  "accept_daily_quest",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];

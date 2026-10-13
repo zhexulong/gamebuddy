@@ -290,20 +290,20 @@ public static class FarmhandActionCatalog
         // changes and are deferred. The cost the seam does NOT charge (the Data/Buildings BuildCost
         // and BuildMaterials) is debited by the handler itself, because the only native debit lives
         // on the menu (CarpenterMenu.ConsumeResources) and driving the menu is forbidden.
-        E("build_farm_building", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("buildingType", "string"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "farm_building_built", "GameLocation.buildStructure"), FarmhandActionLifecycle.Experimental),
+        E("build_farm_building", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("buildingType", "string"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "farm_building_built", "GameLocation.buildStructure"), FarmhandActionLifecycle.LiveVerified),
         // Accepting the day's help-wanted quest. The handler carries ONLY the write half of
         // Billboard.receiveLeftClick's acceptQuestButton branch (Menus/Billboard.cs:363-374): the
         // daily/accepted/daysLeft fields on Game1.questOfTheDay, the quest-log entry and
         // Farmer.acceptedDailyQuest. The branch's click sound and button refresh are presentation
         // and are not reproduced. Experimental: it has no live gate yet, and promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
-        E("accept_daily_quest", "quests_journal", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "daily_quest_accepted", "Quest.accept"), FarmhandActionLifecycle.Experimental),
+        E("accept_daily_quest", "quests_journal", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "daily_quest_accepted", "Quest.accept"), FarmhandActionLifecycle.LiveVerified),
         // Give the actor's OWN horse its name through the game's own naming settlement
         // (`Horse.nameHorse`, Characters/Horse.cs:570): public, UI-free, and the body the naming
         // menu's own callback binding (Horse.cs:637) ends in. The subject is the actor's own
         // horse (`Utility.findHorseForPlayer`), so it carries the wire's one free-text argument
         // and NO target id - an unnamed horse is published by no projection.
-        E("name_entity", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "entity_named", ("text", "string")), FarmhandActionLifecycle.Experimental),
+        E("name_entity", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "entity_named", ("text", "string")), FarmhandActionLifecycle.LiveVerified),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);

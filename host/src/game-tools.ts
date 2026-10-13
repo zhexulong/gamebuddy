@@ -1745,6 +1745,50 @@ export function createStardewActionTools(
       );
     }
   }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "build_farm_building",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("build_farm_building", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("build_farm_building", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.build_farm_building,
+          label: "Commission a farm building",
+          description:
+            "Commission a farm building at a site the game itself accepts. Read the opaque target id, its tile, the `buildingType`, the `buildCost` and the `buildDays` from the `farmBuildingTargets` entries of the most recent observation - the site carries the type, so name the site and never a bare structure. The commission charges the build cost and the materials the game declares, and the terminal is a building standing on that site with a durable id; a site the game no longer accepts, or that you cannot afford or supply, is refused by name rather than built.",
+          parameters: schema,
+          action: "build_farm_building",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "accept_daily_quest",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("accept_daily_quest", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("accept_daily_quest", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.accept_daily_quest,
+          label: "Accept the day's posted quest",
+          description:
+            "Accept the help-wanted quest the town has posted for today. Read the opaque target id, the `questType` and the `title` from the `dailyQuestTargets` entries of the most recent observation, and check `acceptedDailyQuest`: it is the day flag the accept turns true, so a day that already accepted one refuses by name instead of accepting twice. The board is only where a player reads the offer; naming the quest is what this does.",
+          parameters: schema,
+          action: "accept_daily_quest",
+          toArgs: () => ({}),
+        }),
+      );
+    }
+  }
 
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(

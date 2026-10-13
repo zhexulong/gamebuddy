@@ -356,6 +356,102 @@ function hasStardewCompletionEvidence(
         })
       );
     case "clear_fish_pond":
+    case "build_farm_building":
+      // Evidence literal: farmhandexecutioncontroller.buildfarmbuildingactions.cs - the site identity, the
+      // building type, the new building id, the money and materials before/after, and the tile's building
+      // afterwards. The commission is the observable change, so the rule demands all three halves: money fell
+      // by exactly the declared cost, the declared materials were consumed, and the tile now holds the type
+      // that was commissioned. A receipt that merely says it called the settlement cannot satisfy those.
+      return (
+        receipt.reasonCode === "farm_building_built" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "building_type",
+            "building_id",
+            "money_before",
+            "money_after",
+            "build_cost",
+            "materials_before",
+            "materials_after",
+            "materials_required",
+            "build_days",
+            "days_of_construction_left",
+            "magical",
+            "tile_building_after",
+            "native_placement",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.money_before);
+            const after = integerEvidenceValue(e.money_after);
+            const cost = integerEvidenceValue(e.build_cost);
+            const materialsBefore = integerEvidenceValue(e.materials_before);
+            const materialsAfter = integerEvidenceValue(e.materials_after);
+            const materialsRequired = integerEvidenceValue(e.materials_required);
+            return (
+              before !== null &&
+              after !== null &&
+              cost !== null &&
+              cost > 0 &&
+              before - after === cost &&
+              materialsBefore !== null &&
+              materialsAfter !== null &&
+              materialsRequired !== null &&
+              materialsRequired > 0 &&
+              materialsBefore - materialsAfter === materialsRequired &&
+              typeof e.building_id === "string" &&
+              e.building_id.length > 0 &&
+              typeof e.building_type === "string" &&
+              e.building_type.length > 0 &&
+              e.tile_building_after === e.building_type
+            );
+          },
+        )
+      );
+    case "accept_daily_quest":
+      // Evidence literal: farmhandexecutioncontroller.questactions.cs - the quest id and type, the day, and the
+      // quest-log and day-flag counts before and after. The accept writes the quest log AND the day flag, so the
+      // rule requires both: the log grew by exactly one entry and both flags now read true. The target id is
+      // required non-empty because the receipt must name WHICH quest was accepted.
+      return (
+        receipt.reasonCode === "daily_quest_accepted" &&
+        exactEvidence(
+          detail,
+          [
+            "daily_quest_id",
+            "day_of_month",
+            "quest_type",
+            "accepted_before",
+            "accepted_daily_before",
+            "days_left_before",
+            "quest_log_before",
+            "quest_log_after",
+            "days_left_after",
+            "accepted_after",
+            "accepted_daily_after",
+            "daily_after",
+            "can_be_cancelled_after",
+            "day_accepted_after",
+          ],
+          (e) => {
+            const logBefore = integerEvidenceValue(e.quest_log_before);
+            const logAfter = integerEvidenceValue(e.quest_log_after);
+            return (
+              typeof e.daily_quest_id === "string" &&
+              e.daily_quest_id.length > 0 &&
+              logBefore !== null &&
+              logAfter !== null &&
+              logAfter - logBefore === 1 &&
+              e.accepted_after === "true" &&
+              e.accepted_daily_after === "true" &&
+              e.accepted_before === "false"
+            );
+          },
+        )
+      );
     case "name_entity":
       // Evidence literal: farmhandexecutioncontroller.nameentityactions.cs - the subject, the horse
       // id, the requested name, the name read back and the Mod's own read-back verdict. The

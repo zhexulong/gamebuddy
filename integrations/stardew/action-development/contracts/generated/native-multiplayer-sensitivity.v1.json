@@ -1597,7 +1597,7 @@
     },
     {
       "actionId": "build_farm_building",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1614,7 +1614,7 @@
     },
     {
       "actionId": "accept_daily_quest",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1630,7 +1630,7 @@
     },
     {
       "actionId": "name_entity",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

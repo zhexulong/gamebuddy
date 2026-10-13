@@ -278,6 +278,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("use_warp_item", 1, "run-stardew-native-local-player-use-warp-item-smoke.mjs", "warp_item_arrived", "native_use_warp_item_v1"),
   gate("pan_ore", 1, "run-stardew-native-local-player-pan-ore-smoke.mjs", "ore_panned", "native_pan_ore_v1"),
   gate("claim_mail_attachment", 1, "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs", "mail_claimed", "native_claim_mail_attachment_v1"),
+  // Promoted to live-verified after their native-local gates passed.
+  gate("build_farm_building", 1, "run-stardew-native-local-player-build-farm-building-smoke.mjs", "farm_building_built", "native_build_farm_building_v1"),
+  gate("name_entity", 1, "run-stardew-native-local-player-name-entity-smoke.mjs", "entity_named", "native_name_entity_v1"),
+  gate("accept_daily_quest", 1, "run-stardew-native-local-player-accept-daily-quest-smoke.mjs", "daily_quest_accepted", "native_accept_daily_quest_v1"),
 ]);
 
 /**
@@ -396,12 +400,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   wia_tool_approach_interrupt: "run-stardew-native-local-player-wia-tool-approach-smoke.mjs",
   wia_animal_product_interrupt: "run-stardew-native-local-player-wia-animal-product-smoke.mjs",
   wia_item_pickup_interrupt: "run-stardew-native-local-player-wia-item-pickup-smoke.mjs",
-  // build-farm-building lane (2026-10-12): one Experimental registration shipping with its own
-  // shared-harness runner and its own fixture scenario. A runner is neither a capability grant nor
-  // a success claim: promotion moves it into STARDEW_PUBLISHED_ACTION_GATES and out of this map.
-  build_farm_building: "run-stardew-native-local-player-build-farm-building-smoke.mjs",
-  name_entity: "run-stardew-native-local-player-name-entity-smoke.mjs",
-  accept_daily_quest: "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
   // Item/tile lane (2026-10-07): three Experimental registrations, each shipping with its own
   // shared-harness runner and its own fixture scenario. A runner is neither a capability grant
   // nor a success claim: each still owes its own native-local live gate, and promotion moves it
