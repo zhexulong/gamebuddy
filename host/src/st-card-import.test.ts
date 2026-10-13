@@ -7,7 +7,13 @@ import {
   renderIdentityProfile,
   validateIdentityProfile,
 } from "./identity-profile.js";
-import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-card-import.js";
+import {
+  candidateToIdentityProfile,
+  decodeStCard,
+  previewStCard,
+  type StCardImportLoss,
+  type StCardImportLossReason,
+} from "./st-card-import.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import fc from "fast-check";
@@ -528,6 +534,173 @@ test("previewStCard and decodeStCard recognize spec ccv3 as st-v3 format", () =>
   const report = decodeStCard(JSON.stringify(cardWithTopLevelSpec));
   assert.equal(report.format, "st-v3");
   assert.equal(report.candidate?.worldBookCandidates[0]?.entryId, "st-st-v3-1");
+});
+
+// =========================================================================
+// Rule: no import loss is silent.
+//
+// Every bounded drop this importer can make is declared below with the card that
+// produces it. `assertNoSilentImportLoss` IS the rule: it refuses a report whose
+// ledger is not exactly what the card lost, refuses a loss whose field name is
+// not bounded, and refuses a count that is not positive. The fixture record is
+// typed `Record<StCardImportLossReason, ...>`, so ADDING a loss reason to the
+// importer does not compile until that reason has its own card here - a future
+// loss has to report itself.
+// =========================================================================
+
+/** A bounded field name: which part of the card lost something, never card body. */
+const LOSS_FIELD = /^[a-z][a-z_]*(?:\.[a-z_]+)*$/u;
+
+type ImportLossFixture = Readonly<{
+  field: string;
+  count: number;
+  data: Readonly<Record<string, unknown>>;
+}>;
+
+/**
+ * One card per reason, plus the exact loss it must produce. The `count` is
+ * hand-computed from the card, not read back out of the decoder.
+ */
+const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFixture>> = Object.freeze({
+  unparsed_example_blocks: {
+    field: "mes_example",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      // The companion is labelled with her own name: a real card shape the
+      // speaker parser does not accept.
+      mes_example: "<START>\nRin: I am labelled with the card's own name.\nYou: hello",
+    },
+  },
+  worldbook_keys_truncated: {
+    field: "character_book.keys",
+    count: 3,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Lore", content: "carried", keys: Array.from({ length: 19 }, (_, index) => `key_${index}`) },
+        ],
+      },
+    },
+  },
+  unrenderable_worldbook_entry: {
+    field: "character_book.entries",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: { entries: [{ comment: "Lore", content: "this references {{unknown_macro}}." }] },
+    },
+  },
+  worldbook_entry_content_unreadable: {
+    field: "character_book.entries",
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      character_book: {
+        entries: [
+          {
+            comment: "Lore",
+            content: "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1),
+          },
+        ],
+      },
+    },
+  },
+});
+
+/**
+ * A card that loses material on all three paths at once: an unusual example
+ * label, more trigger words than the entry carries, and an entry whose macro the
+ * macro set cannot resolve.
+ */
+const THREE_LOSS_CARD_DATA = Object.freeze({
+  name: "Loss Ledger",
+  description: "calm",
+  mes_example: "<START>\nLoss Ledger: I am the card's own name label.\nYou: hi",
+  character_book: {
+    entries: [
+      { comment: "Many keys", content: "carried", keys: Array.from({ length: 18 }, (_, index) => `key_${index}`) },
+      { comment: "Broken macro", content: "this references {{unknown_macro}}." },
+    ],
+  },
+}) as Readonly<Record<string, unknown>>;
+
+const THREE_LOSS_CARD_EXPECTED: readonly StCardImportLoss[] = [
+  { field: "mes_example", reason: "unparsed_example_blocks", count: 1 },
+  { field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 },
+  { field: "character_book.keys", reason: "worldbook_keys_truncated", count: 2 },
+];
+
+const byLossKey = (loss: StCardImportLoss): string => `${loss.field}:${loss.reason}`;
+
+/** The rule. `expected` is what the card actually lost, computed by the caller. */
+function assertNoSilentImportLoss(
+  report: Readonly<{ losses: readonly StCardImportLoss[] }>,
+  expected: readonly StCardImportLoss[],
+): void {
+  for (const loss of report.losses) {
+    assert.match(loss.field, LOSS_FIELD, `loss ${loss.reason} must name a bounded field`);
+    assert.ok(
+      Number.isSafeInteger(loss.count) && loss.count > 0,
+      `loss ${loss.reason} must carry a positive count`,
+    );
+    assert.ok(
+      Object.hasOwn(IMPORT_LOSS_FIXTURES, loss.reason),
+      `loss ${loss.reason} has no fixture, so nothing can see it`,
+    );
+  }
+  assert.deepEqual(
+    report.losses.map(byLossKey).sort(),
+    expected.map(byLossKey).sort(),
+    "an import loss went unreported",
+  );
+}
+
+test("rule: every declared import loss is produced by its own card and reported by the real decode path", () => {
+  for (const reason of Object.keys(IMPORT_LOSS_FIXTURES) as StCardImportLossReason[]) {
+    const fixture = IMPORT_LOSS_FIXTURES[reason];
+    const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }));
+    // The real path, not the internal helpers: JSON text in, import result out.
+    assertNoSilentImportLoss(report, [{ field: fixture.field, reason, count: fixture.count }]);
+    // The preview carries the same ledger, so a review surface sees it too.
+    assert.deepEqual(previewStCard(JSON.parse(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }))).losses, report.losses);
+  }
+});
+
+test("rule: a card that loses material three ways names all three losses", () => {
+  const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: THREE_LOSS_CARD_DATA }));
+  assertNoSilentImportLoss(report, THREE_LOSS_CARD_EXPECTED);
+});
+
+test("rule: the gate rejects a report whose ledger hides a loss (planted silent drop)", () => {
+  const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: THREE_LOSS_CARD_DATA }));
+  // The real report passes the rule...
+  assertNoSilentImportLoss(report, THREE_LOSS_CARD_EXPECTED);
+  // ...and the planted silent drop does not: the same card, decoded by an
+  // importer that dropped the material without recording it.
+  assert.throws(
+    () => assertNoSilentImportLoss({ losses: [] }, THREE_LOSS_CARD_EXPECTED),
+    /an import loss went unreported/u,
+  );
+  // A partially-silent ledger is refused too (one row missing, not all of them).
+  assert.throws(
+    () => assertNoSilentImportLoss({ losses: report.losses.slice(0, 2) }, THREE_LOSS_CARD_EXPECTED),
+    /an import loss went unreported/u,
+  );
+  // And an unbounded count is not a report.
+  assert.throws(
+    () =>
+      assertNoSilentImportLoss(
+        { losses: [{ field: "mes_example", reason: "unparsed_example_blocks", count: 0 }] },
+        THREE_LOSS_CARD_EXPECTED,
+      ),
+    /positive count/u,
+  );
 });
 
 // =========================================================================
