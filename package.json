@@ -214,6 +214,7 @@
     "clean:all": "pnpm --filter host clean && pnpm --filter dialogue-web clean && dotnet clean integrations/stardew/GameBuddy.Stardew.csproj",
     "check:script-entries": "node tools/scripts/check-script-entry-existence.mjs",
     "check:complexity-gate": "node tools/scripts/check-file-complexity-gate.mjs",
+    "test:complexity-gate": "node --test tools/scripts/check-file-complexity-gate.test.mjs",
     "check:workspace-debris": "node tools/scripts/check-workspace-debris.mjs",
     "test:stardew-dialogue-stream": "node --test tools/check-stardew-dialogue-stream.test.mjs",
     "test:stardew-admission-hold-codes": "node --test tools/lib/stardew-admission-hold-codes.test.mjs",

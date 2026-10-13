@@ -43,7 +43,11 @@ jobs:
       # untracked debris fail CI. (knip itself already covers unreferenced
       # files; these three add the reverse directions.)
       - run: pnpm check:script-entries
+      # The complexity gate is a ratchet on the line count a core file had at its recorded baseline,
+      # not on the absolute ceilings it has already breached (see the gate's own header): it fails
+      # the change that grows a core file and passes the four that are already over their target.
       - run: pnpm check:complexity-gate
+      - run: pnpm test:complexity-gate
       - run: pnpm check:workspace-debris
       # The formatter step is a ratchet, not a repo-wide reformat demand: it fails only on a file
       # that newly joins the recorded red set (682 files at 2516ffa4) and prints that total on every
