@@ -34,7 +34,12 @@ function mountBlocks() {
   const blocks: Array<{ action: string; params: string; body: string }> = [];
   const re = /entry\.actionId === "([a-z_]+)",[\s\S]{0,1200}?toArgs: \(([^)]*)\) => \(([\s\S]{0,400}?)\),\n/g;
   for (const match of GAME_TOOLS.matchAll(re)) {
-    blocks.push({ action: match[1], params: match[2].trim(), body: match[3].trim() });
+    const [, action, params, body] = match;
+    assert.ok(
+      action !== undefined && params !== undefined && body !== undefined,
+      "the mount-block pattern must capture action, params and body together",
+    );
+    blocks.push({ action, params: params.trim(), body: body.trim() });
   }
   return blocks;
 }
@@ -49,7 +54,7 @@ function declaredArgumentNames(id: string): string[] | null {
   const names = [
     ...[...head.matchAll(/new FarmhandActionArgument\("([A-Za-z]+)"/g)].map((m) => m[1]),
     ...[...head.matchAll(/\(\s*"([A-Za-z]+)",\s*"(?:integer|string|boolean|number)"\s*\)/g)].map((m) => m[1]),
-  ];
+  ].filter((name): name is string => name !== undefined);
   return [...new Set(names)];
 }
 
