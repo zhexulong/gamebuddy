@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import {
+  problemTextWithCode,
+  TavernProblemError,
   TavernProtocolError,
   createManagementPipelineApi,
   validateMemoryMutationCommand,
@@ -460,4 +466,114 @@ test("management model-profile validators and client round-trip a player-typed m
       body: JSON.stringify(command),
     },
   });
+});
+
+/**
+ * The management surfaces must not be the last place that flattens a reason.
+ *
+ * `problem-code-gate.test.mjs` holds the two ends of the contract: the codes the
+ * Host may produce are declared, and the client mirrors them. That gate stops at
+ * the wire. The failure this one exists for is one layer further in: a surface
+ * caught the validated RFC-9457 problem and reported a bare
+ * `labels.failure` / `labels.*Failed`, so a `draft_conflict`, a
+ * `connection_not_ready` and a genuine outage all read as the same sentence and
+ * the player could not tell what to do next.
+ *
+ * Two halves, deliberately: the shared helper is asserted to make a bounded code
+ * distinguishable from a generic failure, and every management surface is
+ * scanned for the catch shape that flattens one. The scan is proven against the
+ * shape it forbids, so it cannot pass by finding nothing.
+ */
+const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+
+const PROBLEM_SURFACES = [
+  join(WEB, "components", "management-surface-panels.tsx"),
+  join(WEB, "components", "management-panels.tsx"),
+  join(WEB, "components", "CharactersPanel.tsx"),
+];
+
+/** Catches that decide a failure outcome without naming what they caught. */
+export function flatteningCatchesIn(text, fileName) {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found = [];
+  const visit = (node) => {
+    if (ts.isCatchClause(node)) {
+      const bound =
+        node.variableDeclaration !== undefined && ts.isIdentifier(node.variableDeclaration.name)
+          ? node.variableDeclaration.name.text
+          : null;
+      const body = node.block.getText();
+      const decidesFailure = body.includes('kind: "failure"');
+      const usesCause = bound !== null && new RegExp(`\\b${bound}\\b`, "u").test(body);
+      if (decidesFailure && !usesCause) {
+        const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+        found.push(`${fileName.replace(/\\/gu, "/").split("/src/").pop()}:${line + 1}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+test("problem-code-surface.1: a bounded problem code is distinguishable from a generic failure", () => {
+  const bounded = new TavernProblemError({
+    type: "urn:gamebuddy:tavern:draft_conflict",
+    title: "draft conflict",
+    status: 409,
+    code: "draft_conflict",
+    requestId: HANDLE,
+    retryable: false,
+  });
+  const message = problemTextWithCode("Operation failed.", bounded);
+  assert.notEqual(message, "Operation failed.", "a bounded code must not collapse into the generic sentence");
+  assert.ok(message.includes("draft_conflict"), `the bounded code must appear: ${message}`);
+
+  // An opaque protocol failure carries no code, so the sentence is the summary.
+  assert.equal(problemTextWithCode("Operation failed.", new TavernProtocolError()), "Operation failed.");
+  assert.equal(problemTextWithCode("Operation failed.", new Error("boom")), "Operation failed.");
+});
+
+test("problem-code-surface.2: the flattening scan detects the shape it forbids", () => {
+  const flattened = [
+    "export function f(labels: unknown, report: (n: unknown) => void) {",
+    "  try {",
+    "    g();",
+    "  } catch {",
+    '    report({ kind: "failure", text: labels.failure });',
+    "  }",
+    "}",
+  ].join("\n");
+  assert.deepEqual(flatteningCatchesIn(flattened, "dialogue-web/src/components/sample.tsx"), [
+    "components/sample.tsx:4",
+  ]);
+
+  const names = [
+    "export function f(labels: unknown, report: (n: unknown) => void, problemText: (b: string, e: unknown) => string) {",
+    "  try {",
+    "    g();",
+    "  } catch (error) {",
+    '    report({ kind: "failure", text: problemText(labels.failure, error) });',
+    "  }",
+    "}",
+  ].join("\n");
+  assert.deepEqual(flatteningCatchesIn(names, "dialogue-web/src/components/sample.tsx"), []);
+});
+
+test("problem-code-surface.3: no management surface flattens a caught problem", (t) => {
+  const findings = [];
+  let catches = 0;
+  for (const file of PROBLEM_SURFACES) {
+    const text = readFileSync(file, "utf8");
+    catches += (text.match(/\bcatch\b/gu) ?? []).length;
+    findings.push(...flatteningCatchesIn(text, file));
+  }
+  t.diagnostic(
+    `problem-code-surface.3: ${PROBLEM_SURFACES.length} surface(s), ${catches} catch token(s), ${findings.length} flattening catch(es)`,
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    "a surface that reports a failure must name the reason it caught",
+  );
 });

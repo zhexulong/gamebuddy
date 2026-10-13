@@ -669,6 +669,17 @@ export class TavernProtocolError extends Error {
   }
 }
 
+/**
+ * The player-facing sentence for a failed management call, with the server's
+ * bounded problem code appended when it sent one, so a refusal that named its
+ * reason never collapses into the one generic sentence. The code is already the
+ * validated `TavernProblemV1.code` (a closed bounded token); an opaque protocol
+ * failure carries none and leaves the sentence alone.
+ */
+export function problemTextWithCode(base: string, error: unknown): string {
+  return error instanceof TavernProblemError ? `${base} (${error.code})` : base;
+}
+
 // --- Local strict validation primitives (mirroring the frozen contract). ---
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

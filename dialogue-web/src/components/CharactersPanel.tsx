@@ -7,8 +7,16 @@ import type {
   PersonaV1,
   ScenarioV1,
 } from "../management-pipeline-api";
+import { problemTextWithCode } from "../management-pipeline-api";
 import { CharacterCardImport } from "./CharacterCardImport";
 import { characterLabels } from "./character-domain-labels";
+
+/** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
+type SaveNotice = "saved" | Readonly<{ failure: string }> | null;
+
+function saveFailure(error: unknown, saveFailed: string): Readonly<{ failure: string }> {
+  return { failure: problemTextWithCode(saveFailed, error) };
+}
 
 /**
  * Characters surface (design/28 §2): the companion library and the companion's
@@ -42,19 +50,19 @@ export function CharactersPanel({
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
   const [createName, setCreateName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [createNotice, setCreateNotice] = useState<"saved" | "error" | null>(null);
+  const [createNotice, setCreateNotice] = useState<SaveNotice>(null);
 
   const [persona, setPersona] = useState<PersonaV1 | "loading" | "unavailable">("loading");
   const [personaName, setPersonaName] = useState("");
   const [personaDescription, setPersonaDescription] = useState("");
   const [personaSaving, setPersonaSaving] = useState(false);
-  const [personaNotice, setPersonaNotice] = useState<"saved" | "error" | null>(null);
+  const [personaNotice, setPersonaNotice] = useState<SaveNotice>(null);
 
   const [scenario, setScenario] = useState<ScenarioV1 | "loading" | "unavailable">("loading");
   const [scenarioName, setScenarioName] = useState("");
   const [scenarioDescription, setScenarioDescription] = useState("");
   const [scenarioSaving, setScenarioSaving] = useState(false);
-  const [scenarioNotice, setScenarioNotice] = useState<"saved" | "error" | null>(null);
+  const [scenarioNotice, setScenarioNotice] = useState<SaveNotice>(null);
 
   const [opening, setOpening] = useState<GreetingV1 | "loading" | "unavailable">("loading");
   const [openingLabel, setOpeningLabel] = useState("");
@@ -62,7 +70,7 @@ export function CharactersPanel({
     { label: "", text: "" },
   ]);
   const [openingSaving, setOpeningSaving] = useState(false);
-  const [openingNotice, setOpeningNotice] = useState<"saved" | "error" | null>(null);
+  const [openingNotice, setOpeningNotice] = useState<SaveNotice>(null);
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -135,8 +143,8 @@ export function CharactersPanel({
         setCreateName("");
         setCreateNotice("saved");
       }
-    } catch {
-      if (activeRef.current) setCreateNotice("error");
+    } catch (error) {
+      if (activeRef.current) setCreateNotice(saveFailure(error, labels.saveFailed));
     } finally {
       if (activeRef.current) setCreating(false);
     }
@@ -160,8 +168,8 @@ export function CharactersPanel({
         setPersona(saved);
         setPersonaNotice("saved");
       }
-    } catch {
-      if (activeRef.current) setPersonaNotice("error");
+    } catch (error) {
+      if (activeRef.current) setPersonaNotice(saveFailure(error, labels.saveFailed));
     } finally {
       if (activeRef.current) setPersonaSaving(false);
     }
@@ -185,8 +193,8 @@ export function CharactersPanel({
         setScenario(saved);
         setScenarioNotice("saved");
       }
-    } catch {
-      if (activeRef.current) setScenarioNotice("error");
+    } catch (error) {
+      if (activeRef.current) setScenarioNotice(saveFailure(error, labels.saveFailed));
     } finally {
       if (activeRef.current) setScenarioSaving(false);
     }
@@ -216,8 +224,8 @@ export function CharactersPanel({
         setOpening(saved);
         setOpeningNotice("saved");
       }
-    } catch {
-      if (activeRef.current) setOpeningNotice("error");
+    } catch (error) {
+      if (activeRef.current) setOpeningNotice(saveFailure(error, labels.saveFailed));
     } finally {
       if (activeRef.current) setOpeningSaving(false);
     }
@@ -285,7 +293,7 @@ export function CharactersPanel({
             </div>
             {createNotice !== null && (
               <p role="status" className={createNotice === "saved" ? "success-banner" : "error-banner"}>
-                {createNotice === "saved" ? labels.saved : labels.saveFailed}
+                {createNotice === "saved" ? labels.saved : createNotice.failure}
               </p>
             )}
           </section>
@@ -337,7 +345,7 @@ export function CharactersPanel({
                   </div>
                   {personaNotice !== null && (
                     <p role="status" className={personaNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {personaNotice === "saved" ? labels.saved : labels.saveFailed}
+                      {personaNotice === "saved" ? labels.saved : personaNotice.failure}
                     </p>
                   )}
                 </>
@@ -392,7 +400,7 @@ export function CharactersPanel({
                   </div>
                   {scenarioNotice !== null && (
                     <p role="status" className={scenarioNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {scenarioNotice === "saved" ? labels.saved : labels.saveFailed}
+                      {scenarioNotice === "saved" ? labels.saved : scenarioNotice.failure}
                     </p>
                   )}
                 </>
@@ -480,7 +488,7 @@ export function CharactersPanel({
                   </div>
                   {openingNotice !== null && (
                     <p role="status" className={openingNotice === "saved" ? "success-banner" : "error-banner"}>
-                      {openingNotice === "saved" ? labels.saved : labels.saveFailed}
+                      {openingNotice === "saved" ? labels.saved : openingNotice.failure}
                     </p>
                   )}
                 </>

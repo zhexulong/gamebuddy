@@ -41,6 +41,7 @@ import {
   createManagementPipelineApi,
   type ManagementPipelineApi,
   type MemoryReadV1,
+  problemTextWithCode,
   TavernProblemError,
   TavernProtocolError,
   type TavernConnectionStateV1,
@@ -240,11 +241,11 @@ export function ChatsSurfacePanel({
           ),
         );
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         // Every rejection re-reads the durable list so the panel never shows a
         // stale revision; the problem is then player-visible.
         await reread();
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       }
     })();
   };
@@ -264,11 +265,11 @@ export function ChatsSurfacePanel({
         setCreated(result.opening === null ? null : { opening: result.opening });
         await reread();
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         // A rejection may still hide a committed creation, so the authoritative
         // list is re-read BEFORE the failure is reported.
         await reread();
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       } finally {
         setCreating(false);
       }
@@ -304,9 +305,9 @@ export function ChatsSurfacePanel({
         // snapshot and restart its live cursor on the target conversation.
         onChatSwitched?.();
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });
-      } catch {
+      } catch (error) {
         await reread();
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       } finally {
         setSelecting(null);
       }
@@ -326,9 +327,9 @@ export function ChatsSurfacePanel({
         // mutation), so reconcile against the durable list.
         await reread();
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         await reread();
-        report({ kind: "failure", text: labels.chatRetentionFailed });
+        report({ kind: "failure", text: problemTextWithCode(labels.chatRetentionFailed, error) });
       }
     })();
   };
@@ -546,7 +547,7 @@ export function MemorySurfacePanel({
         );
         setView(memoryViewOf(result));
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         // The rejection may still hide a committed change (a same-cookie stale
         // tab hits the projection conflict), so the authoritative projection is
         // re-read BEFORE the failure is reported: a rejected write never appears
@@ -556,7 +557,7 @@ export function MemorySurfacePanel({
         } catch {
           setView({ kind: "error" });
         }
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       }
     })();
   };
@@ -655,22 +656,18 @@ export function WorldInfoSurfacePanel({
     if (view.kind !== "ready") return;
     const expectedRevision = view.worldInfo.revision;
     void (async () => {
-      let failed = false;
+      let failure: string | null = null;
       try {
         await api.setWorldInfoBinding(
           { apiVersion: 1, selectionGeneration: generation, expectedRevision, sourceHandle },
           csrfToken,
         );
-      } catch {
-        failed = true;
+      } catch (error) {
+        failure = problemTextWithCode(labels.worldInfoBindingFailure, error);
       }
       const next = await readOnce();
       setView(next);
-      report(
-        failed
-          ? { kind: "failure", text: labels.worldInfoBindingFailure }
-          : { kind: "success", text: labels.success },
-      );
+      report(failure === null ? { kind: "success", text: labels.success } : { kind: "failure", text: failure });
     })();
   };
 
@@ -836,7 +833,7 @@ export function SettingsSurfacePanel({
         settingsRevisionRef.current = written.revision;
         setLanguageView({ kind: "ready", locale: written.locale, pending: false });
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         // A rejection can still hide a committed change (a same-cookie stale tab
         // hits the revision conflict), so re-read the authority before reverting.
         try {
@@ -846,7 +843,7 @@ export function SettingsSurfacePanel({
         } catch {
           setLanguageView({ kind: "error" });
         }
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       }
     })();
   };
@@ -885,7 +882,7 @@ export function SettingsSurfacePanel({
         settingsRevisionRef.current = preference.revision;
         setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
         report({ kind: "success", text: labels.success });
-      } catch {
+      } catch (error) {
         // A rejection can still hide a committed change (e.g. a same-cookie stale
         // tab hitting settings_revision_conflict), so re-read the authoritative
         // preference before the failure is shown and never keep a local selection
@@ -897,7 +894,7 @@ export function SettingsSurfacePanel({
         } catch {
           setVoiceView({ kind: "error" });
         }
-        report({ kind: "failure", text: labels.failure });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       }
     })();
   };

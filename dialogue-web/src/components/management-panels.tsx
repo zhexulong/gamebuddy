@@ -5,6 +5,7 @@ import {
   CONNECTION_API_SHAPES,
   type MemoryChapterV1,
   type MemoryItemV1,
+  problemTextWithCode,
   TavernProblemError,
   type TavernConnectionApiShapeV1,
   type TavernConnectionStateV1,
@@ -125,7 +126,7 @@ export function modelProfileProblemText(error: unknown, labels: ReturnType<typeo
     if (error.code === "settings_revision_conflict") return labels.modelProfilesRevisionConflict;
     if (error.code === "invalid_request") return labels.modelProfilesModelRequired;
   }
-  return labels.failure;
+  return problemTextWithCode(labels.failure, error);
 }
 
 /**
@@ -282,7 +283,7 @@ export function connectionProblemText(error: unknown, labels: ReturnType<typeof 
     if (error.code === "connection_conflict") return labels.connectionRevisionConflict;
     if (error.code === "connection_not_ready") return labels.connectionActivateRequiresReady;
   }
-  return labels.failure;
+  return problemTextWithCode(labels.failure, error);
 }
 
 export function connectionReadinessText(
