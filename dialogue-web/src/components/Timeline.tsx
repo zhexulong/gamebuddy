@@ -77,6 +77,21 @@ export function Timeline({
   const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
+  /**
+   * Regeneration re-asks the last thing the player said, so exactly one row can
+   * offer it: the transcript's own last message, when that message is a companion
+   * reply. The opening is message zero - the only companion message a transcript
+   * can begin with - and it has no player turn to repeat, so it never carries the
+   * control. The rule is the Host's own precondition (`regenerate` in
+   * `chat-pipeline-service.ts` refuses every other target), stated here so the
+   * surface never offers an affordance the Host would have to reject.
+   */
+  const regenerateHandle =
+    regenerateHandler !== undefined &&
+    transcript.length > 1 &&
+    transcript[transcript.length - 1]?.role === "companion"
+      ? transcript[transcript.length - 1]!.handle
+      : null;
 
   // Keep the newest message in view: the effect re-runs when the visible
   // content changes (message count or the streaming preview text) and also on
@@ -131,7 +146,7 @@ export function Timeline({
               labels={labels}
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
               onSwipe={swipeHandler}
-              onRegenerate={regenerateHandler}
+              onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
             />
           ))}

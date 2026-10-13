@@ -455,16 +455,33 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (!validIdempotencyKey(idempotencyKey)) throw unavailable();
       if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
       const state = await resumeState();
-      const targetMessage = state.messages.find(
-        (m: ChatThreadState["messages"][number]) =>
-          lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
-      ) ?? [...state.messages].reverse().find((m: ChatThreadState["messages"][number]) => m.role === "companion");
-      if (!targetMessage) throw unavailable();
-      const targetIndex = state.messages.indexOf(targetMessage);
-      const parentPlayerMessage = [...state.messages.slice(0, targetIndex)].reverse().find(
-        (m: ChatThreadState["messages"][number]) => m.role === "player",
-      );
-      const promptText = parentPlayerMessage ? parentPlayerMessage.text : "请继续";
+      // Regeneration re-asks the last thing the player said, so exactly one target
+      // can honour it: the transcript's own last message, when that message is a
+      // companion reply. A middle reply has no turn of its own to re-run, and the
+      // opening - the only companion message a transcript can begin with - has no
+      // player turn before it at all. Both were previously accepted: the middle
+      // one appended an unrelated pair at the tail, and the opening appended the
+      // literal "请继续". They are refused here as well as hidden by the surface,
+      // because the browser is not the authority on what this Chat can do.
+      //
+      // This is deliberately NOT an in-place variant. The durable presentation
+      // commit binds its response to a fresh attempt identity minted from the
+      // attempt (`nativeResponseMessageId`), so a variant of an existing message
+      // would need a durable concept this contract does not carry - a turn whose
+      // presentation targets an existing message - and this route never pretends
+      // to be one.
+      const targetMessage = state.messages[state.messages.length - 1];
+      if (
+        targetMessage === undefined ||
+        targetMessage.role !== "companion" ||
+        lease.browserProjection.projectMessageHandle(targetMessage.messageId) !== command.messageHandle
+      )
+        throw unavailable();
+      const parentPlayerMessage = [...state.messages.slice(0, state.messages.length - 1)]
+        .reverse()
+        .find((m: ChatThreadState["messages"][number]) => m.role === "player");
+      if (parentPlayerMessage === undefined) throw unavailable();
+      const promptText = parentPlayerMessage.text;
 
       pending += 1;
       try {

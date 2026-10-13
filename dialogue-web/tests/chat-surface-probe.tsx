@@ -33,8 +33,13 @@ const sends: string[] = [];
  * bubble compares the `message` prop by reference and bails without reading it,
  * so a read only happens when the bubble's body genuinely ran.
  */
-function tracked(handle: string, text: string, order: number): BrowserMessageV1 {
-  const base = { handle, role: "companion" as const, locale: "und" as const, order, revision: 1 };
+function tracked(
+  handle: string,
+  text: string,
+  order: number,
+  role: "player" | "companion" = "companion",
+): BrowserMessageV1 {
+  const base = { handle, role, locale: "und" as const, order, revision: 1 };
   Object.defineProperty(base, "text", {
     enumerable: true,
     get() {
@@ -96,6 +101,19 @@ function Probe() {
 const chatProbe = {
   setTranscript(texts: readonly string[]): void {
     model = { ...model, transcript: texts.map((text, index) => tracked(`h${index}`, text, index)) };
+    rerender?.();
+  },
+  /**
+   * A transcript with explicit roles. `setTranscript` is the renderer's own
+   * all-companion shortcut; a journey about the regenerate affordance needs a
+   * real conversation, because that control is legal on exactly one row - the
+   * transcript's last, when the companion spoke it - and never on the opening.
+   */
+  setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void {
+    model = {
+      ...model,
+      transcript: entries.map((entry, index) => tracked(`h${index}`, entry.text, index, entry.role)),
+    };
     rerender?.();
   },
   setPreview(text: string | null): void {

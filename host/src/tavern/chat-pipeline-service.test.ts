@@ -437,7 +437,9 @@ test(
     assert.equal(duplicate.turn.state, "queued");
     assert.equal(TavernBrowserValidatorsV1.SubmitResultV1Schema.Check(duplicate), true);
     // Zero second append, zero second idempotency record, exactly one start.
-    assert.equal(output.messages, 1);
+    // The transcript carries two messages: the opening the fixture's companion
+    // materializes, plus the accepted player line.
+    assert.equal(output.messages, 2);
     assert.equal(output.idempotency, 1);
     assert.equal(output.draftRevision, 1);
     assert.equal(output.startCallsAfterDuplicate, 1);
@@ -695,8 +697,87 @@ test(
     assert.equal(output.busy, "Error: turn_busy");
     assert.equal(output.wrongGeneration, "Error: chat_pipeline_service_selection_conflict");
     assert.equal(output.startCalls, 1);
-    assert.equal(output.messages, 1);
+    // The opening the fixture's companion materializes, plus the one player line.
+    assert.equal(output.messages, 2);
     assert.equal(output.idempotency, 1);
     assert.equal(output.ledgerStatus, "attempt_starting");
+  },
+);
+
+test(
+  "regenerate refuses every target but the transcript's own tail companion reply",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "klmnopqrstuvwxyzaabcde", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveToTerminal(fx, "completed");
+  const durable = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  // The fixture's companion materializes its own opening, so the transcript is
+  // [opening, player line, companion reply]: the opening is the companion message
+  // that has no player turn before it, and it is the audit's own case.
+  const openingMessage = durable.messages[0];
+  const playerMessage = durable.messages[1];
+  const tailMessage = durable.messages[durable.messages.length - 1];
+  const target = async (messageHandle, idempotencyKey) =>
+    run(async () => service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle }, idempotencyKey));
+  // The opening (a companion message with no player turn to repeat), the player's
+  // own line, and a handle that names nothing at all: each is refused before any
+  // durable acceptance, and none of them may append a fake "\u8bf7\u7ee7\u7eed" turn.
+  const openingTarget = await target(handleOf(openingMessage.messageId), "oooooooooooooooooooootab".slice(0, 22));
+  const playerTarget = await target(handleOf(playerMessage.messageId), "pppppppppppppppppppppa");
+  const unknownTarget = await target("Z".repeat(43), "uuuuuuuuuuuuuuuuuuuuua");
+  // The one target it can honour: the transcript's own tail companion reply.
+  const accepted = await target(handleOf(tailMessage.messageId), "aaaaaaaaaaaaaaaaaaaaab");
+  await ticks();
+  const after = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  // The refused targets mutated nothing: no fourth message, no second record.
+  const refusedState = { messages: durable.messages.length, idempotency: durable.idempotency.length };
+  const responseIndex = durable.messages.indexOf(tailMessage);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({ openingTarget, playerTarget, unknownTarget, accepted, refusedState, startCalls, openingKind: openingMessage.kind, roles: durable.messages.map((m) => m.role), kinds: durable.messages.map((m) => m.kind), responseText: tailMessage.text, responseSwipes: tailMessage.swipes, afterRoles: after.messages.map((m) => m.role), afterIdempotency: after.idempotency.length, afterResponseText: after.messages[responseIndex].text, afterResponseSwipes: after.messages[responseIndex].swipes }));
+`);
+    // The opening is the audit's own case, and the fixture must really carry one
+    // for the refusal below to mean anything.
+    assert.equal(output.openingKind, "opening");
+    for (const [what, entry] of [
+      ["the opening", output.openingTarget],
+      ["the player's own line", output.playerTarget],
+      ["an unknown handle", output.unknownTarget],
+    ] as const) {
+      const refused = entry as { ok: boolean; error?: string };
+      assert.equal(refused.ok, false, `${what} must be refused`);
+      assert.match(refused.error ?? "", /chat_pipeline_service_unavailable/, what);
+    }
+    // The tail companion reply is re-asked: a durable 202 for a *new* player
+    // message carrying the same text, and one provider start.
+    const accepted = output.accepted as { ok: boolean; value?: SubmitResultV1 };
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.value?.disposition, "accepted");
+    assert.equal(accepted.value?.message.role, "player");
+    assert.equal(accepted.value?.message.text, "Synthetic player request");
+    assert.equal(output.startCalls, 2);
+    // Honest semantics, pinned: regeneration is a new tail turn, NOT an in-place
+    // variant. The companion reply it re-asked is byte-identical and carries no
+    // swipe variants; the transcript grew by exactly the new player line.
+    assert.deepEqual(output.roles, ["companion", "player", "companion"]);
+    assert.deepEqual(output.kinds, ["opening", "player", "response"]);
+    assert.deepEqual(output.afterRoles, ["companion", "player", "companion", "player"]);
+    assert.equal(output.responseText, "Synthetic companion reply.");
+    assert.deepEqual(output.afterResponseText, "Synthetic companion reply.");
+    // The store seeds every message with the one variant it was committed with,
+    // and the projection only offers the swipe pair above one variant - so the
+    // durable fact to pin is that regeneration appended no variant in place: the
+    // reply's variant set is byte-identical before and after.
+    assert.deepEqual(output.responseSwipes, ["Synthetic companion reply."]);
+    assert.deepEqual(output.afterResponseSwipes, ["Synthetic companion reply."]);
+    assert.deepEqual(output.refusedState, { messages: 3, idempotency: 1 });
+    assert.equal(output.afterIdempotency, 2);
   },
 );

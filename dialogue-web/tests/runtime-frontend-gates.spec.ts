@@ -902,7 +902,16 @@ test("gate 7: a new conversation opens on a real empty state and prints no place
  * pair that is not the same kind of thing.
  */
 test("gate 8: the regenerate control clears the touch floor with a visible affordance", async ({ page }) => {
-  await mountShell(page, { root: composedRoot({ swipe: true }) });
+  // The transcript ends on the companion's own reply. Regeneration re-asks the
+  // last thing the player said, so it is offered on the transcript's last
+  // companion row only: a fixture ending on the player's line is a state in
+  // which the control must not exist at all.
+  await mountShell(page, {
+    root: composedRoot({
+      swipe: true,
+      transcript: [DEFAULT_TRANSCRIPT[0]!, DEFAULT_TRANSCRIPT[1]!, DEFAULT_TRANSCRIPT[2]!],
+    }),
+  });
 
   const measured = await page.evaluate(() => {
     const read = (selector: string) => {
