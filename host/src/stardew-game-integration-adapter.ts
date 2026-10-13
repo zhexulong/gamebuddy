@@ -1464,7 +1464,8 @@ function hasStardewCompletionEvidence(
               chestAfter < chestBefore &&
               inventoryAfter > inventoryBefore &&
               chestBefore - chestAfter === inventoryAfter - inventoryBefore &&
-              e.native_menu_opened === "false"
+              e.native_menu_opened === "false" &&
+              e.leftover_returned === "false"
             );
           },
         )
@@ -1473,7 +1474,6 @@ function hasStardewCompletionEvidence(
       // farmhandexecutioncontroller.resourcetoolactions.cs:575-584: the native stump fell
       // (health marker -100) or its terrain feature is gone.
       return (
-              e.leftover_returned === "false" &&
         receipt.reasonCode === "stump_cleared" &&
         exactEvidence(
           detail,
