@@ -846,9 +846,8 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
-        const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
-        if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
-        if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
         if (
           !profile.routeIds.includes("world-info.bind") ||
           !profile.operationIds.includes("world-info.bind") ||
@@ -967,9 +966,8 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
-        const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
-        if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
-        if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!renameRequestValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const result = await managementService.renameChatTitle(body as RenameChatTitleCommandV1);
@@ -981,9 +979,8 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
-        const csrfHeader = singleHeader(request.headers["x-csrf-token"]);
-        if (csrfHeader === null) return sendProblem(response, 400, "invalid_request");
-        if (!tokensEqual(csrfHeader, session.csrf)) return sendProblem(response, 403, "csrf_failed");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
         if (
           !profile.routeIds.includes("chat.opening") ||
           !profile.operationIds.includes("chat.opening")

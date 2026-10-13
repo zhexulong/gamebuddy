@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
 import type { VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
-import type { LanguagePreferenceUpdate } from "./settings/language-preference-store.js";
+import type { PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import {
   composeTavernProfile,
   type MemoryMutationCommandV1,
@@ -142,6 +142,7 @@ const memoryProfile = composeTavernProfile({
 const memoryReadStub: MemoryReadV1 = Object.freeze({
   apiVersion: 1,
   projectionRevision: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  chapters: Object.freeze([]),
   memories: Object.freeze([
     Object.freeze({
       handle: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA",
@@ -277,7 +278,7 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -400,7 +401,7 @@ test("management handler maps foreign binding, wrong generation and stale revisi
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -453,7 +454,7 @@ test("management handler enforces session, CSRF, origin and exact query/body val
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -609,7 +610,7 @@ test("management handler serves memory.read as a same-origin browser session rea
     memoryService: memoryService(),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -688,7 +689,7 @@ test("management handler fails closed when the profile advertises memory.read wi
       managementService: service(recorder),
       worldInfoService: worldInfoService(),
       profile: memoryProfile,
-      voicePreferenceStore,
+      playerPreferenceStore: voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,
@@ -712,7 +713,7 @@ test("management handler does not activate an injected memory service when the p
     }),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -754,7 +755,7 @@ test("management handler closes each service at most once", async () => {
     }),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   await Promise.all([handler.close(), handler.close()]);
@@ -773,7 +774,7 @@ test("management handler rejects Memory mutation before service work for missing
     memoryService: memoryService(memoryRecorder),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -827,7 +828,7 @@ test("management handler rejects memory.read requests without the browser sessio
     memoryService: memoryService(),
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -898,7 +899,7 @@ test("management handler maps a Memory projection conflict to a safe 409 without
     memoryService: conflictingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -951,7 +952,7 @@ test("management handler maps memory storage failures to the storage problem cod
     memoryService: failingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -991,7 +992,7 @@ test("management handler projects the Memory navigation item as unavailable when
     memoryService: failingMemory,
     worldInfoService: worldInfoService(),
     profile: memoryProfile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -1062,7 +1063,7 @@ test("management handler serves world-info read/bind with session, CSRF and stri
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const run = async (input: import("node:http").IncomingMessage) => {
@@ -1213,7 +1214,7 @@ test("management handler fails closed when the profile advertises world-info rou
       managementStateFacade: facade,
       managementService: service(recorder),
       profile,
-      voicePreferenceStore,
+      playerPreferenceStore: voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,
@@ -1233,7 +1234,7 @@ test("management handler maps world-info binding conflict and locked errors to 4
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -1298,7 +1299,7 @@ test("management handler maps world-info service and storage unavailability to s
     managementService: service(recorder),
     worldInfoService: worldInfoService(worldInfoRecorder),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
@@ -1357,7 +1358,7 @@ test("management handler rejects oversized request bodies with HTTP 413 and clos
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -1407,7 +1408,7 @@ test("management dispatcher destroys request socket and returns 413 payload_too_
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
     profile,
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     bootstrapToken: token,
   });
   try {
@@ -1519,7 +1520,7 @@ test("management handler exposes the Host-owned Voice preference read and consen
     managementStateFacade: facade,
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     profile,
     bootstrapToken: token,
   });
@@ -1599,7 +1600,7 @@ test("management handler lists output endpoints through the injected Voice Gatew
     managementStateFacade: facade,
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
-    voicePreferenceStore,
+    playerPreferenceStore: voicePreferenceStore,
     listVoiceOutputDevices: async () => {
       calls += 1;
       return [
@@ -1693,37 +1694,31 @@ test("management handler exposes the Host-owned language preference read and upd
     ],
     navigationItemIds: ["chat"],
   });
-  let languageState: { revision: number; locale: "zh-CN" | "en-US" | null } = { revision: 0, locale: null };
-  const languagePreferenceStore = {
+  let languageState: {
+    revision: number;
+    locale: "zh-CN" | "en-US" | null;
+    disclosureVersion: "mimo-cloud-tts-v1" | null;
+    consent: "undecided" | "accepted" | "revoked";
+    decidedAtMs: number | null;
+    outputDevice: string | null;
+  } = { revision: 0, locale: null, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null };
+  // One Host-owned record carries both settings field groups (the companion
+  // language and the Voice consent/output), so this language surface writes the
+  // same store the Voice surface writes.
+  const preferenceStore = {
     read: async () => languageState,
-    update: async (expectedRevision: number, update: LanguagePreferenceUpdate) => {
-      if (expectedRevision !== languageState.revision) throw new Error("language_preference_revision_conflict");
-      languageState = { revision: languageState.revision + 1, locale: update.locale };
+    update: async (expectedRevision: number, update: PlayerPreferenceUpdate) => {
+      if (expectedRevision !== languageState.revision) throw new Error("player_preference_revision_conflict");
+      languageState = { ...languageState, revision: languageState.revision + 1 };
+      if (update.action === "setLocale") languageState = { ...languageState, locale: update.locale };
       return languageState;
     },
-  };
-  const voicePreferenceStore = {
-    read: async () => ({
-      revision: 0,
-      disclosureVersion: null,
-      consent: "undecided",
-      decidedAtMs: null,
-      outputDevice: null,
-    }),
-    update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
-      revision: 1,
-      disclosureVersion: "mimo-cloud-tts-v1",
-      consent: "accepted",
-      decidedAtMs: 1,
-      outputDevice: null,
-    }),
   };
   const handler = createTavernManagementDialogueWebRequestHandler({
     managementStateFacade: facade,
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
-    languagePreferenceStore,
-    voicePreferenceStore,
+    playerPreferenceStore: preferenceStore,
     profile: languageProfile,
     bootstrapToken: token,
   });
@@ -1766,7 +1761,10 @@ test("management handler exposes the Host-owned language preference read and upd
       "PUT",
       "/api/tavern/v1/settings/language",
       { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
-      { expectedRevision: 0, locale: "ja-JP" },
+      // The contract's locale is a bounded BCP-47-shaped tag
+      // (`^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$`), so the malformed command is
+      // one that fails that shape rather than one language the build does not ship.
+      { expectedRevision: 0, locale: "not_a_locale" },
     ),
   );
   assert.equal(invalid.status, 400);
@@ -1826,29 +1824,12 @@ test("management handler fails closed when the profile advertises language route
     ],
     navigationItemIds: ["chat"],
   });
-  const voicePreferenceStore = {
-    read: async () => ({
-      revision: 0,
-      disclosureVersion: null,
-      consent: "undecided",
-      decidedAtMs: null,
-      outputDevice: null,
-    }),
-    update: async (expectedRevision: number, update: VoicePreferenceUpdate) => ({
-      revision: 1,
-      disclosureVersion: "mimo-cloud-tts-v1",
-      consent: "accepted",
-      decidedAtMs: 1,
-      outputDevice: null,
-    }),
-  };
   await assert.rejects(
     startTavernManagementDialogueWebServer({
       managementStateFacade: facade,
       managementService: service(recorder),
       worldInfoService: worldInfoService(),
       profile: languageProfile,
-      voicePreferenceStore,
       bootstrapToken: token,
     }),
     /tavern_management_composition_unavailable/,
@@ -1861,12 +1842,12 @@ test("management handler maps Voice preference revision conflicts to the safe se
     managementStateFacade: facade,
     managementService: service(recorder),
     worldInfoService: worldInfoService(),
-    voicePreferenceStore: Object.freeze({
+    playerPreferenceStore: Object.freeze({
       async read() {
         return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
-        throw new Error("voice_preference_revision_conflict");
+        throw new Error("player_preference_revision_conflict");
       },
     }),
     profile,
@@ -1898,5 +1879,95 @@ test("management handler maps Voice preference revision conflicts to the safe se
   );
   assert.equal(output.status, 409);
   assert.equal((JSON.parse(output.body) as { code: string }).code, "settings_revision_conflict");
+  await handler.close();
+});
+
+/**
+ * One CSRF condition, one answer, across every mutation.
+ *
+ * `world-info.bind`, `chat.rename` and `chat.opening` answered 400
+ * `invalid_request` for a *missing* `x-csrf-token` while every other mutation
+ * answered 403 `csrf_failed`; a CSRF failure is an authorization failure, so 403
+ * is the one correct answer. This enumerates the routes instead of pinning one,
+ * so a route that copies one of the old branches fails here rather than shipping
+ * a second vocabulary for the same refusal. The check runs before any route can
+ * refuse for a missing profile or service, so the handler needs no services.
+ */
+test("every CSRF-protected management mutation answers 403 csrf_failed for a missing token", async () => {
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service({
+      lists: 0,
+      renames: 0,
+      draftReads: 0,
+      draftSaves: 0,
+      draftDiscards: 0,
+      closes: 0,
+    }),
+    worldInfoService: worldInfoService(),
+    playerPreferenceStore: Object.freeze({
+      async read() {
+        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+      },
+      async update() {
+        return { revision: 1, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+      },
+    }),
+    profile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return output;
+  };
+  const bootstrap = await run(
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+  );
+  assert.equal(bootstrap.status, 200);
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+  const mutations: readonly (readonly [string, string])[] = [
+    ["PUT", "/api/tavern/v1/draft"],
+    ["DELETE", "/api/tavern/v1/draft"],
+    ["PUT", "/api/tavern/v1/world-info"],
+    ["POST", "/api/tavern/v1/chats"],
+    ["POST", `/api/tavern/v1/chats/${handle}/archive`],
+    ["POST", `/api/tavern/v1/chats/${handle}/restore`],
+    ["POST", `/api/tavern/v1/chats/${handle}/trash`],
+    ["PUT", "/api/tavern/v1/chat/select"],
+    ["PUT", "/api/tavern/v1/chat/title"],
+    ["PUT", "/api/tavern/v1/chat/opening"],
+    ["PUT", "/api/tavern/v1/memory"],
+    ["POST", "/api/tavern/v1/settings/connections"],
+    ["POST", `/api/tavern/v1/settings/connections/${handle}/test`],
+    ["POST", `/api/tavern/v1/settings/connections/${handle}/activate`],
+    ["POST", `/api/tavern/v1/settings/connections/${handle}/model`],
+    ["DELETE", `/api/tavern/v1/settings/connections/${handle}`],
+    ["PUT", "/api/tavern/v1/settings/profiles"],
+    ["PUT", "/api/tavern/v1/settings/voice-preference"],
+    ["PUT", "/api/tavern/v1/settings/language"],
+    ["POST", "/api/tavern/v1/companions"],
+    ["POST", "/api/tavern/v1/imports"],
+    ["POST", `/api/tavern/v1/imports/${handle}/review`],
+    ["POST", `/api/tavern/v1/imports/${handle}/confirm`],
+    ["PUT", "/api/tavern/v1/persona"],
+    ["PUT", "/api/tavern/v1/scenario"],
+    ["PUT", "/api/tavern/v1/greeting"],
+  ];
+  for (const [method, path] of mutations) {
+    const response = await run(request(method, path, { origin: "http://127.0.0.1:7331", cookie }));
+    assert.equal(response.status, 403, `${method} ${path} answered ${response.status}, not 403`);
+    assert.equal(
+      (JSON.parse(response.body) as { code: string }).code,
+      "csrf_failed",
+      `${method} ${path} did not name the CSRF failure`,
+    );
+  }
   await handler.close();
 });
