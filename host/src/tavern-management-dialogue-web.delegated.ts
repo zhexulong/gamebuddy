@@ -40,6 +40,7 @@ export type TavernManagementDelegatedOptions = Readonly<
     | "libraryService"
     | "companionDetailService"
     | "companionVoiceService"
+    | "companionWorldBookService"
     | "newCompanionProvisioner"
     | "newChatProvisioner"
     | "chatSelectProvisioner"

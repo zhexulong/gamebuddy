@@ -14,6 +14,7 @@ import {
   type ChatCreateResultV1,
   type ChatRetentionCommandV1,
   type CompanionDetailV1,
+  type CompanionWorldBookV1,
   type CompanionListV1,
   type CompanionCharacterVoiceV1,
   type CompanionVoiceV1,
@@ -177,6 +178,7 @@ const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY = ["chat", "memory"] as 
 const MANAGEMENT_P9_ROUTES = [
   "companion.list",
   "companion.detail",
+  "companion.worldbook.read",
   "companion.create",
   "persona.read",
   "persona.update",
@@ -342,6 +344,16 @@ export type TavernManagementDialogueWebOptions = Readonly<{
       handle: string,
       command: Readonly<{ expectedProfileRevision: number; text?: string; clear?: true }>,
     ): Promise<Readonly<{ profileRevision: number; characterVoice: CompanionCharacterVoiceV1 | null }> | null>;
+  }>;
+  /**
+   * The companion's own world book: the reviewed card's `character_book`, as the
+   * import persisted it under the companion's runtime root. Read-only, and a
+   * different thing from the World Info items one conversation can attach
+   * (`worldInfoService`). Only the mounted companion's handle resolves; any other
+   * handle is reported 404 rather than projected as a different identity.
+   */
+  companionWorldBookService?: Readonly<{
+    read(handle: string): Promise<CompanionWorldBookV1 | null>;
   }>;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
@@ -556,6 +568,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const libraryService = options.libraryService;
   const companionDetailService = options.companionDetailService;
   const companionVoiceService = options.companionVoiceService;
+  const companionWorldBookService = options.companionWorldBookService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -661,6 +674,14 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (profile.routeIds.includes(routeId) && companionVoiceService === undefined)
       throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  // The companion's own world book is mounted only when the exact read is injected;
+  // a profile that advertises the route without it fails closed before dispatch, so
+  // the surface is never shown a book the Host cannot read.
+  if (profile.routeIds.includes("companion.worldbook.read")) {
+    if (companionWorldBookService === undefined) throw new Error("tavern_management_composition_unavailable");
+    if (!profile.operationIds.includes("companion.worldbook.read"))
       throw new Error("tavern_management_composition_unavailable");
   }
   // The reviewed ST-card import routes are mounted only when the exact
@@ -1209,6 +1230,29 @@ export function createTavernManagementDialogueWebRequestHandler(
           if (!TavernBrowserValidatorsV1.CompanionDetailV1Schema.Check(result))
             throw new Error("companion_detail_service_unavailable");
           return sendJson(response, 200, result);
+        }
+      }
+      {
+        const worldBookHandle = matchCompanionWorldBookRoute(request.method, url.pathname);
+        if (worldBookHandle !== null) {
+          // companion.worldbook.read: the companion's OWN book, which is a different
+          // thing from the World Info library a conversation attaches. The exact opaque
+          // handle the list projected resolves; any other handle is answered by the
+          // bound service as null (404), so browser input can never name another
+          // durable companion identity.
+          if (url.search !== "" || (await hasRequestBody(request)))
+            return sendProblem(response, 400, "invalid_request");
+          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (
+            !profile.routeIds.includes("companion.worldbook.read") ||
+            companionWorldBookService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const worldBook = await companionWorldBookService.read(worldBookHandle);
+          if (worldBook === null) return sendProblem(response, 404, "companion_not_found");
+          if (!TavernBrowserValidatorsV1.CompanionWorldBookV1Schema.Check(worldBook))
+            throw new Error("companion_world_book_service_unavailable");
+          return sendJson(response, 200, worldBook);
         }
       }
       {
@@ -2019,6 +2063,13 @@ function matchCompanionVoiceRoute(method: string | undefined, pathname: string):
   return match === null ? null : match[1]!;
 }
 
+/** companion.worldbook.read: the mounted companion's OWN world book (not the World Info library). */
+function matchCompanionWorldBookRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})\/worldbook$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
 /** character.import.read: GET the staged candidate's safe review data. */
 function matchImportIdRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
@@ -2135,7 +2186,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
     message === "chat_management_companion_unreadable" ||
     message === "tavern_artifact_unreadable" ||
     message === "invalid_tavern_artifact" ||
-    message === "invalid_tavern_companion"
+    message === "invalid_tavern_companion" ||
+    // A world book that is present and unreadable is the same kind of fact: the
+    // backdrop is durable and cannot be retried into validity.
+    message === "companion_world_book_unreadable"
   )
     return { status: 503, code: "companion_record_unreadable" };
   if (message === "memory_read_service_unavailable" || message === "memory_read_unavailable")

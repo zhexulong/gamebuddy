@@ -1,0 +1,193 @@
+import { expect, test } from "@playwright/test";
+
+/**
+ * The companion's OWN world book on the Characters surface.
+ *
+ * The defect (audit `shots-final7`, commit 6c447329): the surface's 世界书 block
+ * read the managed World Info LIBRARY (`GET /world-info`) - the artifacts a
+ * conversation may attach - while it was labelled "该角色的对话所读取的世界书。". In a
+ * fresh product that library is empty, so the surface printed
+ * `暂时没有可用的世界书。` beside a companion that durably HAS a world book: the
+ * shipped default companion carries seven keyed entries, and a card imported with
+ * `character_book.entries[].keys` persists its trigger words (`bc848292`). A
+ * player who had just imported a card was told, in effect, that nothing was kept.
+ *
+ * The two lists are different things and are now rendered as such: the
+ * companion's own book (this file) with its entries and their trigger words, and
+ * the attachable library separately (`[data-world-book]`, covered by the
+ * management-surface and composed-reference-game journeys).
+ *
+ * The assertions, and the failure each one catches:
+ *  - a companion whose book carries keyed entries shows the COUNT as text and
+ *    each entry's TRIGGER WORDS: catches the entries being projected but not
+ *    shown, or shown as titles with the words that actually reach them dropped;
+ *  - a companion with no book renders NO block at all: catches an empty box (or a
+ *    "nothing here" sentence) standing in for a book that was never kept;
+ *  - a book that is present but carries no entries says so in words: catches a
+ *    bare zero that a player reads as a book whose entries were lost.
+ */
+
+const token = "A".repeat(43);
+const handle = "B".repeat(42) + "A";
+const csrfToken = "C".repeat(42) + "A";
+const expiresAtMs = 1_900_000_000_000;
+
+const composedRoot = {
+  apiVersion: 1,
+  build: {
+    browserContract: "composed_reference_game_browser_api/v1",
+    profileId: "gamebuddy.composed.reference-game",
+  },
+  chat: {
+    apiVersion: 1,
+    build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.chat-core.reference-pipeline" },
+    csrfToken,
+    browserSession: { expiresAtMs },
+    operations: [],
+    navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
+    selection: { chatHandle: handle, generation: 1, stateRevision: handle },
+    chat: {
+      companion: { name: "琥珀" },
+      title: null,
+      transcript: [],
+      draft: { revision: 0, present: false },
+      turn: null,
+      worldInfo: null,
+    },
+    memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
+    eventStream: null,
+  },
+  game: {
+    apiVersion: 1,
+    build: { browserContract: "game_browser_api/v1", profileId: "gamebuddy.game.preview" },
+    csrfToken,
+    browserSession: { expiresAtMs },
+    game: {
+      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      instance: { status: "none", gameTitle: null, generation: 0 },
+      compatibility: { status: "unchecked", message: null },
+      attachment: { status: "none", generation: 0 },
+      connectionStatus: "none",
+      actionAuthority: "unavailable",
+      role: null,
+      companionName: null,
+      selectedWorld: null,
+      selectedSave: null,
+      capabilitySummary: { available: false, count: 0 },
+      latestOutcome: "none",
+    },
+  },
+};
+
+const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+/**
+ * Everything the Characters surface reads once on mount, with the companion's own
+ * world book under test. `null` serves `present: false` (this companion has no
+ * book); the attachable library stays empty here, which is the state the audit
+ * measured.
+ */
+async function stubCharacters(
+  page: import("@playwright/test").Page,
+  worldBook: Record<string, unknown> | null,
+): Promise<void> {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/companions", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle, name: "琥珀", isCurrent: true }] })),
+  );
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
+    route.fulfill(
+      jsonOk(worldBook ?? { apiVersion: 1, present: false, entries: [] }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/persona", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })),
+  );
+  await page.route("**/api/tavern/v1/scenario", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null })),
+  );
+  await page.route("**/api/tavern/v1/greeting", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, label: null, variants: [] })),
+  );
+  await page.route("**/api/tavern/v1/world-info", (route) =>
+    route.fulfill(jsonOk({ state: "none", revision: handle, items: [] })),
+  );
+  await page.route("**/api/tavern/v1/import-history", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, entries: [] })),
+  );
+}
+
+async function openCharacters(
+  page: import("@playwright/test").Page,
+  navLabel: string,
+): Promise<import("@playwright/test").Locator> {
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: navLabel, exact: true }).click();
+  const surface = page.getByTestId("characters-surface");
+  await expect(surface).toBeVisible();
+  return surface;
+}
+
+test("a companion who has a world book shows its count and its trigger words", async ({ page }) => {
+  // The audit's own shape: a card imported with two keyed entries persisted
+  // `keys = [温室,玻璃房] [洒水器,灌溉]` in the companion's worldbook.json.
+  await stubCharacters(page, {
+    apiVersion: 1,
+    present: true,
+    entries: [
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false },
+      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false },
+    ],
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await expect(block).toBeVisible();
+  await expect(block.locator("h3")).toHaveText("伴侣自己的世界书");
+  // The count is text a player reads, not only an attribute or a list header.
+  await expect(block.locator("[data-companion-world-book-count]")).toHaveText(
+    "她自己的世界书里有 2 条词条",
+  );
+
+  const entries = block.locator("[data-companion-world-book-entry]");
+  await expect(entries).toHaveCount(2);
+  await expect(entries.first()).toContainText("温室");
+  await expect(entries.first()).toContainText("触发词：温室、玻璃房");
+  await expect(entries.nth(1)).toContainText("洒水器");
+  await expect(entries.nth(1)).toContainText("触发词：洒水器、灌溉");
+
+  // The attachable library is a DIFFERENT list and is empty here, so its block is
+  // not rendered at all - it can no longer read as "you have no world book".
+  await expect(surface.locator("[data-world-book]")).toHaveCount(0);
+});
+
+test("a companion who has no world book renders no world-book block", async ({ page }) => {
+  await stubCharacters(page, null);
+  const surface = await openCharacters(page, "Characters");
+
+  await expect(surface).toBeVisible();
+  await expect(surface.locator("[data-companion-world-book]")).toHaveCount(0);
+  await expect(surface.locator("[data-world-book]")).toHaveCount(0);
+  // The surface itself is not lost with the block: the library and its own
+  // sections are still there.
+  await expect(surface.getByRole("heading", { name: "Companions" })).toBeVisible();
+});
+
+test("a world book that carries no entries says so instead of showing a zero", async ({ page }) => {
+  await stubCharacters(page, { apiVersion: 1, present: true, entries: [] });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await expect(block).toBeVisible();
+  await expect(block.locator("[data-companion-world-book-empty]")).toHaveText(
+    "她的世界书已在这里，但里面还没有词条。",
+  );
+  await expect(block.locator("[data-companion-world-book-count]")).toHaveCount(0);
+  await expect(block.locator("[data-companion-world-book-entry]")).toHaveCount(0);
+});

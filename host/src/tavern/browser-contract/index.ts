@@ -638,6 +638,7 @@ const OperationId = Type.Union([
   Type.Literal("world-info.bind"),
   Type.Literal("companion.list"),
   Type.Literal("companion.detail"),
+  Type.Literal("companion.worldbook.read"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -685,6 +686,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.character.voice.update"),
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.detail"),
+  Type.Literal("tavern.operation.companion.worldbook.read"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
   Type.Literal("tavern.operation.character.import.read"),
@@ -777,6 +779,40 @@ export const CompanionListV1Schema = strictObject({
 export const CompanionDetailV1Schema = strictObject({
   apiVersion: ApiVersion,
   name: Type.String({ minLength: 1, maxLength: 128 }),
+});
+/**
+ * One entry of the companion's own durable world book (`<runtimeCwd>/worldbook.json`),
+ * as the reviewed card import persisted it.
+ *
+ * The entry's body is deliberately NOT projected: the worldbook tools already omit
+ * bodies from their catalog, and a body is context the companion reads rather than
+ * text the browser renders. What the player cannot otherwise find out is that the
+ * entry exists at all, and which of their own words reaches it - `keys` are the
+ * card's own trigger words, and per-turn selection matches them against what the
+ * player actually said, so an entry whose keys are invisible is an entry the player
+ * cannot deliberately reach. `constant` marks the always-on background, which is
+ * carried whatever is said and therefore carries no trigger words.
+ */
+export const CompanionWorldBookEntryV1Schema = strictObject({
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+  keys: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 16 }),
+  constant: Type.Boolean(),
+});
+/**
+ * The companion's own world book. This is a DIFFERENT thing from the World Info
+ * items a conversation can attach (`world-info.read`): that list is the managed
+ * library of artifacts a Chat may bind, and this is the book the companion was
+ * provisioned with. Conflating the two is what let a surface that reads the
+ * library claim to be showing the character's own book.
+ *
+ * `present` is false when the companion has no book at all. The surface renders no
+ * block in that case rather than an empty one, so a companion without a book never
+ * reads as a book whose entries were lost.
+ */
+export const CompanionWorldBookV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  present: Type.Boolean(),
+  entries: Type.Array(CompanionWorldBookEntryV1Schema, { maxItems: 128 }),
 });
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -1770,6 +1806,20 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
   }),
   route({
+    routeId: "companion.worldbook.read",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle/worldbook",
+    operationId: "companion.worldbook.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionWorldBookV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -2081,6 +2131,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
+    CompanionWorldBookEntryV1Schema,
+    CompanionWorldBookV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -2182,6 +2234,8 @@ export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingComm
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
+export type CompanionWorldBookEntryV1 = Static<typeof CompanionWorldBookEntryV1Schema>;
+export type CompanionWorldBookV1 = Static<typeof CompanionWorldBookV1Schema>;
 export type CompanionCharacterVoiceV1 = Static<typeof CompanionCharacterVoiceV1Schema>;
 export type CompanionVoiceV1 = Static<typeof CompanionVoiceV1Schema>;
 export type UpdateCompanionVoiceCommandV1 = Static<typeof UpdateCompanionVoiceCommandV1Schema>;

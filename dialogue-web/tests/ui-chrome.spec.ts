@@ -111,6 +111,12 @@ async function mountCharacters(page: Page): Promise<void> {
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle, name: "Mira", isCurrent: true }] })),
   );
+  // Mira has no world book of her own here; the attachable library below is the
+  // list this journey measures. The route is mocked rather than left to the dev
+  // server so the surface's own two blocks stay deterministic.
+  await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, entries: [] })),
+  );
   await page.route("**/api/tavern/v1/persona", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })),
   );

@@ -93,10 +93,21 @@ export type CharacterLabels = Readonly<{
   worldBookHint: string;
   worldBookAttach: string;
   worldBookDetach: string;
-  worldBookEmpty: string;
   worldBookPending: string;
   worldBookUnavailable: string;
   worldBookFailed: string;
+
+  /**
+   * The companion's OWN world book, which is a different thing from the list
+   * above: it is what her card carried and what she always has with her.
+   */
+  companionWorldBookTitle: string;
+  companionWorldBookHint: string;
+  companionWorldBookCount: string;
+  companionWorldBookTriggerWords: string;
+  companionWorldBookKeySeparator: string;
+  companionWorldBookAlwaysOn: string;
+  companionWorldBookNoEntries: string;
 
   /** The decoder's own disposition classes, in player words. */
   dispositionAccepted: string;
@@ -182,14 +193,23 @@ const en: CharacterLabels = Object.freeze({
   openingAbsent: "No opening saved yet.",
   openingSave: "Save opening",
 
-  worldBookTitle: "World book",
-  worldBookHint: "The lorebook this character's chat reads from.",
+  worldBookTitle: "World books you can attach",
+  worldBookHint:
+    "World books from the library that this conversation can attach. Your companion's own world book is a different list, and it is always with her.",
   worldBookAttach: "Attach",
   worldBookDetach: "Detach",
-  worldBookEmpty: "No world books are available yet.",
   worldBookPending: "Saved. It fully applies on the next turn.",
   worldBookUnavailable: "The world book is temporarily unavailable.",
   worldBookFailed: "The world book could not be updated.",
+
+  companionWorldBookTitle: "Your companion's own world book",
+  companionWorldBookHint:
+    "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
+  companionWorldBookCount: "Entries in her own book: {{count}}",
+  companionWorldBookTriggerWords: "Trigger words: {{keys}}",
+  companionWorldBookKeySeparator: ", ",
+  companionWorldBookAlwaysOn: "Always with her",
+  companionWorldBookNoEntries: "Her own book is here, but it carries no entries yet.",
 
   dispositionAccepted: "used",
   dispositionPreserved: "kept unchanged",
@@ -274,14 +294,22 @@ const zh: CharacterLabels = Object.freeze({
   openingAbsent: "还没有保存开场白。",
   openingSave: "保存开场白",
 
-  worldBookTitle: "世界书",
-  worldBookHint: "该角色的对话所读取的世界书。",
+  worldBookTitle: "可关联的世界书",
+  worldBookHint: "可以从库里关联到这次对话的世界书。伴侣自己的世界书是另一份清单，始终跟她在一起。",
   worldBookAttach: "关联",
   worldBookDetach: "解除关联",
-  worldBookEmpty: "暂时没有可用的世界书。",
   worldBookPending: "已保存，将在下一回合完全生效。",
   worldBookUnavailable: "世界书暂时不可用。",
   worldBookFailed: "无法更新世界书。",
+
+  companionWorldBookTitle: "伴侣自己的世界书",
+  companionWorldBookHint:
+    "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
+  companionWorldBookCount: "她自己的世界书里有 {{count}} 条词条",
+  companionWorldBookTriggerWords: "触发词：{{keys}}",
+  companionWorldBookKeySeparator: "、",
+  companionWorldBookAlwaysOn: "始终随行",
+  companionWorldBookNoEntries: "她的世界书已在这里，但里面还没有词条。",
 
   dispositionAccepted: "已使用",
   dispositionPreserved: "原样保留",

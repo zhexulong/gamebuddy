@@ -107,6 +107,7 @@ const OPTIONAL_GROUPS = [
   [
     "companion.list",
     "companion.detail",
+    "companion.worldbook.read",
     "companion.create",
     "persona.read",
     "persona.update",

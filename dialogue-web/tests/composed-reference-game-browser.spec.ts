@@ -14,6 +14,8 @@ import {
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
+/** A second opaque handle, so a companion is never keyed by the Chat's own handle. */
+const characterHandle = "D".repeat(42) + "A";
 const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 const cabinChoiceHandle = "E".repeat(42) + "A";
@@ -2527,12 +2529,21 @@ async function stubCharacterReads(
   page: Page,
   overrides: Readonly<{
     companions?: readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[];
+    /**
+     * The current companion's OWN world book, as `companion.worldbook.read` serves
+     * it. Absent means the companion has no book (`present: false`), which is the
+     * state a directly-named companion is in.
+     */
+    companionWorldBook?: Readonly<Record<string, unknown>>;
   }> = {},
 ): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, companions: overrides.companions ?? [] })),
+  );
+  await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
+    route.fulfill(jsonOk(overrides.companionWorldBook ?? { apiVersion: 1, present: false, entries: [] })),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })),
@@ -2693,7 +2704,19 @@ test("a card whose lorebook entries import produces them on the character's own 
       },
     },
   });
-  await stubCharacterReads(page);
+  await stubCharacterReads(page, {
+    companions: [{ handle: characterHandle, name: "Nova", isCurrent: true }],
+    // What the Host would serve after this card was confirmed: the companion's
+    // own world book, entry by entry, with the trigger words the card supplied.
+    companionWorldBook: {
+      apiVersion: 1,
+      present: true,
+      entries: [
+        { title: "Observatory", keys: [], constant: true },
+        { title: "Comet", keys: ["comet"], constant: false },
+      ],
+    },
+  });
   const { confirms } = await stubImportSuccess(page);
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -2704,9 +2727,16 @@ test("a card whose lorebook entries import produces them on the character's own 
   await expect.poll(() => confirms.length).toBe(1);
   await expect(surface.locator("[data-card-import-result=created]")).toContainText("Carries 2 lorebook entries.");
 
-  // The world book is the character's own view on the same surface ...
-  await expect(surface.locator("[data-world-book]")).toBeVisible();
-  await expect(surface.locator("[data-world-book]")).toContainText("World book");
+  // The world book is the character's own view on the same surface: the book the
+  // card carried, its count, and the words that actually reach each entry ...
+  const own = surface.locator("[data-companion-world-book]");
+  await expect(own).toBeVisible();
+  await expect(own.locator("h3")).toHaveText("Your companion's own world book");
+  await expect(own.locator("[data-companion-world-book-count]")).toHaveText("Entries in her own book: 2");
+  const ownEntries = own.locator("[data-companion-world-book-entry]");
+  await expect(ownEntries).toHaveCount(2);
+  await expect(ownEntries.first()).toContainText("Always with her");
+  await expect(ownEntries.nth(1)).toContainText("Trigger words: comet");
   // ... and it is no longer a peer surface of the shell.
   await expect(page.getByTestId("world-info-surface")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "World Info", exact: true })).toHaveCount(0);

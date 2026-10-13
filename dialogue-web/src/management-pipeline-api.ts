@@ -88,6 +88,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.profiles.update"
     | "companion.list"
     | "companion.detail"
+    | "companion.worldbook.read"
     | "companion.create"
     | "character.import.stage"
     | "character.import.read"
@@ -133,6 +134,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.profiles.update"
     | "tavern.operation.companion.list"
     | "tavern.operation.companion.detail"
+    | "tavern.operation.companion.worldbook.read"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
     | "tavern.operation.character.import.read"
@@ -189,6 +191,36 @@ export type CompanionListV1 = Readonly<{
 export type CompanionDetailV1 = Readonly<{
   apiVersion: 1;
   name: string;
+}>;
+/**
+ * One entry of the companion's OWN world book - the reviewed card's
+ * `character_book`, which the import persisted under the companion's runtime
+ * root. The body is deliberately not projected (the Host's own worldbook tools
+ * omit bodies too): what the player cannot otherwise find out is that the entry
+ * exists and which of their own words reaches it.
+ */
+export type CompanionWorldBookEntryV1 = Readonly<{
+  title: string;
+  /**
+   * The card's own trigger words. Per-turn selection matches them against what
+   * the player actually said, so an entry whose keys are invisible is an entry
+   * the player cannot deliberately reach.
+   */
+  keys: readonly string[];
+  /** Always-on background, carried whatever is said, so it has no trigger words. */
+  constant: boolean;
+}>;
+/**
+ * The companion's own world book. A different thing from the World Info items a
+ * conversation can attach (`WorldInfoStateV1`): that is the managed library of
+ * artifacts a Chat may bind, this is the book the companion was provisioned with.
+ * `present: false` means the companion has no book at all - the surface then
+ * renders no block, so absence never reads as a book whose entries were lost.
+ */
+export type CompanionWorldBookV1 = Readonly<{
+  apiVersion: 1;
+  present: boolean;
+  entries: readonly CompanionWorldBookEntryV1[];
 }>;
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -765,6 +797,9 @@ const OPERATION_IDS = [
   // design/28 §2 Character / Persona / Scenario / Greeting + Chat retention.
   "companion.list",
   "companion.detail",
+  // design/28 §2 the companion's OWN world book: what the reviewed card carried,
+  // which is a different thing from the World Info items a Chat can attach.
+  "companion.worldbook.read",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
@@ -815,6 +850,7 @@ const LABEL_KEYS = [
   "tavern.nav.characters",
   "tavern.operation.companion.list",
   "tavern.operation.companion.detail",
+  "tavern.operation.companion.worldbook.read",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
   "tavern.operation.character.import.read",
@@ -1296,6 +1332,38 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
     hasExactKeys(value, COMPANION_CHARACTER_VOICE_KEYS) &&
     isLengthBoundedString(value.text, 1, 8_192) &&
     (value.source === "card" || value.source === "player")
+  );
+}
+
+const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "entries"] as const;
+const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant"] as const;
+/**
+ * The companion's own world book, read once per mount. The browser may not widen
+ * what the Host bounded: an entry's title is `worldbook.ts`'s own title bound, its
+ * trigger words are the persisted entry's own per-entry list bound, and the list
+ * is the persisted `MAX_ENTRIES` ceiling.
+ */
+function isCompanionWorldBook(value: unknown): value is CompanionWorldBookV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_WORLD_BOOK_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    typeof value.present === "boolean" &&
+    Array.isArray(value.entries) &&
+    value.entries.length <= 128 &&
+    value.entries.every(isCompanionWorldBookEntry)
+  );
+}
+
+function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookEntryV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_WORLD_BOOK_ENTRY_KEYS) &&
+    isLengthBoundedString(value.title, 1, 256) &&
+    typeof value.constant === "boolean" &&
+    Array.isArray(value.keys) &&
+    value.keys.length <= 16 &&
+    value.keys.every((key) => isLengthBoundedString(key, 1, 64))
   );
 }
 
@@ -2159,6 +2227,11 @@ export function validateCompanionVoice(value: unknown): CompanionVoiceV1 {
   return value;
 }
 
+export function validateCompanionWorldBook(value: unknown): CompanionWorldBookV1 {
+  if (!isCompanionWorldBook(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -2397,6 +2470,12 @@ export type ManagementPipelineApi = Readonly<{
   readCompanionDetail(handle: string): Promise<CompanionDetailV1>;
   /** GET /api/tavern/v1/companions/:handle/voice: the mounted companion's performance directive. */
   readCompanionVoice(handle: string): Promise<CompanionVoiceV1>;
+  /**
+   * GET /api/tavern/v1/companions/:handle/worldbook: the companion's OWN world
+   * book (the reviewed card's `character_book`), which is a different thing from
+   * the World Info items a conversation can attach.
+   */
+  readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1>;
   /** PUT /api/tavern/v1/companions/:handle/voice: edit or clear the directive, CASed on its revision. */
   updateCompanionVoice(
     handle: string,
@@ -2801,6 +2880,10 @@ export function createManagementPipelineApi(
     async readCompanionVoice(handle: string): Promise<CompanionVoiceV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/voice`, 200, validateCompanionVoice);
+    },
+    async readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/worldbook`, 200, validateCompanionWorldBook);
     },
     async updateCompanionVoice(
       handle: string,

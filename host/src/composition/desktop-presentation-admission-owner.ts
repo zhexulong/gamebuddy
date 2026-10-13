@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
 import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
+import { readCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
@@ -330,6 +331,26 @@ function createTavernManagementDomains(
       });
     },
   });
+  /**
+   * The companion's OWN world book: the reviewed card's `character_book`, which the
+   * import persisted at `<runtimeCwd>/worldbook.json`. Read-only, and a different
+   * thing from the World Info items a conversation can attach - the surface that
+   * read only the library said "no world book" beside a companion that has one.
+   * Only the mounted companion's handle resolves.
+   */
+  const companionWorldBookService = Object.freeze({
+    async read(handle: string) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const book = await readCompanionWorldBook(runtimePaths.runtimeCwd);
+      return Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        present: book.present,
+        entries: book.entries.map((entry) =>
+          Object.freeze({ title: entry.title, keys: [...entry.keys], constant: entry.constant }),
+        ),
+      });
+    },
+  });
   const newCompanionProvisioner = Object.freeze({
     async create(name: string) {
       // The provisioner mints a new Host-owned identity namespace; the browser
@@ -469,6 +490,7 @@ function createTavernManagementDomains(
       libraryService,
       companionDetailService,
       companionVoiceService,
+      companionWorldBookService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -740,6 +762,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   libraryService: ["listCompanions"],
   companionDetailService: ["read"],
   companionVoiceService: ["read", "update"],
+  companionWorldBookService: ["read"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -844,6 +867,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.update",
       "companion.list",
       "companion.detail",
+      "companion.worldbook.read",
       "companion.create",
       "persona.read",
       "persona.update",
@@ -891,6 +915,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.update",
       "companion.list",
       "companion.detail",
+      "companion.worldbook.read",
       "companion.create",
       "persona.read",
       "persona.update",
