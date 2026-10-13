@@ -38,6 +38,8 @@ export type CharacterLabels = Readonly<{
   importNotUsed: string;
   importAllUsed: string;
   importLongField: string;
+  importVoiceCarried: string;
+  importVoiceDropped: string;
   importFailed: string;
   importFailedPng: string;
   importFailedText: string;
@@ -53,6 +55,16 @@ export type CharacterLabels = Readonly<{
   newCompanionTitle: string;
   newCompanionHint: string;
   newCompanionCreate: string;
+
+  voiceTitle: string;
+  voiceHint: string;
+  voiceFromCard: string;
+  voiceEditedByYou: string;
+  voiceText: string;
+  voiceSave: string;
+  voiceClear: string;
+  voiceSaveFailed: string;
+  voiceCleared: string;
 
   personaTitle: string;
   personaHint: string;
@@ -118,6 +130,8 @@ const en: CharacterLabels = Object.freeze({
   importNotUsed: "Could not use: {{fields}}.",
   importAllUsed: "Every card field was usable.",
   importLongField: "This description is long ({{chars}} chars); it may raise per-turn token use.",
+  importVoiceCarried: "Keeps the card's own performance directive.",
+  importVoiceDropped: "The card's own performance directive was too long and was not kept.",
   importFailed: "The card could not be imported.",
   importFailedPng: "That PNG does not contain a character card.",
   importFailedText: "That file is not readable character card text.",
@@ -133,6 +147,17 @@ const en: CharacterLabels = Object.freeze({
   newCompanionTitle: "New companion",
   newCompanionHint: "A display name only; GameBuddy mints every identity.",
   newCompanionCreate: "Create companion",
+
+  voiceTitle: "Performance directive",
+  voiceHint:
+    "The card's own direction for how this companion performs, kept after the Host's floor. You can rewrite it or clear it; a cleared directive is absent from the prompt rather than empty.",
+  voiceFromCard: "From the card",
+  voiceEditedByYou: "Edited by you",
+  voiceText: "Directive",
+  voiceSave: "Save directive",
+  voiceClear: "Clear directive",
+  voiceSaveFailed: "Could not save the directive. It changed elsewhere; reload and retry.",
+  voiceCleared: "Cleared.",
 
   personaTitle: "Persona",
   personaHint: "How your companion sees you.",
@@ -197,6 +222,8 @@ const zh: CharacterLabels = Object.freeze({
   importNotUsed: "无法使用：{{fields}}。",
   importAllUsed: "卡片的所有字段均可使用。",
   importLongField: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",
+  importVoiceCarried: "保留卡片自带的演出指导。",
+  importVoiceDropped: "卡片自带的演出指导过长，未能保留。",
   importFailed: "无法导入该角色卡。",
   importFailedPng: "该 PNG 不包含角色卡数据。",
   importFailedText: "该文件不是可读取的角色卡文本。",
@@ -212,6 +239,17 @@ const zh: CharacterLabels = Object.freeze({
   newCompanionTitle: "新建伙伴",
   newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
   newCompanionCreate: "创建伙伴",
+
+  voiceTitle: "演出指导",
+  voiceHint:
+    "卡片自带的演出指令，位于 Host 底层规则之后。你可以改写或清除；清除后提示词中不再出现该指令，而不是留下一段空文本。",
+  voiceFromCard: "来自卡片",
+  voiceEditedByYou: "你已修改",
+  voiceText: "指令内容",
+  voiceSave: "保存指令",
+  voiceClear: "清除指令",
+  voiceSaveFailed: "无法保存指令。内容已在其他位置更改；请重新加载后再试。",
+  voiceCleared: "已清除。",
 
   personaTitle: "用户设定 (Persona)",
   personaHint: "你希望伙伴如何认识你。",

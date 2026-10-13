@@ -331,7 +331,7 @@ test("problem-code.4: no browser-contract handler catches and decides nothing", 
 
 test("problem-code.5: the authorities and the sender signatures are read, not assumed", (t) => {
   const { tavern, turn, game, transport } = authorities();
-  assert.equal(tavern.size, 39, `the tavern problem union should have 39 members, read ${tavern.size}`);
+  assert.equal(tavern.size, 40, `the tavern problem union should have 40 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

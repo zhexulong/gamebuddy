@@ -22,6 +22,10 @@ type ImportOutcome =
       preserved: number;
       notUsed: readonly string[];
       longFieldChars: number | null;
+      /** The card carried its own performance directive and it was kept. */
+      voiceCarried: boolean;
+      /** The card's directive was dropped by the decoder's own loss ledger. */
+      voiceDropped: boolean;
     }>
   | Readonly<{ kind: "error"; message: string }>;
 
@@ -108,6 +112,13 @@ export function CharacterCardImport({
       ).length;
       const longField = staged.fields.find((field) => field.field === "persona_core" && field.chars > 4_000);
       const lorebookCount = staged.fields.filter((field) => field.field.startsWith("worldbook_")).length;
+      // The card's own performance directive is a profile-eligible field like the
+      // persona: carrying it is reported from the field list, and the decoder's
+      // own loss ledger is what reports a directive it had to refuse.
+      const voiceCarried = staged.fields.some((field) => field.field === "system_prompt");
+      const voiceDropped = (staged.losses ?? []).some(
+        (loss) => loss.field === "system_prompt" && loss.reason === "character_voice_too_long",
+      );
       setOutcome({
         kind: "created",
         name: confirmed.name,
@@ -116,6 +127,8 @@ export function CharacterCardImport({
         preserved,
         notUsed,
         longFieldChars: longField?.chars ?? null,
+        voiceCarried,
+        voiceDropped,
       });
       onCreated?.();
       await refreshHistory();
@@ -233,6 +246,12 @@ export function CharacterCardImport({
               </div>
               {outcome.longFieldChars !== null && (
                 <div><dd>{labels.importLongField.replace("{{chars}}", String(outcome.longFieldChars))}</dd></div>
+              )}
+              {outcome.voiceCarried && (
+                <div data-card-import-voice="carried"><dd>{labels.importVoiceCarried}</dd></div>
+              )}
+              {outcome.voiceDropped && (
+                <div data-card-import-voice="dropped"><dd>{labels.importVoiceDropped}</dd></div>
               )}
             </dl>
           ) : (

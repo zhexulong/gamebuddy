@@ -101,7 +101,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "greeting.update"
     | "chat.archive"
     | "chat.restore"
-    | "chat.trash";
+    | "chat.trash"
+    | "character.voice.read"
+    | "character.voice.update";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
@@ -144,7 +146,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.greeting.update"
     | "tavern.operation.chat.archive"
     | "tavern.operation.chat.restore"
-    | "tavern.operation.chat.trash";
+    | "tavern.operation.chat.trash"
+    | "tavern.operation.character.voice.read"
+    | "tavern.operation.character.voice.update";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;
@@ -186,6 +190,30 @@ export type CompanionDetailV1 = Readonly<{
   apiVersion: 1;
   name: string;
 }>;
+/**
+ * The mounted companion's own performance directive, as the durable identity
+ * profile holds it (the imported card's `system_prompt`). `source` is
+ * provenance: `card` while the text is exactly what the card supplied,
+ * `player` once the player has edited it. `null` means the field is absent -
+ * the card wrote none, or the player cleared it.
+ */
+export type CompanionCharacterVoiceV1 = Readonly<{
+  text: string;
+  source: "card" | "player";
+}>;
+/** The companion voice read-back: the profile revision to CAS against plus the effective directive. */
+export type CompanionVoiceV1 = Readonly<{
+  apiVersion: 1;
+  profileRevision: number;
+  characterVoice: CompanionCharacterVoiceV1 | null;
+}>;
+/**
+ * One edit or one clear of the mounted companion's directive. An edit always
+ * re-authors the text as the player's; a clear removes the field entirely.
+ */
+export type UpdateCompanionVoiceCommandV1 =
+  | Readonly<{ apiVersion: 1; expectedProfileRevision: number; text: string }>
+  | Readonly<{ apiVersion: 1; expectedProfileRevision: number; clear: true }>;
 export type StCardImportFieldSummaryV1 = Readonly<{
   field: string;
   eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
@@ -196,6 +224,17 @@ export type StCardImportDispositionV1 = Readonly<{
   classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
   reason: string;
 }>;
+/**
+ * One counted loss inside an accepted field. A card's own `system_prompt`
+ * beyond the voice bound reports `field: "system_prompt"`,
+ * `reason: "character_voice_too_long"` - the decoder's own ledger, so a review
+ * reports the loss rather than inferring one.
+ */
+export type StCardImportLossV1 = Readonly<{
+  field: string;
+  reason: string;
+  count: number;
+}>;
 export type StCardImportStageResultV1 = Readonly<{
   apiVersion: 1;
   importId: string;
@@ -203,6 +242,7 @@ export type StCardImportStageResultV1 = Readonly<{
   candidateRevision: number;
   fields: readonly StCardImportFieldSummaryV1[];
   dispositions: readonly StCardImportDispositionV1[];
+  losses?: readonly StCardImportLossV1[];
 }>;
 export type StCardImportReadResultV1 = Readonly<{
   apiVersion: 1;
@@ -213,6 +253,7 @@ export type StCardImportReadResultV1 = Readonly<{
   reviewedFields: readonly string[];
   fields: readonly StCardImportFieldSummaryV1[];
   dispositions: readonly StCardImportDispositionV1[];
+  losses?: readonly StCardImportLossV1[];
 }>;
 export type StCardImportReviewResultV1 = Readonly<{
   apiVersion: 1;
@@ -725,6 +766,10 @@ const OPERATION_IDS = [
   "companion.list",
   "companion.detail",
   "companion.create",
+  // design/28 §2 companion directive: the mounted companion's own performance
+  // directive (the reviewed card's `system_prompt`), read/edit/clear.
+  "character.voice.read",
+  "character.voice.update",
   // design/28 §2 import/export row: reviewed ST-card import pipeline.
   "character.import.stage",
   "character.import.read",
@@ -785,6 +830,8 @@ const LABEL_KEYS = [
   "tavern.operation.chat.archive",
   "tavern.operation.chat.restore",
   "tavern.operation.chat.trash",
+  "tavern.operation.character.voice.read",
+  "tavern.operation.character.voice.update",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory", "characters"] as const;
@@ -822,6 +869,9 @@ const PROBLEM_CODES = [
   "connection_limit_reached",
   "companion_not_found",
   "companion_conflict",
+  // The mounted companion's directive is CASed on the exact profile revision
+  // the browser read; a stale edit is its own bounded refusal.
+  "character_voice_conflict",
   // design/28 §2 import/export row: the staged-card pipeline has its own closed
   // problem codes (rejected card, unknown import, unreviewed confirm).
   "st_card_import_rejected",
@@ -1223,9 +1273,37 @@ function isCompanionDetail(value: unknown): value is CompanionDetailV1 {
   );
 }
 
+const COMPANION_VOICE_KEYS = ["apiVersion", "profileRevision", "characterVoice"] as const;
+const COMPANION_CHARACTER_VOICE_KEYS = ["text", "source"] as const;
+/**
+ * The value the one profile-revision read returns: the exact revision the edit
+ * must CAS on, plus the effective directive (null when the field is absent).
+ * A cleared directive reads as `null`, the same absence the prompt renders.
+ */
+function isCompanionVoice(value: unknown): value is CompanionVoiceV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_VOICE_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isNonNegativeSafeInteger(value.profileRevision) &&
+    (value.characterVoice === null || isCompanionCharacterVoice(value.characterVoice))
+  );
+}
+
+function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterVoiceV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_CHARACTER_VOICE_KEYS) &&
+    isLengthBoundedString(value.text, 1, 8_192) &&
+    (value.source === "card" || value.source === "player")
+  );
+}
+
 const IMPORT_FIELD_KEYS = ["field", "eligibility", "chars"] as const;
 const IMPORT_DISPOSITION_KEYS = ["field", "classification", "reason"] as const;
+const IMPORT_LOSS_KEYS = ["field", "reason", "count"] as const;
 const IMPORT_STAGE_KEYS = ["apiVersion", "importId", "name", "candidateRevision", "fields", "dispositions"] as const;
+const IMPORT_STAGE_KEYS_WITH_LOSSES = [...IMPORT_STAGE_KEYS, "losses"] as const;
 const IMPORT_READ_KEYS = [
   "apiVersion",
   "importId",
@@ -1236,6 +1314,7 @@ const IMPORT_READ_KEYS = [
   "fields",
   "dispositions",
 ] as const;
+const IMPORT_READ_KEYS_WITH_LOSSES = [...IMPORT_READ_KEYS, "losses"] as const;
 const IMPORT_REVIEW_KEYS = ["apiVersion", "importId", "reviewedFields", "approvedAtMs"] as const;
 const IMPORT_CONFIRM_KEYS = ["apiVersion", "name"] as const;
 const IMPORT_HISTORY_COUNTS_KEYS = [
@@ -1288,6 +1367,29 @@ function isImportDispositions(value: unknown): value is readonly StCardImportDis
   return Array.isArray(value) && value.length <= 128 && value.every(isImportDisposition);
 }
 
+function isImportLoss(value: unknown): value is StCardImportLossV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_LOSS_KEYS) &&
+    isLengthBoundedString(value.field, 1, 128) &&
+    isLengthBoundedString(value.reason, 1, 128) &&
+    isNonNegativeSafeInteger(value.count)
+  );
+}
+
+/**
+ * The decoder's loss ledger, declared-optional additive v1: a stage read that
+ * predates it (or a card with no losses) simply omits the member.
+ */
+function isImportLosses(value: unknown): value is readonly StCardImportLossV1[] {
+  return Array.isArray(value) && value.length <= 64 && value.every(isImportLoss);
+}
+
+function hasOptionalLosses(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  if (!Object.hasOwn(value, "losses")) return true;
+  return hasExactKeys(value, keys) && isImportLosses(value.losses);
+}
+
 function isReviewedFields(value: unknown): value is readonly string[] {
   return (
     Array.isArray(value) &&
@@ -1297,9 +1399,12 @@ function isReviewedFields(value: unknown): value is readonly string[] {
 }
 
 function isStCardImportStageResult(value: unknown): value is StCardImportStageResultV1 {
+  if (!isRecord(value)) return false;
+  const withLosses = Object.hasOwn(value, "losses");
+  const keys = withLosses ? IMPORT_STAGE_KEYS_WITH_LOSSES : IMPORT_STAGE_KEYS;
   return (
-    isRecord(value) &&
-    hasExactKeys(value, IMPORT_STAGE_KEYS) &&
+    hasExactKeys(value, keys) &&
+    hasOptionalLosses(value, keys) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isOpaqueHandle(value.importId) &&
     isLengthBoundedString(value.name, 1, 128) &&
@@ -1310,9 +1415,12 @@ function isStCardImportStageResult(value: unknown): value is StCardImportStageRe
 }
 
 function isStCardImportReadResult(value: unknown): value is StCardImportReadResultV1 {
+  if (!isRecord(value)) return false;
+  const withLosses = Object.hasOwn(value, "losses");
+  const keys = withLosses ? IMPORT_READ_KEYS_WITH_LOSSES : IMPORT_READ_KEYS;
   return (
-    isRecord(value) &&
-    hasExactKeys(value, IMPORT_READ_KEYS) &&
+    hasExactKeys(value, keys) &&
+    hasOptionalLosses(value, keys) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isOpaqueHandle(value.importId) &&
     isLengthBoundedString(value.name, 1, 128) &&
@@ -2046,6 +2154,11 @@ export function validateCompanionDetail(value: unknown): CompanionDetailV1 {
   return value;
 }
 
+export function validateCompanionVoice(value: unknown): CompanionVoiceV1 {
+  if (!isCompanionVoice(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -2282,6 +2395,14 @@ export type ManagementPipelineApi = Readonly<{
   listCompanions(): Promise<CompanionListV1>;
   /** GET /api/tavern/v1/companions/:handle: safe detail for one projected handle. */
   readCompanionDetail(handle: string): Promise<CompanionDetailV1>;
+  /** GET /api/tavern/v1/companions/:handle/voice: the mounted companion's performance directive. */
+  readCompanionVoice(handle: string): Promise<CompanionVoiceV1>;
+  /** PUT /api/tavern/v1/companions/:handle/voice: edit or clear the directive, CASed on its revision. */
+  updateCompanionVoice(
+    handle: string,
+    command: UpdateCompanionVoiceCommandV1,
+    csrfToken: string,
+  ): Promise<CompanionVoiceV1>;
   /** POST /api/tavern/v1/companions: creates a Host-owned namespace from a display name. */
   createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1>;
   /** GET /api/tavern/v1/persona: the player's own persona projection. */
@@ -2676,6 +2797,32 @@ export function createManagementPipelineApi(
     async readCompanionDetail(handle: string): Promise<CompanionDetailV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}`, 200, validateCompanionDetail);
+    },
+    async readCompanionVoice(handle: string): Promise<CompanionVoiceV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/voice`, 200, validateCompanionVoice);
+    },
+    async updateCompanionVoice(
+      handle: string,
+      command: UpdateCompanionVoiceCommandV1,
+      csrfToken: string,
+    ): Promise<CompanionVoiceV1> {
+      if (!isOpaqueHandle(handle) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        `/api/tavern/v1/companions/${handle}/voice`,
+        200,
+        validateCompanionVoice,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedProfileRevision: command.expectedProfileRevision,
+          ...("clear" in command ? { clear: true } : { text: command.text }),
+        },
+      );
+      observe("character.voice.update", "passed", String(result.profileRevision));
+      return result;
     },
     async createCompanion(name: string, csrfToken: string): Promise<CompanionDetailV1> {
       if (!isLengthBoundedString(name, 1, 128) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();

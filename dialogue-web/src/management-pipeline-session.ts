@@ -56,6 +56,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.list"
     | "companion.detail"
     | "companion.create"
+    | "character.voice.read"
+    | "character.voice.update"
     | "character.import.stage"
     | "character.import.read"
     | "character.import.review"
@@ -113,7 +115,9 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.greeting.update"
     | "tavern.operation.chat.archive"
     | "tavern.operation.chat.restore"
-    | "tavern.operation.chat.trash";
+    | "tavern.operation.chat.trash"
+    | "tavern.operation.character.voice.read"
+    | "tavern.operation.character.voice.update";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;

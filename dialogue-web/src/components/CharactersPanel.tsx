@@ -2,6 +2,7 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale, Messages } from "../i18n";
 import type {
   CompanionListV1,
+  CompanionVoiceV1,
   GreetingV1,
   ManagementPipelineApi,
   PersonaV1,
@@ -13,6 +14,20 @@ import { characterLabels } from "./character-domain-labels";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
 type SaveNotice = "saved" | Readonly<{ failure: string }> | null;
+
+/** The companion directive's own save outcome, which also has a cleared state. */
+type VoiceNotice = "saved" | "cleared" | Readonly<{ failure: string }> | null;
+
+/**
+ * The companion directive's view state. `ready` carries the durable read-back;
+ * `absent` is a mounted companion with no directive (nothing renders), and
+ * `unavailable` is a failed read (the section is omitted rather than faked).
+ */
+type VoiceView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "ready"; value: CompanionVoiceV1 }>;
 
 function saveFailure(error: unknown, saveFailed: string): Readonly<{ failure: string }> {
   return { failure: problemTextWithCode(saveFailed, error) };
@@ -57,6 +72,13 @@ export function CharactersPanel({
   const [personaDescription, setPersonaDescription] = useState("");
   const [personaSaving, setPersonaSaving] = useState(false);
   const [personaNotice, setPersonaNotice] = useState<SaveNotice>(null);
+
+  const [voice, setVoice] = useState<VoiceView>({ kind: "loading" });
+  const [voiceHandle, setVoiceHandle] = useState<string | null>(null);
+  const [voiceText, setVoiceText] = useState("");
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [voiceClearing, setVoiceClearing] = useState(false);
+  const [voiceNotice, setVoiceNotice] = useState<VoiceNotice>(null);
 
   const [scenario, setScenario] = useState<ScenarioV1 | "loading" | "unavailable">("loading");
   const [scenarioName, setScenarioName] = useState("");
@@ -129,6 +151,79 @@ export function CharactersPanel({
       activeRef.current = false;
     };
   }, [api]);
+
+  useEffect(() => {
+    if (companionList === "loading" || companionList === "unavailable") return;
+    const current = companionList.companions.find((entry) => entry.isCurrent);
+    if (current === undefined) {
+      setVoice({ kind: "absent" });
+      setVoiceHandle(null);
+      return;
+    }
+    let active = true;
+    setVoiceHandle(current.handle);
+    void (async () => {
+      try {
+        const value = await api.readCompanionVoice(current.handle);
+        if (!active) return;
+        setVoice({ kind: "ready", value });
+        setVoiceText(value.characterVoice === null ? "" : value.characterVoice.text);
+      } catch {
+        if (active) setVoice({ kind: "unavailable" });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [api, companionList]);
+
+  const handleSaveVoice = async (): Promise<void> => {
+    if (voice.kind !== "ready" || voiceHandle === null || voiceSaving || voiceClearing) return;
+    const text = voiceText.trim();
+    if (text.length === 0) return;
+    setVoiceSaving(true);
+    setVoiceNotice(null);
+    try {
+      const saved = await api.updateCompanionVoice(
+        voiceHandle,
+        { apiVersion: 1, expectedProfileRevision: voice.value.profileRevision, text },
+        csrfToken,
+      );
+      if (activeRef.current) {
+        setVoice({ kind: "ready", value: saved });
+        setVoiceText(saved.characterVoice === null ? "" : saved.characterVoice.text);
+        setVoiceNotice("saved");
+      }
+    } catch (error) {
+      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed));
+    } finally {
+      if (activeRef.current) setVoiceSaving(false);
+    }
+  };
+
+  const handleClearVoice = async (): Promise<void> => {
+    if (voice.kind !== "ready" || voiceHandle === null || voiceSaving || voiceClearing) return;
+    setVoiceClearing(true);
+    setVoiceNotice(null);
+    try {
+      const cleared = await api.updateCompanionVoice(
+        voiceHandle,
+        { apiVersion: 1, expectedProfileRevision: voice.value.profileRevision, clear: true },
+        csrfToken,
+      );
+      if (activeRef.current) {
+        // The cleared directive reads as absent, so the section itself goes away;
+        // the status line is what acknowledges the one action.
+        setVoice({ kind: "ready", value: cleared });
+        setVoiceText("");
+        setVoiceNotice("cleared");
+      }
+    } catch (error) {
+      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed));
+    } finally {
+      if (activeRef.current) setVoiceClearing(false);
+    }
+  };
 
   const handleCreate = async (): Promise<void> => {
     const name = createName.trim();
@@ -297,6 +392,71 @@ export function CharactersPanel({
               </p>
             )}
           </section>
+          {voice.kind === "ready" && voice.value.characterVoice !== null && (
+            <section aria-label={labels.voiceTitle} data-character-voice>
+              <h3>{labels.voiceTitle}</h3>
+              <p className="management-settings-hint">{labels.voiceHint}</p>
+              <p data-character-voice-source>
+                {voice.value.characterVoice.source === "card" ? labels.voiceFromCard : labels.voiceEditedByYou}
+              </p>
+              <label className="management-settings-label" htmlFor="character-voice-text">
+                {labels.voiceText}
+              </label>
+              <textarea
+                id="character-voice-text"
+                className="form-textarea"
+                rows={4}
+                maxLength={8192}
+                value={voiceText}
+                onChange={(event) => setVoiceText(event.target.value)}
+              />
+              <div className="composer-actions">
+                <button
+                  type="button"
+                  className="small-button"
+                  data-character-voice-save
+                  disabled={voiceSaving || voiceClearing || voiceText.trim().length === 0}
+                  onClick={() => void handleSaveVoice()}
+                >
+                  {voiceSaving ? labels.saving : labels.voiceSave}
+                </button>
+                <button
+                  type="button"
+                  className="small-button"
+                  data-character-voice-clear
+                  disabled={voiceSaving || voiceClearing}
+                  onClick={() => void handleClearVoice()}
+                >
+                  {voiceClearing ? labels.saving : labels.voiceClear}
+                </button>
+              </div>
+              {voiceNotice !== null && (
+                <p
+                  role="status"
+                  className={voiceNotice === "saved" || voiceNotice === "cleared" ? "success-banner" : "error-banner"}
+                  data-character-voice-notice
+                >
+                  {voiceNotice === "saved"
+                    ? labels.saved
+                    : voiceNotice === "cleared"
+                      ? labels.voiceCleared
+                      : voiceNotice.failure}
+                </p>
+              )}
+            </section>
+          )}
+          {/* A cleared directive reads as ABSENT: the editor is not rendered at all,
+              so no empty box is left behind (design/26 §1). The one status line below
+              is only the acknowledgement of the clear action itself. */}
+          {voice.kind === "ready" && voice.value.characterVoice === null && voiceNotice !== null && (
+            <p
+              role="status"
+              className={voiceNotice === "cleared" ? "success-banner" : "error-banner"}
+              data-character-voice-notice
+            >
+              {voiceNotice === "cleared" ? labels.voiceCleared : (voiceNotice as Readonly<{ failure: string }>).failure}
+            </p>
+          )}
 
           {persona !== "unavailable" && (
             <section aria-label={labels.personaTitle} data-persona-editor>
