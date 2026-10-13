@@ -186,7 +186,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
 export const STARDEW_GAME_INTEGRATION_ADAPTER =
   createStardewGameIntegrationAdapter();
 
-function hasStardewCompletionEvidence(
+export function hasStardewCompletionEvidence(
   actionId: string,
   receipt: IntegrationReceiptEvidence,
 ): boolean {
@@ -356,6 +356,47 @@ function hasStardewCompletionEvidence(
         })
       );
     case "clear_fish_pond":
+      // Evidence literal: farmhandexecutioncontroller.pondactions.cs — the identity, the fish type before and
+      // after, the occupant counts, the population gate, the spawn day, the golden-cracker flag and the
+      // ejected count. The native seam returns void, so the proof is the OBSERVED reset: BOTH halves of the
+      // card's postcondition (occupants 0 AND fish type none), an ejected count equal to what the pond held,
+      // and a pond that held something to begin with. The fish are dropped rather than destroyed, so nothing
+      // here claims a loss.
+      return (
+        receipt.reasonCode === "fish_pond_cleared" &&
+        exactEvidence(
+          detail,
+          [
+            "pond_id",
+            "location",
+            "tile_x",
+            "tile_y",
+            "building_origin",
+            "fish_type_before",
+            "fish_type_after",
+            "occupants_before",
+            "occupants_after",
+            "population_gate_before",
+            "population_gate_after",
+            "days_since_spawn_before",
+            "days_since_spawn_after",
+            "golden_cracker_before",
+            "golden_cracker_after",
+            "fish_ejected",
+          ],
+          (e) => {
+            const occupantsBefore = integerEvidenceValue(e.occupants_before);
+            return (
+              occupantsBefore !== null &&
+              occupantsBefore > 0 &&
+              e.occupants_after === "0" &&
+              e.fish_type_after === "none" &&
+              integerEvidenceValue(e.fish_ejected) === occupantsBefore &&
+              integerEvidenceValue(e.population_gate_after) === 0
+            );
+          },
+        )
+      );
     case "build_farm_building":
       // Evidence literal: farmhandexecutioncontroller.buildfarmbuildingactions.cs - the site identity, the
       // building type, the new building id, the money and materials before/after, and the tile's building
@@ -555,12 +596,9 @@ function hasStardewCompletionEvidence(
               hasOpaqueIdEvidenceValue(e.target) &&
               hasOpaqueEvidenceValue(e.garment) &&
               hasOpaqueEvidenceValue(e.dye) &&
-              typeof e.colour_before === "string" &&
-              e.colour_before.length > 0 &&
-              typeof e.colour_expected === "string" &&
-              e.colour_expected.length > 0 &&
-              typeof e.colour_after === "string" &&
-              e.colour_after.length > 0 &&
+              (e.colour_before?.length ?? 0) > 0 &&
+              (e.colour_expected?.length ?? 0) > 0 &&
+              (e.colour_after?.length ?? 0) > 0 &&
               e.colour_changed === String(changed) &&
               (e.prismatic_after === "true" || e.prismatic_after === "false") &&
               dyeBefore !== null &&
@@ -748,46 +786,7 @@ function hasStardewCompletionEvidence(
             e.name_after === e.requested,
         )
       );
-      // Evidence literal: farmhandexecutioncontroller.pondactions.cs — the identity, the fish type before and
-      // after, the occupant counts, the population gate, the spawn day, the golden-cracker flag and the
-      // ejected count. The native seam returns void, so the proof is the OBSERVED reset: BOTH halves of the
-      // card's postcondition (occupants 0 AND fish type none), an ejected count equal to what the pond held,
-      // and a pond that held something to begin with. The fish are dropped rather than destroyed, so nothing
-      // here claims a loss.
-      return (
-        receipt.reasonCode === "fish_pond_cleared" &&
-        exactEvidence(
-          detail,
-          [
-            "pond_id",
-            "location",
-            "tile_x",
-            "tile_y",
-            "fish_type_before",
-            "fish_type_after",
-            "occupants_before",
-            "occupants_after",
-            "population_gate_before",
-            "population_gate_after",
-            "days_since_spawn_before",
-            "days_since_spawn_after",
-            "golden_cracker_before",
-            "golden_cracker_after",
-            "fish_ejected",
-          ],
-          (e) => {
-            const occupantsBefore = integerEvidenceValue(e.occupants_before);
-            return (
-              occupantsBefore !== null &&
-              occupantsBefore > 0 &&
-              e.occupants_after === "0" &&
-              e.fish_type_after === "none" &&
-              integerEvidenceValue(e.fish_ejected) === occupantsBefore &&
-              integerEvidenceValue(e.population_gate_after) === 0
-            );
-          },
-        )
-      );
+
     case "toggle_animal_door":
       // Evidence literal: farmhandexecutioncontroller.animaldooractions.cs:194-197 —
       // target;tile;building_type;animal_door_open_before;animal_door_open_after;

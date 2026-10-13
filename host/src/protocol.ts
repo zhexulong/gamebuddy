@@ -2585,13 +2585,8 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       !value.museumRewardTargets.every(isMuseumRewardTargetFact))
   )
     return "invalid_snapshot:museumRewardTargets";
-  if (
-    value.tailoringTargets !== undefined &&
-    (!Array.isArray(value.tailoringTargets) ||
-      value.tailoringTargets.length > 32 ||
-      !value.tailoringTargets.every(isTailoringTargetFact))
-  )
-    return "invalid_snapshot:tailoringTargets";
+  const tailoringVerdict = tailoringTargetsVerdict(value);
+  if (tailoringVerdict !== null) return tailoringVerdict;
   if (
     value.wearableTargets !== undefined &&
     (!Array.isArray(value.wearableTargets) ||
@@ -5005,13 +5000,8 @@ function dailyQuestError(value: Record<string, unknown>): string | null {
       !value.museumRewardTargets.every(isMuseumRewardTargetFact))
   )
     return "invalid_snapshot:museumRewardTargets";
-  if (
-    value.tailoringTargets !== undefined &&
-    (!Array.isArray(value.tailoringTargets) ||
-      value.tailoringTargets.length > 32 ||
-      !value.tailoringTargets.every(isTailoringTargetFact))
-  )
-    return "invalid_snapshot:tailoringTargets";
+  const tailoringVerdict = tailoringTargetsVerdict(value);
+  if (tailoringVerdict !== null) return tailoringVerdict;
   return null;
 }
 
@@ -5063,10 +5053,34 @@ function isMuseumRewardTargetFact(value: unknown): boolean {
  * (`recipe` or `dye`), the qualified id the act produces, and - for a dye target - the garment's
  * CURRENT colour and name. `garmentColour` is the fact `dye_clothing_with_item`'s postcondition
  * changes, so a target whose identity ignored it could not be verified. */
+/** Why the tailoring projection was refused, naming the offending entry and its keys, or null when acceptable. */
+function tailoringTargetsVerdict(value: Record<string, unknown>): string | null {
+  const targets = value.tailoringTargets;
+  if (targets === undefined) return null;
+  if (!Array.isArray(targets)) return "invalid_snapshot:tailoringTargets:not_an_array";
+  if (targets.length > 32) return `invalid_snapshot:tailoringTargets:count=${targets.length}`;
+  for (let index = 0; index < targets.length; index += 1) {
+    if (isTailoringTargetFact(targets[index])) continue;
+    const entry = targets[index];
+    const keys = isRecord(entry) ? Object.keys(entry).join("|") : typeof entry;
+    return `invalid_snapshot:tailoringTargets:entry${index}:keys=${keys}`;
+  }
+  return null;
+}
+
 function isTailoringTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "kind", "leftSlot", "rightSlot", "leftQualifiedItemId", "rightQualifiedItemId", "outputQualifiedItemId", "garmentColour", "garmentName"]) &&
+    // The two garment fields are OPTIONAL: the bridge omits null members, so a craft target carries neither, and
+    // `hasExactKeys` would refuse a value with fewer keys than it lists (that refusal was the live failure).
+    hasOnlyKeys(value, ["targetId", "kind", "leftSlot", "rightSlot", "leftQualifiedItemId", "rightQualifiedItemId", "outputQualifiedItemId", "garmentColour", "garmentName"]) &&
+    typeof value.targetId !== "undefined" &&
+    typeof value.kind !== "undefined" &&
+    typeof value.leftSlot !== "undefined" &&
+    typeof value.rightSlot !== "undefined" &&
+    typeof value.leftQualifiedItemId !== "undefined" &&
+    typeof value.rightQualifiedItemId !== "undefined" &&
+    typeof value.outputQualifiedItemId !== "undefined" &&
     isOpaqueId(value.targetId) &&
     (value.kind === "recipe" || value.kind === "dye") &&
     isNonNegativeSafeInteger(value.leftSlot) &&
@@ -5077,8 +5091,8 @@ function isTailoringTargetFact(value: unknown): boolean {
     value.rightQualifiedItemId.length > 0 &&
     typeof value.outputQualifiedItemId === "string" &&
     value.outputQualifiedItemId.length > 0 &&
-    (value.garmentColour === null || typeof value.garmentColour === "string") &&
-    (value.garmentName === null || typeof value.garmentName === "string")
+    (value.garmentColour === undefined || value.garmentColour === null || typeof value.garmentColour === "string") &&
+    (value.garmentName === undefined || value.garmentName === null || typeof value.garmentName === "string")
   );
 }
 

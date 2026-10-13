@@ -1,0 +1,145 @@
+{
+  "note": "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.",
+  "receipts": [
+    {
+      "actionId": "accept_daily_quest",
+      "state": "succeeded",
+      "reasonCode": "daily_quest_accepted",
+      "evidence": {
+        "daily_quest_id": "daily_quest_d7fd271563b70dd6",
+        "day_of_month": "1",
+        "quest_type": "10",
+        "accepted_before": "false",
+        "accepted_daily_before": "false",
+        "days_left_before": "0",
+        "quest_log_before": "0",
+        "quest_log_after": "1",
+        "days_left_after": "2",
+        "accepted_after": "true",
+        "accepted_daily_after": "true",
+        "daily_after": "true",
+        "can_be_cancelled_after": "true",
+        "day_accepted_after": "0"
+      }
+    },
+    {
+      "actionId": "accept_special_order",
+      "state": "succeeded",
+      "reasonCode": "special_order_accepted",
+      "evidence": {
+        "special_order_id": "special_order_c0be1fe864fa6327",
+        "board_type": "Qi",
+        "quest_key": "QiChallenge3",
+        "generation_seed": "1822523158",
+        "board_marker_before": "false",
+        "board_marker_after": "true",
+        "orders_before": "0",
+        "orders_after": "1",
+        "order_present_after": "true",
+        "order_in_progress_after": "true"
+      }
+    },
+    {
+      "actionId": "build_farm_building",
+      "state": "succeeded",
+      "reasonCode": "farm_building_built",
+      "evidence": {
+        "target": "build_site_9b79994081f12520",
+        "location": "Farm",
+        "tile": "6,15",
+        "building_type": "Junimo Hut",
+        "building_id": "e1bfbddd-38f9-4465-8594-d3fc46295a22",
+        "money_before": "21000",
+        "money_after": "1000",
+        "build_cost": "20000",
+        "materials_before": "309",
+        "materials_after": "0",
+        "materials_required": "309",
+        "build_days": "0",
+        "days_of_construction_left": "0",
+        "magical": "true",
+        "tile_building_after": "Junimo Hut",
+        "native_placement": "true"
+      }
+    },
+    {
+      "actionId": "claim_museum_reward",
+      "state": "succeeded",
+      "reasonCode": "museum_rewards_collected",
+      "evidence": {
+        "target": "museum_reward_5a9ce61de1e3da88",
+        "location": "ArchaeologyHouse",
+        "rewards_before": "30",
+        "rewards_returned": "30",
+        "rewards_delivered": "30",
+        "rewards_recorded": "30",
+        "rewards_after": "0",
+        "mail_flags_before": "1",
+        "mail_flags_after": "45",
+        "inventory_units_before": "5",
+        "inventory_units_after": "64",
+        "rewards_collected": "true"
+      }
+    },
+    {
+      "actionId": "clear_fish_pond",
+      "state": "succeeded",
+      "reasonCode": "fish_pond_cleared",
+      "evidence": {
+        "pond_id": "fish_pond_43dad00565949807",
+        "location": "Farm",
+        "tile_x": "72",
+        "tile_y": "11",
+        "building_origin": "73,12",
+        "fish_type_before": "128",
+        "fish_type_after": "none",
+        "occupants_before": "1",
+        "occupants_after": "0",
+        "population_gate_before": "0",
+        "population_gate_after": "0",
+        "days_since_spawn_before": "0",
+        "days_since_spawn_after": "0",
+        "golden_cracker_before": "false",
+        "golden_cracker_after": "false",
+        "fish_ejected": "1"
+      }
+    },
+    {
+      "actionId": "name_entity",
+      "state": "succeeded",
+      "reasonCode": "entity_named",
+      "evidence": {
+        "owner_id": "2485608500163530015",
+        "location": "Farm",
+        "actor_tile": "9,8",
+        "horse_tile": "10,9",
+        "horse_owner_id": "2485608500163530015",
+        "horse_name": "none",
+        "horse_id": "a882fc0b98f540a49d29cc592645ebf4",
+        "name_before": "none",
+        "requested": "GameBuddyNamedHorse",
+        "name_after": "GameBuddyNamedHorse",
+        "name_matches_requested": "true",
+        "player_horse_name_updated": "true"
+      }
+    },
+    {
+      "actionId": "redeem_prize_ticket",
+      "state": "succeeded",
+      "reasonCode": "prize_ticket_redeemed",
+      "evidence": {
+        "prize_level": "0",
+        "prize_item_id": "(O)CarrotSeeds",
+        "prize_stack": "12",
+        "prize_held_before": "0",
+        "prize_held_after": "12",
+        "ticket_item_id": "(O)PrizeTicket",
+        "tickets_before": "1",
+        "tickets_after": "0",
+        "prizes_claimed_before": "0",
+        "prizes_claimed_after": "1",
+        "prize_delivered": "true"
+      }
+    }
+  ]
+}
