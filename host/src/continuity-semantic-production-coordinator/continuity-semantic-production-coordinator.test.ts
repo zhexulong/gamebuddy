@@ -273,6 +273,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
+    "settleMountedAuthoredContext",
     "stopMountedChatPresentationEpoch",
   ]);
   const authorityType: SemanticGameProductionAuthority | undefined = undefined;
@@ -293,6 +294,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
+    "settleMountedAuthoredContext",
     "startMountedAttempt",
     "stopMountedChatPresentationEpoch",
   ]);
@@ -501,7 +503,7 @@ test(
       const deployment = await loadHostDeploymentManifest(manifestPath);
       shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment, "fresh");
       assert.deepEqual(Object.keys(shared).sort(), ["chat", "close", "game"]);
-      assert.deepEqual(Object.keys(shared.chat).sort(), ["authority", "close", "startChatRuntime", "startMountedChatRuntime"]);
+      assert.deepEqual(Object.keys(shared.chat).sort(), ["authority", "close", "requestChatSelection", "startChatRuntime", "startMountedChatRuntime"]);
       assert.equal(Object.keys(shared.chat).includes("readChatCatalog"), false);
       // Closing the Game projection must never close the shared Chat projection
       // or its provision/mutex/broker; the Chat runtime authority stays open and
