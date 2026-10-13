@@ -20,6 +20,7 @@
     "test:voice-protocol": "pnpm --dir vendor/pi-koe run test:protocol",
     "lint": "biome lint tools host/src dialogue-web/src vendor/pi-koe/src",
     "lint:eslint": "eslint dialogue-web/src",
+    "lint:ast-grep": "ast-grep scan --config sgconfig.yml dialogue-web/src",
     "format:check": "biome format tools host/src dialogue-web/src vendor/pi-koe/src",
     "check:text-hygiene": "node tools/check-text-hygiene.mjs",
     "check:host-windows-test-preflight": "node tools/check-host-windows-test-preflight.mjs",
@@ -27,7 +28,7 @@
     "check:production-pack-load": "node tools/check-production-pack-load.mjs",
     "test:production-pack-load": "node --test tools/check-production-pack-load.test.mjs",
     "check:diff": "node tools/check-diff.mjs",
-    "quality:check": "pnpm format:check && pnpm lint && pnpm lint:eslint && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm check:dialogue-web-boundaries && pnpm test:stardew:core && pnpm test:stardew:integration",
+    "quality:check": "pnpm format:check && pnpm lint && pnpm lint:eslint && pnpm lint:ast-grep && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm check:dialogue-web-boundaries && pnpm test:stardew:core && pnpm test:stardew:integration",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
     "check:dependency-risk": "node tools/check-dependency-risk.mjs",
     "knip": "knip --config knip.json",
@@ -215,6 +216,7 @@
     "test:stardew-clear-fish-pond-runner": "node --test tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs"
   },
   "devDependencies": {
+    "@ast-grep/cli": "0.50.0",
     "@biomejs/biome": "2.2.4",
     "@vscode/tree-sitter-wasm": "0.3.1",
     "dependency-cruiser": "17.3.2",

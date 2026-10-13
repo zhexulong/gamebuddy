@@ -1,0 +1,16 @@
+id: bare-details
+language: Tsx
+severity: error
+message: a <details> with no className renders the browser's own disclosure triangle
+note: give the disclosure a styling class; the sheet owns the marker.
+rule:
+  kind: jsx_opening_element
+  all:
+    - has:
+        kind: identifier
+        regex: ^details$
+    - not:
+        has:
+          stopBy: end
+          kind: property_identifier
+          regex: ^className$

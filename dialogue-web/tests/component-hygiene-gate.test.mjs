@@ -21,6 +21,17 @@
  * Every failure names the file and the 1-based line, so the message is a route.
  * Every test also prints what it checked and found clean (`t.diagnostic`), so a
  * passing run is evidence rather than silence.
+ *
+ * Two of the shapes now live in `tools/ast-grep/rules` and run as
+ * `pnpm lint:ast-grep`, because they are pure structure and the maintained rule
+ * engine expresses them in prose: `bare-details` (a `<details>` with no
+ * `className`) and `bare-dynamic-list` (a `<ul>`/`<ol>` carrying `.map()`
+ * entries with neither a class nor a `data-` hook). What is left here needs more
+ * than structure - which class the stylesheet actually takes out of the visual
+ * flow or paints a themed surface (gates 1.1, 1.6), which class markers mark a
+ * status/card container (gate 1.3), which i18n key a panel is reusing (gate
+ * 1.5), and whether a `<summary>`'s child is an imported lucide component (gate
+ * 1.2) - and none of that is knowable from a pattern rule.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -164,21 +175,6 @@ function isStatusOrCardContainer(node) {
     .some((token) => ["banner", "card", "status", "notice", "placeholder"].some((marker) => token.includes(marker)));
 }
 
-/** Does the subtree contain a `.map(...)` call (i.e. dynamic entries)? */
-function hasMapCall(node) {
-  let found = false;
-  walk(node, (child) => {
-    if (found) return;
-    if (
-      ts.isCallExpression(child) &&
-      ts.isPropertyAccessExpression(child.expression) &&
-      child.expression.name.text === "map"
-    )
-      found = true;
-  });
-  return found;
-}
-
 function labelKeyIsOpeningChat(node) {
   return (
     ts.isPropertyAccessExpression(node) &&
@@ -228,7 +224,7 @@ test("gate 1.1: a file input is visually hidden and driven by a themed control",
   );
 });
 
-test("gate 1.2: a <details> is classed and its <summary> carries an explicit icon", (t) => {
+test("gate 1.2: a <details>'s <summary> carries an explicit icon", (t) => {
   const failures = [];
   let details = 0;
   let summaries = 0;
@@ -239,9 +235,6 @@ test("gate 1.2: a <details> is classed and its <summary> carries an explicit ico
     walk(sourceFile, (node) => {
       if (!ts.isJsxElement(node) || !isElement(node, "details")) return;
       details += 1;
-      const className = classNameOf(node);
-      if (className === null || className.trim() === "")
-        failures.push(`${at(node, sourceFile)} bare <details> with no styling class`);
       for (const element of jsxElements(node)) {
         if (!isElement(element, "summary")) continue;
         summaries += 1;
@@ -251,7 +244,7 @@ test("gate 1.2: a <details> is classed and its <summary> carries an explicit ico
     });
   }
   t.diagnostic(`gate 1.2: ${files.length} files, ${details} <details>, ${summaries} <summary>, ${failures.length} violation(s)`);
-  assert.deepEqual(failures, [], "a <details> must be styled and its <summary> must render an icon");
+  assert.deepEqual(failures, [], "a <details>'s <summary> must render an explicit icon, not the browser's triangle");
 });
 
 test("gate 1.3: no status/card container stacks three or more bare <p>", (t) => {
@@ -277,29 +270,6 @@ test("gate 1.3: no status/card container stacks three or more bare <p>", (t) => 
   }
   t.diagnostic(`gate 1.3: ${files.length} files, ${containers} status/card container(s), ${failures.length} violation(s)`);
   assert.deepEqual(failures, [], "three stacked bare <p> read as a console dump; use a dl/dt/dd, chips or a card");
-});
-
-test("gate 1.4: a list carrying dynamic entries is never the raw bullet list", (t) => {
-  const failures = [];
-  let dynamicLists = 0;
-  const files = componentFiles();
-  for (const file of files) {
-    const sourceFile = parse(file);
-    walk(sourceFile, (node) => {
-      if (!ts.isJsxElement(node)) return;
-      const name = jsxTagName(node);
-      if (name === null || !ts.isIdentifier(name) || (name.text !== "ul" && name.text !== "ol")) return;
-      if (!hasMapCall(node)) return;
-      dynamicLists += 1;
-      const attrs = attributes(node);
-      const hasClass = classNameOf(node) !== null;
-      const hasHook = [...attrs.keys()].some((key) => key.startsWith("data-"));
-      if (!hasClass && !hasHook)
-        failures.push(`${at(node, sourceFile)} bare <${name.text}> with .map() entries`);
-    });
-  }
-  t.diagnostic(`gate 1.4: ${files.length} files, ${dynamicLists} dynamic list(s), ${failures.length} violation(s)`);
-  assert.deepEqual(failures, [], "a dynamic list must carry a styling class or a data hook");
 });
 
 test("gate 1.5: a panel's loading text is not another panel's copy", (t) => {

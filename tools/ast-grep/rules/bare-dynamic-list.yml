@@ -1,0 +1,24 @@
+id: bare-dynamic-list
+language: Tsx
+severity: error
+message: a <ul>/<ol> carrying .map() entries must declare a styling class or a data hook
+note: a raw bullet list of dynamic entries reads as the browser's default list.
+rule:
+  kind: jsx_element
+  all:
+    - has:
+        kind: jsx_opening_element
+        has:
+          stopBy: neighbor
+          kind: identifier
+          regex: ^[uo]l$
+    - has:
+        stopBy: end
+        pattern: $$$X.map($$$Y)
+    - not:
+        has:
+          kind: jsx_opening_element
+          has:
+            stopBy: neighbor
+            kind: jsx_attribute
+            regex: ^(className|data-)

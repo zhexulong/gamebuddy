@@ -14,6 +14,7 @@ packages:
   # Phase 0B intentionally disables optional native/model build scripts. Magic
   # Context runs with embeddings off; no optional binary is approved implicitly.
 allowBuilds:
+  '@ast-grep/cli': true
   '@google/genai': false
   esbuild: true
   onnxruntime-node: false
