@@ -1,114 +1,94 @@
 const path = require("node:path");
 
 /**
- * Chat ↔ Game ↔ Management surface boundaries for dialogue-web.
+ * Frontend layer boundaries for dialogue-web (design/32, design/104,
+ * architecture/product-surfaces.md).
  *
- * Chat, Game and Management are independent product surfaces (design/32,
- * design/968, design/114): each owns its own assembly, lifecycle and error
- * handling. A surface may NEVER import another surface's runtime assembler.
+ * Chat, Chats, Characters, Game, Settings, Memory and World Info are peer
+ * surfaces: the AppBar selects which one occupies the main region, and each
+ * owns its own assembly, lifecycle and error handling. No surface may import
+ * another surface's assembler, and no contract, shared-UI or support layer may
+ * depend on a surface.
  *
- * The ONLY legal cross-surface sharing is:
- *   - the frozen `tavern_browser_api/v1` wire contract (reference-pipeline-api)
- *     plus its identity-bound session reducer (reference-pipeline-session),
- *     both dependency-free and React-free; and
- *   - shared presentation primitives (MessageBubble, Timeline, ProblemView,
- *     SkipLink, Composer, ChatsDrawer) that are props-driven and carry no
- *     surface lifecycle.
+ * The zones below are path patterns, so a new `components/*Surface.tsx` is
+ * classified the moment it is added; a new file that matches no zone fails
+ * `tools/check-dialogue-web-boundaries.test.mjs` rather than escaping the
+ * boundary rules silently. Every `dialogue-web/src` file belongs to exactly one
+ * zone; `main.tsx` is the browser boot shell and is intentionally unzoned.
  *
- * Surface model:
- *   shell                main.tsx                — the only allowed assembler
+ * Layer model:
  *   chat-contract        reference-pipeline-api + reference-pipeline-session
- *   chat-runtime         components/ReferenceApp  — Chat surface assembler
- *   game-surface         composed game API + Game-only components
- *   management-surface   management API + Management-only components
+ *   platform-contract    management-pipeline-api/session + composed-reference-game-browser-api
+ *   composed-root        components/ComposedReferenceGameApp   — the one assembler
+ *   surface              components/*Surface                   — the peer surface bodies
+ *   surface-support      panels, views, models and labels the surfaces share
  *   shared-ui            props-driven presentation primitives
- *   shared               i18n / types            — leaf utilities
+ *   shared               i18n / types                          — leaf utilities
  *
- * Rules fire as `error`. tools/check-dialogue-web-boundaries.test.mjs owns
- * the golden zone manifest, the drift ledger (must be empty) and negative
- * tests proving every rule fires.
+ * Rules fire as `error`. tools/check-dialogue-web-boundaries.test.mjs owns the
+ * golden zone manifest, the drift ledger (must be empty) and negative tests
+ * proving every rule fires.
  */
-const CHAT_CONTRACT = "^dialogue-web/src/(reference-pipeline-api|reference-pipeline-session)\\.ts$";
-const CHAT_RUNTIME = "^dialogue-web/src/components/ReferenceApp\\.tsx$";
-const GAME_SURFACE =
-  "^dialogue-web/src/(composed-reference-game-browser-api\\.ts|components/(ComposedReferenceGameApp|StardewInstallationDiscovery)\\.tsx)$";
-const MANAGEMENT_SURFACE =
-  "^dialogue-web/src/(management-pipeline-(api|session)\\.ts|components/ManagementApp\\.tsx)$";
+const CHAT_CONTRACT = "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$";
+const PLATFORM_CONTRACT =
+  "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$";
+const COMPOSED_ROOT = "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$";
+const SURFACE = "^dialogue-web/src/components/[^/]*Surface\\.tsx$";
+const SURFACE_SUPPORT =
+  "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card)\\.tsx?)$";
 const SHARED_UI =
-  "^dialogue-web/src/components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|drawers/ChatsDrawer)\\.tsx$";
+  "^dialogue-web/src/(components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer)\\.tsx|components/drawers/ChatsDrawer\\.tsx)$";
 const SHARED = "^dialogue-web/src/(i18n|types)\\.ts$";
 
 module.exports = {
   forbidden: [
     {
-      name: "no-chat-runtime-to-game-surface",
-      comment: "Chat runtime assembler must never import Game surface modules.",
+      name: "no-surface-to-other-surface",
+      comment: "Peer surfaces own independent lifecycles; no surface may import another surface's assembler.",
       severity: "error",
-      from: { path: CHAT_RUNTIME },
-      to: { path: GAME_SURFACE },
+      from: { path: SURFACE },
+      to: { path: SURFACE },
     },
     {
-      name: "no-chat-runtime-to-management-surface",
-      comment: "Chat runtime assembler must never import Management surface modules.",
+      name: "no-surface-support-to-surface",
+      comment: "Panels, views, models and labels are shared by surfaces and must not depend on one.",
       severity: "error",
-      from: { path: CHAT_RUNTIME },
-      to: { path: MANAGEMENT_SURFACE },
+      from: { path: SURFACE_SUPPORT },
+      to: { path: SURFACE },
     },
     {
-      name: "no-game-surface-to-chat-runtime",
-      comment: "Game surface must only consume the frozen chat wire contract and shared UI, never the Chat runtime assembler.",
+      name: "no-contract-imports-ui",
+      comment:
+        "The wire contracts stay dependency-free and React-free: they must not import the shell, a surface, its support or shared UI.",
       severity: "error",
-      from: { path: GAME_SURFACE },
-      to: { path: CHAT_RUNTIME },
+      from: { path: `(${CHAT_CONTRACT}|${PLATFORM_CONTRACT})` },
+      to: { path: `(${COMPOSED_ROOT}|${SURFACE}|${SURFACE_SUPPORT}|${SHARED_UI})` },
     },
     {
-      name: "no-game-surface-to-management-surface",
-      comment: "Game surface must never import Management internals.",
-      severity: "error",
-      from: { path: GAME_SURFACE },
-      to: { path: MANAGEMENT_SURFACE },
-    },
-    {
-      name: "no-management-surface-to-chat-runtime",
-      comment: "Management surface must only consume wire contracts and shared UI, never the Chat runtime assembler.",
-      severity: "error",
-      from: { path: MANAGEMENT_SURFACE },
-      to: { path: CHAT_RUNTIME },
-    },
-    {
-      name: "no-management-surface-to-game-surface",
-      comment: "Management surface must never import Game internals.",
-      severity: "error",
-      from: { path: MANAGEMENT_SURFACE },
-      to: { path: GAME_SURFACE },
-    },
-    {
-      name: "no-contract-imports-surfaces",
-      comment: "The wire contract stays dependency-free and React-free: it must not import any surface or shared UI.",
-      severity: "error",
-      from: { path: CHAT_CONTRACT },
-      to: { path: `(${CHAT_RUNTIME}|${GAME_SURFACE}|${MANAGEMENT_SURFACE}|${SHARED_UI})` },
-    },
-    {
-      name: "no-contract-internal-dependency",
-      comment: "The wire contract stays dependency-free: its own members must not import each other (api and session remain standalone).",
+      name: "no-chat-contract-internal-dependency",
+      comment:
+        "The Chat wire contract stays dependency-free: its own members must not import each other (api and session remain standalone).",
       severity: "error",
       from: { path: CHAT_CONTRACT },
       to: { path: CHAT_CONTRACT },
     },
     {
       name: "no-shared-ui-imports-surfaces",
-      comment: "Shared presentation primitives carry no surface lifecycle and must not import surface assemblers.",
+      comment:
+        "Shared presentation primitives carry no surface lifecycle and must not import the shell, a surface or its support.",
       severity: "error",
       from: { path: SHARED_UI },
-      to: { path: `(${CHAT_RUNTIME}|${GAME_SURFACE}|${MANAGEMENT_SURFACE})` },
+      to: { path: `(${COMPOSED_ROOT}|${SURFACE}|${SURFACE_SUPPORT})` },
     },
     {
-      name: "no-shared-imports-surfaces",
-      comment: "Shared leaf utilities must not import surface modules.",
+      name: "no-shared-imports-modules",
+      comment:
+        "Shared leaf utilities must not import the shell, surfaces, support, shared UI or a wire contract.",
       severity: "error",
       from: { path: SHARED },
-      to: { path: `(${CHAT_RUNTIME}|${GAME_SURFACE}|${MANAGEMENT_SURFACE}|${CHAT_CONTRACT}|${SHARED_UI})` },
+      to: {
+        path: `(${COMPOSED_ROOT}|${SURFACE}|${SURFACE_SUPPORT}|${SHARED_UI}|${CHAT_CONTRACT}|${PLATFORM_CONTRACT})`,
+      },
     },
   ],
   options: {

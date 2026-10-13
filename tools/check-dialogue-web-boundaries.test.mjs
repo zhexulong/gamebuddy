@@ -13,53 +13,37 @@ const configPath = join(repoRoot, ".dependency-cruiser.dialogue-web.cjs");
 const config = require(configPath);
 
 /**
- * Golden zone manifest — the single authority for which files belong to
- * which surface. Any rename must update both this manifest and the config.
+ * Golden zone manifest — path patterns, not a file list, and the single
+ * authority for which layer a source file belongs to. The same patterns are
+ * the zone constants in `.dependency-cruiser.dialogue-web.cjs`, and the first
+ * test below fails if the two ever drift apart.
+ *
+ * Chat, Chats, Characters, Game, Settings, Memory and World Info are peer
+ * surfaces, so every `components/*Surface.tsx` belongs to the `surface` layer
+ * the moment it is added. A file that matches no pattern fails
+ * `every dialogue-web/src file belongs to exactly one golden zone` — that is
+ * the property that stops a new surface from escaping the boundary rules
+ * silently.
  */
 const ZONES = {
   chatContract:
-    "^dialogue-web/src/(reference-pipeline-api|reference-pipeline-session)\\.ts$",
-  chatRuntime: "^dialogue-web/src/components/ReferenceApp\\.tsx$",
-  gameSurface:
-    "^dialogue-web/src/(composed-reference-game-browser-api\\.ts|components/(ComposedReferenceGameApp|StardewInstallationDiscovery)\\.tsx)$",
-  managementSurface:
-    "^dialogue-web/src/(management-pipeline-(api|session)\\.ts|components/ManagementApp\\.tsx)$",
+    "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
+  platformContract:
+    "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$",
+  composedRoot: "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$",
+  surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
+  surfaceSupport:
+    "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card)\\.tsx?)$",
   sharedUi:
-    "^dialogue-web/src/components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|drawers/ChatsDrawer)\\.tsx$",
+    "^dialogue-web/src/(components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer)\\.tsx|components/drawers/ChatsDrawer\\.tsx)$",
   shared: "^dialogue-web/src/(i18n|types)\\.ts$",
 };
 
-const GOLDEN = {
-  chatContract: ["reference-pipeline-api.ts", "reference-pipeline-session.ts"],
-  chatRuntime: ["components/ReferenceApp.tsx"],
-  gameSurface: [
-    "composed-reference-game-browser-api.ts",
-    "components/ComposedReferenceGameApp.tsx",
-    "components/StardewInstallationDiscovery.tsx",
-  ],
-  managementSurface: [
-    "management-pipeline-api.ts",
-    "management-pipeline-session.ts",
-    "components/ManagementApp.tsx",
-  ],
-  sharedUi: [
-    "components/MessageBubble.tsx",
-    "components/Timeline.tsx",
-    "components/ProblemView.tsx",
-    "components/SkipLink.tsx",
-    "components/Composer.tsx",
-    "components/drawers/ChatsDrawer.tsx",
-  ],
-  shared: ["i18n.ts", "types.ts"],
-};
-
 /**
- * Current drift ledger — must be empty. The three pane assemblers
- * (ReferenceApp = Chat, ComposedReferenceGameApp = Game, ManagementApp =
- * Management) own independent lifecycles; shared access is limited to the
- * frozen tavern_browser_api/v1 wire contract and props-driven presentation
- * primitives. Any new cross-assembler edge, contract impurity, or UI
- * primitive depending on a surface fails this check.
+ * Current drift ledger — must be empty. The surfaces are peers that own
+ * independent lifecycles; shared access is limited to the wire contracts and
+ * props-driven presentation primitives. Any new cross-surface edge, contract
+ * impurity, or UI primitive depending on a surface fails this check.
  */
 const DRIFT_LEDGER = [];
 
@@ -158,18 +142,11 @@ test("zone rules reference only known zones and every zone is guarded", () => {
 
 test("every dialogue-web/src file belongs to exactly one golden zone", () => {
   const allFiles = collectSourceFiles();
-  const goldenAll = new Set(Object.entries(GOLDEN).flatMap(([zone, files]) => files.map((file) => `${zone}:${file}`)));
+  assert.ok(allFiles.includes("main.tsx"), "main.tsx shell must exist");
   for (const file of allFiles) {
     if (file === "main.tsx") continue; // shell assembler is intentionally unzoned
     const matches = Object.entries(ZONES).filter(([, pattern]) => new RegExp(pattern).test(`dialogue-web/src/${file}`));
     assert.equal(matches.length, 1, `file ${file} matches ${matches.length} zones: ${matches.map(([name]) => name).join(",")}`);
-    assert.ok(goldenAll.has(`${matches[0][0]}:${file}`), `file ${file} matched zone ${matches[0][0]} but is not in its golden list`);
-  }
-  assert.ok(allFiles.includes("main.tsx"), "main.tsx shell must exist");
-  for (const [zone, files] of Object.entries(GOLDEN)) {
-    for (const file of files) {
-      assert.ok(new RegExp(ZONES[zone]).test(`dialogue-web/src/${file}`), `golden ${zone}/${file} no longer matches its zone pattern`);
-    }
   }
 });
 
@@ -189,33 +166,24 @@ test("boundary rules actually fire on a fixture violating every direction", () =
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, content);
     };
-    // --- chat-contract: reference-pipeline-api + reference-pipeline-session ---
-    // contract must not import any surface (all four alternatives) nor its own member.
-    write("src/reference-pipeline-api.ts", 'import "./components/Composer";\nimport "./components/ReferenceApp";\n');
-    write("src/reference-pipeline-session.ts", 'import "./reference-pipeline-api";\nimport "./components/ComposedReferenceGameApp";\nimport "./components/ManagementApp";\n');
-    // --- chat-runtime: ReferenceApp ---
-    write("src/components/ReferenceApp.tsx", 'import "./ComposedReferenceGameApp";\nimport "./ManagementApp";\n');
-    // --- shared-ui: props-driven primitives ---
-    write("src/components/MessageBubble.tsx", "");
-    write("src/components/Timeline.tsx", 'import "./ComposedReferenceGameApp";\n');
-    write("src/components/ProblemView.tsx", "");
-    write("src/components/SkipLink.tsx", "");
-    write("src/components/Composer.tsx", 'import "./ReferenceApp";\n');
-    write("src/components/drawers/ChatsDrawer.tsx", 'import "./ManagementApp";\n');
-    // --- game-surface ---
-    // game imports chat-runtime and management.
-    write("src/components/ComposedReferenceGameApp.tsx", 'import "./ReferenceApp";\nimport "./ManagementApp";\n');
-    write("src/components/StardewInstallationDiscovery.tsx", "");
-    write("src/composed-reference-game-browser-api.ts", "");
-    // --- management-surface ---
-    // management imports chat-runtime and game.
+    // --- contracts ---
+    // chat contract must not import any surface or shared UI.
+    write("src/reference-pipeline-api.ts", 'import "./components/ChatSurface";\n');
+    // its own members must not import each other.
+    write("src/reference-pipeline-session.ts", 'import "./reference-pipeline-api";\n');
     write("src/management-pipeline-api.ts", "");
-    write("src/management-pipeline-session.ts", "");
-    write("src/components/ManagementApp.tsx", 'import "./ReferenceApp";\nimport "./ComposedReferenceGameApp";\n');
-    // --- shared ---
-    // shared leaf imports each surface/contract/shared-ui alternative once.
-    write("src/i18n.ts", 'import "./components/ReferenceApp";\nimport "./reference-pipeline-api";\n');
-    write("src/types.ts", 'import "./components/ComposedReferenceGameApp";\nimport "./components/ManagementApp";\nimport "./components/Composer";\n');
+    write("src/composed-reference-game-browser-api.ts", "");
+    // --- composed root: the one assembler ---
+    write("src/components/ComposedReferenceGameApp.tsx", "");
+    // --- surfaces: peer body must not import another peer body ---
+    write("src/components/ChatSurface.tsx", 'import "./GameSurface";\n');
+    write("src/components/GameSurface.tsx", "");
+    // --- surface-support must not depend on a surface ---
+    write("src/components/management-panels.tsx", 'import "./ChatSurface";\n');
+    // --- shared-ui must not import a surface or its support ---
+    write("src/components/SurfaceView.tsx", 'import "./ChatSurface";\n');
+    // --- shared leaf must not import a surface either ---
+    write("src/i18n.ts", 'import "./components/ChatSurface";\n');
 
     const rebased = { ...structuredClone(config), options: { ...structuredClone(config.options), includeOnly: "^src/", tsConfig: { fileName: join(fixture, "tsconfig.json") } } };
     for (const rule of rebased.forbidden) {
@@ -229,7 +197,7 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      ["no-chat-runtime-to-game-surface", "no-chat-runtime-to-management-surface", "no-contract-imports-surfaces", "no-contract-internal-dependency", "no-game-surface-to-chat-runtime", "no-game-surface-to-management-surface", "no-management-surface-to-chat-runtime", "no-management-surface-to-game-surface", "no-shared-imports-surfaces", "no-shared-ui-imports-surfaces"].sort(),
+      ["no-chat-contract-internal-dependency", "no-contract-imports-ui", "no-shared-imports-modules", "no-shared-ui-imports-surfaces", "no-surface-support-to-surface", "no-surface-to-other-surface"].sort(),
       `fixture must fire every boundary rule; fired: ${[...rulesFired].join(",")}`,
     );
   } finally {
