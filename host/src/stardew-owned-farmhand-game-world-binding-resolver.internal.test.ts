@@ -58,7 +58,12 @@ async function withControl(root: string, body: (control: ReturnType<typeof openP
 
 test("resolver exposes only the frozen resolveWorldBinding operation", async () => {
   const resolverModule = await import("./stardew-owned-farmhand-game-world-binding-resolver.internal.js");
+  // `STARDEW_GAME_INTEGRATION_ID` is the one published integration identity of
+  // this Stardew lifecycle surface, exported by fe069536 for the production
+  // lifecycle coordinator to import; the resolver object itself still exposes
+  // only `resolveWorldBinding` (asserted below).
   assert.deepEqual(Object.keys(resolverModule).sort(), [
+    "STARDEW_GAME_INTEGRATION_ID",
     "createStardewWorldBindingResolver",
     "createStardewWorldBindingResolverFromGameAuthority",
   ]);
