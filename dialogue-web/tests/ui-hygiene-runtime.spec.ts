@@ -360,3 +360,103 @@ test("gate 3 (control surface): no control paints itself with the browser's own 
   test.info().annotations.push({ type: "control-surface", description: summary.join("; ") });
   console.log(`gate 3 control surface: ${summary.join("; ")}; all controls see-through or theme-token painted`);
 });
+
+/**
+ * Gate 3 (chat row reading): the Chats row's own select control keeps a real
+ * contrast ratio against the card it is painted on, at both the narrow and the
+ * wide layout.
+ *
+ * The measured defect (commit `ca7db343`): the control carried
+ * `chat-item-title chat-item-select`, and `chat-item-select` had no rule at all -
+ * so Chromium painted its own near-white `ButtonFace` (rgb(240, 240, 240)) under
+ * `--text-primary` (`#f5f0e8`), a ratio of 1.005:1. The surface read as an
+ * invisible button. The control-surface gate above catches the *class* whose
+ * background is foreign; this catches the *reading*, which a future class that
+ * paints a themed-but-too-similar surface would pass.
+ */
+test("gate 3 (chat row reading): the Chats row select control stays legible at both widths", async ({ page }) => {
+  await page.route("**/api/tavern/v1/chats*", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/memory", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: handle, memories: [], chapters: [] })),
+  );
+
+  const readings: string[] = [];
+  const failures: string[] = [];
+  for (const width of [400, 1280] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    // The surface is the URL's own fact, so the panel is opened by the route
+    // rather than by a click an app-bar fold could hide at 400 px.
+    await mountBothPanels(page);
+    await page.evaluate(() => {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.hash.slice(1));
+      params.set("panel", "chats");
+      window.history.replaceState({ gbPanel: "chats" }, "", `${url.pathname}${url.search}#${params.toString()}`);
+    });
+    await page.reload();
+    await expect(page.getByTestId("chats-surface")).toBeVisible();
+    // The row exists once the panel's own list read has landed; the surface
+    // frame alone can be on screen before its list is.
+    await expect(page.getByTestId("chat-select")).toBeVisible();
+
+    const reading = await page.evaluate(() => {
+      const node = document.querySelector('[data-testid="chat-select"]');
+      if (node === null) return null;
+      const parse = (value: string): number[] | null => {
+        const match = /^rgba?\(([^)]+)\)$/u.exec(value);
+        if (match === null) return null;
+        const parts = match[1].split(",").map((part) => Number(part.trim()));
+        return parts.length === 3 ? [...parts, 1] : parts;
+      };
+      const opaqueOver = (front: number[], behind: number[]): number[] =>
+        front[3]! >= 1 ? front.slice(0, 3) : [0, 1, 2].map((index) => front[index]! * front[3]! + behind[index]! * (1 - front[3]!));
+      // The card behind the control: the first ancestor painting anything at all.
+      let behind: number[] | null = null;
+      for (let element: Element | null = node; element !== null; element = element.parentElement) {
+        const parsed = parse(getComputedStyle(element).backgroundColor);
+        if (parsed !== null && parsed[3]! > 0) {
+          behind = parsed[3]! >= 1 ? parsed.slice(0, 3) : opaqueOver(parsed, [255, 255, 255]);
+          break;
+        }
+      }
+      const fallback = [255, 255, 255];
+      const background = behind ?? fallback;
+      const foreground = opaqueOver(parse(getComputedStyle(node).color)!, background);
+      const luminance = (rgb: number[]): number => {
+        const channel = (value: number): number => {
+          const scaled = value / 255;
+          return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(rgb[0]!) + 0.7152 * channel(rgb[1]!) + 0.0722 * channel(rgb[2]!);
+      };
+      const first = luminance(foreground);
+      const second = luminance(background);
+      return {
+        className: node.getAttribute("class") ?? "",
+        color: getComputedStyle(node).color,
+        background: `rgb(${background.map((value) => Math.round(value)).join(", ")})`,
+        ratio: (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05),
+      };
+    });
+
+    if (reading === null) {
+      failures.push(`${width}px: the Chats row select control is not rendered`);
+      continue;
+    }
+    readings.push(`${width}px ${reading.className} ${reading.color} on ${reading.background} = ${reading.ratio.toFixed(2)}:1`);
+    if (reading.ratio < 4.5) {
+      failures.push(`${width}px: the Chats row select control reads ${reading.ratio.toFixed(2)}:1`);
+    }
+  }
+
+  test.info().annotations.push({ type: "chat-row-contrast", description: readings.join("; ") });
+  console.log(`gate 3 chat row reading: ${readings.join("; ")}`);
+  expect(failures, "the Chats row's own select control must stay legible against its card").toEqual([]);
+});
