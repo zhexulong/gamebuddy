@@ -234,13 +234,12 @@ test("a11y.1: every interactive control has an accessible name", (t) => {
 });
 
 /**
- * The one control whose only accessible name is `title`, identified by its own
- * shape rather than by where it sits: the file it lives in, its tag, and the label
- * its `title` points at. `title` is a real fallback in the name computation, so a
- * title-only control is named - but it is the weakest source (no visible text,
- * hidden from touch, inconsistently announced), so the set is bounded: a new one
- * has to be a decision rather than an accident. Nothing here is a line number; the
- * route is derived from where the control really sits.
+ * The shape a `title`-only control has, kept as the negative sample `a11y.6`
+ * asserts against. `title` is a real fallback in the name computation, but it is
+ * the weakest source (no visible text, hidden from touch, inconsistently
+ * announced) - and since the chat row's rename button was given its own
+ * `aria-label`, no control in the product is named by `title` alone, which is
+ * what `a11y.5` now requires.
  */
 const TITLE_ONLY_CONTROL = {
   file: "src/components/management-surface-panels.tsx",
@@ -268,14 +267,13 @@ function controlIdentity(control) {
   return { file: fileOf(control.line), tag: control.tag, title: control.title };
 }
 
-test("a11y.5: the one title-only control is the chat row's rename button", (t) => {
+test("a11y.5: no control's only accessible name is its title", (t) => {
   const found = titleOnlyControls();
   t.diagnostic(`a11y.5: ${found.length} title-only control(s): ${found.map((control) => control.line).join(", ")}`);
-  assert.equal(found.length, 1, "a new title-only control needs a decision: give it visible text or an aria-label");
   assert.deepEqual(
-    controlIdentity(found[0]),
-    TITLE_ONLY_CONTROL,
-    "the one title-only control is the chat row's rename button, named by its own title",
+    found.map(controlIdentity),
+    [],
+    "a title-only control is the weakest name source: give it visible text or an aria-label",
   );
 });
 
