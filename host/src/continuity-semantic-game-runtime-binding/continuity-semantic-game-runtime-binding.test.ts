@@ -12,6 +12,7 @@ import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } fr
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
 import type { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import type { ExactReceiptRecoveryPort } from "../stardew-execution-recovery-supervisor.js";
 import {
   brandRuntimeOwnerIdentity,
   consumeBindingToken,
@@ -687,7 +688,7 @@ test("binds Stardew recovery context only to a branded receipt-backed execution"
       throw new Error("fixture receipt recovery is not invoked");
     },
   });
-  (current.handle as { receiptRecovery?: typeof receiptRecovery }).receiptRecovery = receiptRecovery;
+  (current.handle as { receiptRecovery?: ExactReceiptRecoveryPort }).receiptRecovery = receiptRecovery;
   const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
     Object.freeze({
       manifest: await manifest(),

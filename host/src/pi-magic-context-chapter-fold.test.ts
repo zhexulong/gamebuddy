@@ -110,7 +110,7 @@ import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-recla
 import { createGameBuddyPlayerMemoryCrudFacade } from "@cortexkit/pi-magic-context/memory";
 
 const apiKey = process.env.CPA_OAI_API_KEY;
-const identity: CompanionIdentity = Object.freeze({
+const identity = Object.freeze({
   // Production's chat runtime carries a continuity id, and the Host only declares the memory
   // partition when it is present. WITHOUT it the plugin falls back to a git-root walk from a
   // temporary directory - finds no project, and memory plus the historian stay off. A fixture
@@ -120,7 +120,7 @@ const identity: CompanionIdentity = Object.freeze({
   saveId: "save_01",
   worldId: "world_01",
   companionId: "companion_01",
-});
+} satisfies CompanionIdentity);
 
 /**
  * One turn of ordinary conversation, sized so a handful of them cross the fixture trigger.

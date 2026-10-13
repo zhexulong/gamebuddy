@@ -114,7 +114,7 @@ test("rejects invalid options and stop fields without changing admission", () =>
     ["stop", "", "reason"],
     ["stop", "event", ""],
     ["stop\0", "event", "reason"],
-  ]) {
+  ] as const) {
     assert.throws(() => interruption.stop(stopId, sourceEventId, reason), /invalid_interruption_/);
     assert.deepEqual(interruption.capture(), initial);
   }
@@ -124,7 +124,7 @@ test("rejects invalid options and stop fields without changing admission", () =>
       [invalidIdentifier, "event", "reason"],
       ["stop", invalidIdentifier, "reason"],
       ["stop", "event", invalidIdentifier],
-    ]) {
+    ] as const) {
       assert.throws(() => interruption.stop(stopId, sourceEventId, reason), /invalid_interruption_/);
       assert.deepEqual(interruption.capture(), initial);
     }

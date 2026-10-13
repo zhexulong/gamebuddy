@@ -25,20 +25,32 @@ const GAME_TOOLS = readFileSync(join(ROOT, "host", "src", "game-tools.ts"), "utf
 const CATALOG = readFileSync(join(ROOT, "integrations", "stardew", "src", "Core", "Policy", "FarmhandActionDefinitions.cs"), "utf8");
 
 /** Every id that has a mount block, straight from the source. */
-function mountedActionIds() {
-  return [...new Set([...GAME_TOOLS.matchAll(/entry\.actionId === "([a-z_]+)"/g)].map((m) => m[1]))].sort();
+function mountedActionIds(): readonly string[] {
+  return [
+    ...new Set(
+      [...GAME_TOOLS.matchAll(/entry\.actionId === "([a-z_]+)"/g)]
+        .map((m) => m[1])
+        .filter((id): id is string => id !== undefined),
+    ),
+  ].sort();
 }
 
 /** The arguments the Mod's catalog declares for one action, and whether any carries an enum constraint. */
-function catalogArguments(id) {
+function catalogArguments(id: string) {
   const at = CATALOG.indexOf(`E("${id}"`);
   assert.notEqual(at, -1, `${id} has a mount block but is not in the Mod catalog`);
   const segment = CATALOG.slice(at, at + 800);
-  const args = [...segment.matchAll(/new FarmhandActionArgument\("([A-Za-z]+)",\s*"([a-z]+)"(,\s*[A-Za-z]+)?\)/g)].map((m) => ({
-    name: m[1],
-    type: m[2],
-    constrained: m[3] !== undefined,
-  }));
+  const args = [...segment.matchAll(/new FarmhandActionArgument\("([A-Za-z]+)",\s*"([a-z]+)"(,\s*[A-Za-z]+)?\)/g)].map((m) => {
+    const name = m[1];
+    const type = m[2];
+    assert.ok(name !== undefined, "a catalog argument match carries a name");
+    assert.ok(type !== undefined, "a catalog argument match carries a type");
+    return {
+      name,
+      type,
+      constrained: m[3] !== undefined,
+    };
+  });
   const postcondition = (segment.replace(/\s+/g, " ").match(/,\s*"([a-z_]+)",\s*"/) ?? [])[1] ?? "unknown";
   return { args, postcondition };
 }

@@ -28,7 +28,7 @@ const IDENTITY = Object.freeze({
   worldId: "world_context_01",
 });
 
-async function runtimeRootFor(name) {
+async function runtimeRootFor(name: string) {
   const root = await canonicalTestRoot(`game-runtime-context-${name}-`);
   await mkdir(root, { recursive: true });
   return root;
