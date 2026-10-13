@@ -112,6 +112,7 @@ function integrationWithCapabilities(
           dayOfMonth: 1,
           seasonIndex: 0,
           year: 1,
+          weather: "sunny",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -161,6 +162,7 @@ function integrationWithReadiness(
                 dayOfMonth: 1,
                 seasonIndex: 0,
                 year: 1,
+                weather: "sunny",
                 activeExecution: null,
               },
         latestReceipt: null,
@@ -204,6 +206,7 @@ async function catalogActionIds(
   policy = DEFAULT_ACTION_POLICY,
 ): Promise<string[]> {
   const [, , catalog] = createStardewObservationTools(integration, policy);
+  assert.ok(catalog !== undefined, "the observation mount must include the catalog tool");
   const result = await catalog.execute(
     "projection",
     {},
@@ -224,6 +227,7 @@ async function searchActionIds(
     integration,
     DEFAULT_ACTION_POLICY,
   );
+  assert.ok(search !== undefined, "the observation mount must include the search tool");
   const result = await search.execute(
     "projection",
     { query },
@@ -648,6 +652,7 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
           dayOfMonth: 1,
           seasonIndex: 0,
           year: 1,
+          weather: "sunny",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -733,6 +738,7 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
           dayOfMonth: 1,
           seasonIndex: 0,
           year: 1,
+          weather: "sunny",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -804,6 +810,7 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
           dayOfMonth: 1,
           seasonIndex: 0,
           year: 1,
+          weather: "sunny",
           activeExecution: null,
         },
         latestReceipt: null,
