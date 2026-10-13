@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "outDir": "dist-test-focus"
+  },
+  "include": [],
+  "files": [
+    "src/composition/companion-library-list.test.ts"
+  ]
+}
