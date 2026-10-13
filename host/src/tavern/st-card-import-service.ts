@@ -195,6 +195,18 @@ function reportFromDecode(importId: string, report: StCardImportReport, sourceHa
     ...(report.format !== undefined ? { sourceFormat: report.format } : {}),
     sourceHash,
     dispositions: Object.freeze(report.dispositions.map(disposition)),
+    // The decoder's own counted-loss ledger travels with the audit record, so a
+    // review surface reports a loss (a `system_prompt` beyond the voice bound is
+    // the common one) through that one vocabulary rather than a second one.
+    ...(report.losses.length === 0
+      ? {}
+      : {
+          losses: Object.freeze(
+            report.losses.map((loss) =>
+              Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count }),
+            ),
+          ),
+        }),
   });
 }
 function disposition(value: StCardImportDisposition): StCardImportRecord["dispositions"][number] {

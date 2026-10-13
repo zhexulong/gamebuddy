@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
+import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
@@ -163,6 +164,7 @@ type TavernManagementDomains = Readonly<
       TavernManagementDialogueWebOptions,
       | "libraryService"
       | "companionDetailService"
+      | "companionVoiceService"
       | "newCompanionProvisioner"
       | "newChatProvisioner"
       | "personaService"
@@ -299,6 +301,33 @@ function createTavernManagementDomains(
       // the runtime provisioned at mount; the artifact-store companion.json
       // only exists for library-created companions.
       return Object.freeze({ name: mountedName });
+    },
+  });
+  /**
+   * The mounted companion's own performance directive (the reviewed card's
+   * `system_prompt`). `read` projects the durable identity profile; `update`
+   * re-authors the text as the player's or clears it, CASed on the exact profile
+   * revision the browser read. Only the mounted companion's handle resolves.
+   */
+  const companionVoiceService = Object.freeze({
+    async read(handle: string) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const profile = await readIdentityProfile(runtimePaths.identityProfilePath);
+      return Object.freeze({
+        profileRevision: profile.revision,
+        characterVoice: projectCompanionVoice(profile),
+      });
+    },
+    async update(handle: string, command: Readonly<{ expectedProfileRevision: number; text?: string; clear?: true }>) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      return await updateMountedCompanionVoice({
+        identityProfilePath: runtimePaths.identityProfilePath,
+        runtimeCwd: runtimePaths.runtimeCwd,
+        containmentRoot: runtimePaths.root,
+        identityKey: identityKey(manifest.principal),
+        expectedProfileRevision: command.expectedProfileRevision,
+        voice: command.clear === true || command.text === undefined ? null : { text: command.text },
+      });
     },
   });
   const newCompanionProvisioner = Object.freeze({
@@ -439,6 +468,7 @@ function createTavernManagementDomains(
       playerPreferenceStore,
       libraryService,
       companionDetailService,
+      companionVoiceService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -709,6 +739,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionDetailService: ["read"],
+  companionVoiceService: ["read", "update"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -823,6 +854,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.archive",
       "chat.restore",
       "chat.trash",
+      "character.voice.read",
+      "character.voice.update",
       "character.import.stage",
       "character.import.read",
       "character.import.review",
@@ -868,6 +901,8 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.archive",
       "chat.restore",
       "chat.trash",
+      "character.voice.read",
+      "character.voice.update",
       "character.import.stage",
       "character.import.read",
       "character.import.review",

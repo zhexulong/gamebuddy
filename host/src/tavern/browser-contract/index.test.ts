@@ -58,6 +58,8 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "companion.list",
       "companion.detail",
       "companion.create",
+      "character.voice.read",
+      "character.voice.update",
       "character.import.stage",
       "character.import.read",
       "character.import.review",
@@ -1214,6 +1216,34 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "character.voice.read",
+      "GET",
+      "/api/tavern/v1/companions/:companionHandle/voice",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      ["companionHandle"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "character.voice.update",
+      "PUT",
+      "/api/tavern/v1/companions/:companionHandle/voice",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      ["companionHandle"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "character.import.stage",
       "POST",
       "/api/tavern/v1/imports",
@@ -1593,7 +1623,7 @@ test("import operations carry CSRF-bound write routes and safe projections", () 
   assert.equal(confirm.path, "/api/tavern/v1/imports/:importId/confirm");
   assert.equal(confirm.csrf, "required");
   // The stage result carries only player-readable projections (field summary,
-  // dispositions) - never card body text.
+  // dispositions, the decoder's counted-loss ledger) - never card body text.
   const stageResult = TavernBrowserContractV1.schemas.StCardImportStageResultV1Schema;
   assert.deepEqual(Object.keys(stageResult.properties ?? {}).sort(), [
     "apiVersion",
@@ -1601,6 +1631,7 @@ test("import operations carry CSRF-bound write routes and safe projections", () 
     "dispositions",
     "fields",
     "importId",
+    "losses",
     "name",
   ]);
 });

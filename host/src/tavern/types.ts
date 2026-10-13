@@ -57,6 +57,14 @@ export type StCardImportRecord = ArtifactRevision &
       classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
       reason: string;
     }>[];
+    /**
+     * The bounded, counted losses the decode took inside accepted fields (a
+     * card's own `system_prompt` beyond the voice bound is the common one). The
+     * audit record carries the ledger so a review surface reports a loss through
+     * the decoder's own vocabulary instead of a second mechanism. Optional: an
+     * artifact written before the ledger was persisted reads as no losses.
+     */
+    losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
   }>;
 /** Durable, field-level confirmation for an inert import candidate. */
 export type CandidateReviewRecord = ArtifactRevision &
@@ -257,7 +265,7 @@ function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
   });
 }
 function importRecord(v: Record<string, unknown>): StCardImportRecord {
-  if (!only(v, ["schemaVersion", "revision", "importId", "source", "sourceFormat", "sourceHash", "dispositions"]))
+  if (!only(v, ["schemaVersion", "revision", "importId", "source", "sourceFormat", "sourceHash", "dispositions", "losses"]))
     fail();
   const dispositions = array(v.dispositions, 256).map((x) => {
     if (!record(x) || !only(x, ["field", "classification", "reason"])) fail();
@@ -267,6 +275,17 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
       reason: requiredText(x.reason, 128),
     });
   });
+  const losses =
+    v.losses === undefined
+      ? undefined
+      : array(v.losses, 64).map((x) => {
+          if (!record(x) || !only(x, ["field", "reason", "count"])) fail();
+          return freeze({
+            field: requiredId(x.field),
+            reason: requiredText(x.reason, 128),
+            count: requiredRevision(x.count),
+          });
+        });
   const importId = requiredId(v.importId);
   const source = requiredSource(v.source);
   const sourceFormat = optionalSourceFormat(v.sourceFormat);
@@ -279,6 +298,7 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
     ...(sourceFormat === undefined ? {} : { sourceFormat }),
     sourceHash,
     dispositions: freeze(dispositions),
+    ...(losses === undefined ? {} : { losses: freeze(losses) }),
   });
 }
 function importHistory(v: Record<string, unknown>): StCardImportHistoryRecord {

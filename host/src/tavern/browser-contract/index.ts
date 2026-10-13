@@ -122,6 +122,9 @@ const ProblemCode = Type.Union([
   // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
   // to retry something that cannot succeed by retrying.
   Type.Literal("companion_record_unreadable"),
+  // The companion's performance directive is a durable profile field edited against an exact
+  // profile revision; a stale edit is its own bounded, non-retryable-by-repeating fact.
+  Type.Literal("character_voice_conflict"),
 ]);
 
 export const BrowserSwipeInfoV1Schema = strictObject({
@@ -319,6 +322,16 @@ export const StCardImportDispositionV1Schema = strictObject({
   ]),
   reason: Type.String({ minLength: 1, maxLength: 128 }),
 });
+/**
+ * One counted loss inside an accepted field (a card's own directive beyond the
+ * voice bound is `system_prompt` / `character_voice_too_long`). It is the
+ * decoder's own loss ledger, surfaced so a review never has to infer a loss.
+ */
+export const StCardImportLossV1Schema = strictObject({
+  field: Type.String({ minLength: 1, maxLength: 128 }),
+  reason: Type.String({ minLength: 1, maxLength: 128 }),
+  count: Revision,
+});
 export const StageStCardImportCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   /** Raw CCv2/v3 card JSON text (bounded at the same ceiling as the decoder). */
@@ -331,6 +344,7 @@ export const StCardImportStageResultV1Schema = strictObject({
   candidateRevision: Revision,
   fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
   dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
+  losses: Type.Optional(Type.Array(StCardImportLossV1Schema, { maxItems: 64 })),
 });
 export const StCardImportReadResultV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -341,6 +355,7 @@ export const StCardImportReadResultV1Schema = strictObject({
   reviewedFields: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 32 }),
   fields: Type.Array(StCardImportFieldSummaryV1Schema, { maxItems: 32 }),
   dispositions: Type.Array(StCardImportDispositionV1Schema, { maxItems: 128 }),
+  losses: Type.Optional(Type.Array(StCardImportLossV1Schema, { maxItems: 64 })),
 });
 export const ReviewStCardImportCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -614,6 +629,8 @@ const OperationId = Type.Union([
   Type.Literal("chat.archive"),
   Type.Literal("chat.restore"),
   Type.Literal("chat.trash"),
+  Type.Literal("character.voice.read"),
+  Type.Literal("character.voice.update"),
   Type.Literal("draft.save"),
   Type.Literal("draft.discard"),
   Type.Literal("chat.rename"),
@@ -664,6 +681,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.chat.archive"),
   Type.Literal("tavern.operation.chat.restore"),
   Type.Literal("tavern.operation.chat.trash"),
+  Type.Literal("tavern.operation.character.voice.read"),
+  Type.Literal("tavern.operation.character.voice.update"),
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.detail"),
   Type.Literal("tavern.operation.companion.create"),
@@ -759,6 +778,46 @@ export const CompanionDetailV1Schema = strictObject({
   apiVersion: ApiVersion,
   name: Type.String({ minLength: 1, maxLength: 128 }),
 });
+/**
+ * The mounted companion's own performance directive, as the durable identity
+ * profile holds it (the imported card's `system_prompt`).
+ *
+ * `source` is provenance for the review surface: `card` while the text is
+ * exactly what the imported card supplied, `player` once the player has edited
+ * it. The member is absent (projected as null) when the card wrote none or the
+ * player cleared it, so a cleared field reads as absent rather than as empty
+ * text - the same shape the prompt renders.
+ */
+export const CompanionCharacterVoiceV1Schema = strictObject({
+  text: Type.String({ minLength: 1, maxLength: 8_192, format: "tavern-browser-nfc-utf8-text-v1" }),
+  source: Type.Union([Type.Literal("card"), Type.Literal("player")]),
+});
+/**
+ * The companion voice read-back: the durable profile revision the browser must
+ * CAS against plus the effective directive (null when absent).
+ */
+export const CompanionVoiceV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  profileRevision: Revision,
+  characterVoice: Type.Union([CompanionCharacterVoiceV1Schema, Type.Null()]),
+});
+/**
+ * One edit or one clear of the mounted companion's performance directive. An
+ * edit always re-authors the text as the player's (`source: "player"`); a clear
+ * removes the field entirely rather than storing empty text.
+ */
+export const UpdateCompanionVoiceCommandV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    expectedProfileRevision: Revision,
+    text: Type.String({ minLength: 1, maxLength: 8_192, format: "tavern-browser-nfc-utf8-text-v1" }),
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    expectedProfileRevision: Revision,
+    clear: Type.Literal(true),
+  }),
+]);
 /** Create companion from a player-supplied display name; Host mints all IDs. */
 export const CreateCompanionCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -1726,6 +1785,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionDetailV1Schema },
   }),
   route({
+    routeId: "character.voice.read",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle/voice",
+    operationId: "character.voice.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionVoiceV1Schema },
+  }),
+  route({
+    routeId: "character.voice.update",
+    method: "PUT",
+    path: "/api/tavern/v1/companions/:companionHandle/voice",
+    operationId: "character.voice.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: UpdateCompanionVoiceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionVoiceV1Schema },
+  }),
+  route({
     routeId: "character.import.stage",
     method: "POST",
     path: "/api/tavern/v1/imports",
@@ -1993,9 +2081,13 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
+    CompanionVoiceV1Schema,
+    CompanionCharacterVoiceV1Schema,
+    UpdateCompanionVoiceCommandV1Schema,
     CreateCompanionCommandV1Schema,
     StCardImportFieldSummaryV1Schema,
     StCardImportDispositionV1Schema,
+    StCardImportLossV1Schema,
     StageStCardImportCommandV1Schema,
     StCardImportStageResultV1Schema,
     StCardImportReadResultV1Schema,
@@ -2047,6 +2139,7 @@ export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
 export type StCardImportFieldSummaryV1 = Static<typeof StCardImportFieldSummaryV1Schema>;
 export type StCardImportDispositionV1 = Static<typeof StCardImportDispositionV1Schema>;
+export type StCardImportLossV1 = Static<typeof StCardImportLossV1Schema>;
 export type StageStCardImportCommandV1 = Static<typeof StageStCardImportCommandV1Schema>;
 export type StCardImportStageResultV1 = Static<typeof StCardImportStageResultV1Schema>;
 export type StCardImportReadResultV1 = Static<typeof StCardImportReadResultV1Schema>;
@@ -2089,6 +2182,9 @@ export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingComm
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
+export type CompanionCharacterVoiceV1 = Static<typeof CompanionCharacterVoiceV1Schema>;
+export type CompanionVoiceV1 = Static<typeof CompanionVoiceV1Schema>;
+export type UpdateCompanionVoiceCommandV1 = Static<typeof UpdateCompanionVoiceCommandV1Schema>;
 export type CreateCompanionCommandV1 = Static<typeof CreateCompanionCommandV1Schema>;
 export type PersonaV1 = Static<typeof PersonaV1Schema>;
 export type PersonaUpdateCommandV1 = Static<typeof PersonaUpdateCommandV1Schema>;
