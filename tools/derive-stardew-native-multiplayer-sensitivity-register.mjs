@@ -417,9 +417,8 @@ const TABLE = {
   accept_special_order: [
     "StardewValley/FarmerTeam.cs",
     "public void AddSpecialOrder(string id, int? generationSeed = null, bool forceRepeatable = false)",
-    "mp-observational",
-    "the creation write is the player team's own list; the only pattern-decisive read is the per-farmer order",
-    "broadcast to connected farmers, which changes who is told, not whether the order exists.",
+    "mp-insensitive",
+    "AddSpecialOrder's body reads no multiplayer token at all: it returns when the team already offers the id, resolves the order through SpecialOrder.GetSpecialOrder, warns and returns when the id is unknown, refuses a completed non-repeatable order, and appends to the team's own specialOrders list. FarmerTeam is populated in single-player too, so the same call creates the same order in both world modes.",
   ],
   // The museum donation reward collection: reward list is per-player state derived from donation flags.
   claim_museum_reward: [
@@ -431,7 +430,7 @@ const TABLE = {
   ],
   // Prize-ticket redemption: the prize track head is the game's own ticketPrizesClaimed stat; the subject is the actor's own stack.
   redeem_prize_ticket: [
-    "StardewValley/LibraryMuseum.cs",
+    "StardewValley.Locations/LibraryMuseum.cs",
     "public void OnRewardCollected(Item item, Farmer who)",
     "mp-insensitive",
     "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read.",

@@ -1641,8 +1641,8 @@
           "kind": "native",
           "file": "StardewValley/FarmerTeam.cs",
           "signature": "public void AddSpecialOrder(string id, int? generationSeed = null, bool forceRepeatable = false)",
-          "sensitivity": "mp-observational",
-          "observedEffect": "the creation write is the player team's own list; the only pattern-decisive read is the per-farmer order"
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "AddSpecialOrder's body reads no multiplayer token at all: it returns when the team already offers the id, resolves the order through SpecialOrder.GetSpecialOrder, warns and returns when the id is unknown, refuses a completed non-repeatable order, and appends to the team's own specialOrders list. FarmerTeam is populated in single-player too, so the same call creates the same order in both world modes."
         }
       ],
       "admission": {
@@ -1690,7 +1690,7 @@
       "seams": [
         {
           "kind": "native",
-          "file": "StardewValley/LibraryMuseum.cs",
+          "file": "StardewValley.Locations/LibraryMuseum.cs",
           "signature": "public void OnRewardCollected(Item item, Farmer who)",
           "sensitivity": "mp-insensitive",
           "modeNeutralReason": "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read."
