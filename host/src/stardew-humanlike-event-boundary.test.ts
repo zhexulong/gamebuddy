@@ -33,8 +33,8 @@ function createWorldFactMessage(
     gameTime: string | null;
     revision: number;
     deduplicationKey?: string;
-    payload?: Record<string, unknown>;
-    payloadJson?: string;
+    payload?: Record<string, unknown> | undefined;
+    payloadJson?: string | undefined;
   }> = {},
   envelopeOverrides: Partial<Envelope<"world_fact", unknown>> = {},
 ): BridgeMessage {
