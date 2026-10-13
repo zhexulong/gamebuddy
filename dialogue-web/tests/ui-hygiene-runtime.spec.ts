@@ -220,7 +220,8 @@ async function mountPeerSurfaces(page: Page): Promise<void> {
  * does with the navigation entries.
  */
 async function openPeerSurface(page: Page, panel: string | null, testId: string): Promise<void> {
-  if (panel !== null) await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=${panel}`);
+  const surface = panel === null ? "" : `&panel=${panel}`;
+  await page.goto(`/#profile=composed-reference-game&boot=${token}${surface}`);
   await expect(page.getByTestId(testId)).toBeVisible();
 }
 
@@ -398,6 +399,131 @@ test("gate 3 (touch floor, mutation): a planted 20 px control on the Chats surfa
   ).toBe(true);
   expect(planted.checked, "the planted control is counted, not skipped").toBe(before.checked + 1);
   expect(restored.short, "removing the plant leaves the surface clean again").toEqual([]);
+});
+
+/**
+ * No interactive control's LABEL wraps, on any peer surface, at either width.
+ *
+ * The measured defect: `创建伙伴` and `创建` stacked onto two lines inside their flex
+ * rows, so one button read as two, until `white-space: nowrap; flex-shrink: 0` was
+ * added to the shared button. A lane pinned that per panel; nothing held it
+ * generally.
+ *
+ * The predicate is the rendered line-box count, not a declaration: for each visible
+ * interactive control that carries text, every text node is measured with
+ * `Range.getClientRects()`, and a label is wrapping when its text occupies more
+ * than one line box. `white-space` and `flex-shrink` are then reported as context,
+ * because a rule that asserted them would pass on a label that wraps for another
+ * reason (a string too long for its box) - and a rule that reads the cascade is not
+ * reading the product. Controls with no text (icon-only), not rendered ones, and
+ * ones out of the visual flow (`clip-path: inset(50%)`) are excluded by the same
+ * explicit rule the touch floor uses: they are not a label the player reads.
+ *
+ * Widths: 1440 px and 400 px. A label that only fits on one line because the window
+ * is wide is the defect, not the rule.
+ */
+async function wrappedLabels(
+  page: Page,
+  testId: string,
+): Promise<{ checked: number; wrapping: string[] }> {
+  return await page
+    .locator(`[data-testid="${testId}"] ${INTERACTIVE_CONTROL}`)
+    .evaluateAll((nodes) => {
+      const checked = [];
+      const wrapping = [];
+      for (const node of nodes) {
+        if (node.getClientRects().length === 0) continue;
+        const style = getComputedStyle(node);
+        if (style.clipPath === "inset(50%)") continue;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        const tops = new Set();
+        let hasText = false;
+        let textNode = walker.nextNode();
+        while (textNode !== null) {
+          if ((textNode.textContent ?? "").trim().length > 0) {
+            hasText = true;
+            range.selectNodeContents(textNode);
+            for (const rect of range.getClientRects()) tops.add(Math.round(rect.top));
+          }
+          textNode = walker.nextNode();
+        }
+        if (!hasText) continue;
+        const tag = node.tagName.toLowerCase();
+        const label = (node.textContent ?? "").trim().slice(0, 40);
+        checked.push(`${tag} "${label}"`);
+        if (tops.size > 1)
+          wrapping.push(
+            `${tag} "${label}" renders ${tops.size} line boxes (${style.whiteSpace}, flex-shrink ${style.flexShrink})`,
+          );
+      }
+      return { checked: checked.length, wrapping };
+    });
+}
+
+/** The two widths a label has to hold at: the wide layout and the phone strip. */
+const LABEL_WIDTHS = [
+  { width: 1440, height: 900 },
+  { width: 400, height: 800 },
+] as const;
+
+test("gate 3 (label wrap): no interactive control's label wraps on any peer surface", async ({ page }) => {
+  await mountPeerSurfaces(page);
+  await page.setViewportSize({ width: LABEL_WIDTHS[0].width, height: LABEL_WIDTHS[0].height });
+
+  const failures: string[] = [];
+  const summary: string[] = [];
+  for (const viewport of LABEL_WIDTHS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    for (const [panel, testId] of PEER_SURFACES) {
+      await openPeerSurface(page, panel, testId);
+      const measured = await wrappedLabels(page, testId);
+      summary.push(`${viewport.width}px ${testId} ${measured.checked} label(s)`);
+      for (const wrapped of measured.wrapping) failures.push(`${viewport.width}px ${testId}: ${wrapped}`);
+    }
+  }
+
+  test.info().annotations.push({ type: "label-wrap", description: summary.join(" | ") });
+  console.log(`gate 3 label wrap: ${summary.join(" | ")}`);
+  expect(failures, "a control label that wraps reads as two controls").toEqual([]);
+});
+
+/**
+ * The mutation: a label that cannot fit its box on one line, planted on the
+ * characters surface, is reported by the same measurement the gate asserts on -
+ * and a short label in the very same element is not, so the finding is the wrap
+ * and not the element.
+ */
+test("gate 3 (label wrap, mutation): a planted wrapping label is reported", async ({ page }) => {
+  await mountPeerSurfaces(page);
+  await page.setViewportSize({ width: LABEL_WIDTHS[1].width, height: LABEL_WIDTHS[1].height });
+  await openPeerSurface(page, "characters", "characters-surface");
+
+  const before = await wrappedLabels(page, "characters-surface");
+  await page.getByTestId("characters-surface").evaluate((surface) => {
+    const planted = document.createElement("button");
+    planted.id = "planted-wrapping-label";
+    planted.textContent = "Create a brand new companion from this card right away";
+    planted.style.cssText = "width: 96px; display: inline-block; white-space: normal;";
+    surface.append(planted);
+  });
+  const planted = await wrappedLabels(page, "characters-surface");
+  await page.getByTestId("characters-surface").evaluate((surface) => {
+    const control = surface.querySelector("#planted-wrapping-label");
+    if (control !== null) control.textContent = "Create";
+  });
+  const shortened = await wrappedLabels(page, "characters-surface");
+  await page.getByTestId("characters-surface").evaluate((surface) => {
+    surface.querySelector("#planted-wrapping-label")?.remove();
+  });
+
+  console.log(`gate 3 label mutation: before=${JSON.stringify(before.wrapping)} planted=${JSON.stringify(planted.wrapping)}`);
+  expect(before.wrapping, "the characters surface is clean before the plant").toEqual([]);
+  expect(
+    planted.wrapping.some((control) => control.includes("Create a brand new companion")),
+    "the planted wrapping label must be reported by the measurement the gate asserts on",
+  ).toBe(true);
+  expect(shortened.wrapping, "the same element with a short label does not wrap").toEqual([]);
 });
 
 /**
