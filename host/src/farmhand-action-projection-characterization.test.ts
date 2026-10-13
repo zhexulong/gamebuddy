@@ -240,29 +240,97 @@ async function searchActionIds(
   ).actions.map((entry) => entry.actionId);
 }
 
-test("every authenticated published Mod registration with a local adapter has exact live-capability, typed-tool, and catalog parity", async () => {
+/**
+ * The Game Action tool NAME set is constant for the life of a connected session (`b94dfd7a`, "constant
+ * Game Action tool name set preserves the provider prefix cache"). `createStardewActionTools` mounts
+ * every tool it can build whenever the bridge is connected with a fresh snapshot; per-action eligibility
+ * and Host policy are decided at execution time, which returns a structured rejected receipt
+ * (`capability_not_declared` / `action_policy_denied`) instead of withdrawing the tool. The set therefore
+ * does not depend on the live capability list, the snapshot's capabilities, or the policy.
+ *
+ * The mount surface is larger than TEST_MOD_REGISTRATIONS because the fixture is the Mod catalog the
+ * catalog/search tools are filtered against, while this is the fixed Host tool build. Every published
+ * fixture action has a mount; the remaining names are the other Host adapters this build carries.
+ */
+const CONSTANT_MOUNTED_TOOL_NAMES: readonly string[] = Object.freeze([
+  "stardew_bait_crab_pot",
+  "stardew_break_rock_source",
+  "stardew_chest_retrieve",
+  "stardew_chest_store",
+  "stardew_chop_stump",
+  "stardew_chop_tree_source",
+  "stardew_clear_cask",
+  "stardew_clear_debris",
+  "stardew_clear_hoedirt",
+  "stardew_collect_animal_product",
+  "stardew_collect_crab_pot_output",
+  "stardew_cook_recipe",
+  "stardew_craft_item",
+  "stardew_cut_grass",
+  "stardew_cut_weeds",
+  "stardew_deposit_silo_hay",
+  "stardew_dig_artifact_spot",
+  "stardew_dress_mannequin",
+  "stardew_enter_exit",
+  "stardew_enter_mine",
+  "stardew_equip_tool",
+  "stardew_feed_animal",
+  "stardew_fertilize_tile",
+  "stardew_harvest_bush",
+  "stardew_harvest_crop",
+  "stardew_harvest_fruit_tree",
+  "stardew_machine_collect_output",
+  "stardew_machine_inspect",
+  "stardew_machine_load",
+  "stardew_mount_transport",
+  "stardew_move_to_tile",
+  "stardew_navigate_to_destination",
+  "stardew_npc_relationship",
+  "stardew_pickup_forage",
+  "stardew_pickup_item",
+  "stardew_place_crab_pot",
+  "stardew_place_wood_fence",
+  "stardew_plant_sapling",
+  "stardew_plant_seed",
+  "stardew_refill_watering_can",
+  "stardew_scythe_crop",
+  "stardew_set_sign_display",
+  "stardew_shake_tree",
+  "stardew_ship_item",
+  "stardew_stop_action",
+  "stardew_take_pedestal_item",
+  "stardew_till_soil",
+  "stardew_toggle_fence_gate",
+  "stardew_toggle_tool_light",
+  "stardew_travel",
+  "stardew_use_item",
+  "stardew_use_raft",
+  "stardew_water_crop",
+  "stardew_water_pet_bowl",
+  "stardew_water_slime_hutch_trough",
+]);
+
+test("every published Mod registration is mounted, and the catalog lists exactly the live published set", async () => {
   const publishedActionIds = TEST_MOD_REGISTRATIONS.map(
     (entry) => entry.actionId,
   );
-  const publishedCapabilities = TEST_MOD_REGISTRATIONS.map(
-    (entry) => entry.actionId,
-  );
-  const integration = integrationWithCapabilities(publishedCapabilities);
+  const integration = integrationWithCapabilities(publishedActionIds);
 
   assert.equal(
     new Set(publishedActionIds).size,
     publishedActionIds.length,
     "published action IDs must be unique",
   );
-  assert.equal(
-    new Set(publishedCapabilities).size,
-    publishedCapabilities.length,
-    "published capabilities must be unique",
-  );
   assert.deepEqual(
     [...actionToolNames(integration)].sort(),
-    publishedActionIds.map((actionId) => `stardew_${actionId}`).sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+    "the mounted tool name set is the constant Host surface, not the live capability set",
   );
+  for (const actionId of publishedActionIds)
+    assert.ok(
+      actionToolNames(integration).includes(`stardew_${actionId}`),
+      `published action ${actionId} must have a mounted tool`,
+    );
   assert.deepEqual(await catalogActionIds(integration), publishedActionIds);
 });
 
@@ -420,9 +488,11 @@ test("every materialized published Farmhand tool routes its exact action-specifi
   );
   assert.deepEqual(
     [...tools.keys()].sort(),
-    expectedToolNames,
-    "materialized tool names must exactly match published actions",
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+    "materialized tool names are the constant Host surface",
   );
+  for (const toolName of expectedToolNames)
+    assert.ok(tools.has(toolName), `published action must be mounted: ${toolName}`);
   for (const [toolName, tool] of tools) {
     assert.ok(toolName.startsWith("stardew_"));
     assert.ok(
@@ -479,21 +549,27 @@ test("every materialized published Farmhand tool routes its exact action-specifi
   );
 });
 
-test("Farmhand action projection materializes only stable registry actions present in the live Mod capability set", async () => {
+test("the mounted tool surface is constant while the catalog stays filtered to the live Mod capability set", async () => {
   const unknownOnly = integrationWithCapabilities(["unknown_mod_capability"]);
-  assert.deepEqual(actionToolNames(unknownOnly), []);
+  assert.deepEqual(
+    [...actionToolNames(unknownOnly)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
   assert.deepEqual(await catalogActionIds(unknownOnly), []);
 
   const stableButNotLive = integrationWithCapabilities(["move_to_tile"]);
-  assert.deepEqual(actionToolNames(stableButNotLive), ["stardew_move_to_tile"]);
+  assert.deepEqual(
+    [...actionToolNames(stableButNotLive)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
   assert.deepEqual(await catalogActionIds(stableButNotLive), ["move_to_tile"]);
   assert.equal(
-    actionToolNames(stableButNotLive).includes("stardew_till_soil"),
+    (await catalogActionIds(stableButNotLive)).includes("till_soil"),
     false,
   );
 });
 
-test("hello-only capabilities absent from the fresh snapshot are neither mounted, listed, nor searchable", async () => {
+test("hello-only capabilities absent from the fresh snapshot are not listed or searchable, while the mount stays constant", async () => {
   const integration = integrationWithReadiness(
     ["move_to_tile", "till_soil"],
     ["move_to_tile"],
@@ -502,12 +578,15 @@ test("hello-only capabilities absent from the fresh snapshot are neither mounted
       throw new Error("must_not_execute");
     },
   );
-  assert.deepEqual(actionToolNames(integration), ["stardew_move_to_tile"]);
+  assert.deepEqual(
+    [...actionToolNames(integration)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
   assert.deepEqual(await catalogActionIds(integration), ["move_to_tile"]);
   assert.deepEqual(await searchActionIds(integration, "soil"), []);
 });
 
-test("Farmhand projection does not revive legacy or experimental Mod capabilities", async () => {
+test("Farmhand projection does not list legacy or experimental Mod capabilities, and retires their tool names", async () => {
   const integration = integrationWithCapabilities([
     "clear_debris",
     "npc_relationship",
@@ -515,11 +594,23 @@ test("Farmhand projection does not revive legacy or experimental Mod capabilitie
     "collect_resource",
   ]);
 
-  assert.deepEqual(actionToolNames(integration), []);
   assert.deepEqual(await catalogActionIds(integration), []);
+  assert.deepEqual(await searchActionIds(integration, "resource"), []);
+  assert.deepEqual(
+    [...actionToolNames(integration)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
+  // `end_day` and `collect_resource` are retired policy identifiers: they have no Host adapter, so no
+  // capability list can conjure a mounted tool for them.
+  for (const retired of ["end_day", "collect_resource"])
+    assert.equal(
+      actionToolNames(integration).includes(`stardew_${retired}`),
+      false,
+      `${retired} is retired and must have no tool`,
+    );
 });
 
-test("one omitted live capability leaves its published registry action unmounted and unlisted", async () => {
+test("one omitted live capability leaves its published registry action unlisted and unsearchable, while its mounted tool fails closed at execution", async () => {
   const omitted = TEST_MOD_REGISTRATIONS.find(
     (entry) => entry.actionId === "till_soil",
   );
@@ -527,24 +618,48 @@ test("one omitted live capability leaves its published registry action unmounted
     omitted,
     "characterization requires a Mod-published action when omitted live",
   );
+  let executeCalls = 0;
   const integration = integrationWithCapabilities(
     TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).filter(
       (actionId) => actionId !== omitted.actionId,
     ),
+    async () => {
+      executeCalls++;
+      throw new Error("must_not_execute");
+    },
   );
 
-  assert.equal(
+  assert.ok(
     actionToolNames(integration).includes(`stardew_${omitted.actionId}`),
-    false,
+    "the mount surface is constant, so the tool stays mounted",
   );
   assert.equal(
     (await catalogActionIds(integration)).includes(omitted.actionId),
     false,
   );
+  assert.deepEqual(await searchActionIds(integration, "till"), []);
+  const tool = createStardewActionTools(
+    integration,
+    DEFAULT_ACTION_POLICY,
+    () => admission(),
+  ).find((candidate) => candidate.name === `stardew_${omitted.actionId}`);
+  assert.ok(tool, "the omitted action's tool must be mounted");
+  const result = await tool.execute(
+    "projection",
+    { x: 3, y: 4 },
+    new AbortController().signal,
+    () => undefined,
+    {} as never,
+  );
+  assert.equal(executeCalls, 0);
+  assert.equal(
+    (result.details as { reasonCode: string }).reasonCode,
+    "capability_not_declared",
+  );
   assert.ok(TEST_MOD_REGISTRATIONS.includes(omitted));
 });
 
-test("Host v1 denied farming family narrows the live tool and catalog surface without hiding unrelated actions", async () => {
+test("Host v1 denied farming family narrows the catalog surface without withdrawing tools", async () => {
   const allCapabilities = TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId);
   const integration = integrationWithCapabilities(allCapabilities);
   const denyFarming = {
@@ -569,7 +684,8 @@ test("Host v1 denied farming family narrows the live tool and catalog surface wi
   );
   assert.deepEqual(
     [...actionToolNames(integration, denyFarming)].sort(),
-    remaining.map((entry) => `stardew_${entry.actionId}`).sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+    "policy is decided at execution time, so it does not withdraw tools",
   );
   assert.deepEqual(
     await catalogActionIds(integration, denyFarming),
@@ -580,7 +696,8 @@ test("Host v1 denied farming family narrows the live tool and catalog surface wi
       actionToolNames(integration, denyFarming).includes(
         `stardew_${action.actionId}`,
       ),
-      false,
+      true,
+      "a policy-denied action stays mounted",
     );
     assert.equal(
       (await catalogActionIds(integration, denyFarming)).includes(
@@ -599,11 +716,10 @@ test("Host v1 denied farming family narrows the live tool and catalog surface wi
   );
 });
 
-test("Farmhand materialization requires a connected fresh snapshot capability", () => {
+test("Farmhand materialization requires a connected fresh snapshot, not a nonempty capability list", () => {
   for (const [connected, snapshotCapabilities] of [
     [false, ["move_to_tile"]],
     [true, null],
-    [true, []],
   ] as const) {
     const integration = integrationWithReadiness(
       ["move_to_tile"],
@@ -620,6 +736,20 @@ test("Farmhand materialization requires a connected fresh snapshot capability", 
       [],
     );
   }
+  // An empty live capability list does NOT withdraw the mount: per-action admission, not the mount, is
+  // what turns a capability change into a refusal.
+  const emptyCapabilities = integrationWithReadiness(
+    ["move_to_tile"],
+    [],
+    true,
+    async () => {
+      throw new Error("must_not_execute");
+    },
+  );
+  assert.deepEqual(
+    [...actionToolNames(emptyCapabilities)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
 });
 
 test("a materialized Farmhand tool rereads the latest live revision at invocation", async () => {
@@ -677,11 +807,11 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
     },
   };
 
-  const [move] = createStardewActionTools(
+  const move = createStardewActionTools(
     integration,
     DEFAULT_ACTION_POLICY,
     () => admission(),
-  );
+  ).find((candidate) => candidate.name === "stardew_move_to_tile");
   assert.ok(move);
   revision = 4;
   await move.execute(
@@ -754,11 +884,11 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
       throw new Error("must_not_cancel");
     },
   };
-  const [oldMove] = createStardewActionTools(
+  const oldMove = createStardewActionTools(
     integration,
     DEFAULT_ACTION_POLICY,
     () => admission(),
-  );
+  ).find((candidate) => candidate.name === "stardew_move_to_tile");
   assert.ok(oldMove);
   session = "session_generation_b";
   revision = 4;
@@ -775,7 +905,10 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
     (result.details as { reasonCode: string }).reasonCode,
     "capability_not_declared",
   );
-  assert.deepEqual(actionToolNames(integration), []);
+  assert.deepEqual(
+    [...actionToolNames(integration)].sort(),
+    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
+  );
   assert.deepEqual(await catalogActionIds(integration), []);
   assert.deepEqual(await searchActionIds(integration, "move"), []);
 });
@@ -827,11 +960,11 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
     },
   };
 
-  const [move] = createStardewActionTools(
+  const move = createStardewActionTools(
     integration,
     DEFAULT_ACTION_POLICY,
     () => admission(),
-  );
+  ).find((candidate) => candidate.name === "stardew_move_to_tile");
   assert.ok(move);
   enabled = false;
   const result = await move.execute(
