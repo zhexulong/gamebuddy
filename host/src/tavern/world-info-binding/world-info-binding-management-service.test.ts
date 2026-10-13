@@ -370,7 +370,7 @@ test("mounted binding service scopes source handles to the exact current project
   assert.equal(durableBinding.publicTitle, "Pelican Town");
   assert.equal(durableBinding.revision, 1);
   // Every projection mints fresh opaque handles even for the same source.
-  assert.notEqual(second.items[0].handle, first.items[0].handle);
+  assert.notEqual(second.items[0]?.handle, first.items[0]?.handle);
 });
 
 test("mounted binding service rechecks the coordinator lease after bindExact and fails closed before durable mutation", async () => {

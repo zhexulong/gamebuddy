@@ -209,7 +209,7 @@ test("mounted management service lists durable metadata only and renames the exa
   `);
   const listValue = results.listValue as { chats: ReadonlyArray<Readonly<Record<string, unknown>>> };
   assert.equal(listValue.chats.length, 1);
-  assert.equal(listValue.chats[0].isSelected, true);
+  assert.equal(listValue.chats[0]?.isSelected, true);
   assert.equal((results.two as { chats: unknown[] }).chats.length, 2);
   const secondEntry = (results.two as { chats: ReadonlyArray<Readonly<Record<string, unknown>>> }).chats.find(
     (chat) => chat.isSelected === false,

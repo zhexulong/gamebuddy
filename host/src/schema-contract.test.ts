@@ -177,7 +177,11 @@ test("language-neutral schema and Host share closed shapes for every published s
     await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
   ) as { $defs: { snapshot: { properties: Record<string, unknown> } } };
   const hostSnapshotFields = [
-    ...new Set([...protocolSource.matchAll(/invalid_snapshot:([a-z][A-Za-z0-9]*)(?![A-Za-z0-9_])/g)].map((match) => match[1])),
+    ...new Set(
+      [...protocolSource.matchAll(/invalid_snapshot:([a-z][A-Za-z0-9]*)(?![A-Za-z0-9_])/g)]
+        .map((match) => match[1])
+        .filter((field): field is string => field !== undefined),
+    ),
   ];
   const schemaSnapshotFields = new Set(Object.keys(schemaDocument.$defs.snapshot.properties));
   for (const field of hostSnapshotFields)
@@ -1156,6 +1160,7 @@ test("language-neutral schema validates exact ride_minecart request arguments", 
 test("language-neutral schema closes body-node admission challenge and grant frames", async () => {
   const validate = await schemaValidator();
   const [base] = (await fixture("golden-sequence.json")).messages as readonly Record<string, unknown>[];
+  assert.ok(base !== undefined, "golden-sequence.json must carry a first message");
   const challenge = {
     programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
     stopEpoch: 0, catalogRevision: 1, policyIdentity: { value: "policy:01", capabilityRevision: 1 },

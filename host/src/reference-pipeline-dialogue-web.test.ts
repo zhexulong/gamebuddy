@@ -210,13 +210,18 @@ function parseSseFrame(frame: string): Readonly<{
   assert.equal(lines.length, 5);
   assert.equal(lines[3], "");
   assert.equal(lines[4], "");
-  const id = lines[0].slice("id: ".length);
+  const idLine = lines[0];
+  const eventLine = lines[1];
+  const dataLine = lines[2];
+  assert.ok(idLine !== undefined, "sse frame carries an id line");
+  assert.ok(eventLine !== undefined, "sse frame carries an event line");
+  assert.ok(dataLine !== undefined, "sse frame carries a data line");
+  const id = idLine.slice("id: ".length);
   assert.match(id, /^[A-Za-z0-9_-]{22,}$/);
-  const eventType = lines[1].slice("event: ".length);
-  assert.notEqual(eventType, lines[1]);
-  const data = lines[2];
-  assert.ok(data.startsWith("data: "));
-  const event = JSON.parse(data.slice("data: ".length)) as {
+  const eventType = eventLine.slice("event: ".length);
+  assert.notEqual(eventType, eventLine);
+  assert.ok(dataLine.startsWith("data: "));
+  const event = JSON.parse(dataLine.slice("data: ".length)) as {
     apiVersion: number;
     epoch: string;
     sequence: number;
@@ -609,7 +614,7 @@ test("reference handler replays an existing SSE cursor", async () => {
       headers: { Origin: server.origin, "Content-Type": "application/json" },
       body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
     });
-    const _snapshot = (await bootstrap.json()) as { csrfToken: string };
+    await bootstrap.json();
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     const first = stream.publish({
       eventType: "draft.changed",
