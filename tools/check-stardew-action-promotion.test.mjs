@@ -133,3 +133,20 @@ test("gate descriptors remain non-authoritative coverage metadata", () => {
   );
   assert.equal(STARDEW_PUBLISHED_ACTION_GATES.some((entry) => entry.actionId === "move_to_tile"), true);
 });
+test("promotion rejects a published target action whose snapshot family the schema omits", () => {
+  const schema = JSON.parse(sources.schema);
+  delete schema.$defs.snapshot.properties.farmBuildingTargets;
+  const failures = failuresFor({ schema: JSON.stringify(schema) });
+  assert.ok(
+    failures.includes("published_action_missing_snapshot_family:build_farm_building:FarmBuildingTargets"),
+    JSON.stringify(failures),
+  );
+});
+
+test("promotion rejects a target-bearing action with no declared snapshot field", () => {
+  const failures = failuresFor({ snapshotTargetField: {} });
+  assert.ok(
+    failures.includes("published_target_action_missing_snapshot_field:build_farm_building"),
+    JSON.stringify(failures),
+  );
+});

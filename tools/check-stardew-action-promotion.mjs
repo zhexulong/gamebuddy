@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
+import { TARGET_FIELD as STARDEW_SNAPSHOT_TARGET_FIELD } from "./audit-stardew-discovery-channels.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -23,6 +24,7 @@ export function validatePromotionSources({
   protocol,
   schema,
   descriptors = STARDEW_PUBLISHED_ACTION_GATES,
+  snapshotTargetField = STARDEW_SNAPSHOT_TARGET_FIELD,
 }) {
   const failures = [];
   const definitions = parseModDefinitions(farmhandActionDefinitions);
@@ -38,6 +40,13 @@ export function validatePromotionSources({
   const hostSemanticEventKinds = parseHostSemanticEventKinds(protocol);
   const schemaSemanticEventKinds = parseSchemaSemanticEventKinds(schema);
   const schemaActions = parseSchemaExecutionActions(schema);
+  // The observation-contract join: action -> published snapshot family, whose one
+  // authority is the discovery audit's TARGET_FIELD map (also fixed in the same
+  // change). A promoted action whose family the language-neutral schema does not
+  // declare cannot ship its target, so promotion depends on the audit having no gaps.
+  const schemaSnapshotProps = new Set(
+    Object.keys(JSON.parse(schema).$defs?.snapshot?.properties ?? {}).map((key) => key.toLowerCase()),
+  );
   const descriptorIds = descriptors.map((descriptor) => descriptor.actionId);
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
@@ -68,6 +77,11 @@ export function validatePromotionSources({
       if (descriptor.length !== 1 && definition.actionId !== "navigate_to_destination") failures.push(`published_missing_gate_descriptor:${definition.actionId}`);
       else if (descriptor[0] && descriptor[0].identityVersion !== definition.identityVersion)
         failures.push(`gate_identity_drift:${definition.actionId}`);
+      const targetField = definition.needsTarget ? snapshotTargetField[definition.actionId] : undefined;
+      if (definition.needsTarget && targetField === undefined)
+        failures.push(`published_target_action_missing_snapshot_field:${definition.actionId}`);
+      if (targetField !== undefined && !schemaSnapshotProps.has(targetField.toLowerCase()))
+        failures.push(`published_action_missing_snapshot_family:${definition.actionId}:${targetField}`);
     } else if (host.length > 1) {
       failures.push(`experimental_adapter_duplicates:${definition.actionId}`);
     }
@@ -165,7 +179,7 @@ function parseModDefinitions(source) {
       const chunk = nextMatch >= 0 ? body.slice(start, start + 1 + nextMatch) : body.slice(start);
       const isExperimental = chunk.includes("FarmhandActionLifecycle.Experimental");
       const isLiveVerified = chunk.includes("FarmhandActionLifecycle.LiveVerified");
-      definitions.push({ actionId, familyId, identityVersion: 1, lifecycle: isLiveVerified ? "live_verified" : isExperimental ? "experimental" : "published", kind: "execution" });
+      definitions.push({ actionId, familyId, identityVersion: 1, lifecycle: isLiveVerified ? "live_verified" : isExperimental ? "experimental" : "published", kind: "execution", needsTarget: /new FarmhandActionArgument\("expectedTargetId"/.test(chunk) });
     }
   }
   return definitions;
