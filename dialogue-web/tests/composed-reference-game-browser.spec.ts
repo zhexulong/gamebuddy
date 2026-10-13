@@ -5019,8 +5019,19 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  await surface.getByTestId("chat-item").nth(1).getByTitle("Rename Chat").click();
-  await surface.getByLabel("Rename Chat").fill(renamedTitle);
+  // Two controls, two names: the row's rename BUTTON carries the affordance ("Rename Chat") and
+  // the input it opens is the FIELD ("Chat title"). While both carried `labels.renameChat`, a
+  // surface-wide `getByLabel("Rename Chat")` matched the other row's button and this input at once
+  // and Playwright's strict mode failed the journey before it could fill anything. So name the
+  // control that is meant, and assert no second control answers to that name so a duplicate cannot
+  // come back silently.
+  const renameRow = surface.getByTestId("chat-item").nth(1);
+  await renameRow.getByRole("button", { name: "Rename Chat" }).click();
+  const titleField = renameRow.getByLabel("Chat title");
+  await expect(titleField).toBeVisible();
+  await expect(surface.getByLabel("Rename Chat")).toHaveCount(1);
+  await expect(surface.getByLabel("Chat title")).toHaveCount(1);
+  await titleField.fill(renamedTitle);
   await surface.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => titleWrites.length).toBe(1);
   expect(titleWrites[0]).toEqual({

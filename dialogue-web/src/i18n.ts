@@ -77,6 +77,9 @@ const en = {
   newChat: "New Chat",
   exportChat: "Export Chat",
   renameChat: "Rename Chat",
+  // The rename button's own affordance is `renameChat`; this names the FIELD that button opens,
+  // so the affordance and the field it edits are two controls with two accessible names.
+  renameChatTitleField: "Chat title",
   deleteChat: "Delete Chat",
   chatHistory: "Chat History",
 
@@ -607,6 +610,7 @@ const zh: Messages = {
   newChat: "新建会话",
   exportChat: "导出聊天",
   renameChat: "重命名会话",
+  renameChatTitleField: "会话标题",
   deleteChat: "删除会话",
   chatHistory: "历史会话",
 

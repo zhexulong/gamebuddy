@@ -394,7 +394,7 @@ export function ChatsSurfacePanel({
                     <input
                       type="text"
                       className="form-input"
-                      aria-label={labels.renameChat}
+                      aria-label={labels.renameChatTitleField}
                       value={editing.title}
                       onChange={(event) => setEditing({ handle: chat.handle, title: event.target.value })}
                       autoFocus
