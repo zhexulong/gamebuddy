@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-test"
+  },
+  "include": [],
+  "files": [
+    "src/identity-profile.test.ts",
+    "src/companion-speech-dehydration.ts",
+    "src/tavern/default-companion-preset.ts",
+    "src/windows-stale-lock-reclaimer/index.ts"
+  ]
+}

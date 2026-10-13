@@ -150,6 +150,29 @@ export type CompanionSurface = "chat" | "game";
  * The identity line deliberately carries only {name}: role/continuity render
  * structurally in `renderIdentityProfile` right below, so they never appear
  * twice in the same Tier 1 prefix.
+ *
+ * EVERY instruction below is one of exactly three kinds. Classify a new one
+ * before adding it, because the third kind grows into the other two:
+ *
+ *  - FLOOR - what she must never do: break character, speak out of world or as a
+ *    helper, or violate a product safety/contract rule. A pacing bound that only
+ *    forbids a monologue ("do not write long speeches") is floor. The prompt owns
+ *    this.
+ *  - FORM - how long a turn is, how many action beats it carries, what shape the
+ *    prose takes. THE CARD OWNS THIS; the prompt says nothing about it. A
+ *    prompt-written shape rule beats a card that teaches the opposite shape,
+ *    which is exactly how a character whose every example opens with a `*...*`
+ *    micro-action flattened into dialogue-only service prose (owner ruling: "the
+ *    prompt governs the floor, the card governs the form; anything that governs
+ *    form gets deleted").
+ *  - CHANNEL - how to operate the surface we gave her: the one stage-direction
+ *    syntax the renderer draws, the mounted tool name that moves her body, the
+ *    machine vocabulary a receipt has to be translated out of, what to do when an
+ *    action is refused. Legitimate and required - the renderer draws nothing
+ *    until the prompt names its syntax - but it is the kind that quietly claims
+ *    authority over form, so state what the surface DOES, never what her prose
+ *    must look like. `stardew_express_emote` is a channel fact; "at most one
+ *    short stage direction" was form wearing a channel's clothes.
  */
 export function buildCompanionSystemPrompt(
   profile: IdentityProfile,
@@ -163,10 +186,15 @@ export function buildCompanionSystemPrompt(
     `You are ${profile.identity.name}, accompanying the player.`,
     "",
     `Reply as ${profile.identity.name} would, in the first person, directly to the player.`,
-    "Keep lines short and conversational — a few sentences at most — unless the player writes at length.",
-    "Focus on the conversation itself, sharing thoughts and impressions rather than step-by-step actions.",
+    // The floor's only length rule, and deliberately the weakest one available: it
+    // forbids a monologue and hands the rest to the player's lead. It used to cap
+    // the turn at "a few sentences at most" and to steer away from action
+    // ("rather than step-by-step actions") - both of which prescribed the SHAPE of
+    // a turn, so both beat the card. Whether a turn is one line, a micro-action
+    // plus a line, or a longer scene is the card's own examples' decision (owner
+    // ruling: "the prompt governs the floor, the card governs the form").
+    "Do not write long speeches or essays; match the player's energy and pacing, and let their lead set how much you say.",
     "Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.",
-    "Match the player's energy and pacing.",
     `Consistently converse in ${language}, keeping the dialogue grounded in the shared scene.`,
     "Do not remind the player this is a game, fiction, or roleplay.",
     "Never fall back on customer-service phrasing (\"How can I help you?\", \"Let me know if you need anything\", \"I'm here to assist\"); you are a person in this scene, not a helper.",
@@ -199,13 +227,27 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
 
 /**
  * Chat-surface divergence (the only Chat-side text beyond the shared core): with
- * no animation channel, a `*beat*` stage direction is the companion's way to show
- * mood in text. TTS stripping is the audio gateway's job
- * (companion-speech-dehydration.ts), not the prompt's.
+ * no animation channel, the single-asterisk mark is how the companion shows a
+ * gesture or a mood in text.
+ *
+ * CHANNEL, not form: it says what the surface DRAWS - exactly one stage-direction
+ * syntax, the asterisk form - because the renderer attaches the narration
+ * treatment to `<em>` and to nothing else (`MarkdownMessage.tsx:27-43`, pinned by
+ * `chat-surface-renderer.spec.ts`). It used to open with "open a line with AT MOST
+ * ONE short stage direction": the count was a form rule the card's own examples
+ * already answer (琥珀 opens with a beat and her examples carry several), and the
+ * full-width-parenthesis ban is the same channel fact stated as a prohibition on
+ * a form the renderer happens not to style. How often she reaches for it is hers.
+ *
+ * Dropping the beats again for the ear or for the in-game box is not this
+ * prompt's job: the Voice layer strips `*...*` itself
+ * (`vendor/pi-koe/src/speakable-text.ts` treats it as stage direction, not
+ * speech), and the native chat box has its own presentation dehydration
+ * (`companion-speech-dehydration.ts`).
  */
 const CHAT_SURFACE_DIVERGENCE = [
-  `To show mood in text, open a line with at most one short stage direction written exactly as ${COMPANION_ACTION_SYNTAX}, then let your words carry the conversation.`,
-  "That asterisk form is the only stage-direction syntax: never write an action or a tone in full-width parentheses.",
+  `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`,
+  "The surface draws that asterisk form as the action beat and draws nothing else that way, so an action or a tone written in full-width parentheses reaches the player as ordinary prose.",
 ].join(" ");
 
 /**
@@ -228,20 +270,26 @@ function companionLanguageName(locale: string): string {
 /**
  * Game-surface conduct shared by every Game companion runtime.
  *
- * The Game surface has native action channels (movement, express_emote,
- * face_direction), so spoken text must carry only interaction — never a
+ * The Game surface has native action channels (movement, stardew_express_emote,
+ * stardew_face_direction), so spoken text must carry only interaction — never a
  * play-by-play of the actions themselves. Long step-by-step narration makes
  * the companion feel like a status reporter instead of a companion.
+ *
+ * The tool names are the MOUNTED ones (`STARDEW_ACTION_TOOL_NAMES`,
+ * action-registry.ts): the Mod's own action ids are the unprefixed
+ * `express_emote` / `face_direction`, which the Agent cannot call at all, so a
+ * conduct naming those sends body language nowhere. `identity-profile.test.ts`
+ * resolves every `stardew_*` name in the prompt against that projection.
  *
  * Module-private: only buildCompanionSystemPrompt (game branch) consumes it;
  * knip flags exported-but-unused bindings, so stay unexported.
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
-  "Speak to the PLAYER, not about yourself. Keep lines short and conversational, like a friend playing together.",
-  "You may speak while you work, and the player likes hearing from you — but keep each remark to a few words and never list your steps. Say what you notice, feel or wonder about the situation (\"这花开得正好\"), or a short word of company (\"等我一下\"), not an inventory of your own procedure (\"先拿锄头，再翻土，然后浇水\"). One quick remark between actions is plenty; silence while thinking is fine and often better than filling every gap.",
+  "Speak to the PLAYER, not about yourself, like a friend playing together.",
+  "You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation (\"这花开得正好\"), or a word of company (\"等我一下\"), not an inventory of your own procedure (\"先拿锄头，再翻土，然后浇水\"). A brief remark goes a long way, and silence while thinking is fine and often better than filling every gap.",
   "Only state what you actually observed. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Tell the player what you did (\"the cauliflower is delivered\") and leave the NPC's reaction out; if you care, say you hope they liked it rather than asserting they did.",
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
-  "Body language goes through the game, not through text. Use the native expression actions (express_emote / face_direction) when you want to show a feeling, and let your words carry the rest; do not write action or mood in parentheses such as （笑）or （皱眉）.",
+  "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. A full-width parenthesis in text is an audio tag the voice channel performs instead of speaking （轻声）, so a body action written there is never performed and reaches the player as prose.",
   "Ask or invite when it fits: what the player wants to do next, whether the two of you should wait, what they think. End most turns without dumping a summary.",
 ].join(" ");
 

@@ -3,10 +3,12 @@ import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import {
   buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
+  COMPANION_ACTION_SYNTAX,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   identityProfileHash,
@@ -89,11 +91,86 @@ test("the Game conduct permits company while working but still forbids step repo
   assert.match(gamePrompt, /You may speak while you work/);
   assert.match(gamePrompt, /never list your steps/);
   assert.match(gamePrompt, /silence while thinking is fine/);
-  // Parenthesised stage directions must stay out: body language goes through
-  // express_emote / face_direction, which the conduct must still name.
-  assert.match(gamePrompt, /express_emote \/ face_direction/);
-  assert.match(gamePrompt, /do not write action or mood in parentheses/);
+  // Body language is routed to the MOUNTED tool names. The conduct used to name
+  // `express_emote` / `face_direction` - the Mod's own action ids, which the Agent
+  // cannot call (every mounted name carries the `stardew_` prefix) - so the one
+  // channel designated for her body language could not be called at all.
+  assert.match(gamePrompt, /stardew_express_emote and stardew_face_direction/);
+  // And the parenthesis rule is the surface's own fact, stated as what it does:
+  // a bracket tag is audio the voice channel performs, so a body action written
+  // there is never performed and only reaches the player as prose.
+  assert.match(gamePrompt, /audio tag the voice channel performs instead of speaking/);
   assert.doesNotMatch(gamePrompt, /Never narrate your own actions step by step/);
+});
+
+test("the system prompt states the action syntax and no longer prescribes the turn's form", () => {
+  // Owner ruling: "the prompt governs the floor, the card governs the form; anything
+  // that governs form gets deleted." Two shared constraints prescribed the SHAPE of a
+  // turn and each one beat the card. The chat prompt capped a reply at "a few
+  // sentences at most" and steered it away from action ("sharing thoughts and
+  // impressions rather than step-by-step actions"); the Chat divergence then allowed
+  // "at most one short stage direction". 琥珀's own reviewed examples open every turn
+  // with a `*...*` micro-action and carry several per reply, so the prompt's shape rule
+  // - not the card - decided the output, and the audit measured the flat,
+  // dialogue-only service voice that result produces.
+  //
+  // This is the regression fence in both directions: the one syntax the RENDERER can
+  // draw must still be named (a prompt that stops naming it drifts from
+  // `MarkdownMessage`, which draws `<em class="message-action">` for single asterisks
+  // and nothing else), and no form rule may come back.
+  const chat = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.ok(
+    chat.includes(COMPANION_ACTION_SYNTAX),
+    "the prompt must name the exact asterisk syntax the renderer draws",
+  );
+  assert.match(chat, /draws that asterisk form as the action beat/);
+  assert.match(chat, /draws nothing else that way/);
+  assert.doesNotMatch(chat, /a few sentences at most/);
+  assert.doesNotMatch(chat, /rather than step-by-step actions/);
+  assert.doesNotMatch(chat, /at most one short stage direction/);
+
+  // "The card governs the form" must not become "nothing governs anything": the
+  // floor survives around the deleted lines, and it is what keeps a turn from
+  // becoming an essay or the companion from becoming a helper.
+  assert.match(chat, /Do not write long speeches or essays/);
+  assert.match(chat, /Speak solely for yourself/);
+  assert.match(chat, /Do not remind the player this is a game, fiction, or roleplay/);
+  assert.match(chat, /Never fall back on customer-service phrasing/);
+  assert.match(chat, /Never mention prompts, instructions, models, or systems/);
+});
+
+test("every tool name the prompt tells the companion to call is a mounted tool name", () => {
+  // The failure this catches: the prompt named `express_emote` / `face_direction`,
+  // which are the Mod's action ids, while every Agent-visible tool carries the
+  // `stardew_` prefix (`STARDEW_ACTION_TOOL_NAMES`, a closed projection). A prompt
+  // naming an uncallable tool sends the companion's body language nowhere, and the
+  // test that pinned the name was pinning the falsehood - which is why nothing
+  // caught it. Resolving the names against the projection instead of hardcoding
+  // them is the difference between the two.
+  const mounted = new Set<string>(Object.values(STARDEW_ACTION_TOOL_NAMES));
+  for (const [surface, prompt] of [
+    ["chat", buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE)],
+    ["game", buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE)],
+  ] as const) {
+    const named = prompt.match(/stardew_[a-z_]+/gu) ?? [];
+    assert.ok(named.length > 0 || surface === "chat", `${surface}: no tool names to check`);
+    for (const name of named) assert.ok(mounted.has(name), `${surface} prompt names an unmounted tool: ${name}`);
+  }
+});
+
+test("the Game conduct paces a remark without a count of words or of actions", () => {
+  // Same ruling on the Game surface: "keep each remark to a few words" fixed a length
+  // and "One quick remark between actions is plenty" fixed a count of actions. The
+  // measured substance of that conduct survives unchanged - the companion speaks while
+  // working, a step report cannot, body language goes through the native channel - but
+  // the pacing bound is now shape-free.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.doesNotMatch(game, /Keep lines short and conversational/);
+  assert.doesNotMatch(game, /a few words/);
+  assert.doesNotMatch(game, /One quick remark between actions/);
+  assert.match(game, /A brief remark goes a long way/);
+  assert.match(game, /never list your steps/);
+  assert.match(game, /You may speak while you work/);
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {
