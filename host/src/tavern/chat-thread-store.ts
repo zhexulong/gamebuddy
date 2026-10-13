@@ -1052,7 +1052,7 @@ export function classifyInitialChatExactContentFailure(error: unknown): "not_fou
   return undefined;
 }
 
-class ExactThreadNotFoundError extends Error {
+export class ExactThreadNotFoundError extends Error {
   constructor() {
     super("chat_thread_not_found");
   }
@@ -1060,6 +1060,12 @@ class ExactThreadNotFoundError extends Error {
 class ExactThreadAlreadyExistsError extends Error {
   constructor() {
     super("chat_thread_already_exists");
+  }
+}
+/** The exact thread exists, but under a different Chat surface session. */
+export class ExactThreadSurfaceMismatchError extends Error {
+  constructor() {
+    super("chat_thread_surface_mismatch");
   }
 }
 
@@ -1581,7 +1587,7 @@ export function createChatThreadStore(
         if (!threadRow) throw new ExactThreadNotFoundError();
         const thread = rowToThread(db, threadRow);
         if (thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+          throw new ExactThreadSurfaceMismatchError();
 
         const selectedAtMs = now();
         db.prepare(
@@ -1609,7 +1615,7 @@ export function createChatThreadStore(
       return withDb((db) => {
         const state = readStateFromDb(db, chatThreadId);
         if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+          throw new ExactThreadSurfaceMismatchError();
         return state;
       });
     },
@@ -1729,7 +1735,7 @@ export function createChatThreadStore(
         const current = readStateFromDb(db, input.chatThreadId);
         const thread = current.thread;
         if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+          throw new ExactThreadSurfaceMismatchError();
         if ((thread.lifecycleStatus ?? "active") !== "active")
           throw new Error("chat_thread_lifecycle_not_active");
         const ledger = current.turnLedger;
@@ -1811,7 +1817,7 @@ export function createChatThreadStore(
       return withDb((db) => {
         const current = readStateFromDb(db, input.chatThreadId);
         const thread = current.thread;
-        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
+        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId) throw new ExactThreadSurfaceMismatchError();
         if (thread.companionId !== input.companionId || thread.continuityId !== input.continuityId)
           throw new Error("chat_thread_scope_mismatch");
         const currentManagementRevision = thread.managementRevision ?? 1;
@@ -1840,7 +1846,7 @@ export function createChatThreadStore(
         const current = readStateFromDb(db, input.chatThreadId);
         const managementRevision = current.thread.managementRevision ?? 1;
         if (current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+          throw new ExactThreadSurfaceMismatchError();
         if (managementRevision !== input.expectedManagementRevision)
           throw new Error("chat_thread_management_revision_conflict");
         if (current.thread.title === title) throw new Error("chat_thread_title_unchanged");
@@ -1883,7 +1889,7 @@ export function createChatThreadStore(
       withDb((db) => {
         const current = readStateFromDb(db, input.chatThreadId);
         if (current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+          throw new ExactThreadSurfaceMismatchError();
         if ((current.thread.lifecycleStatus ?? "active") !== "active")
           throw new Error("chat_thread_lifecycle_not_active");
         if (current.draft.revision !== input.expectedDraftRevision) throw new Error("chat_draft_revision_conflict");

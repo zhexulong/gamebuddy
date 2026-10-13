@@ -34,7 +34,7 @@ export type ChatRetentionServiceCommand = Readonly<{
   expectedManagementRevision: number;
   operation: "archive" | "restore" | "trash";
 }>;
-import { type ChatThread, createChatThreadStore } from "../chat-thread-store.js";
+import { type ChatThread, createChatThreadStore, ExactThreadSurfaceMismatchError } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
 import { TavernArtifactStore } from "../artifact-store.js";
 import { commitGreetingOpeningVariant, isTavernArtifactUnreadable } from "../library-service.js";
@@ -413,7 +413,7 @@ function validateRetentionCommand(command: ChatRetentionServiceCommand, lease: M
 function rethrowRetentionError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
   if (error.message === "chat_thread_management_revision_conflict") return new Error("chat_management_revision_conflict");
-  if (error.message === "chat_thread_surface_mismatch") return selectionConflict();
+  if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
   if (error.message === "chat_thread_lifecycle_not_active") return new Error("chat_management_service_unavailable");
   if (error.message === "chat_thread_lifecycle_transition_invalid") return new Error("chat_management_lifecycle_invalid");
   if (isStorageError(error)) return storageUnavailable();
@@ -429,7 +429,7 @@ function rethrowReadError(error: unknown): Error {
 function rethrowDraftError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
   if (error.message === "chat_draft_revision_conflict") return new Error("chat_management_revision_conflict");
-  if (error.message === "chat_thread_surface_mismatch") return selectionConflict();
+  if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
   if (error.message === "invalid_chat_thread_draft") return new Error("invalid_request");
   if (error.message === "chat_thread_lifecycle_not_active") return new Error("chat_management_service_unavailable");
   if (isStorageError(error)) return storageUnavailable();
@@ -442,7 +442,7 @@ function rethrowRenameError(error: unknown): Error {
     // Existing player-visible revision-CAS conflict semantics: the browser
     // expectation does not match durable management state; re-read and retry.
     return new Error("chat_management_revision_conflict");
-  if (error.message === "chat_thread_surface_mismatch") return selectionConflict();
+  if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
   if (error.message === "invalid_chat_thread_title") return new Error("invalid_request");
   if (isStorageError(error)) return storageUnavailable();
   return unavailable();

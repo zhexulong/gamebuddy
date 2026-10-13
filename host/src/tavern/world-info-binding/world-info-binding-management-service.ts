@@ -14,6 +14,7 @@ import {
   type TavernStableManagedWorldInfoBinding,
   type TavernStableWorldInfoBinding,
   createChatThreadStore,
+  ExactThreadSurfaceMismatchError,
 } from "../chat-thread-store.js";
 import type {
   PublicWorldInfoProjection,
@@ -404,7 +405,7 @@ function isOpaqueHandle(value: string): boolean {
 function rethrowReadError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
   if (isLeaseUnavailable(error)) return error;
-  if (error.message === "chat_thread_surface_mismatch") return conflict();
+  if (error instanceof ExactThreadSurfaceMismatchError) return conflict();
   if (isStorageError(error)) return storageUnavailable();
   if (/lease|mount|closed/i.test(error.message)) return unavailable();
   return unavailable();

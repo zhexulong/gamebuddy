@@ -54,6 +54,8 @@ import {
   acknowledgeMountedWorldInfoBinding,
   claimMountedAttempt as claimStoreMountedAttempt,
   createChatThreadStore,
+  ExactThreadNotFoundError,
+  ExactThreadSurfaceMismatchError,
   transitionMountedProviderStart,
   transitionMountedPresentation,
 } from "../tavern/chat-thread-store.js";
@@ -2295,10 +2297,7 @@ async function createFreshChatRuntimeAuthority(
       // This thread with another Chat's surface session, or no such thread at
       // all, is the bounded refusal: only that exact pair may be registered by
       // the settlement. A genuine storage failure keeps its own error.
-      if (
-        error instanceof Error &&
-        (error.message === "chat_thread_not_found" || error.message === "chat_thread_surface_mismatch")
-      )
+      if (error instanceof ExactThreadNotFoundError || error instanceof ExactThreadSurfaceMismatchError)
         throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
       throw error;
     }
