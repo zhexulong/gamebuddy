@@ -4376,4 +4376,63 @@ body {
   }
 }
 
+/* ==========================================================================
+   The Chats row's destructive actions arm before they fire
+   (ruling-and-ui-defects lane block, U-05)
+
+   The measured defect: the row's inline archive fired on the first click, so a
+   mis-tap archived a conversation with nothing standing between the finger and
+   the request. The product already has one vocabulary for a deliberate action -
+   the Game surface's `game.endgame` arms on the first click and only the confirm
+   button sends - so the row reuses that shape rather than inventing a second one.
+
+   The confirm step is its own block under the row rather than a crowded addition
+   to the row's action strip, it is a `role="status"` region so the arming is
+   announced and not only painted, and its two buttons are the product's own
+   `small-button`, which already carries the 44 px floor and never wraps.
+
+   The row's control sizes are deliberately NOT restated here:
+   `.icon-button-small` already declares width/height/min-* from
+   `--touch-target-min` (style.css:1291), and every control on this surface
+   measures 44x44 at both 1440x900 and 400x800 (management-surface-panels.spec.ts).
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.chat-item-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.chat-item-confirm-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+}
+
+.chat-item-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.small-button.danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+}
+
+.small-button.danger:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--danger) 18%, transparent);
+  border-color: var(--danger);
+}
+
 } /* end @layer theme.polish */

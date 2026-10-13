@@ -187,6 +187,12 @@ export function ChatsSurfacePanel({
   // never a refusal: the row stays selectable and this only marks the request that is out, so a
   // click during a generating turn does not look ignored while the Host aborts and switches.
   const [selecting, setSelecting] = useState<string | null>(null);
+  // The row's destructive action is a deliberate one: the first click only arms
+  // this, and the request waits for the confirm button. Same shape as the Game
+  // surface's endgame block, so the product has one vocabulary for it.
+  const [confirmation, setConfirmation] = useState<
+    Readonly<{ handle: string; operation: "archive" | "trash" }> | null
+  >(null);
   const { inline, report } = useSurfaceNotice(onNotice);
 
   useEffect(() => {
@@ -203,6 +209,15 @@ export function ChatsSurfacePanel({
       active = false;
     };
   }, [api]);
+
+  // An armed confirmation is armed against one exact row: the same discipline the
+  // endgame block uses, so a stale arm cannot fire an action on a row the player
+  // is no longer looking at (the list re-reads on every mutation and rejection).
+  useEffect(() => {
+    if (confirmation === null) return;
+    if (!chatListRows(list).some((chat) => chat.handle === confirmation.handle && chat.isSelected))
+      setConfirmation(null);
+  }, [confirmation, list]);
 
   const reread = async (): Promise<void> => {
     try {
@@ -426,6 +441,7 @@ export function ChatsSurfacePanel({
                           type="button"
                           className="icon-button-small"
                           title={labels.renameChat}
+                          aria-label={labels.renameChat}
                           onClick={() => setEditing({ handle: chat.handle, title: chat.title ?? "" })}
                         >
                           <Pencil size={14} aria-hidden="true" />
@@ -438,7 +454,7 @@ export function ChatsSurfacePanel({
                             className="icon-button-small"
                             title={labels.chatRetentionArchive}
                             aria-label={labels.chatRetentionArchive}
-                            onClick={() => transition(chat.handle, "archive")}
+                            onClick={() => setConfirmation({ handle: chat.handle, operation: "archive" })}
                           >
                             <Archive size={14} aria-hidden="true" />
                           </button>
@@ -447,13 +463,46 @@ export function ChatsSurfacePanel({
                             className="icon-button-small"
                             title={labels.chatRetentionTrash}
                             aria-label={labels.chatRetentionTrash}
-                            onClick={() => transition(chat.handle, "trash")}
+                            onClick={() => setConfirmation({ handle: chat.handle, operation: "trash" })}
                           >
                             <Trash2 size={14} aria-hidden="true" />
                           </button>
                         </>
                       )}
                     </div>
+                    {confirmation !== null && confirmation.handle === chat.handle && (
+                      <div className="chat-item-confirm" data-testid="chat-retention-confirm">
+                        <p className="chat-item-confirm-prompt" role="status">
+                          {confirmation.operation === "archive"
+                            ? labels.chatRetentionArchiveConfirm
+                            : labels.chatRetentionTrashConfirm}
+                        </p>
+                        <div className="chat-item-confirm-actions">
+                          <button
+                            type="button"
+                            className="small-button danger"
+                            data-testid="chat-retention-confirm-yes"
+                            onClick={() => {
+                              const { handle, operation } = confirmation;
+                              setConfirmation(null);
+                              transition(handle, operation);
+                            }}
+                          >
+                            {confirmation.operation === "archive"
+                              ? labels.chatRetentionArchiveConfirmYes
+                              : labels.chatRetentionTrashConfirmYes}
+                          </button>
+                          <button
+                            type="button"
+                            className="small-button"
+                            data-testid="chat-retention-confirm-no"
+                            onClick={() => setConfirmation(null)}
+                          >
+                            {labels.chatRetentionConfirmNo}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

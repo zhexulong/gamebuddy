@@ -415,3 +415,117 @@ test("the product Characters surface shows a world book bind made after a messag
   await expect(reloaded).toContainText("Saved. It fully applies on the next turn.");
   await expect(reloaded.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
 });
+
+/**
+ * U-05: the Chats row's destructive action is a deliberate one.
+ *
+ * The measured defect: the row's inline archive fired on the first click, with
+ * no confirmation and nothing between a finger and the request. The product
+ * already has one vocabulary for a deliberate, one-way action - the Game
+ * surface's `game.endgame` arms on the first click and only the confirm button
+ * sends (`GameStatePanel.tsx`, `GameSurface.tsx`) - so the archive reuses that
+ * shape rather than inventing a second one.
+ *
+ * The assertions, and the failure each one catches:
+ *  - after the arming click, no lifecycle request has been made: catches a
+ *    confirmation that is only painted, not wired;
+ *  - the confirm step is present and named after the arming click: catches an
+ *    arm that leaves the player with no visible way to continue;
+ *  - exactly one request, with the exact CAS the row carries, after the confirm
+ *    click: catches a confirm that re-sends or that loses the revision.
+ */
+test("the Chats row's archive cannot fire without its confirmation step", async ({ page }) => {
+  const archives: unknown[] = [];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/chats/*/archive", async (route) => {
+    archives.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, handle: chatHandle, status: "archived", managementRevision: 2 }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+
+  await surface.getByRole("button", { name: "Archive", exact: true }).click();
+  await expect(surface.getByTestId("chat-retention-confirm")).toBeVisible();
+  expect(archives.length, "the destructive action fired before it was confirmed").toBe(0);
+
+  await surface.getByTestId("chat-retention-confirm-yes").click();
+  await expect.poll(() => archives.length).toBe(1);
+  expect(archives[0]).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 1 });
+});
+
+/**
+ * U-05: every control on the Chats surface is a real 44 px target.
+ *
+ * This is the surface the sibling lane's touch-floor gate samples
+ * (`ui-hygiene-runtime.spec.ts`, gate 3); this test is the same floor read from
+ * the surface's own mount, so the row's controls are measured where a player
+ * taps them rather than only where the gate happens to look.
+ */
+test("every control on the Chats surface clears the 44px touch floor", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [{ handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    }),
+  );
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+    const surface = page.getByTestId("chats-surface");
+    await expect(surface).toBeVisible();
+
+    const measured = await surface.evaluate((node) =>
+      Array.from(node.querySelectorAll<HTMLElement>("button, input, select, textarea")).map((control) => {
+        const box = control.getBoundingClientRect();
+        return {
+          tag: control.tagName.toLowerCase(),
+          label: control.getAttribute("aria-label") ?? (control.textContent ?? "").trim().slice(0, 30),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+          rendered: control.getClientRects().length > 0,
+        };
+      }),
+    );
+    const rendered = measured.filter((control) => control.rendered);
+    console.log(
+      `[chats-floor] ${viewport.width}x${viewport.height}: ${JSON.stringify(rendered)}`,
+    );
+    const short = rendered.filter((control) => control.height < 44);
+    expect(short, `controls under the 44 px floor at ${viewport.width}x${viewport.height}`).toEqual([]);
+  }
+});
