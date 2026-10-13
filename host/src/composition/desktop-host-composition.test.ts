@@ -49,6 +49,7 @@ test("desktop product composition builds the Stardew game owner only through the
     arm: async () => { throw new Error("unused"); },
     launch: async () => { throw new Error("unused"); },
     contain: async () => { throw new Error("unused"); },
+    recover: async () => { throw new Error("unused"); },
     close: async () => { closeCalls += 1; },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
@@ -105,6 +106,7 @@ test("desktop composition retains the typed root capability and closes the authe
     arm: async () => { throw new Error("unused"); },
     launch: async () => { throw new Error("unused"); },
     contain: async () => { throw new Error("unused"); },
+    recover: async () => { throw new Error("unused"); },
     close: async () => { closeCalls += 1; },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
@@ -179,6 +181,7 @@ test("composition facade close runs the presentation, Chat, Game, and shared chi
     arm: async () => { throw new Error("unused"); },
     launch: async () => { throw new Error("unused"); },
     contain: async () => { throw new Error("unused"); },
+    recover: async () => { throw new Error("unused"); },
     close: async () => { sessionCloseCalls += 1; },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session, children);
