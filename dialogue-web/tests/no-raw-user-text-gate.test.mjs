@@ -40,14 +40,17 @@
  *    false positive;
  *  - a non-string attribute value is not text at all.
  *
- * The one declared exception below is a real finding that is not this lane's to
- * fix (it needs a prop threaded through `MemoryCreateForm` and three Playwright
- * specs read the literal). The gate asserts the exception still exists, so it
- * cannot silently outlive the fix.
+ * There is deliberately no exception list. One existed for `MemoryCreateForm`'s
+ * `aria-label="Memory content"`, and it is exactly what let the defect through:
+ * raw-text.2 caught the literal from the day it was written, and the (path, value)
+ * entry turned the failure into a pass. Its stated reason - "four Playwright specs
+ * assert the literal" - was not a cost either, because the English catalogue value
+ * for the same field is byte-identical to the literal, so nothing in the suite had
+ * to move. A finding is now a failure until somebody fixes the source.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -60,20 +63,6 @@ const CATALOGUE_FILES = [join(SRC, "i18n.ts"), join(SRC, "components", "characte
 
 /** The attributes a player reads or hears. A written-out sentence in one is a leak. */
 const USER_VISIBLE_ATTRIBUTES = ["title", "aria-label", "placeholder", "alt"];
-
-/**
- * Findings that are real but are not one-line fixes in the files this lane owns.
- * The gate fails if such a finding disappears, so this list has to be emptied by
- * whoever fixes it rather than left behind.
- */
-const REPORTED_PROSE_ATTRIBUTES = [
-  {
-    path: "src/components/management-panels.tsx",
-    value: "Memory content",
-    reason:
-      "MemoryCreateForm's textarea hard-codes the English accessible name while the edit field beside it (line 1051) reads labels.memoryContent; the fix threads a copy prop through the component, and four Playwright specs assert the literal",
-  },
-];
 
 const CJK = /[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/u;
 
@@ -100,10 +89,6 @@ export function sourceFiles(directory = SRC) {
     if (name.endsWith(".ts") || name.endsWith(".tsx")) out.push(path);
   }
   return out;
-}
-
-export function relativeToDialogueWeb(file) {
-  return relative(DIALOGUE_WEB, file).replace(/\\/gu, "/");
 }
 
 export function at(node, sourceFile) {
@@ -260,17 +245,11 @@ test("raw-text.2: a user-visible attribute literal is not a written-out sentence
       if (!ts.isJsxAttribute(node) || !USER_VISIBLE_ATTRIBUTES.includes(node.name.getText())) return;
       if (node.initializer !== undefined && ts.isStringLiteral(node.initializer)) literals += 1;
     });
-    for (const finding of proseAttributeLiterals(text, file)) {
-      const path = relativeToDialogueWeb(file);
-      const reported = REPORTED_PROSE_ATTRIBUTES.find(
-        (entry) => entry.path === path && finding.value === entry.value,
-      );
-      if (reported !== undefined) continue;
+    for (const finding of proseAttributeLiterals(text, file))
       failures.push(`${finding.line} user-visible attribute literal is prose: ${JSON.stringify(finding.value)}`);
-    }
   }
   t.diagnostic(
-    `raw-text.2: ${files} file(s), ${literals} literal user-visible attribute(s), ${failures.length} prose literal(s), ${REPORTED_PROSE_ATTRIBUTES.length} reported exception(s)`,
+    `raw-text.2: ${files} file(s), ${literals} literal user-visible attribute(s), ${failures.length} prose literal(s)`,
   );
   assert.deepEqual(failures, [], "a written-out sentence in a user-visible attribute is copy nothing can translate");
 });
@@ -294,18 +273,21 @@ test("raw-text.3: no JSX text node outside a catalogue is prose", (t) => {
   assert.deepEqual(failures, [], "a JSX text node is not reachable by the locale switch; read it from the catalogue");
 });
 
-test("raw-text.4: every reported exception is still a finding", (t) => {
-  // Self-cleaning: an exception that no longer describes a real finding is a
-  // failure, so the list cannot outlive the fix and quietly bless a new leak.
-  for (const entry of REPORTED_PROSE_ATTRIBUTES) {
-    const file = join(DIALOGUE_WEB, entry.path);
-    const findings = proseAttributeLiterals(readFileSync(file, "utf8"), file);
-    assert.ok(
-      findings.some((finding) => finding.value === entry.value),
-      `${entry.path} no longer carries the reported literal ${JSON.stringify(entry.value)}; remove the exception`,
-    );
+test("raw-text.4 (mutation): the prose-attribute rule is not relaxed by any allowlist", (t) => {
+  // raw-text.2 caught `aria-label="Memory content"` in management-panels.tsx from the day it was
+  // written; an exception list keyed by (path, value) is what made it pass. The rule is now the only
+  // thing between a hard-coded accessible name and the tree, so this test pins both directions: the
+  // live tree carries no prose attribute literal, and one planted in a component file is reported
+  // with its route instead of being skipped.
+  const planted = 'export const Probe = () => <textarea aria-label="Memory content" />;';
+  assert.deepEqual(proseAttributeLiterals(planted, "src/components/Planted.tsx"), [
+    { line: "src/components/Planted.tsx:1", value: "Memory content" },
+  ]);
+  for (const file of sourceFiles()) {
+    if (CATALOGUE_FILES.includes(file)) continue;
+    assert.deepEqual(proseAttributeLiterals(readFileSync(file, "utf8"), file), [], `${file} carries no exception here`);
   }
-  t.diagnostic(`raw-text.4: ${REPORTED_PROSE_ATTRIBUTES.length} reported exception(s) still reproduce`);
+  t.diagnostic("raw-text.4: the planted literal is reported and no source file is exempt");
 });
 
 test("raw-text.5: the live bilingual sites are accepted because both languages are present", (t) => {

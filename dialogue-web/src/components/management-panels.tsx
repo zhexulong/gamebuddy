@@ -1146,18 +1146,18 @@ export function MemoryPanel({
           >
             {authoringOpen ? notebook.authoringClose : notebook.authoringOpen}
           </button>
-          {authoringOpen && <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />}
+          {authoringOpen && <MemoryCreateForm label={labels.create} contentLabel={labels.memoryContent} onCreate={(content) => onMutate({ operation: "create", content })} />}
         </div>
       )}
     </section>
   );
 }
 
-export function MemoryCreateForm({ label, onCreate }: Readonly<{ label: string; onCreate: (content: string) => void }>): ReactElement {
+export function MemoryCreateForm({ label, contentLabel, onCreate }: Readonly<{ label: string; contentLabel: string; onCreate: (content: string) => void }>): ReactElement {
   const [content, setContent] = useState("");
   return (
     <div className="composer-actions">
-      <textarea aria-label="Memory content" className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} />
+      <textarea aria-label={contentLabel} className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} />
       <button type="button" className="small-button" disabled={content.trim().length === 0} onClick={() => { onCreate(content.trim()); setContent(""); }}>
         {label}
       </button>
