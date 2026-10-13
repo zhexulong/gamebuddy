@@ -139,4 +139,31 @@ pnpm test
 node tools/verify-phase0b-host.mjs
 ```
 
+`pnpm test` (`pnpm --dir host test`) prepares two vendored dependencies before it
+compiles and runs the host suite, and on Windows it fails closed until it has a
+usable Bun. Both requirements are named where they fail:
+
+- **Bun executable.** `GAMEBUDDY_BUN_EXECUTABLE` must be the absolute path of an
+  existing `bun.exe` - the file `oven-sh/setup-bun` installs, or
+  `%APPDATA%\npm\node_modules\bun\bin\bun.exe`. The npm shim
+  `%APPDATA%\npm\bun.ps1` that `PATH` normally resolves is deliberately
+  rejected: the runner invokes a fixed argv and cannot execute a PowerShell
+  script. An unset value reports `test_dependency_bun_executable_unset` (an
+  ill-formed one `test_dependency_bun_executable_invalid`, a non-existent file
+  `test_dependency_bun_executable_missing`) and prints that remedy with it.
+- **Vendor rebuild inputs.** The suite rebuilds the vendored Magic Context
+  pi-plugin (`bun install` and `bun run ... build` under `vendor/magic-context`),
+  which needs a warm Bun cache or network access. Bun's cache is
+  `%USERPROFILE%\.bun\install\cache`; check it there when that install fails
+  against an incomplete cache instead of guessing.
+
+That rebuild is skipped - with a `host_test_dependency_step_skipped:` line naming
+the reason and the two commands it dropped - when
+`vendor/magic-context/packages/pi-plugin/dist` already carries the package
+entries the suite resolves: `dist/index.js`, `dist/tavern/index.js` and
+`dist/memory/index.js` with their declarations, which is the state a checkout
+reaches after one successful vendor build. A checkout without that output (a
+fresh clone, or a CI job before its own vendor build) always rebuilds, so the
+skip cannot hide a build that never ran.
+
 `runtime.test.ts` verifies the exact active tool list, no coding tools, identity partitioning, pinned extension load, generated restrictive configuration, and session recovery after a persisted assistant entry. The embedded Historian authoring gate is verified separately with `pnpm --dir host check:historian-authoring`: it uses a temporary GameBuddy runtime and the embedded SDK registry. Its Episodic fixture produces a compartment and no `SEMANTIC_MEMORY` while `auto_promote=false`; its separate explicit durable-preference fixture proves Magic Context's native promotion lifecycle creates exactly one scoped `SEMANTIC_MEMORY` only under the test gate's `auto_promote=true`. It exposes neither browser output nor tools and never invokes a system `pi` CLI. This exercises the same no-tool embedded Historian pipeline and its separately gated promotion path; its direct invocation avoids manufacturing production-scale context pressure and does not enable promotion in production. `local-stardew-bridge.test.ts` verifies the authenticated named-pipe Host adapter against a framed peer. No provider request is issued until a separately configured, approved model provider is available. The player-facing Dialogue Director is locked to Pi provider `cpa-oai`, model `deepseek-v4-flash`, and fixed `high` thinking. Its model registry uses DeepSeek's documented OpenAI-compatible `thinking: { type: "enabled" }` request format and `high` reasoning effort; it is text-only with a 1M context limit. CPA's DeepSeek thinking route supports ordinary native `tools`, but rejects forced OpenAI `tool_choice`; GameBuddy does not emit forced tool choice. When explicitly enabled, the private gameplay task subagent is independently pinned to `cpa-oai/gpt-5.6-luna` at `medium`; it never inherits DeepSeek or gains player-facing tools. Both use `CPA_OAI_API_KEY` only at request time. MiMo is not an Agent provider; it belongs to the independent Voice Gateway TTS adapter. Copy `local-host.config.example.json` outside the repository, select `integrationId: "stardew"`, and put Stardew's opaque save/world scope, pipe, bridge token, and optional knowledge path/version inside its `integration` object. Host does not parse these adapter fields. Stardew rejects malformed, duplicate, cross-version, or non-Stardew knowledge before connecting.

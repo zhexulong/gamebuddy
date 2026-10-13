@@ -9,15 +9,55 @@ import { runCompiledTests, runScriptTests } from "./run-tests.mjs";
 const execFileAsync = promisify(execFile);
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(hostRoot, "..");
+const vendorPluginRootPath = resolve(repositoryRoot, "vendor", "magic-context", "packages", "pi-plugin");
 const cmdMetacharacter = /[&|<>^()%!\r\n]/;
 
 // These are the only commands this suite is permitted to invoke through cmd.
 // They stay as argv-like fixed data so no caller-controlled shell text exists.
+// `vendorRebuild` marks the steps whose only product is the vendored pi-plugin
+// build output, so they are the steps the presence of that output makes
+// redundant.
 const testDependencyCommands = Object.freeze([
-  Object.freeze({ command: "pnpm", args: Object.freeze(["--filter", "@gamebuddy/voice-protocol", "build"]), cwd: repositoryRoot }),
-  Object.freeze({ command: "bun", args: Object.freeze(["install", "--cwd", "../vendor/magic-context", "--frozen-lockfile"]), cwd: hostRoot }),
-  Object.freeze({ command: "bun", args: Object.freeze(["run", "--cwd", "../vendor/magic-context/packages/pi-plugin", "build"]), cwd: hostRoot }),
+  Object.freeze({ step: "voice_protocol_build", command: "pnpm", args: Object.freeze(["--filter", "@gamebuddy/voice-protocol", "build"]), cwd: repositoryRoot, vendorRebuild: false }),
+  Object.freeze({ step: "magic_context_vendor_install", command: "bun", args: Object.freeze(["install", "--cwd", "../vendor/magic-context", "--frozen-lockfile"]), cwd: hostRoot, vendorRebuild: true }),
+  Object.freeze({ step: "magic_context_vendor_build", command: "bun", args: Object.freeze(["run", "--cwd", "../vendor/magic-context/packages/pi-plugin", "build"]), cwd: hostRoot, vendorRebuild: true }),
 ]);
+const vendorRebuildCommands = testDependencyCommands.filter((entry) => entry.vendorRebuild);
+
+/**
+ * The vendor build output the compiled suite resolves: the vendored pi-plugin
+ * package's declared `.` import entry (the file `resolveMagicContextExtensionEntry`
+ * loads) and its `tavern`/`memory` subpath exports, each as the runtime bundle
+ * and the declaration the Host typechecks against. `dist/index.d.ts` is absent
+ * on purpose: the package declares no `types` for its `.` export and no source
+ * imports that entry, so a successful build never emits it.
+ */
+const vendorBuildEntries = Object.freeze([
+  "dist/index.js",
+  "dist/tavern/index.js",
+  "dist/tavern/index.d.ts",
+  "dist/memory/index.js",
+  "dist/memory/index.d.ts",
+]);
+
+/**
+ * Named, bounded skip reason for the vendored pi-plugin rebuild.
+ *
+ * It is a condition on the artifact the step produces, never an operator
+ * switch: a checkout that lacks that output - a fresh clone, or a CI job whose
+ * own vendor build has not run - still runs the rebuild, so no path can skip
+ * work that was never done.
+ */
+export const vendorRebuildSkipReason =
+  "the vendored pi-plugin build output this suite resolves is already present, so the fixed bun install and pi-plugin build would only reproduce it";
+
+function isRegularFile(path) {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() === true;
+}
+
+function vendorBuildPresent(vendorPluginRoot) {
+  return vendorBuildEntries.every((entry) => isRegularFile(resolve(vendorPluginRoot, entry)));
+}
 
 function fixedWindowsCommandToken(token) {
   // The dependency manifest contains only fixed argv tokens. cmd's `call`
@@ -33,44 +73,82 @@ function windowsCommandProcessor(comSpec) {
   return comSpec;
 }
 
+const bunExecutableRemedy =
+  "set GAMEBUDDY_BUN_EXECUTABLE to the absolute path of an existing bun.exe (the file oven-sh/setup-bun installs, or %APPDATA%\\npm\\node_modules\\bun\\bin\\bun.exe); the npm bun.ps1 shim on PATH is deliberately rejected because this runner invokes fixed argv and cannot execute it";
+
 function configuredBunExecutable(bunExecutable) {
+  if (bunExecutable === undefined || bunExecutable === "")
+    throw new Error(`test_dependency_bun_executable_unset: ${bunExecutableRemedy}`);
   if (typeof bunExecutable !== "string" || !/^[A-Za-z]:\\.+\.exe$/i.test(bunExecutable) || bunExecutable.includes("\0") || cmdMetacharacter.test(bunExecutable))
-    throw new Error("test_dependency_bun_executable_invalid");
-  if (!existsSync(bunExecutable) || !statSync(bunExecutable).isFile())
-    throw new Error("test_dependency_bun_executable_missing");
+    throw new Error(`test_dependency_bun_executable_invalid: ${bunExecutableRemedy}`);
+  if (!isRegularFile(bunExecutable))
+    throw new Error(`test_dependency_bun_executable_missing: ${bunExecutable} is not an existing file; ${bunExecutableRemedy}`);
   return bunExecutable;
 }
 
-/** Return fixed dependency build invocations. Windows requires a CI-provided Bun executable. */
+function plannedInvocation(entry, { platform, comSpec, bunExecutable }) {
+  if (platform !== "win32") return Object.freeze({ command: entry.command, args: entry.args, cwd: entry.cwd });
+  if (entry.command === "bun") {
+    return Object.freeze({
+      command: configuredBunExecutable(bunExecutable),
+      args: entry.args,
+      cwd: entry.cwd,
+    });
+  }
+  // cmd parses a quoted token after `call` as a literal executable name.
+  // The manifest is strictly validated to fixed, whitespace-free tokens, so
+  // unquoted concatenation preserves its argv semantics without shell input.
+  const command = `${fixedWindowsCommandToken(entry.command)}.cmd`;
+  const commandText = `call ${command} ${entry.args.map(fixedWindowsCommandToken).join(" ")}`;
+  return Object.freeze({
+    command: windowsCommandProcessor(comSpec),
+    args: Object.freeze(["/d", "/s", "/c", commandText]),
+    cwd: entry.cwd,
+  });
+}
+
+/**
+ * Return the fixed dependency-preparation plan for this machine: the
+ * invocations to run, and the named reason the vendored pi-plugin rebuild was
+ * dropped when its build output is already on disk.
+ *
+ * Windows requires an absolute CI-provided Bun executable. The vendored
+ * rebuild is Bun's only consumer here, so Bun is validated exactly when that
+ * rebuild is planned - a checkout that already carries the output does not fail
+ * on an executable it would never invoke.
+ */
 export function testDependencyInvocations({
   platform = process.platform,
   comSpec = process.env.ComSpec,
   bunExecutable = process.env.GAMEBUDDY_BUN_EXECUTABLE,
+  vendorPluginRoot = vendorPluginRootPath,
 } = {}) {
-  return Object.freeze(testDependencyCommands.map((entry) => {
-    if (platform !== "win32") return entry;
-    if (entry.command === "bun") {
-      return Object.freeze({
-        command: configuredBunExecutable(bunExecutable),
-        args: entry.args,
-        cwd: entry.cwd,
-      });
-    }
-    // cmd parses a quoted token after `call` as a literal executable name.
-    // The manifest is strictly validated to fixed, whitespace-free tokens, so
-    // unquoted concatenation preserves its argv semantics without shell input.
-    const command = `${fixedWindowsCommandToken(entry.command)}.cmd`;
-    const commandText = `call ${command} ${entry.args.map(fixedWindowsCommandToken).join(" ")}`;
-    return Object.freeze({
-      command: windowsCommandProcessor(comSpec),
-      args: Object.freeze(["/d", "/s", "/c", commandText]),
-      cwd: entry.cwd,
-    });
-  }));
+  const vendorRebuildNeeded = !vendorBuildPresent(vendorPluginRoot);
+  return Object.freeze({
+    skipReason: vendorRebuildNeeded ? null : vendorRebuildSkipReason,
+    invocations: Object.freeze(
+      testDependencyCommands
+        .filter((entry) => vendorRebuildNeeded || !entry.vendorRebuild)
+        .map((entry) => plannedInvocation(entry, { platform, comSpec, bunExecutable })),
+    ),
+  });
+}
+
+/**
+ * The one line a skipped rebuild prints: name the reason and the fixed commands
+ * the skip dropped, because a silent skip reads as a step that ran.
+ */
+export function vendorRebuildSkipReport() {
+  const skipped = vendorRebuildCommands
+    .map((entry) => `${entry.step} (${[entry.command, ...entry.args].join(" ")})`)
+    .join("; ");
+  return `host_test_dependency_step_skipped:reason=${vendorRebuildSkipReason}:skipped=${skipped}`;
 }
 
 async function prepareTestDependencies() {
-  for (const invocation of testDependencyInvocations()) {
+  const { skipReason, invocations } = testDependencyInvocations();
+  if (skipReason !== null) console.error(vendorRebuildSkipReport());
+  for (const invocation of invocations) {
     await execFileAsync(invocation.command, invocation.args, { cwd: invocation.cwd, windowsHide: true });
   }
   const declaredArtifact = resolve(hostRoot, "node_modules", "@cortexkit", "pi-magic-context", "dist");
