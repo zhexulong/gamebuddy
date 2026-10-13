@@ -342,19 +342,49 @@ internal sealed partial class ExecutionManager
         string.IsNullOrEmpty(buildingType) ? "none" : buildingType;
 
     /// <summary>
+    /// `GameLocation.isBuildable` read against THIS location. The game's own version reads `Game1.currentLocation`
+    /// internally (GameLocation.cs:17120/17122/17126), so a caller passing a location the actor is not standing in
+    /// gets answers about the wrong map - measured live as `scanned=5200:buildable=0` for the farm while the actor
+    /// was still indoors. The rule below is the game's, with the location the caller actually means.
+    /// </summary>
+    internal static bool IsBuildableAtLocation(GameLocation location, int x, int y)
+    {
+        Rectangle buildableRectangle = location.GetBuildableRectangle();
+        if (buildableRectangle != Rectangle.Empty && !buildableRectangle.Contains(x, y)) return false;
+        Vector2 tile = new(x, y);
+        Building? buildingAt = location.getBuildingAt(tile);
+        if (buildingAt is not null && !buildingAt.isMoving) return false;
+        bool freeOfItems = location.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, ~CollisionMask.Objects, useFarmerTile: true)
+            || location.getObjectAtTile(x, y)?.QualifiedItemId == "(O)590";
+        if (!freeOfItems) return false;
+        string buildable = location.doesTileHavePropertyNoNull(x, y, "Buildable", "Back");
+        if (buildable.Equals("t", StringComparison.OrdinalIgnoreCase) || buildable.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+        return location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
+            && !buildable.Equals("f", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The `onlyNeedsToBePassable` arm of the same rule, read against THIS location.</summary>
+    internal static bool IsPassableBuildableAtLocation(GameLocation location, Vector2 tile)
+    {
+        Rectangle buildableRectangle = location.GetBuildableRectangle();
+        if (buildableRectangle != Rectangle.Empty && !buildableRectangle.Contains((int)tile.X, (int)tile.Y)) return false;
+        return location.isTilePassable(tile) && !location.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.All);
+    }
+
+    /// <summary>
     /// True when the whole footprint (and the human-door tile the game's own placement check
     /// requires) is buildable and free right now. This is the LIVE half of the target
     /// re-resolution: the opaque id can only prove the request names the site it was handed,
     /// while this read proves the site still exists as a place a building can go.
     /// </summary>
-    private static bool IsFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y)
+    internal static bool IsFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y)
     {
         for (int offsetX = 0; offsetX < data.Size.X; offsetX++)
         {
             for (int offsetY = 0; offsetY < data.Size.Y; offsetY++)
             {
                 Vector2 tile = new(x + offsetX, y + offsetY);
-                if (!location.isTileOnMap(tile) || !location.isBuildable(tile))
+                if (!location.isTileOnMap(tile) || !IsBuildableAtLocation(location, (int)tile.X, (int)tile.Y))
                     return false;
                 if (location.buildings.Any(building => building is not null && building.occupiesTile((int)tile.X, (int)tile.Y)))
                     return false;
@@ -366,7 +396,7 @@ internal sealed partial class ExecutionManager
         if (data.HumanDoor != new Point(-1, -1))
         {
             Vector2 door = new(x + data.HumanDoor.X, y + data.HumanDoor.Y + 1);
-            if (!location.isTileOnMap(door) || (!location.isBuildable(door, onlyNeedsToBePassable: true) && !location.isPath(door)))
+            if (!location.isTileOnMap(door) || (!IsPassableBuildableAtLocation(location, door) && !location.isPath(door)))
                 return false;
         }
 
@@ -466,7 +496,7 @@ internal sealed partial class ExecutionManager
     /// free, with a lawful human-door tile, or null. The window is the shared discovery radius
     /// so a published site is one the actor could actually approach.
     /// </summary>
-    private static Vector2? FindFarmBuildingSite(Farmer player, GameLocation location, BuildingData data)
+    internal static Vector2? FindFarmBuildingSite(Farmer player, GameLocation location, BuildingData data)
     {
         for (int x = player.TilePoint.X - TargetDiscoveryRadius; x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
         {

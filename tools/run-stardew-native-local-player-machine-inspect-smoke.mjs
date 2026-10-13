@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
@@ -29,7 +29,7 @@ export async function runMachineInspectSmoke(
   const topology = validateNativeLocalFixtureConfig(config);
   try {
     const snapshot = await requireActionableMachineSnapshot(client, topology);
-    assertTopologyCapabilities(snapshot, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(snapshot, EXPECTED_CAPABILITIES);
     const targets = validMachineTargets(snapshot);
     if (targets.length !== 1)
       throw new Error(targets.length === 0 ? "no_reachable_native_machine_target" : "ambiguous_live_machine_targets");

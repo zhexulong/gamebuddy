@@ -82,7 +82,10 @@ test("pet-animal runner uses shared dispatch, exact terminal correlation, and fr
   assert.equal(result.freshPostcondition.targetGone, true);
 });
 
-test("pet-animal runner rejects an incomplete native-local capability surface", async () => {
+// A surface that LACKS a required capability still blocks. The assertion form changed from exact-set to required-
+// subset because the native-local fixture advertises its full registered surface rather than an isolated one, so the
+// exact form asserted a property the environment never guaranteed; the code it reports is the subset helper's.
+test("pet-animal runner rejects a native-local surface missing a required capability", async () => {
   const client = {
     state: { snapshot: null },
     observe: async () => ({
@@ -98,7 +101,7 @@ test("pet-animal runner rejects an incomplete native-local capability surface", 
   const result = await runPetAnimalSmoke(client, [], config);
   assert.equal(result.state, "blocked");
   assert.equal(result.topology, "native_local_player_fixture");
-  assert.match(result.reasonCode, /native_capability_surface_mismatch/);
+  assert.match(result.reasonCode, /native_required_capability_missing/);
 });
 
 /**

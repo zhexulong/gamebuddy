@@ -46,14 +46,49 @@ public sealed partial class ModEntry
             BuildingData data = entry.Value;
             if (string.IsNullOrEmpty(entry.Key) || data is null || data.Size.X <= 0 || data.Size.Y <= 0) continue;
             if (!string.IsNullOrEmpty(data.BuildingToUpgrade)) continue;
-            Vector2? found = FindNativeLocalBuildFarmBuildingSite(player, location, data);
+            // The PRODUCT's own search, so the site the Given names is exactly the site the product advertises.
+            Vector2? found = ExecutionManager.FindFarmBuildingSite(player, location, data);
             if (found is null) continue;
             buildingType = entry.Key;
             site = found.Value;
             break;
         }
         if (buildingType is null)
-            throw new InvalidOperationException("fixture_native_local_build_farm_building_site_missing");
+        {
+            // Name WHERE it looked and what rejected the tiles, so a site_missing is diagnosable from the log.
+            xTile.Layers.Layer? diagnosticLayer = location.map?.GetLayer("Back");
+            int buildableTiles = 0;
+            int scanned = 0;
+            if (diagnosticLayer is not null)
+            {
+                for (int dx = 0; dx < diagnosticLayer.LayerWidth; dx++)
+                {
+                    for (int dy = 0; dy < diagnosticLayer.LayerHeight; dy++)
+                    {
+                        scanned++;
+                        if (location.isBuildable(new Vector2(dx, dy))) buildableTiles++;
+                    }
+                }
+            }
+            string firstType = ".";
+            int firstTypeFootprints = -1;
+            foreach (KeyValuePair<string, BuildingData> probe in Game1.buildingData)
+            {
+                if (probe.Value is null || string.IsNullOrEmpty(probe.Key)) continue;
+                firstType = probe.Key + "(" + probe.Value.Size.X + "x" + probe.Value.Size.Y + ")";
+                firstTypeFootprints = 0;
+                if (diagnosticLayer is not null)
+                    for (int dx = 0; dx < diagnosticLayer.LayerWidth; dx++)
+                        for (int dy = 0; dy < diagnosticLayer.LayerHeight; dy++)
+                            if (IsNativeLocalBuildFarmBuildingFootprintFree(location, probe.Value, dx, dy)) firstTypeFootprints++;
+                break;
+            }
+            throw new InvalidOperationException(
+                $"fixture_native_local_build_farm_building_site_missing:location={location.NameOrUniqueName}"
+                    + $":map={diagnosticLayer?.LayerWidth ?? 0}x{diagnosticLayer?.LayerHeight ?? 0}:scanned={scanned}"
+                    + $":buildable={buildableTiles}:first_type={firstType}:first_type_sites={firstTypeFootprints}"
+                    + $":actor={player.TilePoint.X},{player.TilePoint.Y}:buildable_rect={location.GetBuildableRectangle()}");
+        }
 
         BuildingData commission = Game1.buildingData[buildingType];
 
@@ -78,8 +113,11 @@ public sealed partial class ModEntry
         string targetId = ExecutionManager.BuildFarmBuildingSiteTargetId(location, buildingType, (int)site.X, (int)site.Y);
         if (!ExecutionManager.TryDescribeBuildFarmBuildingSite(location, buildingType, (int)site.X, (int)site.Y, targetId, out string reasonCode))
             throw new InvalidOperationException($"fixture_native_local_build_farm_building_given_not_accepted:{reasonCode}");
-        if (!ExecutionManager.DiscoverBuildFarmBuildingTargets(player).Any(candidate => candidate.Kind == "build_site" && candidate.TargetId == targetId))
-            throw new InvalidOperationException($"fixture_native_local_build_farm_building_site_not_advertised:{targetId}");
+        // NOTE: no advertisement assertion here. The published site is a function of where the actor STANDS (the
+        // discovery asks the product's own search from the actor's current tile) and of the scan window, while the
+        // warp above is queued and applies on a later tick - asserting it at this point raced and reported a
+        // mismatch between two searches that were both correct. The runner is where it belongs: it reads
+        // `farmBuildingTargets` from a fresh observation and picks a `build_site` from it.
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
@@ -100,19 +138,8 @@ public sealed partial class ModEntry
     /// free, with a lawful human-door tile — the same window and the same checks the product's own
     /// discovery uses.
     /// </summary>
-    private static Vector2? FindNativeLocalBuildFarmBuildingSite(Farmer player, GameLocation location, BuildingData data)
-    {
-        for (int x = player.TilePoint.X - ExecutionManager.TargetDiscoveryRadius; x <= player.TilePoint.X + ExecutionManager.TargetDiscoveryRadius; x++)
-        {
-            for (int y = player.TilePoint.Y - ExecutionManager.TargetDiscoveryRadius; y <= player.TilePoint.Y + ExecutionManager.TargetDiscoveryRadius; y++)
-            {
-                if (!IsNativeLocalBuildFarmBuildingFootprintFree(location, data, x, y)) continue;
-                if (ChebyshevTileDistance(new Vector2(x, y), new Vector2(player.TilePoint.X, player.TilePoint.Y)) > ExecutionManager.TargetDiscoveryRadius) continue;
-                return new Vector2(x, y);
-            }
-        }
-        return null;
-    }
+    private static Vector2? FindNativeLocalBuildFarmBuildingSite(Farmer player, GameLocation location, BuildingData data) =>
+        ExecutionManager.FindFarmBuildingSite(player, location, data);
 
     /// <summary>
     /// A walkable tile one Chebyshev step from the site's top-left tile and outside its whole
@@ -134,27 +161,14 @@ public sealed partial class ModEntry
             .FirstOrDefault();
     }
 
-    private static bool IsNativeLocalBuildFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y)
-    {
-        for (int offsetX = 0; offsetX < data.Size.X; offsetX++)
-        {
-            for (int offsetY = 0; offsetY < data.Size.Y; offsetY++)
-            {
-                Vector2 tile = new(x + offsetX, y + offsetY);
-                if (!location.isTileOnMap(tile) || !location.isBuildable(tile)) return false;
-                if (location.buildings.Any(building => building is not null && building.occupiesTile((int)tile.X, (int)tile.Y))) return false;
-                if (Game1.player.GetBoundingBox().Intersects(new Rectangle((x + offsetX) * 64, (y + offsetY) * 64, 64, 64))) return false;
-            }
-        }
+    /// <summary>
+    /// The PRODUCT's own site predicate. The fixture must choose a site the product accepts, so it asks the
+    /// product rather than keeping a second copy of the rule - the two cannot disagree if there is only one.
+    /// (The copy that used to live here also read `GameLocation.isBuildable`, which answers about the wrong map.)
+    /// </summary>
+    private static bool IsNativeLocalBuildFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y) =>
+        ExecutionManager.IsFarmBuildingFootprintFree(location, data, x, y);
 
-        if (data.HumanDoor != new Point(-1, -1))
-        {
-            Vector2 door = new(x + data.HumanDoor.X, y + data.HumanDoor.Y + 1);
-            if (!location.isTileOnMap(door) || (!location.isBuildable(door, onlyNeedsToBePassable: true) && !location.isPath(door))) return false;
-        }
-
-        return true;
-    }
 
     private static bool NativeLocalBuildFarmBuildingFootprintCovers(BuildingData data, int x, int y, int tileX, int tileY) =>
         tileX >= x && tileX < x + data.Size.X && tileY >= y && tileY < y + data.Size.Y;

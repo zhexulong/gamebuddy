@@ -23,7 +23,7 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  * The receipt is not the proof. Five things are observed directly, and the first is the one
  * that makes the action worth having:
  *
- *   1. the site comes from the Mod's own `buildFarmBuildingTargets` projection (`kind ===
+ *   1. the site comes from the Mod's own `farmBuildingTargets` projection (`kind ===
  *      "build_site"`), never from this runner — the request names the tile and the opaque id
  *      discovery published for it;
  *   2. the world CHANGED: the same projection now publishes a `built` entry on exactly that
@@ -152,18 +152,18 @@ export function assertBuildFarmBuildingPostconditions({ target, evidence, sitesA
 function chooseBuildSite(snapshot) {
   const candidates = buildSites(snapshot);
   if (candidates.length === 0)
-    throw new Error(`no farm-building site is advertised: ${JSON.stringify(snapshot?.buildFarmBuildingTargets)}`);
+    throw new Error(`no farm-building site is advertised: ${JSON.stringify(snapshot?.farmBuildingTargets)}`);
   return candidates[0];
 }
 
 function buildSites(snapshot) {
-  const targets = snapshot?.buildFarmBuildingTargets;
+  const targets = snapshot?.farmBuildingTargets;
   return Array.isArray(targets) ? targets.filter((entry) => entry?.kind === "build_site") : [];
 }
 
 /** The buildings the world now reports, or null when the surface does not carry them at all. */
 function builtBuildings(snapshot) {
-  const targets = snapshot?.buildFarmBuildingTargets;
+  const targets = snapshot?.farmBuildingTargets;
   return Array.isArray(targets) ? targets.filter((entry) => entry?.kind === "built") : null;
 }
 

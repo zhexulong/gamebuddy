@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
@@ -38,7 +38,7 @@ export async function runAdvanceDaySmoke(
   const topology = validateTopologyConfig(config);
   try {
     const before = await observeTopologySnapshot(client, topology, { actionable: true });
-    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
 
     const requestId = `native_local_advance-day_${Date.now()}`;
     const accepted = await executeFresh(client, {

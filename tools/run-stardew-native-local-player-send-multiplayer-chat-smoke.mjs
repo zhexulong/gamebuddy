@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   delay,
@@ -45,7 +45,7 @@ const REQUIRED_CAPABILITIES = [ACTION];
  * Topology plumbing: the farmhand reads as `shared_world_farmhand` (its config
  * carries `FarmhandProvisioner.Enable`), so the shared-world harness modes are used
  * - `observeTopologySnapshot` tolerates the bridge's deliberate refusal to re-admit
- * a revision it already admitted, and `assertTopologyCapabilities` is the
+ * a revision it already admitted, and `assertRequiredCapabilities` is the
  * required-subset capability check for a live consented surface. A bare
  * `observeFresh` / strict exact-surface capability mode (the single-player
  * fixtures) is refused here on purpose: this lane cannot pass them and must
@@ -59,7 +59,7 @@ export async function runSendMultiplayerChatSmoke(client, receipts, config, { te
 
   const trace = [];
   const opening = await observeTopologySnapshot(client, topology, { actionable: true });
-  assertTopologyCapabilities(opening, topology, REQUIRED_CAPABILITIES);
+  assertRequiredCapabilities(opening, REQUIRED_CAPABILITIES);
   trace.push({ step: "capability", topology, action: ACTION });
 
   const primary = await dispatchChat(client, opening, "primary", "Hello from the senior farmhand.");

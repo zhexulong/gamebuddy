@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
@@ -27,7 +27,7 @@ export async function runPetAnimalSmoke(
   const topology = validateTopologyConfig(config);
   try {
     const before = await observeActionable(client, topology);
-    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
     const target = chooseOnlyPetTarget(before);
     if (target.friendship !== 0 || target.pettedToday !== false) throw new Error("pet_fixture_starting_state_mismatch");
     const requestId = `native_local_pet_animal_${Date.now()}`;
@@ -47,7 +47,7 @@ export async function runPetAnimalSmoke(
       requireActionable: true,
       check: (snapshot) => Array.isArray(snapshot.petTargets),
     });
-    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, EXPECTED_CAPABILITIES);
     const evidence = parseEvidence(terminal.evidence);
     const targetGone = !validTargets(after).some((entry) => entry.targetId === target.targetId);
     const passed =

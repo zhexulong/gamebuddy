@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
@@ -27,7 +27,7 @@ export async function runChestRetrieveSmoke(
   const topology = validateTopologyConfig(config);
   try {
     const before = await observeTopologySnapshot(client, topology, { actionable: true });
-    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
     const target = chooseOnlyChestRetrieveTarget(before);
     const requestId = `native_local_chest-retrieve_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -53,7 +53,7 @@ export async function runChestRetrieveSmoke(
       throw new Error(`chest_retrieve_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeTopologySnapshot(client, topology, { actionable: true, minRevision: terminal.revision });
-    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, EXPECTED_CAPABILITIES);
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&

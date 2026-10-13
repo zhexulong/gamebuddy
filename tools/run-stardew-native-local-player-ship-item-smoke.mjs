@@ -1,5 +1,5 @@
 import {
-  assertTopologyCapabilities,
+  assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
   executeFresh,
@@ -27,7 +27,7 @@ export async function runShipItemSmoke(
   const topology = validateTopologyConfig(config);
   try {
     const before = await observeTopologySnapshot(client, topology, { actionable: true });
-    assertTopologyCapabilities(before, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
     const target = chooseOnlyShippingBinTarget(before);
     const requestId = `native_local_ship_item_${Date.now()}`;
     const accepted = await executeFresh(client, {
@@ -56,7 +56,7 @@ export async function runShipItemSmoke(
     // in one native call, and lastItemShipped must reference that same item.
     const shipped = Number.parseInt(evidence.stack, 10);
     const after = await observeTopologySnapshot(client, topology, { actionable: true });
-    assertTopologyCapabilities(after, topology, EXPECTED_CAPABILITIES);
+    assertRequiredCapabilities(after, EXPECTED_CAPABILITIES);
     const reread = (after.shippingBinTargets ?? []).find((entry) => entry?.targetId === target.targetId);
     const passed =
       after.revision >= terminal.revision &&
