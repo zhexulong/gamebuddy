@@ -23,6 +23,32 @@ export type NativeCompanionContentEvent =
       assistantMessageEvent: Readonly<{ type: string; contentIndex?: unknown; delta?: unknown; partial?: unknown }>;
     }>;
 
+/**
+ * The explicit presentation choice, named once per surface.
+ *
+ * `"strip"` removes stage direction (`*...*` beats, reasoning frames) before the
+ * sinks; the in-game bubble and the voice cannot render it. `"keep"` passes the
+ * model's exact text to the sinks; the Chat transcript renderer draws the
+ * asterisk beat (`.message-action`) and its durable row must hold what the model
+ * wrote.
+ */
+export type StageDirectionPresentation = "strip" | "keep";
+
+/** The in-game bubble and the voice: neither can draw a `*...*` beat. */
+export const NATIVE_BUBBLE_STAGE_DIRECTION = "strip" as const;
+
+/**
+ * The Chat transcript: its renderer draws the beat, so its durable row is the
+ * model's own output rather than a display projection. A Chat persistence lane
+ * that strips here writes a quote-only row the renderer can no longer style, and
+ * the deletion is irreversible for every message already generated.
+ */
+export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "keep" as const;
+
+export type NativeCompanionContentOptions = Readonly<{
+  stageDirection: StageDirectionPresentation;
+}>;
+
 export type NativeCompanionContentSinks = Readonly<{
   /**
    * Ephemeral player-visible streaming hint; it is never durable authority.
@@ -66,10 +92,18 @@ export type NativeCompanionContentObserver = Readonly<{
  * they arrive and `onFinalText` then commits only the never-completed
  * residual; without that sink the preview/final semantics are unchanged.
  * Callers own surface-specific durable commit and cancellation admission.
+ *
+ * `options.stageDirection` is the explicit presentation choice. `"strip"` is
+ * for a surface that cannot draw a `*...*` beat (the in-game bubble, the voice);
+ * `"keep"` is for the Chat transcript, whose renderer draws the beat
+ * (`.message-action`) and whose durable row is the model's own output, not a
+ * display projection. It is a parameter, not a regex exception, so the two
+ * pipes cannot silently share one behaviour again.
  */
 export function attachNativeCompanionContent(
   session: Pick<AgentSession, "subscribe"> | Readonly<{ subscribe(listener: (event: NativeCompanionContentEvent) => void): () => void }>,
   sinks: NativeCompanionContentSinks,
+  options: NativeCompanionContentOptions,
 ): NativeCompanionContentObserver {
   let opened = false;
   let revoked = false;
@@ -91,6 +125,13 @@ export function attachNativeCompanionContent(
   // permanently, so consecutive conjunctions cannot double-emit.
   let incrementalAccumulator = new IncrementalSpeechAccumulator();
   const incrementalActive = sinks.onIncrementalText !== undefined;
+  // Explicit presentation choice, never inferred from the sink shape: the Game
+  // bubble and the voice strip stage direction; the Chat transcript keeps it.
+  const stripStageDirection = options.stageDirection === "strip";
+  const present = (text: string): string =>
+    stripStageDirection ? dehydrateCompanionSpeech(text) : text.normalize("NFC");
+  const presentIsEmpty = (text: string): boolean =>
+    stripStageDirection ? isEmptyAfterDehydration(text) : text.trim().length === 0;
   // Completed sentences held until message_end decides whether this assistant
   // message is the player-visible response. A Pi turn's intermediate tool-use
   // messages also carry text (the model's running commentary between actions),
@@ -240,11 +281,11 @@ export function attachNativeCompanionContent(
         // time below; the first piece of the stream is where a genuine
         // "here I am / look at this" lands, so that is the one we take.
         const remark = messageSentences[0] ?? messageAccumulator.flush();
-        if (isEmptyAfterDehydration(remark)) return;
-        const dehydrated = dehydrateCompanionSpeech(remark);
-        if (dehydrated.length === 0) return;
+        if (presentIsEmpty(remark)) return;
+        const piece = present(remark);
+        if (piece.length === 0) return;
         workingRemarkReleased = true;
-        dispatch(async () => await sinks.onIncrementalText!(dehydrated));
+        dispatch(async () => await sinks.onIncrementalText!(piece));
         return;
       }
       finalizing = true;
@@ -264,15 +305,15 @@ export function attachNativeCompanionContent(
         // first point that separates the reply from an intermediate tool-use
         // preamble; see the accumulator comment above.
         for (const sentence of messageSentences) {
-          if (isEmptyAfterDehydration(sentence)) continue;
-          dispatch(async () => await sinks.onIncrementalText!(dehydrateCompanionSpeech(sentence)));
+          if (presentIsEmpty(sentence)) continue;
+          dispatch(async () => await sinks.onIncrementalText!(present(sentence)));
         }
         const residual = messageAccumulator.flush();
-        if (!isEmptyAfterDehydration(residual))
-          dispatch(async () => await sinks.onFinalText(dehydrateCompanionSpeech(residual)));
+        if (!presentIsEmpty(residual))
+          dispatch(async () => await sinks.onFinalText(present(residual)));
         return;
       }
-      const text = readSafeAssistantText(finalMessage);
+      const text = readSafeAssistantText(finalMessage, stripStageDirection);
       if (text === null) {
         const hasText = finalMessage.content.some(isTextContent);
         const hasTool = finalMessage.content.some(
@@ -315,17 +356,18 @@ export function attachNativeCompanionContent(
   });
 }
 
-function readSafeAssistantText(message: AssistantMessage): string | null {
+function readSafeAssistantText(message: AssistantMessage, stripStageDirection: boolean): string | null {
   const joined = message.content
     .filter(isTextContent)
     .map((entry) => entry.text)
     .join("")
     .trim()
     .normalize("NFC");
-  // Dehydrate stage direction first (roleplay beats, asides, reasoning blocks)
-  // so the native chat box never shows the model's scaffolding. Pure-beat
-  // replies dehydrate to empty and are rejected below.
-  const value = dehydrateCompanionSpeech(joined);
+  // A `strip` surface cannot draw a `*...*` beat, so its scaffolding is
+  // removed here and a pure-beat reply is rejected below. A `keep` surface (the
+  // Chat transcript) receives the model's exact text: its renderer draws the
+  // beat and its durable row must not be a display projection.
+  const value = stripStageDirection ? dehydrateCompanionSpeech(joined) : joined;
   if (
     value.length === 0 ||
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value) ||

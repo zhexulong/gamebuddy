@@ -621,6 +621,60 @@ test("P5 normalizes native preview deltas before the browser event contract and 
   ]);
 });
 
+test("Chat commits the model's exact text, keeping its asterisk action beat", async () => {
+  // `attachNativeCompanionContent` sits between Pi's `message_end` and the
+  // durable `commit_presentation`, so a `strip` presentation on this lane would
+  // write every Chat row without the beat the renderer draws — irreversible for
+  // messages already generated. The failure this catches: the Chat lane passing
+  // `stageDirection: "strip"` (or a default that strips), which commits
+  // "早安!今天天气真好。" instead of the model's own line.
+  let observer: Observer | undefined;
+  const { scope, presentationTransitions } = createScope({
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+            });
+            emit({ type: "message_end", message: nativeAssistant([nativeText("*转过身微笑* 早安!今天天气真好。")]) });
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedProviderStart(scope);
+
+  assert.equal(result.outcome, "completed");
+  const commit = presentationTransitions[0];
+  assert.equal(commit?.operation, "commit_presentation");
+  assert.equal(
+    commit?.operation === "commit_presentation" && commit.message.text,
+    "*转过身微笑* 早安!今天天气真好。",
+    "the Chat durable row must keep the model's asterisk action beat",
+  );
+});
+
 test("P4c terminalizes a rejected prompt after an observation as durable runtime failure", async () => {
   let observer: Observer | undefined;
   let promptCalls = 0;

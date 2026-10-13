@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "outDir": "dist-test-focus"
+  },
+  "include": [],
+  "files": [
+    "src/native-companion-content.test.ts",
+    "src/companion-stage-direction-callers.test.ts",
+    "src/tavern/p4-provider-start-execution.test.ts",
+    "src/tavern/chat-thread-store.presentation.test.ts"
+  ]
+}

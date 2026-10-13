@@ -1,4 +1,4 @@
-import { attachNativeCompanionContent } from "../native-companion-content.js";
+import { attachNativeCompanionContent, CHAT_TRANSCRIPT_STAGE_DIRECTION } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { NativeChatPreview } from "./provider-invocation.js";
 import type {
@@ -267,7 +267,7 @@ export async function runMountedProviderStart(
         if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
         if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
       },
-    });
+    }, { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION });
     nativeObserver.open();
     // Open one exact speech job for this turn when a voice sink is attached.
     if (speechSink !== undefined) {

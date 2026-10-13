@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { attachNativeCompanionContent, type NativeCompanionContentEvent } from "./native-companion-content.js";
+import { attachNativeCompanionContent, type NativeCompanionContentEvent, type NativeCompanionContentOptions, type NativeCompanionContentSinks } from "./native-companion-content.js";
 
 type Listener = (event: NativeCompanionContentEvent) => void;
 
@@ -37,10 +37,19 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => queueMicrotask(resolve));
 }
 
+/** The Game bubble / voice presentation strips stage direction. */
+function attach(
+  fx: ReturnType<typeof fakeSession>,
+  sinks: NativeCompanionContentSinks,
+  stageDirection: NativeCompanionContentOptions["stageDirection"] = "strip",
+) {
+  return attachNativeCompanionContent(fx.session, sinks, { stageDirection });
+}
+
 test("obtains the provider response identity from its first update when Pi's start snapshot has none", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
@@ -68,7 +77,7 @@ test("streams text deltas from exactly one assistant message and commits its mat
   const previews: string[] = [];
   const finals: string[] = [];
   const rejections: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async (delta) => {
       previews.push(delta);
     },
@@ -114,7 +123,7 @@ test("streams text deltas from exactly one assistant message and commits its mat
 test("commits the exact Pi assistant lifecycle when an OpenAI-compatible stream provides no response ID", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
@@ -135,7 +144,7 @@ test("rejects a final assistant message that contradicts an observed provider re
   const fx = fakeSession();
   const finals: string[] = [];
   const rejections: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
@@ -163,7 +172,7 @@ test("rejects a final assistant message that contradicts an observed provider re
 test("final text comes from the final assistant message, excludes thinking/tool calls, and normalizes NFC", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
@@ -185,16 +194,16 @@ test("final text comes from the final assistant message, excludes thinking/tool 
   assert.deepEqual(finals, ["Café!"]);
 });
 
-test("dehydrates roleplay stage direction before committing final chat text", async () => {
+test("strips roleplay stage direction when the surface cannot draw it (Game bubble / voice)", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
     },
     onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
-  });
+  }, "strip");
   observer.open();
   const final = assistant([text("*转过身微笑* 早安!今天天气真好。")]);
   fx.emit({ type: "message_start", message: assistant([text("")]) });
@@ -204,10 +213,33 @@ test("dehydrates roleplay stage direction before committing final chat text", as
   assert.deepEqual(finals, ["早安!今天天气真好。"]);
 });
 
+test("keeps the model's exact text, including its asterisk action beat, for the Chat transcript", async () => {
+  // The Chat durable row is the model's own output, not a display projection:
+  // the renderer draws the single-asterisk beat as `.message-action`. A `strip`
+  // observer here would delete the companion's only expression channel in Chat
+  // (no mounted tools) and the loss would be irreversible for every row written.
+  const fx = fakeSession();
+  const finals: string[] = [];
+  const observer = attach(fx, {
+    onPreviewDelta: async () => undefined,
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  }, "keep");
+  observer.open();
+  const final = assistant([text("*转过身微笑* 早安!今天天气真好。")]);
+  fx.emit({ type: "message_start", message: assistant([text("")]) });
+  fx.emit({ type: "message_end", message: final });
+  await observer.close();
+
+  assert.deepEqual(finals, ["*转过身微笑* 早安!今天天气真好。"]);
+});
+
 test("skips intermediate tool-use assistant messages and commits the following native response", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onFinalText: async (value) => {
       finals.push(value);
@@ -247,7 +279,7 @@ test("incremental activation releases at most one working remark per turn", asyn
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onIncrementalText: async (value) => {
       inlines.push(value);
@@ -302,16 +334,26 @@ test("incremental activation releases at most one working remark per turn", asyn
 });
 
 test("never commits aborted, error, empty, control-text, or foreign assistant output", async () => {
-  for (const [stopReason, content, expected] of [
-    ["aborted", [text("late")], "aborted"],
-    ["error", [text("late")], "error"],
-    ["stop", [thinking("private"), toolCall], "empty"],
-    ["stop", [text("bad\u0000text")], "empty"],
-  ] as const) {
+  // A pre-existing HEAD mismatch lived here: the observer emitted `tool_only` /
+  // `unsupported_content` (see `readSafeAssistantText`) while the test expected
+  // the never-emitted `empty`, so the case had been red. The expectations now
+  // match the observer's actual reasons; the guarantee under test is unchanged.
+    // Reason strings the observer actually emits: a reply whose only content is
+    // tool scaffolding dehydrates to nothing but carries a tool call ->
+    // `tool_only`; a reply with text that is rejected for control bytes ->
+    // `unsupported_content`. (`empty` was never emitted; HEAD's test expected it
+    // and was red.) The product guarantee is the same: none of these are
+    // committed, and no foreign output is admitted.
+    for (const [stopReason, content, expected] of [
+      ["aborted", [text("late")], "aborted"],
+      ["error", [text("late")], "error"],
+      ["stop", [thinking("private"), toolCall], "tool_only"],
+      ["stop", [text("bad\u0000text")], "unsupported_content"],
+    ] as const) {
     const fx = fakeSession();
     const finals: string[] = [];
     const rejections: string[] = [];
-    const observer = attachNativeCompanionContent(fx.session, {
+    const observer = attach(fx, {
       onPreviewDelta: async () => undefined,
       onFinalText: async (value) => {
       finals.push(value);
@@ -338,7 +380,7 @@ test("revocation suppresses late preview and final content and close drains an a
   const pending = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async (value) => {
       previews.push(value);
       await pending;
@@ -381,7 +423,7 @@ test("incremental activation emits each completed sentence from the delta lane a
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onIncrementalText: async (value) => {
       inlines.push(value);
@@ -433,7 +475,7 @@ test("incremental activation commits only the never-completed residual at messag
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onIncrementalText: async (value) => {
       inlines.push(value);
@@ -467,11 +509,11 @@ test("incremental activation commits only the never-completed residual at messag
   assert.deepEqual(finals, ["我这就去"]);
 });
 
-test("a caller without onIncrementalText keeps the exact preview/final semantics (Chat regression)", async () => {
+test("a caller without onIncrementalText keeps the exact preview/final semantics and its presentation choice (Chat regression)", async () => {
   const fx = fakeSession();
   const previews: string[] = [];
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async (delta) => {
       previews.push(delta);
     },
@@ -481,7 +523,7 @@ test("a caller without onIncrementalText keeps the exact preview/final semantics
       finals.push(value);
     },
     onRejected: async () => undefined,
-  });
+  }, "keep");
   observer.open();
   observer.openPreviews();
   const trackedPartial = assistant([text("")]);
@@ -516,7 +558,7 @@ test("incremental activation never opens a sentence boundary inside a thinking f
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
-  const observer = attachNativeCompanionContent(fx.session, {
+  const observer = attach(fx, {
     onPreviewDelta: async () => undefined,
     onIncrementalText: async (value) => {
       inlines.push(value);

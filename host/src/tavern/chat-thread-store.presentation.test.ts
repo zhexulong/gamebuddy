@@ -3,6 +3,12 @@ import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { dehydrateCompanionSpeech } from "../companion-speech-dehydration.js";
+import {
+  attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_STAGE_DIRECTION,
+  type NativeCompanionContentEvent,
+} from "../native-companion-content.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
@@ -461,3 +467,103 @@ test("presentation exact attempt binding rejects a foreign attempt or binding", 
     await removeTestRoot(root);
   }
 });
+
+
+/**
+ * The Chat turn path's persistence rule, asserted end to end.
+ *
+ * The failure this catches: the Chat lane hands the persistence transition a
+ * projection of the model's text instead of the text itself. Every generated
+ * message then loses the companion's only expression channel in Chat (her
+ * `*...*` action beats), and the loss is irreversible for every row already
+ * written - while the renderer keeps drawing the class it can no longer find.
+ * The row is read back from a freshly reopened durable store, and the reader is
+ * the real `attachNativeCompanionContent` configured with the production Chat
+ * presentation choice, so a planted dehydrate on this path (the constant flipped
+ * to `strip`, or a literal substituted for it) fails right here.
+ */
+test("the Chat persistence path stores the model's own text, action beat included, and reads it back unchanged", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-turn-action-beat-");
+  try {
+    const { attemptId, base } = await prepareRunning(root);
+    // A real reply's shape: two asterisk beats around quoted speech.
+    const modelText =
+      "*正蹲在田埂边用小花铲抠一块顽固的碎石，听到声音抬起头，茶褐色的发尾沾了点泥星子。*\n\n“嗯？醒啦。”\n\n*她把铲子往腰侧工具包里一插，站起来拍了拍膝盖上的土。*\n\n“锅里有昨晚上剩的防风草汤，热一热就能喝。”";
+    const presented = await chatPresentationOf(modelText);
+    assert.ok(typeof presented === "string", "the observer commits the model's final assistant text");
+    if (presented !== modelText)
+      assert.fail(
+        `the Chat presentation lane handed the store ${JSON.stringify(presented)} instead of the model's own text ${JSON.stringify(modelText)}`,
+      );
+
+    const committedAt = base + 10;
+    const messageId = "chat_native_attempt_action_beat";
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId, text: presented, occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    assert.equal(committed.status, "presentation_committed");
+
+    // What the player's transcript is built from: the durable store, reopened.
+    const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
+    const row = reopened.messages.find((message) => message.messageId === messageId);
+    assert.equal(row?.role, "companion");
+    assert.equal(row?.kind, "response");
+    assert.equal(row?.text, modelText);
+    // Stated against the rule, not against the function: the stored row must not
+    // be the dehydrator's projection of the model's text.
+    assert.notEqual(row?.text, dehydrateCompanionSpeech(modelText));
+    assert.match(row?.text ?? "", /\*[^*]+\*/u, "the stored row still carries the action beat");
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
+ * Runs the real Chat presentation observer over one Pi assistant message and
+ * returns the text it hands the persistence lane. `CHAT_TRANSCRIPT_STAGE_DIRECTION`
+ * is the production decision, so this reader cannot agree with a lane that has
+ * been changed to strip.
+ */
+async function chatPresentationOf(modelText: string): Promise<string | undefined> {
+  const listeners = new Set<(event: NativeCompanionContentEvent) => void>();
+  const finals: string[] = [];
+  const rejections: string[] = [];
+  const observer = attachNativeCompanionContent(
+    Object.freeze({
+      subscribe(listener: (event: NativeCompanionContentEvent) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    }),
+    {
+      onPreviewDelta: async () => undefined,
+      onFinalText: async (value) => {
+        finals.push(value);
+      },
+      onRejected: async (reason) => {
+        rejections.push(reason);
+      },
+    },
+    { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION },
+  );
+  observer.open();
+  const message = Object.freeze({
+    role: "assistant" as const,
+    content: [Object.freeze({ type: "text" as const, text: modelText })],
+    stopReason: "stop",
+    responseId: "assistant_action_beat",
+  });
+  for (const listener of [...listeners]) {
+    listener({ type: "message_start", message });
+    listener({ type: "message_end", message });
+  }
+  await observer.close();
+  assert.deepEqual(rejections, [], "the Chat presentation must not reject a reply that carries a beat");
+  return finals[0];
+}

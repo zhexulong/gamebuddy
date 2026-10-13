@@ -1,6 +1,10 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
-import { attachNativeCompanionContent, type NativeCompanionContentObserver } from "./native-companion-content.js";
+import {
+  attachNativeCompanionContent,
+  NATIVE_BUBBLE_STAGE_DIRECTION,
+  type NativeCompanionContentObserver,
+} from "./native-companion-content.js";
 import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
 import { chunkCompanionSpeech } from "./companion-speech-chunker.js";
 
@@ -266,7 +270,7 @@ export class CompanionLoop {
                   // produced nothing presentable — recorded as a failure, never as a quiet success.
                   turnOutcome = reason === "aborted" || reason === "error" ? reason : "error";
                 },
-              });
+              }, { stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION });
               nativeContentObserver.open();
               // Previews unlock the delta lane for every Game surface, not only
               // voice: incremental presentation consumes completed sentences from
