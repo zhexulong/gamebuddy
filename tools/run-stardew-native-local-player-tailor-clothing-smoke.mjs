@@ -5,10 +5,13 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  waitForActionable,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
+/** How long the actor may take to settle after the fixture's warp before the run gives up. */
+const ACTIONABLE_TIMEOUT_MS = 30_000;
 const ACTION = "tailor_clothing";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
@@ -36,7 +39,7 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  */
 export async function runTailorClothingSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
-  const snapshot = await observeFresh(client, { actionable: true });
+  const snapshot = await waitForActionable(client, await observeFresh(client), ACTIONABLE_TIMEOUT_MS);
   assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const target = chooseRecipeTarget(snapshot);
   const before = inventoryItemCounts(snapshot);
@@ -158,7 +161,7 @@ export function assertTailorClothingPostconditions({ target, evidence, before, a
  */
 async function executeNegative(client, receipts, args, expectedTargetId, terminalTimeoutMs) {
   const requestId = `native_local_tailor_clothing_negative_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const snapshot = await observeFresh(client, { actionable: true });
+  const snapshot = await waitForActionable(client, await observeFresh(client), ACTIONABLE_TIMEOUT_MS);
   const before = inventoryItemCounts(snapshot);
   const accepted = await executeFresh(client, {
     requestId,

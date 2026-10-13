@@ -74,6 +74,8 @@ public static class FarmhandExecutionAcceptance
         bool responseKey = args.ResponseKey is not null;
         bool quantity = args.Quantity.HasValue;
         bool buildingType = args.BuildingType is not null;
+        bool leftSlot = args.LeftSlot is not null;
+        bool rightSlot = args.RightSlot is not null;
         bool text = args.Text is not null;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
@@ -88,7 +90,9 @@ public static class FarmhandExecutionAcceptance
             && responseKey == HasArgument(descriptor, "responseKey")
             && quantity == HasArgument(descriptor, "quantity")
             && text == HasArgument(descriptor, "text")
-            && buildingType == HasArgument(descriptor, "buildingType");
+            && buildingType == HasArgument(descriptor, "buildingType")
+            && leftSlot == HasArgument(descriptor, "leftSlot")
+            && rightSlot == HasArgument(descriptor, "rightSlot");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -112,6 +116,8 @@ public static class FarmhandExecutionAcceptance
         // constant (the one the handler enforces), so the two cannot disagree about what a chat line is.
         "buildingType" => args.BuildingType is { Length: > 0 } buildingTypeId
             && buildingTypeId.Length <= 128, // mirrors the Host wire validator (>128 is rejected the same way)
+        "leftSlot" => args.LeftSlot is int leftSlotValue && leftSlotValue >= 0 && leftSlotValue < 24,
+        "rightSlot" => args.RightSlot is int rightSlotValue && rightSlotValue >= 0 && rightSlotValue < 24,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum

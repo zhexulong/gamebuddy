@@ -145,7 +145,12 @@
     "clear_fish_pond",
     "build_farm_building",
     "accept_daily_quest",
-    "name_entity"
+    "accept_special_order",
+    "claim_museum_reward",
+    "name_entity",
+    "redeem_prize_ticket",
+    "tailor_clothing",
+    "dye_clothing_with_item"
   ],
   "actions": [
     {
@@ -1629,6 +1634,40 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
+      "actionId": "accept_special_order",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/FarmerTeam.cs",
+          "signature": "public void AddSpecialOrder(string id, int? generationSeed = null, bool forceRepeatable = false)",
+          "sensitivity": "mp-observational",
+          "observedEffect": "the creation write is the player team's own list; the only pattern-decisive read is the per-farmer order"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "claim_museum_reward",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Locations/LibraryMuseum.cs",
+          "signature": "public List<Item> getRewardsForPlayer(Farmer player)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the reward set is derived from the player's own donation flags and the game's data table; the mail flags and"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
       "actionId": "name_entity",
       "lifecycle": "live_verified",
       "seams": [
@@ -1638,6 +1677,57 @@
           "signature": "public void nameHorse(string name)",
           "sensitivity": "mp-observational",
           "observedEffect": "the settlement's only pattern-decisive read is presentation: `Game1.multiplayer.globalChatInfoMessage(\"HorseNamed\", Game1.player.Name, name)` announces the rename. The stored name - `base.Name`, `displayName`, and the acting player's own `Game1.player.horseName` - is written the same way in both world modes, and `mutex.ReleaseLock()` only releases the horse's own NetMutex this call already holds, so the name the postcondition reads back cannot differ by world mode."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "redeem_prize_ticket",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley/LibraryMuseum.cs",
+          "signature": "public void OnRewardCollected(Item item, Farmer who)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "tailor_clothing",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/TailoringMenu.cs",
+          "signature": "public Item CraftItem(Item left_item, Item right_item)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the settlement consumes two held items and produces a garment; no multiplayer-decisive token is read."
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
+    },
+    {
+      "actionId": "dye_clothing_with_item",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/TailoringMenu.cs",
+          "signature": "public bool DyeItems(Clothing clothing, Item dye_object, float dye_strength_override = -1f)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the colour comes from the dye item's own context tags; no multiplayer-decisive token is read."
         }
       ],
       "admission": {

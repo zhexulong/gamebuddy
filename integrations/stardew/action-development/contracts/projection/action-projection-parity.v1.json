@@ -2595,6 +2595,54 @@
         }
       },
       {
+        "actionId": "accept_special_order",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "special_order_accepted"
+        }
+      },
+      {
+        "actionId": "claim_museum_reward",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "museum_rewards_collected"
+        }
+      },
+      {
         "actionId": "name_entity",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2616,6 +2664,86 @@
         "effect": "write",
         "postcondition": {
           "name": "entity_named"
+        }
+      },
+      {
+        "actionId": "redeem_prize_ticket",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {},
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "prize_ticket_redeemed"
+        }
+      },
+      {
+        "actionId": "tailor_clothing",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "leftSlot": {
+            "type": "integer"
+          },
+          "rightSlot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "clothing_tailored"
+        }
+      },
+      {
+        "actionId": "dye_clothing_with_item",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "leftSlot": {
+            "type": "integer"
+          },
+          "rightSlot": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "clothing_dyed"
         }
       }
     ]
@@ -2707,7 +2835,12 @@
       "clear_fish_pond",
       "build_farm_building",
       "accept_daily_quest",
-      "name_entity"
+      "accept_special_order",
+      "claim_museum_reward",
+      "name_entity",
+      "redeem_prize_ticket",
+      "tailor_clothing",
+      "dye_clothing_with_item"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -2819,7 +2952,12 @@
       "clear_fish_pond",
       "build_farm_building",
       "accept_daily_quest",
-      "name_entity"
+      "accept_special_order",
+      "claim_museum_reward",
+      "name_entity",
+      "redeem_prize_ticket",
+      "tailor_clothing",
+      "dye_clothing_with_item"
     ]
   },
   "fixtureOwnedFiles": [

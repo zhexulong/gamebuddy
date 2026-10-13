@@ -413,6 +413,43 @@ const TABLE = {
   // event), so the seam is cited there: the entry overload's own body carries no game logic to
   // classify. The settlement reads no multiplayer state that decides the outcome; its two
   // decisive-pattern reads are collateral (see observedEffect).
+  // The special-orders board accept: the creation write is publicly reachable without the board.
+  accept_special_order: [
+    "StardewValley/FarmerTeam.cs",
+    "public void AddSpecialOrder(string id, int? generationSeed = null, bool forceRepeatable = false)",
+    "mp-observational",
+    "the creation write is the player team's own list; the only pattern-decisive read is the per-farmer order",
+    "broadcast to connected farmers, which changes who is told, not whether the order exists.",
+  ],
+  // The museum donation reward collection: reward list is per-player state derived from donation flags.
+  claim_museum_reward: [
+    "StardewValley.Locations/LibraryMuseum.cs",
+    "public List<Item> getRewardsForPlayer(Farmer player)",
+    "mp-insensitive",
+    "the reward set is derived from the player's own donation flags and the game's data table; the mail flags and",
+    "recipes the grant writes are the same world facts in any session - no multiplayer-decisive token is read.",
+  ],
+  // Prize-ticket redemption: the prize track head is the game's own ticketPrizesClaimed stat; the subject is the actor's own stack.
+  redeem_prize_ticket: [
+    "StardewValley/LibraryMuseum.cs",
+    "public void OnRewardCollected(Item item, Farmer who)",
+    "mp-insensitive",
+    "the redemption acts on the actor's own inventory and stats; no multiplayer-decisive token is read.",
+  ],
+  // Tailoring craft: the sewing machine's table drives it; a backpack-local exchange.
+  tailor_clothing: [
+    "StardewValley.Menus/TailoringMenu.cs",
+    "public Item CraftItem(Item left_item, Item right_item)",
+    "mp-insensitive",
+    "the settlement consumes two held items and produces a garment; no multiplayer-decisive token is read.",
+  ],
+  // Tailoring dye: the colour comes from the dye item's own context tags and Clothing.Dye.
+  dye_clothing_with_item: [
+    "StardewValley.Menus/TailoringMenu.cs",
+    "public bool DyeItems(Clothing clothing, Item dye_object, float dye_strength_override = -1f)",
+    "mp-insensitive",
+    "the colour comes from the dye item's own context tags; no multiplayer-decisive token is read.",
+  ],
   build_farm_building: [
     "StardewValley/GameLocation.cs",
     "public bool buildStructure(string typeId, BuildingData data, Vector2 tileLocation, Farmer who, out Building constructed, bool magicalConstruction = false, bool skipSafetyChecks = false)",

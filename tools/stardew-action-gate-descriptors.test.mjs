@@ -74,6 +74,11 @@ test("descriptor runner identity names the native-local shared-harness runner fo
   // actual native-local route (run-stardew-native-local-player-*), which is
   // the shared-harness runner. Any parallel/legacy runner ID is stale.
   const expectedRunners = Object.freeze({
+    "dye_clothing_with_item": "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
+    "tailor_clothing": "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
+    "redeem_prize_ticket": "run-stardew-native-local-player-prize-ticket-smoke.mjs",
+    "claim_museum_reward": "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
+    "accept_special_order": "run-stardew-native-local-player-accept-special-order-smoke.mjs",
     "accept_daily_quest": "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
     "name_entity": "run-stardew-native-local-player-name-entity-smoke.mjs",
     "build_farm_building": "run-stardew-native-local-player-build-farm-building-smoke.mjs",

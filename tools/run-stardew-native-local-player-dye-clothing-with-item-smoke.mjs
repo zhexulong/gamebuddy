@@ -5,10 +5,13 @@ import {
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt,
+  waitForActionable,
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
+/** How long the actor may take to settle after the fixture's warp before the run gives up. */
+const ACTIONABLE_TIMEOUT_MS = 30_000;
 const ACTION = "dye_clothing_with_item";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
@@ -39,7 +42,7 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  */
 export async function runDyeClothingWithItemSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
-  const snapshot = await observeFresh(client, { actionable: true });
+  const snapshot = await waitForActionable(client, await observeFresh(client), ACTIONABLE_TIMEOUT_MS);
   assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
   const target = chooseDyeTarget(snapshot);
   const before = {
@@ -151,7 +154,7 @@ export function assertDyeClothingPostconditions({ target, evidence, before, afte
 /** One refused submission, with its own fresh observation (the previous request advanced the revision). */
 async function executeNegative(client, receipts, args, expectedTargetId, target, terminalTimeoutMs) {
   const requestId = `native_local_dye_clothing_negative_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const snapshot = await observeFresh(client, { actionable: true });
+  const snapshot = await waitForActionable(client, await observeFresh(client), ACTIONABLE_TIMEOUT_MS);
   const before = { inventory: inventoryItemCounts(snapshot), colour: colourOfTarget(snapshot, target.targetId) };
   const accepted = await executeFresh(client, {
     requestId,
