@@ -589,11 +589,26 @@ function declaredArgumentNames(descriptor: ActionRegistrationDescriptor): readon
     const names = descriptor.arguments.map((argument) => argument?.name);
     return names.every((name) => typeof name === "string" && name.length > 0) ? (names as string[]) : undefined;
   }
-  if (descriptor.argumentSchema !== undefined && typeof descriptor.argumentSchema === "object" && descriptor.argumentSchema !== null) {
-    const properties = (descriptor.argumentSchema as { properties?: Record<string, unknown> }).properties;
-    if (properties !== undefined && typeof properties === "object" && properties !== null) return Object.keys(properties);
-  }
+  if (descriptor.argumentSchema !== undefined && typeof descriptor.argumentSchema === "object" && descriptor.argumentSchema !== null)
+    return Object.keys(descriptor.argumentSchema);
   return undefined;
+}
+
+/**
+ * Forward exactly the argument names the Mod descriptor declares, so a descriptor-derived tool builds its
+ * parameter schema and its wire args from ONE source. The two were separate before: several tools derived a
+ * complete `{ x, y, expectedTargetId }` schema and then forwarded `{}`, which the Host protocol refused as
+ * `invalid_execution_request` before the bridge - a registered, advertised, described capability that could
+ * not execute, with no fact in the refusal for the model to act on.
+ */
+function declaredArguments(
+  descriptor: ActionRegistrationDescriptor | undefined,
+  params: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const args: Record<string, unknown> = {};
+  for (const name of (descriptor === undefined ? [] : declaredArgumentNames(descriptor)) ?? [])
+    args[name] = params[name];
+  return args;
 }
 
 /**
@@ -707,20 +722,12 @@ export function createStardewActionTools(
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.travel,
-        label: "Travel Through Stardew Warp or Minecart",
+        label: "Travel Through a Stardew Warp",
         description:
-          "Use a live native warp at the supplied source tile, or ride an advertised minecart objective from that station tile. The Mod resolves the destination and only a Warped postcondition can report success.",
+          "Use a live native warp at the source tile x, y. The Mod resolves the destination and only a Warped postcondition can report success; a named minecart ride is the separate stardew_ride_minecart action.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedTargetId: Type.Optional(
-            Type.String({
-              minLength: 1,
-              maxLength: 128,
-              description:
-                "A minecart targetId published in minecartTargets for this station tile. Omit for an ordinary warp.",
-            }),
-          ),
           requestId: Type.Optional(
             Type.String({ minLength: 1, maxLength: 128 }),
           ),
@@ -729,10 +736,7 @@ export function createStardewActionTools(
           ),
         }),
         action: "travel",
-        toArgs: (params) =>
-          params.expectedTargetId === undefined
-            ? { x: params.x, y: params.y }
-            : { x: params.x, y: params.y, expectedTargetId: params.expectedTargetId },
+        toArgs: (params) => ({ x: params.x, y: params.y }),
       }),
     );
   }
@@ -742,7 +746,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
         label: "Enter or Exit Stardew Location",
         description:
-          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x, y and expectedTargetId must be copied exactly from doorTargets in the most recent observe result; only the Warped postcondition can report success.",
+          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; only the Warped postcondition can report success.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -786,7 +790,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
         label: "Pick Up Stardew Forage",
         description:
-          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
+          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates), and sceneTarget must be the { observationId, ref } binding that stardew_read_scene published for that same target. Only the authoritative native receipt and target disappearance can report completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1652,7 +1656,7 @@ export function createStardewActionTools(
             "End the day the way the player does: the Farmhand walks to its own bed, lets the native sleep path run, declares sleep-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
           parameters: schema,
           action: "advance_day",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -1674,7 +1678,7 @@ export function createStardewActionTools(
             "Close the informational native dialogue currently on screen (a DialogueBox with no pending question) through the native closeDialogue path. The dialog must have been opened by the world (a villager, a door gate, an event) and must not be a question that requires choosing an answer.",
           parameters: schema,
           action: "dismiss_modal",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -1696,7 +1700,7 @@ export function createStardewActionTools(
             "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
           parameters: schema,
           action: "ride_bus",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -1874,7 +1878,7 @@ export function createStardewActionTools(
             "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Move into reach of the shop first; the action does not walk.",
           parameters: schema,
           action: "shop_purchase",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -1896,7 +1900,7 @@ export function createStardewActionTools(
             "Select an already-reached floor on the mine elevator. Read the opaque target id, `floor` and `isCurrentFloor` from the `mineElevatorFloorTargets` entries of the most recent observation. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
           parameters: schema,
           action: "select_mine_elevator_floor",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -2472,7 +2476,7 @@ export function createStardewActionTools(
             "Put the held item into a storage chest the BUILDING itself declares, such as a Mill's input chest. Stand within reach of the building first. Read the opaque target id, its tile, the chest id and the load hint from the buildingChestTargets entries of the most recent observation. Only the native Load branch is driven; a chest the game exposes only through a menu is refused by name.",
           parameters: schema,
           action: "load_building_chest",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -2494,7 +2498,7 @@ export function createStardewActionTools(
             "Take what a building's OWN output chest holds, such as a Mill's flour or a Junimo Hut's crops. Stand within reach of the building first. Read the opaque target id, its tile and `stackCount` from the `buildingChestTargets` entries of the most recent observation. A chest holding two or more stacks is refused by name (building_chest_requires_menu), because the native branch would open a container menu this action does not drive; otherwise the Mod asserts the stack left the chest AND arrived in the pack.",
           parameters: schema,
           action: "collect_building_chest_output",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }
@@ -2626,7 +2630,7 @@ export function createStardewActionTools(
             "Get off the horse or other mount the Farmhand is currently riding. This action takes NO arguments. It is a pure state assertion: it refuses when the actor is not riding anything, and only the observed end state (!isRidingHorse) can report success.",
           parameters: schema,
           action: "dismount_transport",
-          toArgs: () => ({}),
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
     }

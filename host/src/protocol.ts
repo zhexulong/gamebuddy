@@ -1984,11 +1984,17 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action === "withdraw_silo_hay" ||
     value.action === "use_obelisk" ||
     value.action === "clear_fish_pond" ||
-    value.action === "accept_daily_quest" ||
     value.action === "toggle_animal_door"
   ) {
-    // All three take the shared { x, y, expectedTargetId } shape and no slot.
+    // The shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "accept_daily_quest") {
+    // The quest identity ALONE. `dailyQuestTargets` publishes no tile, and the Mod's own wire parser
+    // pins exactly { expectedTargetId } (BridgeProtocol.ExecutionArgumentProperties, asserted by
+    // AcceptDailyQuestActionTests). Demanding x/y here - as this branch once did, sharing the sibling
+    // branch above - refused every request the Mod would have accepted, so the action was advertised
+    // and could never execute.
+    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
   } else if (value.action === "send_multiplayer_chat") {
     // One string and nothing else, bounded by the SAME length the Mod enforces (its
     // ChatMessageMaximumLength): an argument the wire accepts but the handler refuses would be a
