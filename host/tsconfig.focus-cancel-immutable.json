@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-cancel-immutable",
+    "noEmit": false,
+    "noUnusedLocals": false
+  },
+  "include": [],
+  "files": [
+    "src/tavern/chat-thread-store.ts",
+    "src/tavern/chat-thread-store.mounted-turn-transition.internal.ts",
+    "src/tavern/chat-thread-store.cancel-authority.test.ts",
+    "src/tavern/chat-thread-store.presentation.test.ts",
+    "src/tavern/chat-thread-store.route-ownership.test.ts",
+    "src/tavern/chat-thread-store.test.ts"
+  ]
+}

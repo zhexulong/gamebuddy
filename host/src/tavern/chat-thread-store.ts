@@ -2306,7 +2306,14 @@ export function createChatThreadStore(
           break;
         }
         default: {
-          if (ledger.status === "attempt_starting" || isTerminalLedger(ledger))
+          // A claimed cancel is already this turn's durable winner: the runner that
+          // owns the prompt drain finishes it with `cancel`, so a later failure can no
+          // longer replace an interruption with a failure.
+          if (
+            ledger.status === "attempt_starting" ||
+            ledger.status === "cancel_claimed" ||
+            isTerminalLedger(ledger)
+          )
             throw new Error("p5_presentation_terminal_immutable");
           nextLedger = freezeFailedTurn({
             turnId: ledger.turnId,

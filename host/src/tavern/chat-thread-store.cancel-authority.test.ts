@@ -502,3 +502,48 @@ test("cancel authority: the widened not_started exit still rejects the fabricate
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("cancel authority: a claimed cancel is not overwritable by a failure", async () => {
+  const root = await canonicalTestRoot("gamebuddy-cancel-auth-claim-immutable-");
+  let closeStore: (() => void) | undefined;
+  try {
+    const { store, attemptId } = await prepare(root, "running");
+    closeStore = () => store.close?.();
+    const base = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
+    const claimed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_cancel", claimedAtMs: base + 1 },
+    );
+    assert.equal(claimed.status, "cancel_claimed");
+
+    // The defect this covers: the mounted cancel seam publishes its durable claim and
+    // then aborts the prompt it owns, so the runner that drains that prompt is the only
+    // writer left that can terminalize the turn. While nothing consumed the published
+    // winner, that runner reported the stop's own abort as this turn's failure, and the
+    // store let the failure replace the claimed interruption - losing the cancel, the
+    // timestamps and the fact that the player had already stopped the turn.
+    await assert.rejects(
+      () =>
+        transitionMountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "fail", reasonCode: "runtime_unavailable", failedAtMs: base + 2 },
+        ),
+      /p5_presentation_terminal_immutable/,
+    );
+    assert.deepEqual((await store.resumeThread("thread_01", "surface_01")).turnLedger, claimed);
+
+    // The claim's own owner still finishes it, and keeps the claim's identity.
+    const cancelled = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "cancel", cancelledAtMs: base + 3 },
+    );
+    assert.equal(cancelled.status, "cancelled");
+    if (cancelled.status === "cancelled") {
+      assert.equal(cancelled.cancelClaimedAtMs, base + 1);
+      assert.equal(cancelled.cancelledAtMs, base + 3);
+    }
+  } finally {
+    closeStore?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
