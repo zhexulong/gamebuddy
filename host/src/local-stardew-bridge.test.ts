@@ -104,6 +104,13 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
   await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject));
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    // `connect()` resolves as soon as the hello_ack is authenticated; the
+    // fixture's snapshot is a second frame on the same pipe. The read-only gate
+    // below requires an ADMITTED snapshot bound to the published catalog
+    // revision, so wait for it instead of racing the transport.
+    for (let attempt = 0; attempt < 20 && client.state.snapshot === null; attempt++)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.equal(client.state.snapshot?.revision, 1);
     const result = await client.observeScene();
     assert.equal(requestType, "observe_scene_request");
      assert.equal(result.observationId, "observation_01");
@@ -600,13 +607,14 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
         if (request.type === "observe_request") {
           observeRequests++;
           if (observeRequests === 1) firstObserveRequest();
-          const catalogRevision = observeRequests === 1 ? 2 : 3;
+          // Both solicited snapshots bind the one published catalog revision;
+          // `catalog_update` never mints a new one (see the case below).
           const snapshotRevision = observeRequests === 1 ? 20 : 21;
           observeResponses.push(() =>
             socket.write(
               frame({
                 ...request,
-                messageId: `catalog_snapshot_${catalogRevision}`,
+                messageId: `catalog_snapshot_${snapshotRevision}`,
                 type: "snapshot",
                 payload: {
                   revision: snapshotRevision,
@@ -617,7 +625,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
                   health: 100,
                   actionable: true,
                   capabilities: ["inspect_self"],
-                  catalogRevision,
+                  catalogRevision: 1,
                   enabledActionIds: ["move_to_tile"],
                   presentationLocale: "en-US",
                   timeOfDay: 600,
@@ -639,8 +647,13 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     const catalogRevision = () => client.state.catalogRevision;
+    const capabilityRevision = () => client.state.policyIdentity?.capabilityRevision;
     const snapshotRevision = () => client.state.snapshot?.revision;
-    const catalogUpdate = (revision: number) =>
+    // A catalog update REPUBLISHES the same catalogRevision with a strictly newer
+    // policy identity. The Mod's `FarmhandActionSurfacePublication.CatalogRevision`
+    // is the constant 1 and `BridgeSession.TryCreateCatalogUpdate` sends it, while
+    // the live publication is versioned by `policyIdentity.capabilityRevision`.
+    const catalogUpdate = (identityValue: string, revision: number) =>
       peer?.write(
         frame({
           protocolVersion: 1,
@@ -649,25 +662,30 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
           timestampMs: Date.now(),
           scope,
           type: "catalog_update",
-          payload: { catalogRevision: revision, policyIdentity: { value: revision.toString(16).padStart(32, "0"), capabilityRevision: revision }, enabledActionIds: ["move_to_tile"] },
+          payload: { catalogRevision: 1, policyIdentity: { value: identityValue, capabilityRevision: revision }, enabledActionIds: ["move_to_tile"] },
         }),
       );
 
-    catalogUpdate(2);
-    for (let attempt = 0; attempt < 20 && catalogRevision() !== 2; attempt++)
+    catalogUpdate("b".repeat(32), 2);
+    for (let attempt = 0; attempt < 20 && capabilityRevision() !== 2; attempt++)
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
     assert.equal(client.state.snapshot, null);
-    assert.equal(catalogRevision(), 2);
+    assert.equal(catalogRevision(), 1);
+    assert.equal(capabilityRevision(), 2);
     await firstObserveRequestSeen;
     assert.equal(observeRequests, 1);
     const refresh1 = client.refreshAfterCatalogUpdate();
     const refresh2 = client.refreshAfterCatalogUpdate();
     assert.strictEqual(refresh1, refresh2);
 
-    catalogUpdate(3);
-    for (let attempt = 0; attempt < 20 && catalogRevision() !== 3; attempt++)
+    // A second publication of the same catalog revision supersedes the first
+    // while its refresh is still in flight: the refresh must chase the newer
+    // publication instead of settling on the superseded payload.
+    catalogUpdate("c".repeat(32), 3);
+    for (let attempt = 0; attempt < 20 && capabilityRevision() !== 3; attempt++)
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
-    assert.equal(catalogRevision(), 3);
+    assert.equal(catalogRevision(), 1);
+    assert.equal(capabilityRevision(), 3);
     assert.equal(observeRequests, 1);
     observeResponses[0]?.();
     for (let attempt = 0; attempt < 20 && observeRequests < 2; attempt++)
@@ -675,7 +693,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
     assert.equal(observeRequests, 2);
     observeResponses[1]?.();
     const snapshot = await refresh1;
-    assert.equal(snapshot.catalogRevision, 3);
+    assert.equal(snapshot.catalogRevision, 1);
     assert.equal(snapshotRevision(), 21);
 
     peer?.write(
@@ -712,7 +730,8 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
     );
-    catalogUpdate(3);
+    // Replaying the exact publication already accepted is stale authority.
+    catalogUpdate("c".repeat(32), 3);
     assert.deepEqual(await disconnected, {
       state: "disconnected",
       reasonCode: "invalid_catalog_update_authority",
@@ -950,13 +969,16 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
       stage: "native_chat_bridge_inbound_rejected",
       reasonCode: "malformed_player_control",
     });
+    // The rejection closes the transport from inside the message handler, and
+    // `NamedPipeTransport.close()` drains its frameStage listeners (37105add), so
+    // no trailing `pipe_frame_dispatched` stage can reach a listener here. The
+    // frame WAS dispatched: the fixed rejection diagnostic above is its result.
     assert.deepEqual(diagnostics, [
       { stage: "pipe_bytes_received", reasonCode: "observed" },
       { stage: "pipe_frame_header_accepted", reasonCode: "observed" },
       { stage: "pipe_frame_payload_complete", reasonCode: "observed" },
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_inbound_rejected", reasonCode: "malformed_player_control" },
-      { stage: "pipe_frame_dispatched", reasonCode: "observed" },
     ]);
     assert.equal((await disconnected).reasonCode, "invalid_semantic_event");
     assert.equal(facts, 0);
