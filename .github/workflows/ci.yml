@@ -84,6 +84,7 @@ jobs:
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: pnpm check:dependency-risk
+      - run: pnpm test:dependency-risk
       - run: git diff --exit-code -- third_party/sbom-node.json
 
   voice-gateway:
