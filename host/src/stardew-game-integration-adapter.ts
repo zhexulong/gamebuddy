@@ -1444,6 +1444,7 @@ function hasStardewCompletionEvidence(
             "inventory_before",
             "inventory_after",
             "native_menu_opened",
+            "leftover_returned",
           ],
           (e) => {
             const chestBefore = integerEvidenceValue(e.chest_stack_before);
@@ -1472,6 +1473,7 @@ function hasStardewCompletionEvidence(
       // farmhandexecutioncontroller.resourcetoolactions.cs:575-584: the native stump fell
       // (health marker -100) or its terrain feature is gone.
       return (
+              e.leftover_returned === "false" &&
         receipt.reasonCode === "stump_cleared" &&
         exactEvidence(
           detail,

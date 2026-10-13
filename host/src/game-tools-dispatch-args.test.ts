@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
  * those runners call `client.execute` directly and the Host's request validation never runs during a live gate.
  *
  *   1. `toArgs(params)` is the ONLY source of the wire arguments
- *      (`executeGameAction(..., definition.toArgs(params), ...)`), so a mount written `toArgs: () => ({})` sends
- *      `args: {}` and `validateExecutionRequest` refuses every call. Six published actions shipped that way -
- *      use_obelisk, withdraw_silo_hay, clear_fish_pond, toggle_animal_door, build_farm_building, accept_daily_quest -
- *      visible to the agent and dead on every invocation.
+ *      (`executeGameAction(..., definition.toArgs(params), ...)`), so a mount that derives a complete parameter schema
+ *      and then forwards nothing sends an empty `args` and `validateExecutionRequest` refuses every call. Six published
+ *      actions shipped that way - use_obelisk, withdraw_silo_hay, clear_fish_pond, toggle_animal_door,
+ *      build_farm_building, accept_daily_quest - visible to the agent and dead on every invocation.
  *   2. `isModDescriptorComplete` is a per-action chain ending in `return false`, so an action without an arm is never
  *      mounted at all and never appears in `visibleActionsFromModCatalog`: the agent cannot see it. Promoting such an
  *      action changes its lifecycle and its gate while the tool does not exist.
@@ -32,7 +32,7 @@ const REGISTRY = readFileSync(join(ROOT, "host", "src", "action-registry.ts"), "
 /** The mount blocks, with the action id and the toArgs expression that feeds the request. */
 function mountBlocks() {
   const blocks: Array<{ action: string; params: string; body: string }> = [];
-  const re = /entry\.actionId === "([a-z_]+)",[\s\S]{0,1200}?toArgs: \(([^)]*)\) => \(([\s\S]{0,300}?)\),\n/g;
+  const re = /entry\.actionId === "([a-z_]+)",[\s\S]{0,1200}?toArgs: \(([^)]*)\) => \(([\s\S]{0,400}?)\),\n/g;
   for (const match of GAME_TOOLS.matchAll(re)) {
     blocks.push({ action: match[1], params: match[2].trim(), body: match[3].trim() });
   }
@@ -62,12 +62,18 @@ test("every mount forwards the arguments its action declares", () => {
     const declared = declaredArgumentNames(block.action);
     assert.notEqual(declared, null, `${block.action} has a mount block but is not in the Mod catalog`);
     if (declared!.length === 0) continue;
-    // Forwarding means naming each declared argument from the tool's own input. The parameter is not always called
-    // `params` (two mounts call it `args`), so the assertion follows whatever the mount declares, not a fixed name.
     const source = block.params.length > 0 ? block.params : "params";
-    const forwardsAll = declared!.every((name) =>
-      new RegExp("\\b" + name + ":\\s*[A-Za-z]*\\(?\\s*" + source + "\\." + name + "\\b").test(block.body),
+    // TWO legitimate forms. The explicit one names each declared argument from the tool's own input. The generic one
+    // delegates to a helper that takes the names off the descriptor - the stronger design, because the schema and the
+    // wire args then come from one source. That helper is asserted below, so "delegates to something" is not a loophole.
+    const delegated = new RegExp("declaredArguments\\(\\s*registration\\.descriptor\\s*,\\s*" + source + "\\s*\\)").test(
+      block.body,
     );
+    const forwardsAll =
+      delegated ||
+      declared!.every((name) =>
+        new RegExp("\\b" + name + ":\\s*[A-Za-z]*\\(?\\s*" + source + "\\." + name + "\\b").test(block.body),
+      );
     if (!forwardsAll) offenders.push(`${block.action} declares [${declared!.join(", ")}] but sends "${block.body}"`);
   }
   assert.deepEqual(offenders, [], "a mount that drops its arguments is a tool the agent can call and never use");
@@ -81,5 +87,16 @@ test("every mounted action has a descriptor-completeness arm, or it cannot be se
     missing,
     [],
     "isModDescriptorComplete ends in `return false`, so an action without an arm is never mounted or advertised",
+  );
+});
+
+test("a delegated forwarder reads the argument names off the descriptor", () => {
+  const at = GAME_TOOLS.indexOf("function declaredArguments(");
+  assert.notEqual(at, -1, "the delegated helper must exist for a mount to rely on it");
+  const body = GAME_TOOLS.slice(at, GAME_TOOLS.indexOf("\n}", at));
+  assert.match(
+    body,
+    /declaredArgumentNames\(descriptor\)/,
+    "it must take the NAMES from the descriptor: forwarding the params object whole would send keys the wire does not declare",
   );
 });
