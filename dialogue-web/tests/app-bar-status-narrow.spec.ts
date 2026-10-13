@@ -16,7 +16,10 @@ import { expect, test } from "@playwright/test";
  *    name is not truncated (`scrollWidth <= clientWidth`): catches a fix that
  *    bought the badge its space back out of the name;
  *  - the badge carries the status word as its accessible name: catches a state
- *    that is carried by colour alone.
+ *    that is carried by colour alone;
+ *  - no element in the bar overflows its own box: catches the retired status word
+ *    coming back as a 1px box whose text still lays out 24px (`overBy 23`) - a
+ *    clipped sliver that is neither readable nor gone.
  */
 
 const token = "A".repeat(43);
@@ -103,8 +106,32 @@ test("the 400px app bar names its status on the companion's monogram and keeps t
     const box = (element: Element) => element.getBoundingClientRect();
     const dotBox = box(dot);
     const avatarBox = box(avatar);
+    const appBar = document.querySelector(".app-bar");
+    // Every element the bar lays out, not only the word: one element whose
+    // scrollWidth beats its clientWidth is content a viewer sees cut off, and
+    // `scrollWidth` is what the viewport gates measure.
+    const appBarOverflowers =
+      appBar === null
+        ? []
+        : [...appBar.querySelectorAll("*")]
+            .map((node) => {
+              const element = node as HTMLElement & { scrollWidth?: number; clientWidth?: number };
+              const cls =
+                typeof element.className === "string"
+                  ? element.className
+                  : (element.getAttribute("class") ?? "");
+              return {
+                tag: element.tagName.toLowerCase(),
+                cls,
+                overBy: (element.scrollWidth ?? 0) - (element.clientWidth ?? 0),
+              };
+            })
+            .filter((entry) => entry.overBy > 0);
     return {
       labelInDom: (labelNode.textContent ?? "").trim(),
+      labelDisplay: getComputedStyle(labelNode).display,
+      labelBox: { width: Math.round(box(labelNode).width), height: Math.round(box(labelNode).height) },
+      appBarOverflowers,
       titleInDom: (title.textContent ?? "").trim(),
       statusPosition: getComputedStyle(statusNode).position,
       titleOverflow: title.scrollWidth - title.clientWidth,
@@ -126,6 +153,18 @@ test("the 400px app bar names its status on the companion's monogram and keeps t
   expect(measured.titleOverflow, "the companion's name is truncated at 400px").toBeLessThanOrEqual(1);
   expect(measured.titleWidth, "the companion's name is not rendered at 400px").toBeGreaterThan(0);
   expect(measured.pageOverflowX, "the badge must not widen the bar").toBeLessThanOrEqual(0);
+  // No element in the bar is wider than its own box. Catches the retired status
+  // word coming back as the classic 1px-box recipe, whose text still laid out 24px
+  // inside a 1px box and reported `scrollWidth 24 / clientWidth 1 / overBy 23`:
+  // neither readable nor gone, and an overflow every viewport gate can see.
+  expect(
+    measured.appBarOverflowers,
+    "an element in the app bar overflows its own box at 400px",
+  ).toEqual([]);
+  // The word is out of the flow at this width, not squeezed into a sliver: it is
+  // still in the DOM (the accessible name below is read from it) and lays out no box.
+  expect(measured.labelDisplay, "the status word is still laid out at 400px").toBe("none");
+  expect(measured.labelBox, "the status word still occupies a box at 400px").toEqual({ width: 0, height: 0 });
 
   // The state is named, not merely coloured: the badge's accessible name is the
   // same word the live region carries.

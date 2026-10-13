@@ -3397,9 +3397,14 @@ body {
    because a bar that keeps neither pushes its own companion block to nothing.
 
    The status word is the widest thing left beside the monogram, so at this
-   width the dot carries the tone on its own. That is not colour alone: the dot
-   pulses while a turn is in flight, and the word stays in the live region for a
-   screen reader - it is out of flow, not hidden.
+   width it is retired from the bar exactly as the peer entries' own labels are
+   (`.nav-button .nav-label`): removed from the flow, not squeezed. A 1 px box
+   with `clip-path` left the word's text laid out 24 px inside a 1 px box, so the
+   bar carried a 23 px horizontal overflow - neither readable nor gone, and an
+   overflow every viewport gate measures. The fact is not lost with the word: the
+   badge keeps the status as its accessible name (`aria-label`/`title` on
+   `.app-bar-status`), the dot carries the tone on its own, and the dot pulses
+   while a turn is in flight - so the state is never colour alone.
    ========================================================================== */
 
 @media (max-width: 480px) {
@@ -3412,14 +3417,7 @@ body {
   }
 
   .app-bar-status-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    display: none;
   }
 }
 
@@ -4377,9 +4375,13 @@ body {
    At this width the status becomes what the earlier lane intended: a badge on
    the companion's own monogram, which frees exactly the horizontal space the
    name needed. Nothing about the fact changes - it is the same live region, the
-   dot keeps its tone and its pulse, and the word stays in the DOM - and
-   `aria-label`/`title` on `.app-bar-status` name the badge at every width, so
-   the state is never carried by colour alone.
+   dot keeps its tone and its pulse, and the word is retired from the bar the way
+   the peer entries retire their own labels - and `aria-label`/`title` on
+   `.app-bar-status` name the badge at every width, so the state is never carried
+   by colour alone. The word is out of the flow, not squeezed into a 1 px box:
+   measured at 400 px, the squeezed box reported `scrollWidth 24 / clientWidth 1`
+   (a 23 px overflow a viewer reads as a clipped sliver), and this treatment
+   reports none.
 
    Appended block; the rules above are untouched.
    ========================================================================== */
