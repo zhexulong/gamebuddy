@@ -109,7 +109,6 @@ const en = {
   worldInfoLocked: "World Info binding is locked after this chat has messages.",
   worldInfoPending: "This binding is saved and will fully apply on the next turn.",
   worldInfoUnavailable: "World Info binding is temporarily unavailable.",
-  worldInfoBindingFailure: "World Info binding could not be updated.",
 
   // Persona
   userPersona: "User Persona",
@@ -639,7 +638,6 @@ const zh: Messages = {
   worldInfoLocked: "当前对话已有消息，世界书绑定已锁定。",
   worldInfoPending: "绑定已保存，将在下一次对话回合完全生效。",
   worldInfoUnavailable: "世界书绑定暂时不可用。",
-  worldInfoBindingFailure: "无法更新世界书绑定。",
 
   // Persona
   userPersona: "用户设定 (Persona)",

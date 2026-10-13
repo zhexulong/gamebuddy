@@ -65,7 +65,6 @@ import {
   modelProfileProblemText,
   VoiceSettingsPanel,
   type VoiceView,
-  WorldInfoBindingPanel,
 } from "./management-panels";
 
 /**
@@ -634,109 +633,6 @@ export type WorldInfoSurfaceSource = Readonly<{
   worldInfo: WorldInfoStateV1 | null;
   selectionGeneration: number;
 }>;
-
-type WorldInfoView =
-  | Readonly<{ kind: "loading" }>
-  | Readonly<{ kind: "error" }>
-  | Readonly<{ kind: "unavailable" }>
-  | Readonly<{ kind: "ready"; worldInfo: WorldInfoStateV1 }>;
-
-/**
- * The World Info panel: attach/remove over `world-info.bind`.
- *
- * The mount owns the read, because the two shells serve different snapshots: the
- * management surface's `/state` carries its World Info revision, while the
- * composed shell's Chat projection hard-codes `worldInfo: null` and a profile
- * identity this wire validator rejects, so that mount reads the dedicated
- * `GET /world-info` route instead. Only the read differs; the bind ordering
- * below is one implementation on both.
- *
- * Bind ordering (frozen): `world-info.bind` with the exact selectionGeneration
- * and expectedRevision -> the service result is deliberately NOT applied
- * locally -> both success and failure re-read the authoritative revision before
- * the outcome is reported, so a lost revision conflict is visible as the newer
- * binding rather than as a stale selection.
- */
-export function WorldInfoSurfacePanel({
-  api,
-  csrfToken,
-  labels,
-  read,
-  bindAvailable,
-  onNotice,
-}: Readonly<{
-  api: ManagementPipelineApi;
-  csrfToken: string;
-  labels: Messages;
-  /** The mount's authoritative reader for the exact World Info revision it shows. */
-  read: () => Promise<WorldInfoSurfaceSource>;
-  bindAvailable?: boolean;
-  onNotice?: (notice: ManagementSurfaceNotice) => void;
-}>): ReactElement | null {
-  const [view, setView] = useState<WorldInfoView>({ kind: "loading" });
-  const [generation, setGeneration] = useState(0);
-  const { inline, report } = useSurfaceNotice(onNotice);
-
-  const readOnce = async (): Promise<WorldInfoView> => {
-    try {
-      const source = await read();
-      setGeneration(source.selectionGeneration);
-      return source.worldInfo === null ? { kind: "unavailable" } : { kind: "ready", worldInfo: source.worldInfo };
-    } catch {
-      return { kind: "error" };
-    }
-  };
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      const next = await readOnce();
-      if (active) setView(next);
-    })();
-    return () => {
-      active = false;
-    };
-    // The reader is the mount's own authority for its World Info revision and is
-    // stable for the life of the surface; a re-read is driven by the bind below,
-    // never by a prop change.
-  }, []);
-
-  const bind = (sourceHandle: string | null): void => {
-    if (view.kind !== "ready") return;
-    const expectedRevision = view.worldInfo.revision;
-    void (async () => {
-      let failure: string | null = null;
-      try {
-        await api.setWorldInfoBinding(
-          { apiVersion: 1, selectionGeneration: generation, expectedRevision, sourceHandle },
-          csrfToken,
-        );
-      } catch (error) {
-        failure = problemTextWithCode(labels.worldInfoBindingFailure, error);
-      }
-      const next = await readOnce();
-      setView(next);
-      report(failure === null ? { kind: "success", text: labels.success } : { kind: "failure", text: failure });
-    })();
-  };
-
-  if (bindAvailable === false) return null;
-  if (view.kind === "loading") return null;
-  if (view.kind !== "ready") {
-    return (
-      <>
-        <SurfaceNotice notice={inline} />
-        <p className="state-placeholder">{view.kind === "unavailable" ? labels.worldInfoUnavailable : labels.failure}</p>
-      </>
-    );
-  }
-  return (
-    <>
-      <SurfaceNotice notice={inline} />
-      <WorldInfoBindingPanel worldInfo={view.worldInfo} labels={labels} onBind={bind} />
-    </>
-  );
-}
 
 /**
  * The Settings panel: the companion language, the voice consent/devices, the
