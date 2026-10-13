@@ -53,14 +53,33 @@ $productionSources = Get-ChildItem -LiteralPath $modRoot -Filter "*.cs" -File -R
   Where-Object { $_.FullName -notmatch '\\tests\\' } |
   Get-Content -Raw
 $allSource = $productionSources -join "`n"
-# The forbidden scan must not trip on prose: the two surviving `Game1.warpFarmer`
-# texts live in `//` comments that document the native warp seam, not in code.
 # Strip line and block comments for the forbidden pass only; the required-text
-# pass still uses the unmodified source.
+# pass still uses the unmodified source. Comments are not scanned, so the
+# `Game1.warpFarmer` texts that only document the native warp seam never trip it.
 $codeOnly = [regex]::Replace($allSource, '(?m)//.*$', '')
 $codeOnly = [regex]::Replace($codeOnly, '(?s)/\*.*?\*/', '')
+# The native warp seam is a legitimate implementation now that the Phase 1
+# restriction has lapsed: `select_mine_elevator_floor`'s floor-0 branch is a
+# faithful copy of MineElevatorMenu's own warp
+# (farmhandexecutioncontroller.mineelevatoractions.cs), and the ModEntry
+# mine-elevator Given stages its arrival through the game's own transition
+# (ModEntry.Fixtures.MineElevator.cs). Only these two exact call expressions are
+# admitted, each exactly once; every other warp surface still fails, and a Mod
+# source tree without them is not the surface this allowlist describes.
+$admittedWarpCalls = @(
+    'Game1.warpFarmer(MineEntranceLocation, MineEntranceTileX, MineEntranceTileY, flip: true)',
+    'Game1.warpFarmer(MineElevatorFixtureLevel, MineElevatorFixtureTileX, MineElevatorFixtureTileY, 2)'
+)
+$forbiddenScan = $codeOnly
+foreach ($admittedWarpCall in $admittedWarpCalls) {
+    $admittedWarpIndex = $forbiddenScan.IndexOf($admittedWarpCall)
+    if ($admittedWarpIndex -lt 0) {
+        throw "Stardew embodiment is missing the admitted native warp seam: $admittedWarpCall"
+    }
+    $forbiddenScan = $forbiddenScan.Remove($admittedWarpIndex, $admittedWarpCall.Length)
+}
 foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "HttpClient", "WebSocket", "TcpListener", "UdpClient", "Game1.warpFarmer")) {
-    if ($codeOnly.Contains($forbiddenText)) {
+    if ($forbiddenScan.Contains($forbiddenText)) {
         throw "Stardew embodiment contains forbidden Phase 1 surface: $forbiddenText"
     }
 }

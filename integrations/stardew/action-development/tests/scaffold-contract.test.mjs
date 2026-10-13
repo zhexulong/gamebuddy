@@ -3,13 +3,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { verifyStardewScaffold } from "../src/scaffold-contract.mjs";
+import { ALLOWED_GAME1_WARP_SURFACE, verifyStardewScaffold } from "../src/scaffold-contract.mjs";
 
-const ALLOWED_WARPS = Object.freeze([
-  ["PortfolioMineEntryGivenFixture.cs", 'Game1.warpFarmer("Mine", 23, 8, false);'],
-  ["PortfolioMineElevatorGivenFixture.cs", 'Game1.warpFarmer("UndergroundMine5", 6, 6, 2);'],
-  ["PortfolioMineLadderGivenFixture.cs", 'Game1.warpFarmer("UndergroundMine2", 6, 6, 2);'],
-]);
+// The admitted warp surface is the checker's single source of truth, so the
+// fixture is DERIVED from it. Duplicating it as a second literal list is what
+// let the two drift apart: the checker still admitted three retired
+// PortfolioMine*Fixture.cs while the Mod's real surface had moved on.
+const ALLOWED_WARPS = Object.freeze(ALLOWED_GAME1_WARP_SURFACE.map((entry) => {
+  const separator = entry.indexOf(":");
+  return Object.freeze([entry.slice(0, separator), entry.slice(separator + 1)]);
+}));
+const MOD_COMPILE_FILE_COUNT = 1 + ALLOWED_WARPS.length;
 const EXCLUDED_MOD_DIRECTORIES = Object.freeze([
   "tests",
   "src/Core",
@@ -74,7 +78,7 @@ test("accepts a tiny valid scaffold with separate Mod and Core closures", async 
   assert.deepEqual(report, {
     schema: "gamebuddy-stardew-scaffold-contract/v1",
     status: "passed",
-    modCompileFileCount: 4,
+    modCompileFileCount: MOD_COMPILE_FILE_COUNT,
     coreCompileFileCount: 1,
   });
 });
@@ -206,7 +210,7 @@ test("ignores unexpected source under every excluded Mod directory", async () =>
     ));
 
     assert.equal(report.status, "passed", excludedDirectory);
-    assert.equal(report.modCompileFileCount, 4, excludedDirectory);
+    assert.equal(report.modCompileFileCount, MOD_COMPILE_FILE_COUNT, excludedDirectory);
   }
 });
 
@@ -230,6 +234,21 @@ test("keeps Core files in its separate closure while excluding Core build output
   });
 
   assert.equal(report.status, "passed");
-  assert.equal(report.modCompileFileCount, 4);
+  assert.equal(report.modCompileFileCount, MOD_COMPILE_FILE_COUNT);
   assert.equal(report.coreCompileFileCount, 2);
+});
+
+test("ignores a Game1.warpFarmer named only in a comment", async () => {
+  const report = await withScaffoldFixture(({ modRoot }) => writeFixtureFile(
+    modRoot,
+    "DocumentedWarp.cs",
+    `internal static class DocumentedWarp {
+  // Game1.warpFarmer("Farm", 0, 0, false);
+  internal static void Run() { }
+}
+`,
+  ));
+
+  assert.equal(report.status, "passed");
+  assert.equal(report.modCompileFileCount, MOD_COMPILE_FILE_COUNT + 1);
 });

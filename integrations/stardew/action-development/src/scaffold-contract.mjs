@@ -17,10 +17,16 @@ const ALLOWED_MOD_COMPILE_REMOVES = Object.freeze([
   "action-development/**/*.cs",
 ]);
 const XML_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_.:-]*/;
-const ALLOWED_GAME1_WARP_SURFACE = Object.freeze([
-  'PortfolioMineEntryGivenFixture.cs:Game1.warpFarmer("Mine",23,8,false)',
-  'PortfolioMineElevatorGivenFixture.cs:Game1.warpFarmer("UndergroundMine5",6,6,2)',
-  'PortfolioMineLadderGivenFixture.cs:Game1.warpFarmer("UndergroundMine2",6,6,2)',
+// The two legitimate native warp call sites. The Phase-1 restriction lapsed: the
+// first is `select_mine_elevator_floor`'s floor-0 branch, a faithful copy of
+// MineElevatorMenu's own warp, and the second stages the ModEntry mine-elevator
+// Given through the game's own transition. This is the checker's single source
+// of truth for the admitted surface, and the checker requires the Mod's actual
+// surface to equal it exactly, so both calls must stay present and nothing else
+// may be added.
+export const ALLOWED_GAME1_WARP_SURFACE = Object.freeze([
+  'farmhandexecutioncontroller.mineelevatoractions.cs:Game1.warpFarmer(MineEntranceLocation,MineEntranceTileX,MineEntranceTileY,flip:true)',
+  'ModEntry.Fixtures.MineElevator.cs:Game1.warpFarmer(MineElevatorFixtureLevel,MineElevatorFixtureTileX,MineElevatorFixtureTileY,2)',
 ]);
 
 function fail(message) {
@@ -350,16 +356,28 @@ function findClosingParenthesis(source, openingIndex) {
   return -1;
 }
 
+/**
+ * Comment prose is not a call site, so comments are stripped before the warp
+ * surface is scanned - exactly as the PowerShell sibling's forbidden pass does.
+ * Without it the two comments that merely NAME the native warp seam (the
+ * minecart arrow comment and the mine-elevator doc comment) would be pinned as
+ * part of the admitted surface, and any prose edit would break the checker.
+ */
+function commentFreeSource(source) {
+  return source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
 function normalizedWarpSurface(source, relativePath) {
   const calls = [];
   const callPattern = /\bGame1\s*\.\s*warpFarmer\s*\(/g;
+  const codeOnly = commentFreeSource(source);
 
-  for (const match of source.matchAll(callPattern)) {
+  for (const match of codeOnly.matchAll(callPattern)) {
     const openingIndex = match.index + match[0].lastIndexOf("(");
-    const closingIndex = findClosingParenthesis(source, openingIndex);
+    const closingIndex = findClosingParenthesis(codeOnly, openingIndex);
     const callSource = closingIndex === -1
-      ? source.slice(match.index)
-      : source.slice(match.index, closingIndex + 1);
+      ? codeOnly.slice(match.index)
+      : codeOnly.slice(match.index, closingIndex + 1);
     calls.push(`${relativePath}:${normalizedSource(callSource)}`);
   }
   return calls;

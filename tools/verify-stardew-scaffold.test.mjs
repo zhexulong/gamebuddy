@@ -105,3 +105,20 @@ test("scaffold checker rejects forbidden embodiment surfaces anywhere in the Mod
     },
   );
 });
+
+// The native warp seam is admitted by exact call expression, not by file: any
+// Game1.warpFarmer call that is not one of the two admitted sites must still
+// trip the scan, so the allowlist cannot rot into a blanket permission.
+test("scaffold checker rejects a Game1.warpFarmer call outside the admitted native warp sites", async () => {
+  await withStardewFixture(
+    async (modRoot) =>
+      writeFile(
+        join(modRoot, "UnexpectedWarp.cs"),
+        'internal static class UnexpectedWarp { internal static void Run() => Game1.warpFarmer("Farm", 0, 0, false); }\n',
+      ),
+    ({ code, output }) => {
+      assert.notEqual(code, 0);
+      assert.match(output, /forbidden Phase 1 surface: Game1\.warpFarmer/);
+    },
+  );
+});
