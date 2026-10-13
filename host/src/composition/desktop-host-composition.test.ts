@@ -136,7 +136,12 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // fails closed rather than inventing one, and the projection is consumed only
   // as the Host-owned assembly input of the presentation child.
   assert.match(source, /const presentation = lifecycleCoordinator\.presentation;\s*if \(presentation === undefined\) throw new Error\("game_integration_presentation_projection_unavailable"\);/);
-  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*\}\)/s);
+  // The composed reference-game admission still derives the artifact root in place
+  // (5086882f fixed the same two-levels-up derivation for the hoisted local the
+  // chat-only/management variant shares), and 46160994 added `chatSelection` as its
+  // last argument so the composed surface mounts `chat.select` over the same shared
+  // authority the mounted Chat lane owns.
+  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*chatSelection: shared\.chat,\s*\}\)/s);
   // The presentation child is registered after the Game owner, the Chat runtime,
   // and the shared authority, so the reverse-order aggregation closes the one
   // listener before the Chat runtime, the Game owner, and the shared authority
