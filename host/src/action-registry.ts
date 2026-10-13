@@ -870,9 +870,7 @@ export function isModDescriptorComplete(
     // The offer routes through the native GameLocation.checkAction ingress
     // (not a single method binding), so the complete-descriptor gate covers
     // the exact five-argument shape and the write postcondition instead.
-    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
-    const expected = ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"];
-    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
     return true;
@@ -881,9 +879,7 @@ export function isModDescriptorComplete(
     // An animal moves between observation and dispatch, so the pet target is
     // bound by identity (expectedTargetId) with live coordinates as geometry,
     // matching the Mod's identity-locked admission.
-    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
-    const expected = ["x", "y", "expectedTargetId"];
-    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
     return true;
@@ -900,11 +896,26 @@ export function isModDescriptorComplete(
   if (actionId === "ride_minecart") {
     // The station tile plus one opaque advertised ride selector, both mandatory:
     // `ride_minecart` has no "plain warp" form, unlike `travel`.
-    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
-    const expected = ["x", "y", "expectedTargetId"];
-    if (JSON.stringify(argumentNames) !== JSON.stringify(expected)) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
-    if (descriptor.postcondition !== "minecart_ride_completed") return false;
+    if (publishedPostconditionName(descriptor) !== "minecart_ride_completed") return false;
+    return true;
+  }
+  if (actionId === "ride_bus") {
+    // The ticket machine of the current location is the whole target, so the exact wire shape is the
+    // EMPTY set; the fare, the driver check and the cutscene belong to the native ticket interaction.
+    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "bus_arrived") return false;
+    return true;
+  }
+  if (actionId === "select_mine_elevator_floor") {
+    // One opaque already-reached floor and nothing else: the native floor set is a pure function of the
+    // live MineShaft.lowestLevelReached, which the Mod re-derives, so a coordinate would be a second
+    // source of truth for the one fact the selector already carries.
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "mine_elevator_floor_selected") return false;
     return true;
   }
   if (actionId === "equip_wearable") {
@@ -1013,21 +1024,45 @@ export function isModDescriptorComplete(
     return true;
   }
   if (actionId === "answer_dialogue") {
-    const argumentNames = (descriptor.arguments ?? []).map((argument) => argument.name);
-    if (JSON.stringify(argumentNames) !== JSON.stringify(["responseKey"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["responseKey"])) return false;
     const argument = getDescriptorArgument(descriptor, "responseKey");
     if (!argument || argument.type !== "string") return false;
     if (descriptor.effect !== "write") return false;
-    if (descriptor.postcondition !== "answer_dialogue_answered") return false;
+    if (publishedPostconditionName(descriptor) !== "answer_dialogue_answered") return false;
+    return true;
+  }
+  if (actionId === "shop_purchase") {
+    // The opaque shop the actor already stands next to, the good's wire identity and how many units:
+    // deliberately no coordinate, because walking is move_to_tile's job and a walk failure must never be
+    // reported as a trade failure.
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId", "expectedQualifiedItemId", "quantity"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "item_purchased") return false;
     return true;
   }
   if (actionId === "advance_day") {
     // The night carries no arguments at all: the bed and the ready state are
     // native facts, so the complete-descriptor gate is the empty argument list
     // plus the declared day-advanced postcondition.
-    if ((descriptor.arguments ?? []).length !== 0) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
     if (descriptor.effect !== "write") return false;
-    if (descriptor.postcondition !== "day_advanced") return false;
+    if (publishedPostconditionName(descriptor) !== "day_advanced") return false;
+    return true;
+  }
+  if (actionId === "build_farm_building") {
+    // The blueprint the Agent chooses plus the exterior tile the building is raised from and the opaque
+    // tile target, all mandatory: the cost and the placement legality are re-derived on the game thread.
+    if (!hasExactPublishedArgumentNames(descriptor, ["buildingType", "x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "farm_building_built") return false;
+    return true;
+  }
+  if (actionId === "accept_daily_quest") {
+    // The day's posted help-wanted quest, named by the opaque target id alone: the offer is native world
+    // state rather than a tile, so there is no coordinate to carry.
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "daily_quest_accepted") return false;
     return true;
   }
   return false;

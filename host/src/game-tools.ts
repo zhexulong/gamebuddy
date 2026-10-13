@@ -1718,7 +1718,11 @@ export function createStardewActionTools(
             "Withdraw one hay from a discovered silo. Stand within reach of the silo first. Read the opaque target id, its tile and the stored `hay` count from the `siloTargets` entries of the most recent observation (the same list `deposit_silo_hay` reads). The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
           parameters: schema,
           action: "withdraw_silo_hay",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -1740,7 +1744,11 @@ export function createStardewActionTools(
             "Empty a built fish pond of every occupant through the pond own clearing settlement. Read the opaque target id, its tile, the pond type, the occupant count and the fish type from the `fishPondTargets` projection. The fish are NOT destroyed: each one is put on the ground as debris for you to collect, and the pond itself is reset and must be restocked from scratch. An empty pond is never advertised, and one that was already emptied refuses by name (pond_already_empty) rather than clearing nothing and calling it a success.",
           parameters: schema,
           action: "clear_fish_pond",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -1762,7 +1770,12 @@ export function createStardewActionTools(
             "Commission a farm building at a site the game itself accepts. Read the opaque target id, its tile, the `buildingType`, the `buildCost` and the `buildDays` from the `farmBuildingTargets` entries of the most recent observation - the site carries the type, so name the site and never a bare structure. The commission charges the build cost and the materials the game declares, and the terminal is a building standing on that site with a durable id; a site the game no longer accepts, or that you cannot afford or supply, is refused by name rather than built.",
           parameters: schema,
           action: "build_farm_building",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            buildingType: params.buildingType,
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -1784,7 +1797,9 @@ export function createStardewActionTools(
             "Accept the help-wanted quest the town has posted for today. Read the opaque target id, the `questType` and the `title` from the `dailyQuestTargets` entries of the most recent observation, and check `acceptedDailyQuest`: it is the day flag the accept turns true, so a day that already accepted one refuses by name instead of accepting twice. The board is only where a player reads the offer; naming the quest is what this does.",
           parameters: schema,
           action: "accept_daily_quest",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -1807,7 +1822,11 @@ export function createStardewActionTools(
             "Open or close a barn or coop animal door. Stand within reach of the building first. Read the opaque target id, its tile and the current `isOpen` state from the `animalDoorTargets` entries of the most recent observation. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
           parameters: schema,
           action: "toggle_animal_door",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -1829,7 +1848,11 @@ export function createStardewActionTools(
             "Activate a discovered warp obelisk. Stand within reach of it first. Read the opaque target id, `route`, tile and `destination` from the `obeliskTargets` entries of the most recent observation. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
           parameters: schema,
           action: "use_obelisk",
-          toArgs: () => ({}),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
