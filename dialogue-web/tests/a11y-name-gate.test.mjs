@@ -188,11 +188,13 @@ export function controlsIn(text, fileName) {
   walk(sourceFile, (node) => {
     if (!ts.isJsxElement(node) && !ts.isJsxSelfClosingElement(node)) return;
     if (!isInteractiveControl(node)) return;
+    const source = nameSourceOf(node, labelled);
     found.push({
       line: at(node, sourceFile),
       tag: intrinsicName(node) ?? "?",
-      source: nameSourceOf(node, labelled),
-      titleOnly: nameSourceOf(node, labelled) === "title",
+      title: attributeSource(node, "title"),
+      source,
+      titleOnly: source === "title",
     });
   });
   return found;
@@ -232,23 +234,66 @@ test("a11y.1: every interactive control has an accessible name", (t) => {
 });
 
 /**
- * The controls whose only accessible name is `title`. `title` is a real fallback
- * in the name computation, so these are named - but it is the weakest source (no
- * visible text, hidden from touch, inconsistently announced), so the set is
- * bounded here: a new title-only control has to be a decision rather than an
- * accident.
+ * The one control whose only accessible name is `title`, identified by its own
+ * shape rather than by where it sits: the file it lives in, its tag, and the label
+ * its `title` points at. `title` is a real fallback in the name computation, so a
+ * title-only control is named - but it is the weakest source (no visible text,
+ * hidden from touch, inconsistently announced), so the set is bounded: a new one
+ * has to be a decision rather than an accident. Nothing here is a line number; the
+ * route is derived from where the control really sits.
  */
-const TITLE_ONLY_CONTROLS = ["src/components/management-surface-panels.tsx:304 <button>"];
+const TITLE_ONLY_CONTROL = {
+  file: "src/components/management-surface-panels.tsx",
+  tag: "button",
+  title: "labels.renameChat",
+};
+
+/** Every title-only control in a set of source files, each carrying its own route. */
+export function titleOnlyControls(files = sourceFiles()) {
+  const found = [];
+  for (const file of files) {
+    const text = readFileSync(file, "utf8");
+    for (const control of controlsIn(text, file)) if (control.titleOnly) found.push(control);
+  }
+  return found;
+}
+
+/** The route of a `file:line` location, without the line. */
+function fileOf(location) {
+  return location.slice(0, location.lastIndexOf(":"));
+}
+
+/** A control's identity, independent of the line it happens to be written on. */
+function controlIdentity(control) {
+  return { file: fileOf(control.line), tag: control.tag, title: control.title };
+}
 
 test("a11y.5: the one title-only control is the chat row's rename button", (t) => {
-  const found = [];
-  for (const file of sourceFiles()) {
-    const text = readFileSync(file, "utf8");
-    for (const control of controlsIn(text, file))
-      if (control.titleOnly) found.push(`${control.line} <${control.tag}>`);
-  }
-  t.diagnostic(`a11y.5: ${found.length} title-only control(s), ${TITLE_ONLY_CONTROLS.length} declared`);
-  assert.deepEqual(found, TITLE_ONLY_CONTROLS, "a new title-only control needs a decision: give it visible text or an aria-label");
+  const found = titleOnlyControls();
+  t.diagnostic(`a11y.5: ${found.length} title-only control(s): ${found.map((control) => control.line).join(", ")}`);
+  assert.equal(found.length, 1, "a new title-only control needs a decision: give it visible text or an aria-label");
+  assert.deepEqual(
+    controlIdentity(found[0]),
+    TITLE_ONLY_CONTROL,
+    "the one title-only control is the chat row's rename button, named by its own title",
+  );
+});
+
+test("a11y.6 (mutation): a second title-only control, or a different one, is not accepted", (t) => {
+  const rename = 'const only = <button type="button" title={labels.renameChat}><Pencil aria-hidden="true" /></button>;';
+  const one = controlsIn(rename, "src/components/Probe.tsx").filter((control) => control.titleOnly);
+  assert.deepEqual(one.map(controlIdentity), [
+    { file: "src/components/Probe.tsx", tag: "button", title: "labels.renameChat" },
+  ]);
+  const two = controlsIn(`${rename}\nconst extra = <button title="Archive" />;`, "src/components/Probe.tsx").filter(
+    (control) => control.titleOnly,
+  );
+  assert.equal(two.length, 2, "a second title-only control must be counted, so a11y.5's bound fails");
+  const different = controlsIn('const other = <button title="Archive" />;', "src/components/Probe.tsx").filter(
+    (control) => control.titleOnly,
+  );
+  assert.notDeepEqual(different.map(controlIdentity), [TITLE_ONLY_CONTROL], "a differently titled control is not the rename button");
+  t.diagnostic("a11y.6: a second title-only control is counted and a differently titled one is rejected");
 });
 
 test("a11y.2: the tree really is being read, not vacuously passing", (t) => {

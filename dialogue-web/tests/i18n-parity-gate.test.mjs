@@ -87,6 +87,17 @@ export function at(node, sourceFile) {
 }
 
 /**
+ * The 1-based line of the first `needle` in `text`, so a mutation proof derives the
+ * route it expects from the text it actually mutated instead of pinning today's
+ * line number (the catalogue grows, and the line moves with it).
+ */
+function lineOf(text, needle) {
+  const index = text.indexOf(needle);
+  assert.ok(index >= 0, `the mutation anchor ${JSON.stringify(needle)} must exist`);
+  return text.slice(0, index).split("\n").length;
+}
+
+/**
  * Every catalogue binding in a source text: `{ name, entries, duplicates, dynamic }`.
  * An entry is `{ key, value, line }`; `value` is null for a non-literal value.
  */
@@ -276,7 +287,7 @@ test("i18n.5 (mutation): a key added to one locale only fails with file and line
     ["gateMutationKey"],
     "the injected key is the only key missing from the other locale",
   );
-  assert.equal(missing[0].line, "src/i18n.ts:7");
+  assert.equal(missing[0].line, `src/i18n.ts:${lineOf(mutated, "gateMutationKey")}`);
   t.diagnostic(`i18n.5: injected en-only key reported at ${missing[0].line}`);
 });
 
@@ -291,6 +302,6 @@ test("i18n.6 (mutation): a placeholder dropped in one language fails with file a
   const expected = en.entries.find((candidate) => candidate.key === "emptyChatOpening");
   assert.deepEqual(placeholdersOf(expected.value), ["name"]);
   assert.deepEqual(placeholdersOf(entry.value), []);
-  assert.equal(entry.line, "src/i18n.ts:444");
+  assert.equal(entry.line, `src/i18n.ts:${lineOf(mutated, 'emptyChatOpening: "开启一段新的旅程…"')}`);
   t.diagnostic(`i18n.6: dropped placeholder reported at ${entry.line}`);
 });
