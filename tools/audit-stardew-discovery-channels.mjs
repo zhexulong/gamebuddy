@@ -114,6 +114,9 @@ const TARGET_FIELD = Object.freeze({
   withdraw_silo_hay: "SiloTargets",
   use_obelisk: "ObeliskTargets",
   toggle_animal_door: "AnimalDoorTargets",
+  // build_farm_building names its site AND reads back the buildings already standing through the
+  // lane's one `farmBuildingTargets` array.
+  build_farm_building: "FarmBuildingTargets",
 
   // The world-object lane. All three read the lane's single projection, so all three
   // discover their target through `worldObjectTargets`.
