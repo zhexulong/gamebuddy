@@ -14,7 +14,7 @@ import type { TavernConnectionProbe } from "./tavern/connection-probe.js";
 import { createTavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { WorldInfoStateV1 } from "./tavern/world-info-binding/world-info-binding-management-service.js";
-import { startTavernManagementDialogueWebServer } from "./tavern-management-dialogue-web.js";
+import { startTavernManagementDialogueWebServer, type TavernModelProfileProjection } from "./tavern-management-dialogue-web.js";
 
 /**
  * ADR-0010's Class B rule, enforced as a rule rather than as one removed guard.
@@ -405,9 +405,9 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
     decidedAtMs: null,
     outputDevice: null,
   };
-  const modelProfiles = {
-    chat: { surface: "chat" as const, revision: 0, modelId: "initial-model", thinkingLevel: "low" },
-    game: { surface: "game" as const, revision: 0, modelId: "initial-model", thinkingLevel: "low" },
+  const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
+    chat: { surface: "chat", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
+    game: { surface: "game", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
   };
   const memories: { handle: string; title: string; content: string }[] = [];
   const memoryRead = () => ({
@@ -465,7 +465,10 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
         };
       },
       async commitOpeningVariant() {
-        return { apiVersion: 1 as const, opening: null, managementRevision: 1 };
+        return {
+          apiVersion: 1 as const,
+          openingVariant: { variantId: "class-b-opening", index: 0, count: 1, label: null, locked: false },
+        };
       },
       async close() {
         // no-op

@@ -186,10 +186,10 @@ async function withHandler(
     worldInfoService,
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
-        return { revision: 1, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+        return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
       },
     }),
     profile: options.profile ?? connectionProfile,
@@ -910,10 +910,10 @@ test("a profile that advertises connection routes without the Host service fails
         worldInfoService,
         playerPreferenceStore: Object.freeze({
           async read() {
-            return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+            return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
           },
           async update() {
-            return { revision: 1, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+            return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
           },
         }),
         profile: connectionProfile,

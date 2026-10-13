@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
-import type { VoicePreferenceUpdate } from "./settings/voice-preference-store.js";
-import type { PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
+import type { PlayerPreference, PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
 import {
   composeTavernProfile,
   type MemoryMutationCommandV1,
@@ -214,12 +213,13 @@ function worldInfoService(recorder?: {
 
 const voicePreferenceStore = Object.freeze({
   async read() {
-    return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+    return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
   },
-  async update(expectedRevision: number, update: VoicePreferenceUpdate) {
+  async update(expectedRevision: number, update: PlayerPreferenceUpdate) {
     assert.equal(expectedRevision, 0);
     return {
       revision: 1,
+      locale: null,
       disclosureVersion: update.action === "accept" ? update.disclosureVersion : null,
       consent: update.action === "accept" ? ("accepted" as const) : ("revoked" as const),
       decidedAtMs: 1,
@@ -1694,14 +1694,14 @@ test("management handler exposes the Host-owned language preference read and upd
     ],
     navigationItemIds: ["chat"],
   });
-  let languageState: {
-    revision: number;
-    locale: "zh-CN" | "en-US" | null;
-    disclosureVersion: "mimo-cloud-tts-v1" | null;
-    consent: "undecided" | "accepted" | "revoked";
-    decidedAtMs: number | null;
-    outputDevice: string | null;
-  } = { revision: 0, locale: null, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null };
+  let languageState: PlayerPreference = {
+    revision: 0,
+    locale: null,
+    disclosureVersion: null,
+    consent: "undecided",
+    decidedAtMs: null,
+    outputDevice: null,
+  };
   // One Host-owned record carries both settings field groups (the companion
   // language and the Voice consent/output), so this language surface writes the
   // same store the Voice surface writes.
@@ -1844,7 +1844,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
     worldInfoService: worldInfoService(),
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
         throw new Error("player_preference_revision_conflict");
@@ -1907,10 +1907,10 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
     worldInfoService: worldInfoService(),
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
       },
       async update() {
-        return { revision: 1, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+        return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
       },
     }),
     profile,
