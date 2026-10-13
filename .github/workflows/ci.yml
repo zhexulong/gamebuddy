@@ -85,10 +85,18 @@ jobs:
       - run: pnpm test
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session
-      # entry it publishes. `tools/*.test.mjs` are otherwise never run by CI - the contract could be deleted
+      # entry it publishes. This one file has no `test:` script of its own, so the aggregate corpus step
+      # below does not reach it - the contract could be deleted
       # without anything noticing, which is exactly how a composed session silently lost its fold.
       - name: Composed runtime contract gate
         run: node --test tools/desktop-composition-launch.test.mjs
+      # The rest of the `tools/` suite corpus: 67 `test:` scripts over 72 files that no job ran. The runner
+      # derives that set from package.json each run (so a new suite is wired by existing), runs it as one
+      # concurrent `node --test`, skips the suites whose prerequisite (the `design/` mount, the gitignored
+      # decompile) a checkout does not create, and names the suites that are still red - with owner and
+      # reason - in tools/tool-test-corpus-quarantine.json. It fails if one of those starts passing, so an
+      # exclusion cannot outlive its defect.
+      - run: pnpm test:tool-corpus
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: pnpm check:dependency-risk

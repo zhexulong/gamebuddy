@@ -1,0 +1,26 @@
+{
+  "schema": "gamebuddy-tool-test-corpus-quarantine/v1",
+  "note": "Suites in the tools/ corpus that are red for a reason this step did not fix. Each entry must name a corpus file, an owner and the concrete reason; the runner fails if a listed suite stops failing, so an entry cannot outlive its defect. Remove your entry when the defect is fixed.",
+  "exclusions": [
+    {
+      "file": "tools/verify-stardew-scaffold.test.mjs",
+      "owner": "stardew integration lane",
+      "reason": "The checker it drives (integrations/stardew/action-development/scripts/verify-stardew-scaffold.ps1:64) still lists Game1.warpFarmer as a forbidden Phase 1 surface, but the shipped Mod now calls the native warp seam in real code (farmhandexecutioncontroller.mineelevatoractions.cs:241, ModEntry.Fixtures.MineElevator.cs:51). The file is in the live lane's dirty territory; the forbid-list entry must be dropped there."
+    },
+    {
+      "file": "tools/audit-stardew-discovery-channels.test.mjs",
+      "owner": "stardew action surface / protocol schema",
+      "reason": "Two live_verified actions publish a target list the frozen envelope schema does not admit: protocol/bridge-v1.schema.json $defs.snapshot has no fishPondTargets or farmBuildingTargets, while the Mod declares both (BridgeProtocolModels.cs:499 FishPondTargets, :526 FarmBuildingTargets) and the Host protocol types both. build_farm_building reports missing_envelope_schema_field; clear_fish_pond reports undeclared_target_field because tools/audit-stardew-discovery-channels.mjs:39 TARGET_FIELD has no entry for it."
+    },
+    {
+      "file": "tools/check-host-game-physical-seam.test.mjs",
+      "owner": "host game lifecycle",
+      "reason": "host/src/stardew-production-lifecycle-coordinator.internal.ts:19 imports withStardewLifecycleInstallationRegistrationOwner, the registration mutation facade, which the seam rule allows only from games/stardew/lifecycle/stardew-private-bootstrap-composer.core (tools/check-host-game-physical-seam.mjs:190). Either the coordinator stops mutating registration or the design names it as a second owner; that is a design call, not a test fix."
+    },
+    {
+      "file": "tools/stardew-action-gate-descriptors.test.mjs",
+      "owner": "stardew action surface lane (uncommitted)",
+      "reason": "At HEAD the fixture-backed descriptor coverage table is missing accept_special_order, claim_museum_reward and redeem_prize_ticket; the live lane's uncommitted copy of this same file adds them. Recheck once that lane commits."
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { deriveSoilInteractionTransitionModel, sourceManifestForSoilItm } from "./lib/stardew-soil-itm-canary.mjs";
@@ -13,6 +14,13 @@ const paths = [
   "StardewValley/Crop.cs",
 ];
 
+// The canary reads its witnesses out of a decompiled Stardew tree, which is
+// gitignored and absent from a checkout. Skip it with a named reason rather than
+// failing every run that has no local decompile.
+const decompileSkipReason = paths.every((path) => existsSync(new URL(path, root)))
+  ? false
+  : "requires the decompiled Stardew source tree at .tmp-stardew-decompile/, which a repository checkout does not create";
+
 async function fixture() {
   const sourceFiles = Object.fromEntries(
     await Promise.all(paths.map(async (path) => [path, await readFile(new URL(path, root), "utf8")])),
@@ -22,7 +30,7 @@ async function fixture() {
   return { sourceFiles, model };
 }
 
-test("derives a trace-first soil ITM with source-realization witnesses", async () => {
+test("derives a trace-first soil ITM with source-realization witnesses", { skip: decompileSkipReason }, async () => {
   const input = await fixture();
   const result = deriveSoilInteractionTransitionModel(input);
   assert.equal(result.canaryId, "stardew_1_6_15_soil_interaction_transition_model_v1");
@@ -35,7 +43,7 @@ test("derives a trace-first soil ITM with source-realization witnesses", async (
   assert.equal(result.protocols[0].protocolId, "native_day_progression_with_fresh_observation");
 });
 
-test("fails closed when a required source witness drifts", async () => {
+test("fails closed when a required source witness drifts", { skip: decompileSkipReason }, async () => {
   const input = await fixture();
   input.sourceFiles["StardewValley/Tools/Hoe.cs"] = input.sourceFiles["StardewValley/Tools/Hoe.cs"].replace(
     "location.makeHoeDirt(item)",
@@ -44,23 +52,31 @@ test("fails closed when a required source witness drifts", async () => {
   assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_source_manifest_mismatch" });
 });
 
-test("rejects a source model that erases seed/fertilizer semantic separation", async () => {
-  const input = await fixture();
-  input.model.separationObligations = input.model.separationObligations.filter(
-    (entry) => entry.leftClassId !== "soil.plant_seed",
-  );
-  assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_separation_missing" });
-});
+test(
+  "rejects a source model that erases seed/fertilizer semantic separation",
+  { skip: decompileSkipReason },
+  async () => {
+    const input = await fixture();
+    input.model.separationObligations = input.model.separationObligations.filter(
+      (entry) => entry.leftClassId !== "soil.plant_seed",
+    );
+    assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_separation_missing" });
+  },
+);
 
-test("rejects a source model that omits an action-layer deletion counterfactual", async () => {
-  const input = await fixture();
-  input.model.irredundancyObligations = input.model.irredundancyObligations.filter(
-    (entry) => entry.interactionClassId !== "soil.water",
-  );
-  assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_irredundancy_missing" });
-});
+test(
+  "rejects a source model that omits an action-layer deletion counterfactual",
+  { skip: decompileSkipReason },
+  async () => {
+    const input = await fixture();
+    input.model.irredundancyObligations = input.model.irredundancyObligations.filter(
+      (entry) => entry.interactionClassId !== "soil.water",
+    );
+    assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_irredundancy_missing" });
+  },
+);
 
-test("rejects product registry vocabulary as a model input", async () => {
+test("rejects product registry vocabulary as a model input", { skip: decompileSkipReason }, async () => {
   const input = await fixture();
   input.model.interactionClasses[0].actionId = "till_soil";
   assert.throws(() => deriveSoilInteractionTransitionModel(input), { code: "soil_itm_forbidden_vocabulary" });

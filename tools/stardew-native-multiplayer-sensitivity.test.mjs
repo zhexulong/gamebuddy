@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+import { resolveStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 import {
   collectContextTokens,
   collectDecisiveTokens,
@@ -9,13 +11,26 @@ import {
   validateMultiplayerSensitivityRegister,
 } from "./lib/stardew-native-multiplayer-sensitivity.mjs";
 
+// The committed register is only verifiable against the exact decompiled game
+// source. That tree is gitignored (`/ref/`), so a checkout does not create it;
+// skip that one test with a named reason instead of failing on a missing
+// prerequisite. Everything else in this suite is synthetic and always runs.
+const stardewDecompileSkipReason = (() => {
+  try {
+    resolveStardewDecompileRoot({ repositoryRoot: resolve(import.meta.dirname, "..") });
+    return false;
+  } catch {
+    return "requires the decompiled Stardew source tree at ref/external/StardewValleyDecompiled/Stardew Valley (gitignored; restore with ilspycmd: 9.1.0.7988), which a repository checkout does not create";
+  }
+})();
+
 const SOURCE = Object.freeze({
   "StardewValley/Fake.cs": {
     text: [
       "public virtual bool Act(Farmer who)",
       "{",
       "    if (who.IsLocalPlayer) PlaySound();",
-      "    if (Game1.player.team.SpecialOrderActive(\"X\")) Stamp();",
+      '    if (Game1.player.team.SpecialOrderActive("X")) Stamp();',
       "    return Mutate();",
       "}",
       "public virtual bool Clean(Farmer who)",
@@ -24,7 +39,7 @@ const SOURCE = Object.freeze({
       "}",
       "public virtual bool TeamOnly(Farmer who)",
       "{",
-      "    if (Game1.player.team.SpecialOrderActive(\"X\")) Stamp();",
+      '    if (Game1.player.team.SpecialOrderActive("X")) Stamp();',
       "    return Mutate();",
       "}",
     ].join("\n"),
@@ -32,7 +47,14 @@ const SOURCE = Object.freeze({
 });
 
 function seam(overrides = {}) {
-  return { kind: "native", file: "StardewValley/Fake.cs", signature: "public virtual bool Act(Farmer who)", sensitivity: "mp-semantic", semanticEffect: "changes the target", ...overrides };
+  return {
+    kind: "native",
+    file: "StardewValley/Fake.cs",
+    signature: "public virtual bool Act(Farmer who)",
+    sensitivity: "mp-semantic",
+    semanticEffect: "changes the target",
+    ...overrides,
+  };
 }
 
 function register(actions, extra = {}) {
@@ -106,7 +128,9 @@ test("accepts a mod-owned seam and refuses to give it a native sensitivity", () 
       validateMultiplayerSensitivityRegister(
         register([
           action({
-            seams: [{ kind: "mod_owned", authority: "BodyController", sensitivity: "mp-semantic", semanticEffect: "x" }],
+            seams: [
+              { kind: "mod_owned", authority: "BodyController", sensitivity: "mp-semantic", semanticEffect: "x" },
+            ],
             requiredLiveTopology: "shared_world_multiplayer",
           }),
         ]),
@@ -128,7 +152,12 @@ test("rejects claiming mp-insensitive for a seam that reads a decisive token", (
 });
 
 test("requires a mode-neutral reason when only context tokens are present", () => {
-  const teamOnly = () => seam({ signature: "public virtual bool TeamOnly(Farmer who)", sensitivity: "mp-insensitive", semanticEffect: undefined });
+  const teamOnly = () =>
+    seam({
+      signature: "public virtual bool TeamOnly(Farmer who)",
+      sensitivity: "mp-insensitive",
+      semanticEffect: undefined,
+    });
   // Undeclared mode-neutral justification is refused.
   assert.throws(
     () =>
@@ -197,10 +226,7 @@ test("derives over_restriction when admission rejects a shared world without nat
 });
 
 test("derives unverified_scope when admission admits a shared world with an mp-semantic seam", () => {
-  const report = validateMultiplayerSensitivityRegister(
-    register([action({ lifecycle: "experimental" })]),
-    SOURCE,
-  );
+  const report = validateMultiplayerSensitivityRegister(register([action({ lifecycle: "experimental" })]), SOURCE);
   assert.equal(report.unverifiedScope.length, 1);
 });
 
@@ -209,10 +235,7 @@ test("live_verified is the shared-world evidence, so an mp-semantic live_verifie
   // run to have passed, so the lifecycle itself is the evidence. A
   // live_verified mp-semantic action must not still pin an unverified_scope
   // gap that its promotion already closed.
-  const report = validateMultiplayerSensitivityRegister(
-    register([action({ lifecycle: "live_verified" })]),
-    SOURCE,
-  );
+  const report = validateMultiplayerSensitivityRegister(register([action({ lifecycle: "live_verified" })]), SOURCE);
   assert.equal(report.unverifiedScope.length, 0);
   assert.equal(report.defects.length, 0);
 });
@@ -266,7 +289,10 @@ test("a scope acknowledgement covers many actions and cannot outlive the gap", (
   });
   const scope = [{ defect: "over_restriction", actions: ["a1"], reason: "systemic", owner: "stardew-integration" }];
 
-  const report = validateMultiplayerSensitivityRegister(register([overRestricted, clean], { scopeAcknowledgements: scope }), SOURCE);
+  const report = validateMultiplayerSensitivityRegister(
+    register([overRestricted, clean], { scopeAcknowledgements: scope }),
+    SOURCE,
+  );
   assert.equal(report.defects.length, 0);
   assert.equal(report.acknowledged.length, 1);
 
@@ -276,79 +302,82 @@ test("a scope acknowledgement covers many actions and cannot outlive the gap", (
   );
 });
 
-test("the committed register derives cleanly against the exact decompiled source", async () => {
-  const registerText = await readFile(
-    "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json",
-    "utf8",
-  );
-  const sources = {};
-  const { readdir } = await import("node:fs/promises");
-  const path = await import("node:path");
-  const root = "ref/external/StardewValleyDecompiled/Stardew Valley";
-  const pending = [root];
-  while (pending.length) {
-    const directory = pending.pop();
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const absolute = path.join(directory, entry.name);
-      if (entry.isDirectory()) pending.push(absolute);
-      else if (entry.isFile() && entry.name.endsWith(".cs"))
-        sources[path.relative(root, absolute).split(path.sep).join("/")] = { text: await readFile(absolute, "utf8") };
+test(
+  "the committed register derives cleanly against the exact decompiled source",
+  { skip: stardewDecompileSkipReason },
+  async () => {
+    const registerText = await readFile(
+      "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json",
+      "utf8",
+    );
+    const sources = {};
+    const { readdir } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const root = "ref/external/StardewValleyDecompiled/Stardew Valley";
+    const pending = [root];
+    while (pending.length) {
+      const directory = pending.pop();
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const absolute = path.join(directory, entry.name);
+        if (entry.isDirectory()) pending.push(absolute);
+        else if (entry.isFile() && entry.name.endsWith(".cs"))
+          sources[path.relative(root, absolute).split(path.sep).join("/")] = { text: await readFile(absolute, "utf8") };
+      }
     }
-  }
-  const report = validateMultiplayerSensitivityRegister(JSON.parse(registerText), sources);
-  // The expected count is derived from the Mod catalog, never hardcoded: a
-  // hardcoded number is what let three actions (`water_pet_bowl`,
-  // `water_slime_hutch_trough`, `advance_day`) sit outside the register while the
-  // suite stayed green. The comparison is set equality, so a registered action the
-  // catalog does not declare fails too.
-  const catalogText = await readFile(
-    "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-    "utf8",
-  );
-  const catalogBody = catalogText.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)[1];
-  const catalogIds = [...catalogBody.matchAll(/\b(E|R)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[2]).sort();
-  const registeredIds = JSON.parse(registerText).actions.map((a) => a.actionId).sort();
-  assert.deepEqual(
-    registeredIds,
-    catalogIds,
-    "the sensitivity register must cover exactly the Mod catalog: a missing entry means the action was never scope-classified",
-  );
-  assert.deepEqual(report.defects, []);
-  // Every pin must be a real, still-derived defect carrying a reason and an owner:
-  // a pin is an acknowledged gap, never a silent suppression. The list is asserted
-  // exactly rather than by count, so neither a stale pin nor a hand-typed one can
-  // hide here. Update this list deliberately when a shared-world action lands.
-  //
-  // An acknowledgement is legitimate ONLY for an action that has no shared-world evidence yet: a live_verified
-  // action cannot also be an unverified-scope gap, because the shared-world run IS the evidence. The invariant is
-  // asserted per acknowledgement against the register's own lifecycle (derived, not hand-listed), so a pin on a
-  // finished action fails here as well as in the validator's /stale/ check.
-  //
-  // This replaced an `acknowledged === []` assertion that had gone stale: it was written when every mp-semantic
-  // action happened to be live_verified, and `talk_to_npc` later landed as Experimental + mp-semantic WITH a
-  // declared acknowledgement. Measured before the change, on this same tree: 16 pass / 1 fail, this assertion.
-  const registerById = new Map(JSON.parse(registerText).actions.map((action) => [action.actionId, action]));
-  for (const ack of report.acknowledged) {
-    const action = registerById.get(ack.actionId);
-    assert.ok(action, `${ack.actionId} is acknowledged but absent from the register`);
-    assert.notEqual(
-      action.lifecycle,
-      "live_verified",
-      `${ack.actionId} is acknowledged as unverified scope while it already carries live evidence`,
+    const report = validateMultiplayerSensitivityRegister(JSON.parse(registerText), sources);
+    // The expected count is derived from the Mod catalog, never hardcoded: a
+    // hardcoded number is what let three actions (`water_pet_bowl`,
+    // `water_slime_hutch_trough`, `advance_day`) sit outside the register while the
+    // suite stayed green. The comparison is set equality, so a registered action the
+    // catalog does not declare fails too.
+    const catalogText = await readFile("integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs", "utf8");
+    const catalogBody = catalogText.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)[1];
+    const catalogIds = [...catalogBody.matchAll(/\b(E|R)\(\s*"([a-z0-9_]+)"/g)].map((m) => m[2]).sort();
+    const registeredIds = JSON.parse(registerText)
+      .actions.map((a) => a.actionId)
+      .sort();
+    assert.deepEqual(
+      registeredIds,
+      catalogIds,
+      "the sensitivity register must cover exactly the Mod catalog: a missing entry means the action was never scope-classified",
     );
-    assert.notEqual(
-      action.lifecycle,
-      "published",
-      `${ack.actionId} is acknowledged as unverified scope while it is published`,
-    );
-    assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);
-    assert.ok(ack.owner && ack.owner.length > 0, `${ack.actionId} pin must carry an owner`);
-  }
-  // The pins must be doing real work, not masking an empty register: the scope-bound
-  // actor resolver landed, so no action may still derive the retired over-restriction
-  // defect (the 16 single-player guards are gone).
-  assert.equal(report.actions.filter((a) => a.rawDefects.some((d) => d.defect === "over_restriction")).length, 0);
-});
+    assert.deepEqual(report.defects, []);
+    // Every pin must be a real, still-derived defect carrying a reason and an owner:
+    // a pin is an acknowledged gap, never a silent suppression. The list is asserted
+    // exactly rather than by count, so neither a stale pin nor a hand-typed one can
+    // hide here. Update this list deliberately when a shared-world action lands.
+    //
+    // An acknowledgement is legitimate ONLY for an action that has no shared-world evidence yet: a live_verified
+    // action cannot also be an unverified-scope gap, because the shared-world run IS the evidence. The invariant is
+    // asserted per acknowledgement against the register's own lifecycle (derived, not hand-listed), so a pin on a
+    // finished action fails here as well as in the validator's /stale/ check.
+    //
+    // This replaced an `acknowledged === []` assertion that had gone stale: it was written when every mp-semantic
+    // action happened to be live_verified, and `talk_to_npc` later landed as Experimental + mp-semantic WITH a
+    // declared acknowledgement. Measured before the change, on this same tree: 16 pass / 1 fail, this assertion.
+    const registerById = new Map(JSON.parse(registerText).actions.map((action) => [action.actionId, action]));
+    for (const ack of report.acknowledged) {
+      const action = registerById.get(ack.actionId);
+      assert.ok(action, `${ack.actionId} is acknowledged but absent from the register`);
+      assert.notEqual(
+        action.lifecycle,
+        "live_verified",
+        `${ack.actionId} is acknowledged as unverified scope while it already carries live evidence`,
+      );
+      assert.notEqual(
+        action.lifecycle,
+        "published",
+        `${ack.actionId} is acknowledged as unverified scope while it is published`,
+      );
+      assert.ok(ack.reason && ack.reason.length > 0, `${ack.actionId} pin must carry a reason`);
+      assert.ok(ack.owner && ack.owner.length > 0, `${ack.actionId} pin must carry an owner`);
+    }
+    // The pins must be doing real work, not masking an empty register: the scope-bound
+    // actor resolver landed, so no action may still derive the retired over-restriction
+    // defect (the 16 single-player guards are gone).
+    assert.equal(report.actions.filter((a) => a.rawDefects.some((d) => d.defect === "over_restriction")).length, 0);
+  },
+);
 
 test("the mechanism axis requires a real fork citation and never understates the set", async () => {
   const { validateMultiplayerMechanisms, deriveRequiredSharedWorldMechanisms } = await import(
@@ -356,12 +385,17 @@ test("the mechanism axis requires a real fork citation and never understates the
   );
   // A fork whose predicate is absent from the cited body is drift, not a citation.
   assert.throws(
-    () => validateMultiplayerMechanisms([mechanism({ forks: [{ ...mechanism().forks[0], predicate: "if (Game1.IsMultiplayer)" }] })], SOURCE),
+    () =>
+      validateMultiplayerMechanisms(
+        [mechanism({ forks: [{ ...mechanism().forks[0], predicate: "if (Game1.IsMultiplayer)" }] })],
+        SOURCE,
+      ),
     (error) => error.code === "mp_sensitivity_mechanism_fork_drift",
   );
   // An uncited fork class is rejected rather than silently treated as collateral.
   assert.throws(
-    () => validateMultiplayerMechanisms([mechanism({ forks: [{ ...mechanism().forks[0], forkClass: "maybe" }] })], SOURCE),
+    () =>
+      validateMultiplayerMechanisms([mechanism({ forks: [{ ...mechanism().forks[0], forkClass: "maybe" }] })], SOURCE),
     (error) => error.code === "mp_sensitivity_register_invalid",
   );
   // The shared-world set is derived from the forks: adding an outcome fork must grow
@@ -389,9 +423,7 @@ test("the committed register pins the sleep mechanism as shared-world evidence",
 });
 
 test("a mechanism pin suppresses its blocking finding and is rejected once stale", async () => {
-  const { validateMultiplayerSensitivityRegister } = await import(
-    "./lib/stardew-native-multiplayer-sensitivity.mjs"
-  );
+  const { validateMultiplayerSensitivityRegister } = await import("./lib/stardew-native-multiplayer-sensitivity.mjs");
   const pin = {
     defect: "unverified_mechanism_scope",
     mechanisms: ["m"],
@@ -417,7 +449,11 @@ test("a mechanism pin suppresses its blocking finding and is rejected once stale
   );
   // A mechanism pin must name mechanisms, not actions.
   assert.throws(
-    () => validateMultiplayerSensitivityRegister(register([act], { scopeAcknowledgements: [{ ...pin, mechanisms: [] }] }), SOURCE),
+    () =>
+      validateMultiplayerSensitivityRegister(
+        register([act], { scopeAcknowledgements: [{ ...pin, mechanisms: [] }] }),
+        SOURCE,
+      ),
     (error) => error.code === "mp_sensitivity_register_invalid",
   );
 });

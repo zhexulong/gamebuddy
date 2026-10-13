@@ -22,10 +22,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { resolveStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
 const GATE = path.join(ROOT, "tools", "check-stardew-loop-closure.mjs");
 const execFileAsync = promisify(execFile);
+
+// The gate resolves every candidate anchor against the decompiled game source,
+// which is gitignored (`/ref/`) and absent from a checkout. Skip with a named
+// reason rather than failing when there is nothing to resolve against.
+const decompileSkipReason = (() => {
+  try {
+    resolveStardewDecompileRoot({ repositoryRoot: ROOT });
+    return false;
+  } catch {
+    return "requires the decompiled Stardew source tree at ref/external/StardewValleyDecompiled/Stardew Valley (gitignored; restore with ilspycmd: 9.1.0.7988), which a repository checkout does not create";
+  }
+})();
 
 async function run(extraArgs = [], env = {}) {
   try {
@@ -41,14 +55,14 @@ async function run(extraArgs = [], env = {}) {
   }
 }
 
-test("the gate passes on the shipped tables", async () => {
+test("the gate passes on the shipped tables", { skip: decompileSkipReason }, async () => {
   const r = await run();
   assert.equal(r.code, 0, `gate must pass; stderr: ${r.stderr}`);
   assert.match(r.stdout, /^\s*closable\s+cut_grass\b/m, "cut_grass is a closable candidate");
   assert.match(r.stdout, /^\s*closable\s+enter_mine\b/m, "enter_mine is a closable candidate");
 });
 
-test("every candidate primitive is resolved against the real decompile", async () => {
+test("every candidate primitive is resolved against the real decompile", { skip: decompileSkipReason }, async () => {
   const r = await run();
   const lines = r.stdout.split("\n").filter((l) => /^\s+(closable|blocked|verify_chain)\s/.test(l));
   assert.ok(lines.length >= 15, `expected the full candidate set; got ${lines.length}`);
@@ -57,7 +71,7 @@ test("every candidate primitive is resolved against the real decompile", async (
   assert.equal(blocked.length, 0, `unexpected blocked candidates:\n${blocked.join("\n")}`);
 });
 
-test("the gate reports a count line", async () => {
+test("the gate reports a count line", { skip: decompileSkipReason }, async () => {
   const r = await run();
   const m = r.stdout.match(/loop-closure gate: (\d+) candidates, (\d+) closable, (\d+) verify-chain, (\d+) blocked/);
   assert.ok(m, `count line present; stdout: ${r.stdout.slice(-200)}`);
@@ -65,7 +79,7 @@ test("the gate reports a count line", async () => {
   assert.ok(Number(m[1]) >= 15, "candidate set is the full one");
 });
 
-test("a realtime-input-only entry with no terminal blocks the candidate", async () => {
+test("a realtime-input-only entry with no terminal blocks the candidate", { skip: decompileSkipReason }, async () => {
   // `Game1.pressActionButton` is the raw key/mouse dispatcher: it reads
   // `KeyboardState`/`MouseState` and writes no world terminal of its own. An Agent
   // has no 60FPS input device, so this shape must block rather than look closable.
@@ -80,7 +94,7 @@ test("a realtime-input-only entry with no terminal blocks the candidate", async 
   }
 });
 
-test("a private entry blocks the candidate", async () => {
+test("a private entry blocks the candidate", { skip: decompileSkipReason }, async () => {
   // `GameLocation.getGalaxySword` is a real `private void` that writes world state
   // (`Game1.player.Items.Add`). A private entry is NOT callable by the Mod, so the
   // candidate must be blocked -- this is the rule that keeps a plan item honest.
@@ -95,7 +109,7 @@ test("a private entry blocks the candidate", async () => {
   }
 });
 
-test("a menu-only terminal blocks the candidate", async () => {
+test("a menu-only terminal blocks the candidate", { skip: decompileSkipReason }, async () => {
   // `case "Billboard"` mounts a Billboard menu and writes nothing else. The Agent
   // cannot dismiss an arbitrary menu, so a menu-only terminal is not a closed loop.
   const f = path.join(HERE, ".tmp-menu.json");
@@ -109,22 +123,30 @@ test("a menu-only terminal blocks the candidate", async () => {
   }
 });
 
-test("a public entry with no terminal of its own falls through to the chain", async () => {
-  // `FruitTree.performUseAction` only delegates to `shake`; the terminal (fruit[]
-  // nulled + Debris) is one hop down. The gate must keep going rather than
-  // declaring the entry effect-free.
-  const f = path.join(HERE, ".tmp-chain.json");
-  await writeFile(f, JSON.stringify([{ actionId: "probe", anchor: "FruitTree.cs:222 -> FruitTree.cs:361 shake" }]), "utf8");
-  try {
-    const r = await run(["--candidates", f]);
-    assert.equal(r.code, 0, `the chain hop carries the terminal; stdout: ${r.stdout}`);
-    assert.match(r.stdout, /FruitTree\.cs:361/);
-  } finally {
-    await rm(f, { force: true });
-  }
-});
+test(
+  "a public entry with no terminal of its own falls through to the chain",
+  { skip: decompileSkipReason },
+  async () => {
+    // `FruitTree.performUseAction` only delegates to `shake`; the terminal (fruit[]
+    // nulled + Debris) is one hop down. The gate must keep going rather than
+    // declaring the entry effect-free.
+    const f = path.join(HERE, ".tmp-chain.json");
+    await writeFile(
+      f,
+      JSON.stringify([{ actionId: "probe", anchor: "FruitTree.cs:222 -> FruitTree.cs:361 shake" }]),
+      "utf8",
+    );
+    try {
+      const r = await run(["--candidates", f]);
+      assert.equal(r.code, 0, `the chain hop carries the terminal; stdout: ${r.stdout}`);
+      assert.match(r.stdout, /FruitTree\.cs:361/);
+    } finally {
+      await rm(f, { force: true });
+    }
+  },
+);
 
-test("an anchor with no File.cs:line hop is reported, not skipped", async () => {
+test("an anchor with no File.cs:line hop is reported, not skipped", { skip: decompileSkipReason }, async () => {
   const f = path.join(HERE, ".tmp-badanchor.json");
   await writeFile(f, JSON.stringify([{ actionId: "ghost", anchor: "just some prose" }]), "utf8");
   try {
