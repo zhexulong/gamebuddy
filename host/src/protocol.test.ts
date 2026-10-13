@@ -36,6 +36,7 @@ const snapshot: Snapshot = {
   dayOfMonth: 1,
   seasonIndex: 0,
   year: 1,
+  weather: "sunny",
   activeExecution: null,
 };
 const now = 1_700_000_000_000;
@@ -2460,6 +2461,7 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
+    weather: "sunny",
     activeExecution: null,
     chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
     chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 }],
@@ -2521,6 +2523,7 @@ test("snapshot admits treeStumpTargets and rejects malformed rows", () => {
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
+    weather: "sunny",
     activeExecution: null,
     treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "Tree", health: 5 }],
   };
@@ -2547,6 +2550,7 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
+    weather: "sunny",
     activeExecution: null,
     treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
   };
@@ -2612,6 +2616,7 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
+    weather: "sunny",
     activeExecution: null,
     weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: 1 }],
     scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262", displayName: "Wheat" }],
@@ -2695,7 +2700,7 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
 });
 
 test("observe_scene result admits reachable as true, false, null or absent, and rejects a non-boolean", () => {
-  const sceneFor = (reachable) =>
+  const sceneFor = (reachable: boolean | null | undefined) =>
     newEnvelope("observe_scene_result", scope, {
       observationId: "so1_REACHAB1E0001",
       currentLocation: "Farm",
