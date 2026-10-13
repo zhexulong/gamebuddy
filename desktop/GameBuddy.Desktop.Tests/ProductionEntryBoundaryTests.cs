@@ -48,8 +48,10 @@ public sealed class ProductionEntryBoundaryTests
         var resident = productionPath.IndexOf("guardianSupervisor.StartResidentAsync(image, cancellationToken)", StringComparison.Ordinal);
         var attach = productionPath.IndexOf("host.AttachResidentGuardianAsync(resident, cancellationToken)", StringComparison.Ordinal);
         Assert.True(admit >= 0 && host > admit && resident > host && attach > resident);
-        Assert.Contains("await host.WaitForExitAsync(cancellationToken)", productionPath, StringComparison.Ordinal);
-        Assert.Contains("if (resident is not null) await resident.DisposeAsync()", productionPath, StringComparison.Ordinal);
+        // The acknowledged Host session owns the entry from here: the only wait that ends this
+        // flow is the exact child exiting or the player's tray quit.
+        Assert.Contains("if (!await WaitForSessionEndAsync(host, quit.Token, cancellationToken).ConfigureAwait(false))", source, StringComparison.Ordinal);
+        Assert.Contains("if (resident is not null) await resident.DisposeAsync()", source, StringComparison.Ordinal);
         Assert.Contains("return LaunchOutcome.NoClaim;", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("StartRecoveryAsync", productionPath, StringComparison.Ordinal);
         Assert.DoesNotContain("GuardianStarted", productionPath, StringComparison.Ordinal);

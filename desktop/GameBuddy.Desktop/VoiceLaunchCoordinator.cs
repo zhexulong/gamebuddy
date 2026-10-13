@@ -69,8 +69,12 @@ internal static class VoiceLaunchCoordinator
             return null;
 
         var port = PickFreeLoopbackPort();
-        return new VoiceLaunch(gateway, port, GenerateToken(), preference.SelectedOutputDevice);
+        return Compose(gateway, port, preference);
     }
+
+    /// <param name="preference">The strict reader already proved consent; its stored endpoint is projected verbatim, with null meaning the platform default.</param>
+    private static VoiceLaunch Compose(AdmittedVoiceGateway gateway, int port, VoicePreference preference) =>
+        new(gateway, port, GenerateToken(), preference.SelectedOutputDevice);
 
     /// <summary>Reserves a free loopback port and releases it for the Voice child to bind.</summary>
     internal static int PickFreeLoopbackPort()

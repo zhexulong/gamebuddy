@@ -84,6 +84,8 @@ public sealed class VoiceLaunchCoordinatorTests
 
         var launch = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
 
+        // The stored endpoint is projected verbatim once consent is provable; there is no
+        // device probe on this path, so a test host without audio hardware reads the same value.
         Assert.NotNull(launch);
         Assert.Equal("waveout:3", launch.OutputDevice);
     }
@@ -131,6 +133,11 @@ public sealed class VoiceLaunchCoordinatorTests
         {
             schemaVersion = 1,
             revision,
+            // The record's exact key set is the frozen shape (VoicePreferenceFileReader), and it carries the
+            // companion language: a fixture that writes the pre-`locale` shape is refused, so every
+            // accepted-consent case here read null. The launch gate only needs the kind, so null is the
+            // honest value for a fixture that says nothing about language.
+            locale = (string?)null,
             disclosureVersion,
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
