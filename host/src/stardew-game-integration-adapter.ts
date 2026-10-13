@@ -555,8 +555,11 @@ function hasStardewCompletionEvidence(
               hasOpaqueIdEvidenceValue(e.target) &&
               hasOpaqueEvidenceValue(e.garment) &&
               hasOpaqueEvidenceValue(e.dye) &&
+              typeof e.colour_before === "string" &&
               e.colour_before.length > 0 &&
+              typeof e.colour_expected === "string" &&
               e.colour_expected.length > 0 &&
+              typeof e.colour_after === "string" &&
               e.colour_after.length > 0 &&
               e.colour_changed === String(changed) &&
               (e.prismatic_after === "true" || e.prismatic_after === "false") &&
