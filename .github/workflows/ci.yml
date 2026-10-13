@@ -50,6 +50,7 @@ jobs:
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary
+      - run: pnpm check:error-identity-classification
       - run: pnpm typecheck
       # `pnpm typecheck` reads the working tree, so it cannot see a commit that only compiles
       # because another lane's uncommitted work is present. This checks the commit itself.
