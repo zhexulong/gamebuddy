@@ -16,10 +16,10 @@ const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
  * Bounded reasons an import can LOSE card material it was handed.
  *
  * A loss is a deliberate, bounded decision inside a field the card did supply -
- * a cap (the key list), a label the speaker parser does not accept, an entry the
- * macro set cannot render. Unlike `dispositions` (whole fields accepted, kept
- * opaque or refused) a loss is *within* an accepted field, so it needs a count as
- * well as a reason.
+ * a cap (the key list), a label the speaker parser does not accept, content
+ * beyond the declared entry bound, an entry the macro set cannot render. Unlike
+ * `dispositions` (whole fields accepted, kept opaque or refused) a loss is
+ * *within* an accepted field, so it needs a count as well as a reason.
  *
  * The rule is "no import loss is silent": `st-card-import.test.ts` declares one
  * fixture card per reason below and fails if a fixture's loss is not reported with
@@ -27,7 +27,12 @@ const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
  * reported counts do not account for every droppable item in the card. A new drop
  * that reports nothing, or reports a reason with no fixture, turns the gate red.
  */
-const ST_CARD_IMPORT_LOSS_REASONS = ["unparsed_example_blocks"] as const;
+const ST_CARD_IMPORT_LOSS_REASONS = [
+  "unparsed_example_blocks",
+  "worldbook_keys_truncated",
+  "unrenderable_worldbook_entry",
+  "worldbook_entry_content_unreadable",
+] as const;
 export type StCardImportLossReason = (typeof ST_CARD_IMPORT_LOSS_REASONS)[number];
 export type StCardImportLoss = Readonly<{
   /** The card field the material came from, e.g. `mes_example`. */
@@ -305,7 +310,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           core: description ?? personality!,
           ...(description === undefined || personality === undefined ? {} : { interactionStyle: personality }),
         });
-  const worldBookCandidates = extractCharacterBook(data.character_book, format, name);
+  const worldBookCandidates = extractCharacterBook(data.character_book, format, name, losses);
   // `system_prompt` is a standard v2/v3 card field and `extensions` is open by
   // design; neither is executable, so neither is dropped. `system_prompt`
   // survives as review-visible candidate text (the Host composes its own prompt
@@ -488,17 +493,27 @@ function disposition(
 ): StCardImportDisposition {
   return Object.freeze({ field, classification, reason });
 }
-function playableKeys(value: unknown): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  return Object.freeze(
-    value
-      .flatMap((key) => (typeof key === "string" ? [key.trim()] : []))
-      .filter((key) => key.length > 0 && key.length <= 64)
-      .slice(0, 16),
-  );
+function playableKeys(value: unknown): Readonly<{ keys: readonly string[]; dropped: number }> {
+  if (!Array.isArray(value)) return Object.freeze({ keys: Object.freeze([]), dropped: 0 });
+  const usable = value
+    .flatMap((key) => (typeof key === "string" ? [key.trim()] : []))
+    .filter((key) => key.length > 0);
+  const keys = Object.freeze(usable.filter((key) => key.length <= MAX_WORLDBOOK_KEY_CHARS).slice(0, MAX_WORLDBOOK_KEYS));
+  // The card's own trigger words the entry could not carry: the per-word bound
+  // and the 16-key cap are bounded decisions, but a dropped trigger word is what
+  // makes a keyword-gated entry unreachable, so the count is reported.
+  return Object.freeze({ keys, dropped: usable.length - keys.length });
 }
+/** The keys one world-book entry carries. A cap, not a schema limit. */
+const MAX_WORLDBOOK_KEYS = 16;
+const MAX_WORLDBOOK_KEY_CHARS = 64;
 
-function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3", charName: string): WorldBookEntry[] {
+function extractCharacterBook(
+  value: unknown,
+  format: "st-v2" | "st-v3",
+  charName: string,
+  losses: StCardImportLossLedger,
+): WorldBookEntry[] {
   if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
     return [];
   const entries = Array.isArray(value.entries)
@@ -507,24 +522,45 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3", charNam
       ? Object.values(value.entries)
       : undefined;
   if (entries === undefined) return [];
-  return entries.flatMap((raw, index) => {
-    if (!isRecord(raw)) return [];
+  const candidates: WorldBookEntry[] = [];
+  let unreadableContent = 0;
+  let unrenderableContent = 0;
+  let truncatedKeys = 0;
+  entries.forEach((raw, index) => {
+    if (!isRecord(raw)) return;
     const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
-    if (content === undefined) return [];
+    if (content === undefined) {
+      // Content the card DID write but this import cannot read: beyond the
+      // declared entry bound, the wrong type, or carrying control characters.
+      if (raw.content !== undefined) unreadableContent += 1;
+      return;
+    }
     // Card macros are part of the format, so the entry is rendered into authored
     // content here - the same rendering `candidateToIdentityProfile` applies to
     // the persona and examples. An entry the macro set cannot fully render is
     // dropped rather than written into the companion's worldbook with a raw
-    // `{{...}}` placeholder.
+    // `{{...}}` placeholder - and the drop is counted below, never silent.
     const renderedContent = renderWorldBookText(content, { char: charName });
-    if (hasUnrenderedMacro(renderedContent)) return [];
+    if (hasUnrenderedMacro(renderedContent)) {
+      unrenderableContent += 1;
+      return;
+    }
     const title = renderWorldBookText(
       boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
         boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
         `Imported background ${index + 1}`,
       { char: charName },
     );
-    return [
+    // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
+    // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
+    // every keyword-gated entry unreachable no matter how correct the rest of the chain was.
+    //
+    // Carried only when the card actually supplied usable words: the worldbook validator treats an
+    // EMPTY key list as invalid, so a card declaring `keys: []` must read as "no trigger words"
+    // (the field stays absent) rather than as a malformed entry.
+    const { keys, dropped } = playableKeys(raw.keys);
+    truncatedKeys += dropped;
+    candidates.push(
       Object.freeze({
         entryId: `st-${format}-${index + 1}`,
         title,
@@ -538,17 +574,14 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3", charNam
         // materializes into the m[0] lorebook_constant source. Keyword-gated
         // entries (constant false) stay behind the lookup tools.
         ...(raw.constant === true ? { constant: true } : {}),
-        // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
-        // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
-        // every keyword-gated entry unreachable no matter how correct the rest of the chain was.
-        //
-        // Carried only when the card actually supplied usable words: the worldbook validator treats an
-        // EMPTY key list as invalid, so a card declaring `keys: []` must read as "no trigger words"
-        // (the field stays absent) rather than as a malformed entry.
-        ...(playableKeys(raw.keys).length === 0 ? {} : { keys: playableKeys(raw.keys) }),
+        ...(keys.length === 0 ? {} : { keys }),
       }),
-    ];
+    );
   });
+  losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
+  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent);
+  losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
+  return candidates;
 }
 function parseExamples(
   value: string | undefined,

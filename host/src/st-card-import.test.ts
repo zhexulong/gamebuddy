@@ -714,6 +714,58 @@ test("preview folds first_mes into a reviewed example row when mes_example is mi
   assert.deepEqual(previewStCard({ spec: "chara_card_v3", data: { name: "Rin", description: "calm" } }).losses, []);
 });
 
+test("a world-book entry's dropped trigger words and dropped entries are reported with their counts", () => {
+  // The failure this catches: `playableKeys` cut the card's own trigger words to
+  // 16 with no report, and `extractCharacterBook` dropped an unrenderable entry
+  // (or one whose content was unreadable) with no report either. A dropped
+  // trigger word is what makes a keyword-gated entry unreachable, and a dropped
+  // entry is card material the player paid for.
+  const keys = Array.from({ length: 20 }, (_, index) => `\u5173\u952e\u8bcd${index + 1}`);
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Book Losses",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Capped", content: "carried", keys },
+          { comment: "Unrenderable", content: "this references {{unknown_macro}}." },
+          { comment: "Unreadable", content: "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1) },
+          { comment: "Fine", content: "kept" },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(
+    preview.worldBookCandidates.map((entry) => entry.title),
+    ["Capped", "Fine"],
+  );
+  assert.equal(preview.worldBookCandidates[0]?.keys?.length, 16);
+  assert.deepEqual(preview.losses, [
+    { field: "character_book.entries", reason: "worldbook_entry_content_unreadable", count: 1 },
+    { field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 },
+    { field: "character_book.keys", reason: "worldbook_keys_truncated", count: 4 },
+  ]);
+  // The decode report carries the same ledger: an import result that drops this
+  // much has to say so on the path the application actually persists from.
+  assert.deepEqual(
+    decodeStCard(
+      JSON.stringify({
+        data: { name: "Book Losses", description: "calm", character_book: { entries: [{ comment: "U", content: "{{nope}}" }] } },
+      }),
+    ).losses,
+    [{ field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 }],
+  );
+  // A book whose entries all survive reports nothing.
+  assert.deepEqual(
+    previewStCard({
+      spec: "chara_card_v3",
+      data: { name: "Clean", description: "calm", character_book: { entries: [{ content: "kept", keys: ["\u519c\u573a"] }] } },
+    }).losses,
+    [],
+  );
+});
+
 test("preview surfaces softHints for unusually long persona fields (frontend notice, never a gate)", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
