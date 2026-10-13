@@ -193,14 +193,17 @@ async function captureMarkers(run: (markers: Marker[]) => Promise<void>): Promis
 test(
   "a real fold seals a chapter and keeps the m[0] prefix byte-stable (CI fold fixture)",
   {
-    // The only gate is the credential: the fixture runs real provider turns (a fold spends one
-    // historian model call). It needs nothing else now that the embedded historian has a registry -
-    // see the file header for the two fork defects that used to make this impossible.
-    // `GAMEBUDDY_CHAPTER_FOLD_FORCE=1` still runs it without the credential check for diagnosis.
+    // Opt-in only. The fixture spends a real historian model call and, measured here, 340.7s of body
+    // time, and CI sets no provider credential - so gating it on the credential alone meant it never
+    // ran in CI while every developer machine that had one paid for both in each suite run. Run it
+    // deliberately with `GAMEBUDDY_CHAPTER_FOLD_FORCE=1`; the credential is still required on that
+    // path, and its absence is a named skip rather than an obscure failure inside the body.
     skip:
-      apiKey === undefined && process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE !== "1"
-        ? "requires CPA_OAI_API_KEY: this fixture runs real provider turns"
-        : false,
+      process.env.GAMEBUDDY_CHAPTER_FOLD_FORCE === "1"
+        ? apiKey === undefined
+          ? "GAMEBUDDY_CHAPTER_FOLD_FORCE=1 is set but CPA_OAI_API_KEY is absent: this fixture runs real provider turns"
+          : false
+        : "opt-in only (GAMEBUDDY_CHAPTER_FOLD_FORCE=1): a real historian model call and about 340s of body time",
   },
   async () => {
     // Narrowed after the skip guard: the closure below must not see `string | undefined`.
