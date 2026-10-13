@@ -949,11 +949,12 @@ export function MemoryPanel({
   // The notebook's own words, selected by this mount's locale.
   const notebook = memoryNotebookLabels(locale);
 
-  // The historian card is the surface's first line, and its number is the
+  // The notebook card is the surface's first line, and its number is the
   // projection the Host just returned - never an optimistic local count. With
-  // nothing written yet the card still explains what the notebook is and that
-  // it fills from ordinary play, so an empty projection reads as "not yet"
-  // rather than as a blank form.
+  // nothing written yet the card still says what the notebook is and how it
+  // fills - the player asking her to keep something - so an empty projection
+  // reads as "not yet" rather than as a blank form or as a promise of a writer
+  // production does not run.
   const notebookState: "ready" | "loading" | "empty" | "unavailable" | "error" =
     memoryView.kind === "loading"
       ? "loading"
@@ -983,9 +984,9 @@ export function MemoryPanel({
         </button>
       </div>
       {/*
-        The historian card: the notebook, its promise, and the real accumulated
+        The notebook card: the notebook, its promise, and the real accumulated
         count. The same card whether the notebook has entries or not, so a player
-        who has just started still learns what will fill it - the feature says it
+        who has just started still learns how it fills - the feature says it
         exists by behaving, not by explaining itself.
       */}
       <aside className="memory-notebook" data-memory-notebook>

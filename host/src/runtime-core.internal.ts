@@ -148,6 +148,16 @@ export const MAGIC_CONTEXT_RECALL_ENABLED = false;
 export const MAGIC_CONTEXT_MEMORY_ENABLED = true;
 // Magic Context's own ongoing-interaction Historian can publish eligible
 // Semantic facts when it is enabled. The Host never classifies or writes them.
+//
+// Off as a rollout gate, not by accident - reopening it was an explicit owner
+// decision (P7 of the Player-Managed Interaction Memory plan) and that decision
+// is still open. Keep it off, but do not expect flipping it to fill the Memory
+// notebook: promotion runs only inside a historian fold publish, over an
+// *anchored* compartment range, and the fold fires at 65% of the model's usable
+// window (measured: a five-turn run sat at 0.38% of a 750,000-token window with
+// `times_execute_threshold_reached = 0`). No ordinary conversation reaches it, so
+// the notebook's copy names the route that exists - the player asking her to keep
+// something - and claims no automatic accumulation.
 export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
 
 const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;

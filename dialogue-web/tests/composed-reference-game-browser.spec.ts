@@ -2162,9 +2162,13 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
  * The failure each assertion catches:
  *
  * 1. `explains the notebook while it is empty` - an empty Memory projection that
- *    paints a blank form (no historian card, no honest zero) is the reported
- *    defect; the card must say what the notebook is and that it fills from
- *    ordinary play even when the Host returns no rows.
+ *    paints a blank form (no notebook card, no honest zero) is the reported
+ *    defect; the card must say what the notebook is and how it fills - the player
+ *    asking her to keep something - even when the Host returns no rows. It must
+ *    NOT promise a writer production does not run: promotion is gated off and the
+ *    historian fold that would carry it fires at 65% of the usable window, so
+ *    `memory-notebook-promise-gate.test.mjs` pins the wording and this spec pins
+ *    what the mounted card actually renders.
  * 2. `counts exactly what the Host returned` - a fabricated or locally guessed
  *    number, or a count that ignores the mounted rows, fails; the card's number is
  *    compared to the two rows the route returned.
@@ -2205,10 +2209,14 @@ test("the Memory surface reads as the companion's notebook, with a real count an
   const surface = page.getByTestId("memory-surface");
   await expect(surface).toBeVisible();
 
-  // 1. Zero memories still explains the notebook, with an honest zero.
+  // 1. Zero memories still explains the notebook, with an honest zero - and it
+  // states the route that exists (the player telling her), not an automatic
+  // writer (see the file header and memory-notebook-promise-gate.test.mjs).
   const notebook = surface.locator("[data-memory-notebook]");
   await expect(notebook).toBeVisible();
-  await expect(notebook).toContainText("Your companion writes this down");
+  await expect(notebook).toContainText("This is her notebook");
+  await expect(notebook).not.toContainText("writes this down");
+  await expect(notebook).not.toContainText("fills in as you talk");
   await expect(notebook.locator("[data-memory-count]")).toHaveAttribute("data-memory-count", "0");
   await expect(notebook.locator("[data-memory-count]")).toContainText("Nothing written down yet");
 

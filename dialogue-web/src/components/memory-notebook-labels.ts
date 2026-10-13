@@ -4,10 +4,22 @@ import type { Locale } from "../i18n";
  * The Memory notebook's one vocabulary, in the companion's own voice.
  *
  * The Memory surface is the companion's scrapbook, not a database form: the copy
- * here names the notebook, says that it fills from ordinary talk and farm life,
- * and gives the contract's own `category` members (`semantic` | `interaction`)
- * a life-flavoured player label. A raw member is never rendered; see design/104
- * §10.
+ * here names the notebook and gives the contract's own `category` members
+ * (`semantic` | `interaction`) a life-flavoured player label, and it states the
+ * contract that actually holds — the entries are the ones the *player* asked her
+ * to keep — so the promise names that route and never claims the notebook fills by
+ * itself. A raw member is never rendered; see design/104 §10.
+ *
+ * Why the automatic claim is gone: Magic Context's automatic promotion is off
+ * (`MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false` in `host/src/runtime-core.internal.ts`,
+ * a rollout gate), and it could not fill an ordinary conversation even if it were
+ * on — promotion runs only inside a historian fold publish over an *anchored*
+ * compartment range, and that fold fires at 65% of the model's usable window. A
+ * measured five-turn run sat at 0.38% of a 750,000-token window with
+ * `times_execute_threshold_reached = 0`, i.e. roughly 487,500 tokens short. Copy
+ * promising accumulation would therefore promise something production cannot keep;
+ * see `design/tasks/active/companion-surface-discovery-principle.md` ("没有入口的功能
+ * 不写进界面，也不在文案里许诺").
  *
  * The strings live in this file (not `i18n.ts`, which is a shared, append-only
  * file for the other lanes) and are selected by the mount's own locale. Each
@@ -31,11 +43,14 @@ export type MemoryNotebookLabels = Readonly<Record<MemoryNotebookLabelKey, strin
 const MESSAGES: Readonly<Record<MemoryNotebookLabelKey, { en: string; zh: string }>> = {
   title: { en: "Your companion's notebook", zh: "伴侣的时光手札" },
   promise: {
-    en: "Your companion writes this down while you talk and work the farm — you never have to fill anything in.",
-    zh: "你聊天、打理农场的时候，伴侣会把这些事自己写进手札——你不用动手填。",
+    en: "This is her notebook. Whatever you tell her is worth keeping stays in it.",
+    zh: "这是她的手札。你告诉她值得留下的事，就会留在这里。",
   },
   count: { en: "{{count}} memories written down so far.", zh: "已经悄悄记下 {{count}} 件事。" },
-  empty: { en: "Nothing written down yet. It fills in as you talk.", zh: "还没有记下什么。随着你们聊天，它会慢慢填满。" },
+  empty: {
+    en: "Nothing written down yet. Tell her something worth keeping whenever you like.",
+    zh: "还没有记下什么。你随时可以告诉她一件值得留下的事。",
+  },
   unavailable: { en: "The notebook is not open right now.", zh: "手札暂时打不开。" },
   failed: { en: "The notebook could not be opened.", zh: "手札没能打开。" },
   authoringOpen: { en: "+ Whisper something to your companion", zh: "+ 悄悄告诉伴侣一件事" },
