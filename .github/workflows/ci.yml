@@ -49,9 +49,17 @@ jobs:
       - run: pnpm lint
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
+      - run: pnpm test:dialogue-web-boundaries
       - run: pnpm check:host-production-import-boundary
       - run: pnpm check:error-identity-classification
       - run: pnpm test:error-identity-classification
+      # A gate is not wired until its own suite runs too: the rule and the tests that keep the
+      # rule honest are a pair, and a rule whose suite runs nowhere is how a green check hides
+      # a broken gate.
+      - run: pnpm check:host-diagnostic-output
+      - run: pnpm test:host-diagnostic-output
+      - run: pnpm check:test-store-teardown
+      - run: pnpm test:test-store-teardown
       - run: pnpm typecheck
       # `pnpm typecheck` reads the working tree, so it cannot see a commit that only compiles
       # because another lane's uncommitted work is present. This checks the commit itself.
