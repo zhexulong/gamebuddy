@@ -162,3 +162,17 @@ assemblers.
 3. The `tools/*.test.mjs` corpus is the single biggest unrun surface (69 suites). One aggregate
    step (`node --test tools/*.test.mjs`) would close it, at the cost of whatever those suites'
    shared-state and runtime cost turns out to be.
+
+## Postscript — HEAD moved during the run (9d6417a2)
+
+Two sibling commits landed while this ran (the residuals lane):
+`d62cbd56 fix(dialogue-web): the rename affordance and the field it opens are two named controls`
+and `9bb5feed test(host): the Memory read's chapters member is asserted, not silently dropped`.
+Re-verified at 9d6417a2:
+
+- `node tools/check-head-typecheck.mjs` -> `head_typecheck_ok rev=9d6417a2fadc` (exit 0).
+- ratchet -> `new=1`, `TS2322: 35 -> 36` (unchanged; still pre-existing at HEAD~).
+- `pnpm test:dialogue-web-boundaries` -> still RED (same `AppBar.tsx` golden-zone failure).
+- `node tools/check-test-store-teardown.mjs` -> `test_store_teardown_ok files=30`.
+- the worktree `ci.yml` diff against my commit is exactly the one un-adopted line
+  (`+ - run: pnpm test:dialogue-web-boundaries`).
