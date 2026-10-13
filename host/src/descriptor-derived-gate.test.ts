@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { isDescriptorDerivedActionId, isModDescriptorComplete } from "./action-registry.js";
+import type { ActionRegistrationDescriptor } from "./protocol.js";
 /**
  * The gate these tests pin decides VISIBILITY, TOOL MOUNTING and COMPLETION JUDGING at once
  * (action-registry.ts:740-765). Its failure mode is silence: a descriptor-derived action with no arm
@@ -13,24 +14,35 @@ import { isDescriptorDerivedActionId, isModDescriptorComplete } from "./action-r
  * assert it stays shut on the wrong ones.
  */
 
+/**
+ * `effect` is a plain string on purpose: one case below feeds an effect that is neither "read" nor "write",
+ * which is the value the Mod must never publish, and the helper still has to hand it to the gate.
+ */
+type DescriptorFacts = Readonly<{
+  names: readonly string[];
+  postcondition: string;
+  effect?: string;
+  nativeBinding?: string;
+}>;
+
 /** The wire shape: hello_ack carries `arguments` (array) and `postcondition` as a record. */
-function wireDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }) {
+function wireDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }: DescriptorFacts): ActionRegistrationDescriptor {
   return {
     arguments: names.map((name) => ({ name, type: name === "x" || name === "y" ? "integer" : "string" })),
     effect,
     postcondition: { name: postcondition },
     nativeBinding,
-  };
+  } as ActionRegistrationDescriptor;
 }
 
 /** The action-surface shape: `argumentSchema` keyed by name. */
-function surfaceDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }) {
+function surfaceDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }: DescriptorFacts): ActionRegistrationDescriptor {
   return {
     argumentSchema: Object.fromEntries(names.map((name) => [name, { type: name === "x" || name === "y" ? "integer" : "string" }])),
     effect,
     postcondition: { name: postcondition },
     nativeBinding,
-  };
+  } as ActionRegistrationDescriptor;
 }
 
 const xyz = ["x", "y", "expectedTargetId"];
