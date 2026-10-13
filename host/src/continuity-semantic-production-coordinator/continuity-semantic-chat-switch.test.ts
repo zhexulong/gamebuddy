@@ -53,7 +53,7 @@ function cleanup(root: string): void {
 }
 
 const switchScript = `
-  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, manifestPath, scenario] =
+  const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl, acceptanceUrl, claimUrl, contentPortUrl, manifestPath, scenario] =
     process.argv.slice(1);
   const { bindWindowsStaleLockReclaimer } = await import(pathLockUrl);
   const { createBuildWindowsStaleLockReclaimer } = await import(reclaimerUrl);
@@ -61,6 +61,7 @@ const switchScript = `
   const internal = await import(coordinatorUrl);
   const {
     createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
+    createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
     isCurrentMountedChatRuntimeLease,
   } = internal;
   const { loadHostDeploymentManifest } = await import(manifestUrl);
@@ -68,9 +69,19 @@ const switchScript = `
   const { identityKey } = await import(runtimeUrl);
   const { createPlayerTurnAcceptor } = await import(acceptanceUrl);
   const { createProviderAttemptClaimer } = await import(claimUrl);
+  const { createManifestDerivedInitialChatExactContentPort } = await import(contentPortUrl);
+  const { DatabaseSync } = await import("node:sqlite");
+  const { readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
 
   const manifest = await loadHostDeploymentManifest(manifestPath);
-  const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
+  // The restart scenario is a second process over a root the first one already
+  // provisioned: it opens the known authority (and reconciles the terminal
+  // teardown the first process left) instead of provisioning a fresh one.
+  const authority =
+    scenario === "select-created-after-restart"
+      ? await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest)
+      : await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const first = await authority.startMountedChatRuntime();
   const firstThread = first.chatThreadId;
   const firstSurface = first.chatSurfaceSessionId;
@@ -87,7 +98,177 @@ const switchScript = `
   };
   const out = { firstThread, firstSurface, firstGeneration, firstChatHandle };
 
-  if (scenario === "in-flight") {
+  /**
+   * What the durable semantic authority actually holds, read from the file with a
+   * separate read-only connection: the assertion is about committed state, not
+   * about anything the authority reports about itself.
+   */
+  const semanticDbPath = (() => {
+    const stack = [manifest.runtimeRoot];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        if (entry.isDirectory()) stack.push(join(current, entry.name));
+        else if (entry.name === "gamebuddy-continuity-v1.sqlite") return join(current, entry.name);
+      }
+    }
+    throw new Error("semantic_db_not_found");
+  })();
+  const readDurable = () => {
+    const db = new DatabaseSync(semanticDbPath, { readOnly: true });
+    const threads = db
+      .prepare(
+        "SELECT chat_surface_session_id, chat_thread_id, lifecycle, content_receipt_json IS NOT NULL AS verified FROM production_continuity_thread ORDER BY chat_surface_session_id",
+      )
+      .all();
+    const active = db
+      .prepare(
+        "SELECT chat_thread_id, chat_surface_session_id, expected_selection_json FROM production_active_selection WHERE singleton=1",
+      )
+      .get();
+    db.close();
+    return { threads, active };
+  };
+  /** The bounded refusal a request answers, or the fact that it was accepted. */
+  const refusal = async (work) => {
+    try {
+      await work();
+      return "accepted";
+    } catch (error) {
+      return error?.message ?? String(error);
+    }
+  };
+  /**
+   * The product's New Chat, reduced to its durable effect: a brand-new
+   * (thread, surface-session) pair whose Tavern content is written by the content
+   * port the settlement will register it from, with nothing registered in the
+   * semantic authority. That is exactly the state the installed authority was in.
+   */
+  const createSecondChat = async () => {
+    const target = Object.freeze({
+      chatThreadId: "chat-" + "9".repeat(16),
+      chatSurfaceSessionId: "surface-" + "9".repeat(16),
+    });
+    const content = createManifestDerivedInitialChatExactContentPort(manifest);
+    try {
+      await content.port.createExplicit(
+        Object.freeze({
+          chatThreadId: target.chatThreadId,
+          companionId: manifest.principal.companionId,
+          continuityId: manifest.principal.continuityId,
+          chatSurfaceSessionId: target.chatSurfaceSessionId,
+          opening: "blank",
+        }),
+      );
+    } finally {
+      content.close();
+    }
+    const state = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
+    out.createdThreadReadableBeforeSelection = state.thread.chatThreadId === target.chatThreadId;
+    return target;
+  };
+  /** Selects the target through the authority and mints its successor mount. */
+  const selectAndMount = async (target) => {
+    const outcome = await authority.requestChatSelection({
+      kind: "select",
+      selectionGeneration: firstGeneration,
+      chatThreadId: target.chatThreadId,
+      chatSurfaceSessionId: target.chatSurfaceSessionId,
+    });
+    const firstSuperseded = isCurrentMountedChatRuntimeLease(first);
+    const successor = await authority.startMountedChatRuntime();
+    return Object.freeze({
+      status: outcome.status,
+      outcomeThread: outcome.chatThreadId,
+      outcomeSurface: outcome.chatSurfaceSessionId,
+      firstSuperseded,
+      successorThread: successor.chatThreadId,
+      successorSurface: successor.chatSurfaceSessionId,
+      successorCurrent: isCurrentMountedChatRuntimeLease(successor),
+    });
+  };
+
+  if (scenario === "select-created" || scenario === "select-created-create-only") {
+    const target = await createSecondChat();
+    const before = readDurable();
+    out.createdThread = target.chatThreadId;
+    out.createdSurface = target.chatSurfaceSessionId;
+    out.beforeThreads = before.threads;
+    out.beforeActive = before.active;
+
+    if (scenario === "select-created") {
+      // A target with no Tavern content behind it is still refused, and the
+      // refusal lands before anything is released: the mounted Chat stays current
+      // and no expectation is recorded for a Chat that could never be mounted.
+      out.absentOutcome = await refusal(() =>
+        authority.requestChatSelection({
+          kind: "select",
+          selectionGeneration: firstGeneration,
+          chatThreadId: "chat-absent",
+          chatSurfaceSessionId: "surface-absent",
+        }),
+      );
+      out.absentKeptMount = isCurrentMountedChatRuntimeLease(first);
+      out.absentKeptSelection = readDurable().active.chat_thread_id === firstThread;
+
+      // The exact thread named with another Chat's surface session is refused: a
+      // thread belongs to the surface talking to it.
+      out.foreignPairOutcome = await refusal(() =>
+        authority.requestChatSelection({
+          kind: "select",
+          selectionGeneration: firstGeneration,
+          chatThreadId: target.chatThreadId,
+          chatSurfaceSessionId: firstSurface,
+        }),
+      );
+      out.foreignPairKeptMount = isCurrentMountedChatRuntimeLease(first);
+      out.foreignPairKeptSelection = readDurable().active.chat_thread_id === firstThread;
+
+      // A stale generation is the bounded refusal, not a switch.
+      out.staleOutcome = await refusal(() =>
+        authority.requestChatSelection({
+          kind: "select",
+          selectionGeneration: firstGeneration + 7,
+          chatThreadId: target.chatThreadId,
+          chatSurfaceSessionId: target.chatSurfaceSessionId,
+        }),
+      );
+      out.staleKeptMount = isCurrentMountedChatRuntimeLease(first);
+      out.staleKeptSelection = readDurable().active.chat_thread_id === firstThread;
+
+      out.switch = await selectAndMount(target);
+      const after = readDurable();
+      out.afterThreads = after.threads;
+      out.afterActive = after.active;
+      const createdState = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
+      out.createdMessageCount = createdState.messages.length;
+      const initialState = await store.resumeThread(firstThread, firstSurface);
+      out.firstThreadStillReadable = initialState.thread.chatThreadId === firstThread;
+    }
+  } else if (scenario === "select-created-after-restart") {
+    // A fresh process over the same root: the Chat the previous run created was
+    // never selected and never registered. This is the durable check that a
+    // create-then-restart does not strand it.
+    const target = Object.freeze({
+      chatThreadId: "chat-" + "9".repeat(16),
+      chatSurfaceSessionId: "surface-" + "9".repeat(16),
+    });
+    const before = readDurable();
+    out.createdThread = target.chatThreadId;
+    out.beforeThreads = before.threads;
+    out.beforeActive = before.active;
+    out.switch = await selectAndMount(target);
+    const after = readDurable();
+    out.afterThreads = after.threads;
+    out.afterActive = after.active;
+    const createdState = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
+    out.createdMessageCount = createdState.messages.length;
+  } else if (scenario === "in-flight" || scenario === "in-flight-created") {
+    // In the created variant the target is a Chat the product's New Chat wrote and
+    // the authority never registered. It is created before the turn starts, so
+    // this scenario differs from the existing one only in what is selected.
+    const createdTarget = scenario === "in-flight-created" ? await createSecondChat() : undefined;
+    out.createdThread = createdTarget === undefined ? null : createdTarget.chatThreadId;
     // A real, durably generating turn: accepted, attempt claimed, armed, running,
     // and with a committed presentation - exactly the state the old refusal
     // answered. The scripted runner then holds the active prompt so the selection
@@ -129,7 +310,18 @@ const switchScript = `
     const generating = await store.resumeThread(firstThread, firstSurface);
     out.generatingLedgerStatus = generating.turnLedger === null ? null : generating.turnLedger.status;
 
-    const selection = authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
+    // In the created variant the target above is the Chat the product's New Chat
+    // wrote and the authority never registered: the same switch, driven for real.
+    const selection = authority.requestChatSelection(
+      createdTarget === undefined
+        ? { kind: "create", selectionGeneration: firstGeneration }
+        : {
+            kind: "select",
+            selectionGeneration: firstGeneration,
+            chatThreadId: createdTarget.chatThreadId,
+            chatSurfaceSessionId: createdTarget.chatSurfaceSessionId,
+          },
+    );
     // The abort claims the durable winner before the mount is released; the
     // mount is only released once the interrupted turn has settled.
     await waitFor(async () => (await store.resumeThread(firstThread, firstSurface)).turnLedger?.status === "cancel_claimed");
@@ -305,7 +497,15 @@ const switchScript = `
 
 async function runSwitchScenario(
   root: string,
-  scenario: "switch" | "in-flight" | "durable-unstarted" | "durable-not-started",
+  scenario:
+    | "switch"
+    | "in-flight"
+    | "in-flight-created"
+    | "durable-unstarted"
+    | "durable-not-started"
+    | "select-created"
+    | "select-created-create-only"
+    | "select-created-after-restart",
 ): Promise<Record<string, unknown>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -333,6 +533,7 @@ async function runSwitchScenario(
       new URL("../runtime.js", import.meta.url).href,
       new URL("../tavern/player-turn-acceptance.js", import.meta.url).href,
       new URL("../tavern/provider-attempt-claim.js", import.meta.url).href,
+      new URL("../tavern/initial-chat-exact-content-port.js", import.meta.url).href,
       manifestPath,
       scenario,
     ],
@@ -497,6 +698,195 @@ test(
       // for a prompt the provider never saw.
       assert.equal(observed.interruptedKeptPlayerText, true);
       assert.ok(Number(observed.interruptedMessageCount) >= 1);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+type DurableThreadRow = Readonly<{
+  chat_thread_id: string;
+  chat_surface_session_id: string;
+  lifecycle: string;
+  verified: number | boolean;
+}>;
+type DurableActiveRow = Readonly<{
+  chat_thread_id: string;
+  chat_surface_session_id: string;
+  expected_selection_json: string | null;
+}>;
+
+const durableThread = (rows: unknown, threadId: string): DurableThreadRow | undefined =>
+  (rows as DurableThreadRow[]).find((row) => row.chat_thread_id === threadId);
+
+/**
+ * The defect this covers: a Chat the product's New Chat creates is written to the
+ * Tavern store and registered nowhere, and the select route could therefore never
+ * select it (409 `selection_conflict`, idle or generating). The assertions below
+ * fail on the pre-fix authority at:
+ * - `beforeThreads`: it must show the created pair absent from
+ *   `production_continuity_thread` - that absence IS the defect state, so a
+ *   passing run cannot be one where the pair happened to already be registered;
+ * - `absent*`: an unregistered AND unverifiable target must still be refused, and
+ *   the refusal must land before the mounted runtime is released - the hole a
+ *   bare "admit unregistered targets" change opens, where the mount is torn down
+ *   and the settlement then fails, leaving the player with no mounted Chat;
+ * - `foreignPair*`: naming the real thread with another Chat's surface session
+ *   must still be refused - the invariant that a thread belongs to the surface
+ *   talking to it, which loosening that same guard would destroy;
+ * - `switch.*` / `after*`: the created Chat must become the mounted conversation
+ *   AND be registered and content-verified for its own pair, so the switch is a
+ *   durable fact rather than a mount the authority does not record.
+ */
+test(
+  "a Chat created through the product is selectable, and the refusal still fires for what it is not for",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-created-chat-selection-");
+    try {
+      const observed = await runSwitchScenario(root, "select-created");
+      const createdThread = String(observed.createdThread);
+      const createdSurface = String(observed.createdSurface);
+      const before = observed.beforeThreads as readonly DurableThreadRow[];
+
+      // The Tavern content exists (the create landed) and the semantic authority
+      // has never heard of it: exactly the shape the installed authority was in.
+      assert.equal(observed.createdThreadReadableBeforeSelection, true);
+      assert.equal(before.length, 1);
+      assert.equal(durableThread(before, createdThread), undefined);
+      assert.equal(durableThread(before, String(observed.firstThread))?.verified, 1);
+
+      // An unregistered and unverifiable target: refused, and nothing is released.
+      assert.equal(observed.absentOutcome, "semantic_chat_selection_conflict");
+      assert.equal(observed.absentKeptMount, true);
+      assert.equal(observed.absentKeptSelection, true);
+
+      // The right thread with another Chat's surface session: refused.
+      assert.equal(observed.foreignPairOutcome, "semantic_chat_selection_conflict");
+      assert.equal(observed.foreignPairKeptMount, true);
+      assert.equal(observed.foreignPairKeptSelection, true);
+
+      // A stale generation: the bounded refusal, and nothing is released.
+      assert.equal(observed.staleOutcome, "semantic_chat_selection_generation_conflict");
+      assert.equal(observed.staleKeptMount, true);
+      assert.equal(observed.staleKeptSelection, true);
+
+      // The switch: the first time this Chat could ever be selected.
+      const switched = observed.switch as Record<string, unknown>;
+      assert.equal(switched.status, "switched");
+      assert.equal(switched.outcomeThread, createdThread);
+      assert.equal(switched.outcomeSurface, createdSurface);
+      assert.equal(switched.firstSuperseded, false);
+      assert.equal(switched.successorThread, createdThread);
+      assert.equal(switched.successorSurface, createdSurface);
+      assert.equal(switched.successorCurrent, true);
+
+      // The registration landed durably for the created Chat's OWN pair, with its
+      // Tavern content verified and no expectation left behind.
+      const after = observed.afterThreads as readonly DurableThreadRow[];
+      const registered = durableThread(after, createdThread);
+      assert.equal(after.length, 2);
+      assert.equal(registered?.chat_surface_session_id, createdSurface);
+      assert.equal(registered?.lifecycle, "active");
+      assert.equal(registered?.verified, 1);
+      const active = observed.afterActive as DurableActiveRow;
+      assert.equal(active.chat_thread_id, createdThread);
+      assert.equal(active.chat_surface_session_id, createdSurface);
+      assert.equal(active.expected_selection_json, null);
+
+      // Switching is not deletion: the conversation switched away from stays.
+      assert.equal(observed.firstThreadStillReadable, true);
+      assert.equal(durableThread(after, String(observed.firstThread))?.lifecycle, "active");
+      assert.ok(Number(observed.createdMessageCount) >= 0);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * The stranded-record question, answered durably: a Chat created and NEVER
+ * selected, then the product restarted. Two real processes over one root - the
+ * first creates the pair and exits, the second starts fresh and selects it. It
+ * fails on a pre-fix authority at the second process's `switch.status`, and it
+ * would fail after the fix if the registration only happened at first selection
+ * and a restart in between stranded the pair.
+ */
+test(
+  "a Chat created and never selected is still selectable after the product restarts",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-created-chat-restart-");
+    try {
+      const created = await runSwitchScenario(root, "select-created-create-only");
+      const createdThread = String(created.createdThread);
+      const createdSurface = String(created.createdSurface);
+      const createdRunThreads = created.beforeThreads as readonly DurableThreadRow[];
+      assert.equal(createdRunThreads.length, 1);
+      assert.equal(durableThread(createdRunThreads, createdThread), undefined);
+      // Nothing was selected: the recorded expectation was never used.
+      assert.equal((created.beforeActive as DurableActiveRow).chat_thread_id, String(created.firstThread));
+
+      const restarted = await runSwitchScenario(root, "select-created-after-restart");
+      // The restart alone registers nothing: the pair is still only in the Tavern
+      // store, so this is genuinely the select that follows a restart.
+      const beforeSelect = restarted.beforeThreads as readonly DurableThreadRow[];
+      assert.equal(beforeSelect.length, 1);
+      assert.equal(durableThread(beforeSelect, createdThread), undefined);
+
+      const switched = restarted.switch as Record<string, unknown>;
+      assert.equal(switched.status, "switched");
+      assert.equal(switched.outcomeThread, createdThread);
+      assert.equal(switched.successorThread, createdThread);
+      assert.equal(switched.successorSurface, createdSurface);
+      assert.equal(switched.successorCurrent, true);
+
+      const after = restarted.afterThreads as readonly DurableThreadRow[];
+      const registered = durableThread(after, createdThread);
+      assert.equal(registered?.chat_surface_session_id, createdSurface);
+      assert.equal(registered?.verified, 1);
+      assert.equal((restarted.afterActive as DurableActiveRow).chat_thread_id, createdThread);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * Class A over a Chat the product created: the focus transfer must cut the
+ * generating turn and switch, never refuse. Before the fix no second row was
+ * selectable at all, so this shape could not be driven on real hardware: the
+ * scenario fails pre-fix at `switch`/`outcomeStatus` (the selection was refused
+ * while idle too), and it fails on a regression to a refusal at
+ * `cancelClaimedWhileGenerating` and `interruptedLedgerStatus`.
+ */
+test(
+  "selecting a Chat the product created while a turn generates aborts that turn and switches",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-created-chat-in-flight-");
+    try {
+      const observed = await runSwitchScenario(root, "in-flight-created");
+      const createdThread = String(observed.createdThread);
+      assert.equal(observed.createdThreadReadableBeforeSelection, true);
+      // The turn really was generating when the selection ran.
+      assert.equal(observed.generatingLedgerStatus, "presentation_committed");
+      // The abort is the one cancel path, claimed while the turn is still mounted.
+      assert.equal(observed.cancelClaimedWhileGenerating, true);
+      // The player gets the switch to the created Chat, never a refusal.
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.outcomeThread, createdThread);
+      assert.equal(observed.secondThread, createdThread);
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.firstSuperseded, false);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.successorThreadReadable, true);
+      // The interrupted conversation is terminal and kept everything it produced.
+      assert.equal(observed.firstThreadStillReadable, true);
+      assert.equal(observed.interruptedLedgerStatus, "cancelled");
+      assert.equal(observed.interruptedProducedTextKept, true);
+      assert.equal(observed.interruptedLedgerPresentation, true);
+      assert.ok(Number(observed.interruptedMessageCount) >= 2);
     } finally {
       cleanup(root);
     }

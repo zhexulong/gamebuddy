@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "dist-created-chat",
+    "noUnusedLocals": false
+  },
+  "include": [],
+  "files": [
+    "src/continuity-semantic-production-coordinator/continuity-semantic-chat-switch.test.ts",
+    "src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
+    "src/continuity-semantic-store/continuity-semantic-production-store.chat-selection.test.ts",
+    "src/continuity-semantic-store/continuity-semantic-production-store.ts",
+    "src/tavern/initial-chat-exact-content-port.ts",
+    "src/tavern/player-turn-acceptance.ts",
+    "src/tavern/provider-attempt-claim.ts"
+  ]
+}

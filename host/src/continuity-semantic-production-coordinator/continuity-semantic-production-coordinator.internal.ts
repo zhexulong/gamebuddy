@@ -2279,6 +2279,31 @@ async function createFreshChatRuntimeAuthority(
     return `chat-${kind}-${suffix.slice(0, 32)}`;
   }
   /**
+   * Proves the exact Tavern content behind a not-yet-registered selection target
+   * exists, so the settlement cannot become the thing that creates a conversation
+   * the player never had. It reads through this authority's own Chat thread store:
+   * a second store opened on the same root/continuity key takes over the mounted
+   * runtime's route registrations and detaches them when it closes, so a live
+   * turn's own cancel path must never be shadowed by another connection.
+   */
+  async function assertSelectTargetContentExists(
+    target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  ): Promise<void> {
+    try {
+      await mountedStore().resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
+    } catch (error) {
+      // This thread with another Chat's surface session, or no such thread at
+      // all, is the bounded refusal: only that exact pair may be registered by
+      // the settlement. A genuine storage failure keeps its own error.
+      if (
+        error instanceof Error &&
+        (error.message === "chat_thread_not_found" || error.message === "chat_thread_surface_mismatch")
+      )
+        throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
+      throw error;
+    }
+  }
+  /**
    * ADR 0009 / ADR-0010. The recorded expectation is durable and the request is
    * never refused for a generating turn: the one mounted runtime whose turn is
    * still in flight is aborted through the same cancel path an explicit browser
@@ -2297,6 +2322,46 @@ async function createFreshChatRuntimeAuthority(
               chatSurfaceSessionId: input.chatSurfaceSessionId,
             })
           : mintChatSelectionIdentity();
+      // ADR 0009: a `select` names a Chat the player can reach, and the durable
+      // authority only admits a `select` expectation for a Chat it already knows. A
+      // Chat the product's New Chat creates is written to Tavern content and
+      // registered nowhere, so it is not known here yet - while the pre-mount
+      // settlement is the one window in which a registration may advance the
+      // vector, because a mounted runtime forbids it (the teardown consumes the
+      // runtime's own committed vector). That leaves exactly two halves:
+      //
+      // - the target's exact Tavern content must already exist. This runs BEFORE
+      //   anything is released: the settlement runs after the release, so a target
+      //   that could never be registered would otherwise leave the player with no
+      //   mounted Chat at all. It is also what stops a request from fabricating a
+      //   conversation, since the recorded shape below may create content the
+      //   settlement does not find.
+      // - the expectation is recorded in the settlement's own `create` shape, which
+      //   is the durable shape for "a Chat only the settlement registers". The
+      //   settlement registers that exact pair and verifies its Tavern content
+      //   before the Chat can become active or be mounted, and a pair anything else
+      //   already occupies is still refused by the authority.
+      let intentKind: "create" | "select" = input?.kind === "select" ? "select" : "create";
+      if (input?.kind === "select") {
+        const unregistered = await locked(() => {
+          const catalog = provision.store.readChatCatalog();
+          if (
+            !Number.isSafeInteger(input.selectionGeneration) ||
+            input.selectionGeneration < 1 ||
+            catalog.activeSelection?.selectionRevision !== input.selectionGeneration
+          )
+            throw new SemanticProductionCoordinatorError("semantic_chat_selection_generation_conflict");
+          return !catalog.threads.some(
+            (thread) =>
+              thread.chatThreadId === target.chatThreadId &&
+              thread.chatSurfaceSessionId === target.chatSurfaceSessionId,
+          );
+        });
+        if (unregistered) {
+          await assertSelectTargetContentExists(target);
+          intentKind = "create";
+        }
+      }
       const mountedRecord =
         mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
       await locked(() => {
@@ -2311,7 +2376,7 @@ async function createFreshChatRuntimeAuthority(
         try {
           provision.store.recordChatSelectionIntent(
             Object.freeze({
-              intent: Object.freeze({ kind: input.kind, ...target }),
+              intent: Object.freeze({ kind: intentKind, ...target }),
               expected: { ...catalog.vector },
             }),
           );
