@@ -98,8 +98,25 @@
  * and this test PASSES - a real fold sealed a chapter, the chapter reached m[0], and the m[0] prefix
  * stayed byte-stable within each materialization revision. (2) turned out not to block: with the runner
  * actually spawning, the first triggers succeeded rather than being held by the drain budget.
+ *
+ * LIFECYCLE (measured 2026-10-14, this machine, real provider): the body takes 340.7s end to end, so
+ * every bound imposed from outside either kills the `finally` with the process (the Host suite bounds
+ * each file with `runBoundedChild` against the shared suite deadline) or reports the timeout and then
+ * waits the body out (Node's `--test-timeout`, which fired at 180s here and left the root behind
+ * anyway). The fixture therefore bounds its own body (`GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS`, default
+ * 600) so that expiry is an ordinary failure whose `finally` still runs.
+ *
+ * RUNNING THE `finally` IS NOT ENOUGH TO REMOVE THE ROOT, which is the second half of the incident. The
+ * runtime holds `data/cortexkit/magic-context/context.db` open, and the vendor releases it only from
+ * its own `process.once("exit", closeDatabase)` (vendor pi-plugin `src/index.ts:1176-1179`), so on
+ * Windows every `rm` inside the body fails with `EBUSY ... context.db` - a fully passing run leaves its
+ * root behind, and the old `.catch(() => undefined)` made that silent. The removal therefore runs from
+ * a process-exit hook registered after the vendor's (see the `finally`), and that hook is where the
+ * lifecycle assertion lives: it removes the root synchronously and, if the root is still there, writes
+ * the failure synchronously and fails the run's exit code.
  */
 import assert from "node:assert/strict";
+import { existsSync, rmSync, writeSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -191,9 +208,58 @@ test(
     const key = apiKey;
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     let runtime: Awaited<ReturnType<typeof createCompanionRuntime>> | undefined;
-    let cleanupError: unknown;
     let bodyFailed = false;
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
+    // The fixture's own bound on its body, and the reason it exists: a bound imposed from outside is
+    // not a failure this test can survive. Node reports `--test-timeout` and then waits for the body,
+    // so the run looks stalled for minutes; a runner that does kill the process (the Host suite's
+    // per-file `runBoundedChild`) kills the `finally` with it, so the runtime's root and its handles
+    // outlive the run and the next run inherits the debris. Measured here: 340.7s of body, so the
+    // default is a whole minute-scale budget rather than a few seconds. Raise it with
+    // `GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS` on a slower machine or a stricter provider.
+    const configuredDeadlineSeconds = Number.parseInt(
+      process.env.GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS ?? "600",
+      10,
+    );
+    const budgetMs =
+      (Number.isSafeInteger(configuredDeadlineSeconds) && configuredDeadlineSeconds > 0
+        ? configuredDeadlineSeconds
+        : 600) * 1_000;
+    const bodyStartedAt = Date.now();
+    const bodyDeadline = bodyStartedAt + budgetMs;
+    const secondsSince = (from: number): string => ((Date.now() - from) / 1_000).toFixed(1);
+    // Collected rather than written: `captureMarkers` owns stderr for the whole body, so the phase log
+    // is flushed by the `finally` on every exit path - including the deadline failure, whose entire
+    // value is naming the phase that spent the budget.
+    const phases: string[] = [];
+    const phase = (name: string, from?: number): void => {
+      phases.push(
+        `phase=${name} at=${secondsSince(bodyStartedAt)}s` + (from === undefined ? "" : ` delta=${secondsSince(from)}s`),
+      );
+    };
+    const deadlineExpired = (name: string): string =>
+      `chapter_fold_fixture_deadline_expired: ${name} after ${secondsSince(bodyStartedAt)}s (budget ${budgetMs / 1_000}s)`;
+    /**
+     * Run one phase inside the fixture's own budget. Nothing here is cancellable - a provider turn in
+     * flight cannot be recalled - so expiry abandons the work and lets the `finally` dispose the
+     * session that owns it, instead of the process being killed with no `finally` at all.
+     */
+    const bounded = async <T>(name: string, work: Promise<T>): Promise<T> => {
+      const remainingMs = bodyDeadline - Date.now();
+      if (remainingMs <= 0) throw new Error(deadlineExpired(name));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          work,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(deadlineExpired(name))), remainingMs);
+          }),
+        ]);
+      } finally {
+        // Cleared on both paths, so the fixture's own bound can never outlive the phase it bounds.
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    };
     // Magic Context treats the fold trigger as a USER-tier trusted key, and its rule is explicit:
     // No isolated user tier here on purpose. The runtime owns its Magic Context user-scope config
     // inside its own root and the Host points XDG_CONFIG_HOME at it (runtime-core.internal.ts), so
@@ -226,22 +292,27 @@ test(
         "utf8",
       );
       const markers = await captureMarkers(async (markers) => {
-        runtime = await createCompanionRuntime(
-          identity,
-          root,
-          undefined,
-          { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "low" },
-          undefined,
-          undefined,
-          false,
-          undefined,
-          "chat_session_01",
-          undefined,
-          "chat",
-          // The private composition seam: compress BOTH window-derived quantities so a real fold fits
-          // in a test. The trigger alone is not enough - see `historianProtectedTokens`.
-          { historianExecuteThresholdTokens: 6_000, historianProtectedTokens: 4_000 },
+        const runtimeStartedAt = Date.now();
+        runtime = await bounded(
+          "runtime_create",
+          createCompanionRuntime(
+            identity,
+            root,
+            undefined,
+            { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "low" },
+            undefined,
+            undefined,
+            false,
+            undefined,
+            "chat_session_01",
+            undefined,
+            "chat",
+            // The private composition seam: compress BOTH window-derived quantities so a real fold fits
+            // in a test. The trigger alone is not enough - see `historianProtectedTokens`.
+            { historianExecuteThresholdTokens: 6_000, historianProtectedTokens: 4_000 },
+          ),
         );
+        phase("runtime_create", runtimeStartedAt);
         // Thirty turns, and the number is measured rather than guessed. Magic Context's own log gives
         // the reason on each pass it declines:
         //   "compartment trigger: not firing at 0.4% because unsummarized tail from 1 is too small"
@@ -251,7 +322,9 @@ test(
         // moment the raw usage first crossed the threshold. The historian then runs asynchronously and
         // the chapter appears in a LATER pass's m[0], which is why the loop keeps prompting.
         for (let index = 1; index <= 30; index += 1) {
-          await runtime.session.prompt(filler(index));
+          const turnStartedAt = Date.now();
+          await bounded(`prompt_${index}`, runtime.session.prompt(filler(index)));
+          phase(`prompt_${index}`, turnStartedAt);
         }
         // The historian runs ASYNCHRONOUSLY (fire-and-forget), so a chapter can only appear in a m[0]
         // rendered AFTER it publishes - the firing pass is never the pass that shows it.
@@ -272,9 +345,12 @@ test(
         const deadline = Date.now() + Math.max(1, waitMinutes) * 60_000;
         while (Date.now() < deadline) {
           if (markers.some(({ line }) => /^\[probe:m0_chapters\]\s+\S+\s+[1-9]/u.test(line))) break;
-          await new Promise((resolve) => setTimeout(resolve, 30_000));
-          await runtime.session.prompt("Still here?");
+          await bounded("chapter_wait_sleep", new Promise((resolve) => setTimeout(resolve, 30_000)));
+          const turnStartedAt = Date.now();
+          await bounded("chapter_wait_prompt", runtime.session.prompt("Still here?"));
+          phase("chapter_wait_prompt", turnStartedAt);
         }
+        phase("chapter_wait_exit");
       });
       const chapterLines = markers
         .map(({ line }) => /^\[probe:m0_chapters\]\s+(\S+)\s+(\d+)\s+(\S+)$/u.exec(line))
@@ -334,48 +410,62 @@ test(
         profileRevision: 1,
       };
       const facade = createGameBuddyPlayerMemoryCrudFacade(profileBinding);
-      const panelSees = await facade.listChapters({
-        continuityId: identity.continuityId,
-        profileId: "chat",
-        profileRevision: 1,
-      });
+      const panelStartedAt = Date.now();
+      const panelSees = await bounded(
+        "panel_list_chapters",
+        facade.listChapters({
+          continuityId: identity.continuityId,
+          profileId: "chat",
+          profileRevision: 1,
+        }),
+      );
       assert.ok(panelSees.length >= 1, "the panel's read returned no chapter after a real fold sealed one");
       const folded = panelSees[0];
       if (folded === undefined) throw new Error("unreachable: asserted above");
       assert.equal(folded.status, "sealed", "a freshly folded chapter must read as the fold's own text");
 
-      const corrected = await facade.updateChapter({
-        continuityId: identity.continuityId,
-        profileId: "chat",
-        profileRevision: 1,
-        chapterId: folded.chapterId,
-        content: "What I remember of those first days.",
-      });
+      const corrected = await bounded(
+        "panel_update_chapter",
+        facade.updateChapter({
+          continuityId: identity.continuityId,
+          profileId: "chat",
+          profileRevision: 1,
+          chapterId: folded.chapterId,
+          content: "What I remember of those first days.",
+        }),
+      );
       assert.equal(corrected.status, "edited", "the player's correction must persist as theirs");
       assert.equal(corrected.content, "What I remember of those first days.");
 
-      const removed = await facade.deleteChapter({
-        continuityId: identity.continuityId,
-        profileId: "chat",
-        profileRevision: 1,
-        chapterId: folded.chapterId,
-      });
+      const removed = await bounded(
+        "panel_delete_chapter",
+        facade.deleteChapter({
+          continuityId: identity.continuityId,
+          profileId: "chat",
+          profileRevision: 1,
+          chapterId: folded.chapterId,
+        }),
+      );
       assert.equal(removed.status, "deleted", "a removal must tombstone the chapter");
       assert.equal(
         removed.content,
         "What I remember of those first days.",
         "the tombstone keeps the body, so a removal stays auditable",
       );
-      const afterRemoval = await facade.listChapters({
-        continuityId: identity.continuityId,
-        profileId: "chat",
-        profileRevision: 1,
-      });
+      const afterRemoval = await bounded(
+        "panel_list_after_removal",
+        facade.listChapters({
+          continuityId: identity.continuityId,
+          profileId: "chat",
+          profileRevision: 1,
+        }),
+      );
       assert.equal(
         afterRemoval.filter((chapter) => chapter.status !== "deleted").length,
         0,
         "a removed chapter must not be shown as live history",
       );
+      phase("panel_path", panelStartedAt);
       process.stderr.write(
         `[chapter-fold-fixture] panel path: folded=${folded.status} corrected=${corrected.status} removed=${removed.status} listed=${afterRemoval.length}\n`,
       );
@@ -386,35 +476,77 @@ test(
       // Without this the run's handles keep the test process alive after the assertions. A cleanup
       // failure must not MASK the fold evidence though: on this machine (2026-10-08) releasing the
       // runtime's durable lock reports `durable_path_lock_release_failed:windows_reclaimer_unavailable`
-      // even with the reclaimer bound the same way `chat-transcript.test.ts` binds it, so it is
-      // reported alongside the verdict instead of replacing it.
+      // even with the reclaimer bound the same way `chat-transcript.test.ts` binds it, so failures are
+      // collected and reported alongside the verdict instead of replacing it.
+      const cleanupStartedAt = Date.now();
+      const cleanupFailures: string[] = [];
+      const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
       try {
+        // Disposed while the reclaimer is still bound: the runtime's durable lock release runs here.
         runtime?.session.dispose();
+        phase("dispose", cleanupStartedAt);
       } catch (error) {
-        cleanupError = error;
-        process.stderr.write(
-          `[chapter-fold-fixture] dispose failed: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
-      // Diagnosis aid: keep the root when asked, so Magic Context's own database can be read
-      // afterwards (it is where the fold's reasons live: `session_meta`).
-      if (process.env.GAMEBUDDY_CHAPTER_FOLD_KEEP_ROOT === "1") {
-        process.stderr.write(`[chapter-fold-fixture] kept root: ${root}\n`);
-      } else {
-        await rm(root, { recursive: true, force: true }).catch(() => undefined);
+        cleanupFailures.push(`dispose failed: ${describe(error)}`);
+        process.stderr.write(`[chapter-fold-fixture] dispose failed: ${describe(error)}\n`);
       }
       bindWindowsStaleLockReclaimer(undefined);
+      // Out of the root BEFORE any removal is attempted. This process's own working directory is inside
+      // `<root>/contexts/<hash>` (`contextDir`), and on Windows a live current directory holds the tree
+      // open as well, so the ordering has to be this one whichever platform runs it.
       process.chdir(previousCwd);
+      if (process.env.GAMEBUDDY_CHAPTER_FOLD_KEEP_ROOT === "1") {
+        // Diagnosis aid: keep the root when asked, so Magic Context's own database can be read
+        // afterwards (it is where the fold's reasons live: `session_meta`). Retaining this root is this
+        // run's declared outcome, so neither the removal below nor its assertion applies.
+        process.stderr.write(`[chapter-fold-fixture] kept root: ${root}\n`);
+      } else {
+        // Worth one attempt here: on POSIX an open file can still be unlinked, so the root is gone at
+        // the end of the body wherever the platform allows it.
+        const removalFailure = await rm(root, { recursive: true, force: true }).then(
+          () => undefined,
+          (error: unknown) => describe(error),
+        );
+        if (existsSync(root)) {
+          // Measured here (2026-10-14, this machine): `EBUSY: resource busy or locked, unlink
+          // '...\magic-context\context.db'` - every time, on a passing run as much as on a deadline
+          // failure, because the handle above is still open. This hook is registered after the
+          // runtime's own, i.e. after the vendor's, so the handle is closed by the time it runs.
+          phase("root_removal_deferred_to_process_exit", cleanupStartedAt);
+          if (removalFailure !== undefined) phase(`root_removal_failed_here: ${removalFailure}`);
+          process.once("exit", () => {
+            // Synchronous by necessity - an exit handler can await nothing - and `writeSync(2, ...)` is
+            // the one report that survives one on every platform.
+            try {
+              rmSync(root, { recursive: true, force: true });
+            } catch {
+              // Reported by the check below, which does not depend on the error's shape.
+            }
+            if (existsSync(root)) {
+              process.exitCode = 1;
+              writeSync(
+                2,
+                "[chapter-fold-fixture] cleanup failure (fold verdict preserved): " +
+                  `chapter_fold_fixture_temp_root_survived_cleanup: ${root}\n`,
+              );
+            }
+          });
+        } else {
+          phase("root_removed", cleanupStartedAt);
+        }
+      }
       if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousConfigHome;
       if (previousEmbeddedRuntime === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
       else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntime;
+      // Where the budget went, on every exit path: a deadline failure is only actionable when it
+      // names the phase that spent the budget.
+      for (const line of phases) process.stderr.write(`[chapter-fold-fixture] ${line}\n`);
+      for (const failure of cleanupFailures)
+        process.stderr.write(`[chapter-fold-fixture] cleanup failure (fold verdict preserved): ${failure}\n`);
       // Only when nothing else is failing: otherwise the fold verdict is already on its way out and
       // replacing it with a cleanup error would hide the thing this fixture exists to measure.
-      if (cleanupError !== undefined && !bodyFailed) {
-        throw new Error(
-          `runtime cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        );
+      if (cleanupFailures.length > 0 && !bodyFailed) {
+        throw new Error(`runtime cleanup failed: ${cleanupFailures.join("; ")}`);
       }
     }
   },
