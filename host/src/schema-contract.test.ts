@@ -178,10 +178,10 @@ test("language-neutral schema and Host share closed shapes for every published s
       },
     ],
     ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
-    ["fertilizerTargets", { targetId: "fertilizer_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)368" }],
+    ["fertilizerTargets", { targetId: "fertilizer_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)368", displayName: "Quality Fertilizer" }],
     [
       "woodFenceTargets",
-      { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322" },
+      { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322", displayName: "Wood Fence" },
     ],
     [
       "woodFenceResultTargets",
@@ -192,6 +192,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         x: 10,
         y: 12,
         qualifiedItemId: "(O)322",
+        displayName: "Wood Fence",
         isFence: true,
         isGate: false,
         health: 10,
@@ -200,7 +201,7 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     [
       "crabPotTargets",
-      { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710" },
+      { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710", displayName: "Crab Pot" },
     ],
     [
       "crabPotResultTargets",
@@ -211,6 +212,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         x: 10,
         y: 12,
         qualifiedItemId: "(O)710",
+        displayName: "Crab Pot",
         ownerId: 1,
         offsetX: 0,
         offsetY: 0,
@@ -226,6 +228,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         x: 10,
         y: 12,
         qualifiedItemId: "(O)710",
+        displayName: "Crab Pot",
         baitQualifiedItemId: "(O)685",
         ownerId: "1",
         baitStack: 1,
@@ -240,6 +243,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         x: 10,
         y: 12,
         qualifiedItemId: "(O)710",
+        displayName: "Crab Pot",
         baitQualifiedItemId: "(O)685",
         ownerId: "1",
         baitStack: 1,
@@ -260,12 +264,12 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     [
       "rockSourceTargets",
-      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 },
+      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", displayName: "Stone", health: 1 },
     ],
     ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
     [
       "artifactSpotTargets",
-      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
     ],
     [
       "artifactSpotResultTargets",
@@ -278,6 +282,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         x: 10,
         y: 12,
         qualifiedItemId: "(BC)12",
+        displayName: "Keg",
         readyForHarvest: false,
         minutesUntilReady: 10,
       },
@@ -335,13 +340,14 @@ test("language-neutral schema and Host share closed shapes for every published s
         y: 12,
         animalType: "Cow",
         qualifiedProduceItemId: "(O)184",
+        displayName: "Milk",
         toolKind: "milk_pail",
         produceStack: 1,
       },
     ],
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, hayStack: 1 }],
-    ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", stack: 1 }],
-    ["foodTargets", { slot: 2, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
+    ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
+    ["foodTargets", { slot: 2, qualifiedItemId: "(O)216", displayName: "Bread", stack: 1, edibility: 20, isDrink: false }],
     ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
     ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
     ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
@@ -447,6 +453,7 @@ test("language-neutral schema requires positive ResourceClump health in debris s
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       activeExecution: null,
       debrisTargets: [
         {
@@ -529,6 +536,7 @@ test("language-neutral schema validates exact Wood Fence request and result targ
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       activeExecution: null,
       woodFenceResultTargets: [
         {
@@ -538,6 +546,7 @@ test("language-neutral schema validates exact Wood Fence request and result targ
           x: 10,
           y: 12,
           qualifiedItemId: "(O)322",
+          displayName: "Wood Fence",
           isFence: true,
           isGate: false,
           health: 10,
@@ -667,8 +676,9 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       artifactSpotTargets: [
-        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
+        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
       ],
     },
   };
@@ -683,7 +693,7 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       payload: {
         ...(snapshot.payload as Record<string, unknown>),
         artifactSpotTargets: [
-          { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot" },
+          { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot", displayName: "Artifact Spot" },
         ],
       },
     }),
@@ -744,6 +754,7 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       artifactSpotResultTargets: [
         { targetId: "artifact_result_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
       ],
@@ -819,6 +830,7 @@ test("language-neutral schema validates exact clear_hoedirt request arguments an
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       clearHoeDirtTargets: [
         { targetId: "hoedirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
       ],
@@ -900,6 +912,7 @@ test("language-neutral schema validates strict chop-tree result snapshot facts",
       dayOfMonth: 1,
       seasonIndex: 0,
       year: 1,
+      weather: "sunny",
       activeExecution: null,
       treeChopResultTargets: [
         {

@@ -99,8 +99,14 @@
           "y": 8
         },
         "stamina": 250,
+        "exhausted": false,
         "health": 100,
         "actionable": true,
+        "timeOfDay": 600,
+        "dayOfMonth": 1,
+        "seasonIndex": 0,
+        "year": 1,
+        "weather": "sunny",
         "capabilities": [
           "move_to_tile",
           "inspect_self"
