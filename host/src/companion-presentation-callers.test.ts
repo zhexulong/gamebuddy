@@ -5,45 +5,65 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 /**
- * The dehydrator's callers are a closed set, and this is the check that keeps it
- * closed.
+ * The callers of `attachNativeCompanionContent` are a closed set, and so are the
+ * named presentation choices each one must carry. This is the check that keeps
+ * both closed.
  *
- * `attachNativeCompanionContent` is the seam that decides whether the text the
- * model produced reaches a surface as itself or as a projection of itself. Only
- * two surfaces may project: the in-game bubble and the voice, neither of which
- * can draw a `*...*` beat. The Chat transcript must receive the model's exact
- * text, because its renderer draws that beat and its durable row is what the
- * player reads back.
+ * `attachNativeCompanionContent` is the seam that decides what text the model
+ * produced reaches a surface as. Two independent choices live there:
  *
- * The failure this catches: a new caller - or a literal substituted for the
- * named choice - silently deleting the companion's only expression channel on a
- * surface that draws it, which is the exact defect that shipped in the Chat
- * lane. The check is stated against the rule (which surfaces may project, and
- * what each choice means) rather than against one function, so the next person
- * who wires the dehydrator somewhere else fails here instead of in a transcript.
+ *  - `stageDirection`: `"strip"` for a surface that cannot draw a `*...*` beat
+ *    (the in-game bubble and the voice); `"keep"` for the Chat transcript, whose
+ *    renderer draws the beat and whose durable row is what the player reads back.
+ *  - `scaffolding`: `"drop"` for the Chat row, which must not carry the model's
+ *    own scratchpad (`<thinking>`, `（思考：...）`, `【内心：...】`,
+ *    `**emphasis**`, `---` rules); `"unchanged"` for a surface whose projection
+ *    already removes scaffolding, which is what the frozen dehydrator does.
+ *
+ * The failure this catches: a new caller, or a literal substituted for the named
+ * choice, silently deleting the companion's only expression channel on a surface
+ * that draws it - or silently letting the model's scaffolding through into the
+ * player's transcript. The check is stated against the rule (which surfaces may
+ * present, and which choices each must name) rather than against one function,
+ * so the next person who wires the seam somewhere else fails here instead of in
+ * a transcript.
  */
 type SourceFile = Readonly<{ path: string; text: string }>;
 
-/** The presentation choice each production caller must name, by caller path. */
-const CALLERS: Readonly<Record<string, string>> = Object.freeze({
-  "companion-loop.ts": "NATIVE_BUBBLE_STAGE_DIRECTION",
-  "tavern/p4-provider-start-execution.ts": "CHAT_TRANSCRIPT_STAGE_DIRECTION",
-  "tavern/provider-invocation.ts": "CHAT_TRANSCRIPT_STAGE_DIRECTION",
+/** The named presentation choices each production caller must carry, by caller path. */
+const CALLERS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "companion-loop.ts": Object.freeze(["NATIVE_BUBBLE_STAGE_DIRECTION", "NATIVE_BUBBLE_SCAFFOLDING"]),
+  "tavern/p4-provider-start-execution.ts": Object.freeze([
+    "CHAT_TRANSCRIPT_STAGE_DIRECTION",
+    "CHAT_TRANSCRIPT_SCAFFOLDING",
+  ]),
+  "tavern/provider-invocation.ts": Object.freeze(["CHAT_TRANSCRIPT_STAGE_DIRECTION", "CHAT_TRANSCRIPT_SCAFFOLDING"]),
 });
 
 /** The one value each named choice may carry. */
 const CHOICE_VALUES: Readonly<Record<string, string>> = Object.freeze({
   NATIVE_BUBBLE_STAGE_DIRECTION: "strip",
   CHAT_TRANSCRIPT_STAGE_DIRECTION: "keep",
+  NATIVE_BUBBLE_SCAFFOLDING: "unchanged",
+  CHAT_TRANSCRIPT_SCAFFOLDING: "drop",
 });
 
+/** The option each named choice is passed as. */
+const CHOICE_AXES: Readonly<Record<string, string>> = Object.freeze({
+  NATIVE_BUBBLE_STAGE_DIRECTION: "stageDirection",
+  CHAT_TRANSCRIPT_STAGE_DIRECTION: "stageDirection",
+  NATIVE_BUBBLE_SCAFFOLDING: "scaffolding",
+  CHAT_TRANSCRIPT_SCAFFOLDING: "scaffolding",
+});
+
+const OPTION_AXES = Object.freeze(["stageDirection", "scaffolding"]);
 const ATTACH = "attachNativeCompanionContent(";
 
 /**
  * Audits production sources and returns one message per violation. An empty
  * result means the closed set still holds.
  */
-export function auditStageDirectionCallSites(files: readonly SourceFile[]): readonly string[] {
+export function auditPresentationCallSites(files: readonly SourceFile[]): readonly string[] {
   const violations: string[] = [];
   const callers = new Map<string, number>();
 
@@ -51,11 +71,13 @@ export function auditStageDirectionCallSites(files: readonly SourceFile[]): read
     const calls = callSites(file.text);
     if (calls > 0) callers.set(file.path, calls);
 
-    const literal = /stageDirection:\s*["'](strip|keep)["']/u.exec(file.text);
-    if (literal !== null)
-      violations.push(
-        `${file.path} passes the literal ${JSON.stringify(literal[1])}: the presentation choice must be one of the named constants, so a caller cannot quietly change it`,
-      );
+    for (const axis of OPTION_AXES) {
+      const literal = new RegExp(`${axis}:\\s*["'][a-z_]+["']`, "u").exec(file.text);
+      if (literal !== null)
+        violations.push(
+          `${file.path} passes the literal ${JSON.stringify(literal[0])}: each presentation choice must be one of the named constants, so a caller cannot quietly change it`,
+        );
+    }
 
     for (const [constant, value] of Object.entries(CHOICE_VALUES)) {
       const declared = new RegExp(`export const ${constant} = "([^"]*)" as const;`, "u").exec(file.text);
@@ -70,17 +92,19 @@ export function auditStageDirectionCallSites(files: readonly SourceFile[]): read
         `${path} calls ${ATTACH.slice(0, -1)}: only ${Object.keys(CALLERS).join(", ")} may present native companion content`,
       );
 
-  for (const [path, constant] of Object.entries(CALLERS)) {
+  for (const [path, constants] of Object.entries(CALLERS)) {
     const calls = callers.get(path);
     if (calls === undefined) {
       violations.push(`${path} no longer presents native companion content`);
       continue;
     }
-    const named = callers.get(path) === undefined ? 0 : countMatches(files, path, `stageDirection: ${constant}`);
-    if (named !== calls)
-      violations.push(
-        `${path} makes ${calls} call(s) but names ${constant} ${named} time(s): each call must carry the ${CHOICE_VALUES[constant]} presentation explicitly`,
-      );
+    for (const constant of constants) {
+      const named = countMatches(files, path, `${CHOICE_AXES[constant]}: ${constant}`);
+      if (named !== calls)
+        violations.push(
+          `${path} makes ${calls} call(s) but names ${constant} ${named} time(s): each call must carry the ${CHOICE_VALUES[constant]} ${CHOICE_AXES[constant]} explicitly`,
+        );
+    }
   }
 
   return Object.freeze(violations);
@@ -120,44 +144,70 @@ async function productionSources(directory: string): Promise<readonly SourceFile
 /** `host/src`, resolved the same whether this module runs from source or from the compiled test project. */
 const hostSourceRoot = fileURLToPath(new URL("../src", import.meta.url));
 
-test("only the bubble and the Chat transcript present native companion content, and each names its choice", async () => {
-  const violations = auditStageDirectionCallSites(await productionSources(hostSourceRoot));
+test("only the bubble and the Chat transcript present native companion content, and each names both of its choices", async () => {
+  const violations = auditPresentationCallSites(await productionSources(hostSourceRoot));
   assert.deepEqual(violations, [], violations.join("\n"));
 });
 
-test("a third caller, a literal choice, or a flipped Chat constant fails this check", () => {
+test("a third caller, a literal choice, a missing scaffolding name, or a flipped Chat constant fails this check", () => {
   const declarations = [
     'export const NATIVE_BUBBLE_STAGE_DIRECTION = "strip" as const;',
     'export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "keep" as const;',
+    'export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;',
+    'export const CHAT_TRANSCRIPT_SCAFFOLDING = "drop" as const;',
   ].join("\n");
+  const bubbleOptions = "{\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,\n}";
+  const chatOptions = "{\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n  scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,\n}";
   const allowed: readonly SourceFile[] = [
     { path: "native-companion-content.ts", text: declarations },
-    { path: "companion-loop.ts", text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n});" },
-    { path: "tavern/p4-provider-start-execution.ts", text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});" },
-    { path: "tavern/provider-invocation.ts", text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});" },
+    { path: "companion-loop.ts", text: `attachNativeCompanionContent(session, sinks, ${bubbleOptions});` },
+    { path: "tavern/p4-provider-start-execution.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
+    { path: "tavern/provider-invocation.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
   ];
-  assert.deepEqual(auditStageDirectionCallSites(allowed), []);
+  assert.deepEqual(auditPresentationCallSites(allowed), []);
 
-  const thirdCaller = auditStageDirectionCallSites([
+  const thirdCaller = auditPresentationCallSites([
     ...allowed,
-    { path: "somewhere-else.ts", text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});" },
+    { path: "somewhere-else.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
   ]);
   assert.equal(thirdCaller.length, 1);
   assert.match(thirdCaller[0]!, /somewhere-else\.ts calls attachNativeCompanionContent/u);
 
-  const literalChoice = auditStageDirectionCallSites(
+  const literalChoice = auditPresentationCallSites(
     allowed.map((file) =>
       file.path === "tavern/provider-invocation.ts"
         ? { ...file, text: 'attachNativeCompanionContent(session, sinks, { stageDirection: "keep" });' }
         : file,
     ),
   );
-  assert.ok(literalChoice.some((violation) => /passes the literal "keep"/u.test(violation)));
+  assert.ok(literalChoice.some((violation) => /passes the literal "stageDirection: \\"keep\\""/u.test(violation)));
   assert.ok(literalChoice.some((violation) => /names CHAT_TRANSCRIPT_STAGE_DIRECTION 0 time\(s\)/u.test(violation)));
+  assert.ok(literalChoice.some((violation) => /names CHAT_TRANSCRIPT_SCAFFOLDING 0 time\(s\)/u.test(violation)));
 
-  const flipped = auditStageDirectionCallSites([
+  const missingScaffolding = auditPresentationCallSites(
+    allowed.map((file) =>
+      file.path === "tavern/p4-provider-start-execution.ts"
+        ? { ...file, text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});" }
+        : file,
+    ),
+  );
+  assert.ok(
+    missingScaffolding.some((violation) => /names CHAT_TRANSCRIPT_SCAFFOLDING 0 time\(s\)/u.test(violation)),
+    "a Chat caller that names no scaffolding choice must fail the check",
+  );
+
+  const flipped = auditPresentationCallSites([
     { path: "native-companion-content.ts", text: 'export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "strip" as const;' },
     ...allowed.slice(1),
   ]);
   assert.ok(flipped.some((violation) => /declares CHAT_TRANSCRIPT_STAGE_DIRECTION = "strip"/u.test(violation)));
+
+  const flippedScaffolding = auditPresentationCallSites([
+    { path: "native-companion-content.ts", text: 'export const CHAT_TRANSCRIPT_SCAFFOLDING = "unchanged" as const;' },
+    ...allowed.slice(1),
+  ]);
+  assert.ok(
+    flippedScaffolding.some((violation) => /declares CHAT_TRANSCRIPT_SCAFFOLDING = "unchanged"/u.test(violation)),
+    "a Chat row that stops dropping scaffolding must fail the check",
+  );
 });

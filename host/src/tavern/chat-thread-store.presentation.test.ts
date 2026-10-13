@@ -6,6 +6,7 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { dehydrateCompanionSpeech } from "../companion-speech-dehydration.js";
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeCompanionContentEvent,
 } from "../native-companion-content.js";
@@ -543,10 +544,99 @@ test("the Chat persistence path stores the model's own text, action beat include
 });
 
 /**
+ * The rule for the Chat row's second axis, on the same durable row.
+ *
+ * The failure this catches: `CHAT_TRANSCRIPT_STAGE_DIRECTION` stopped the Chat
+ * lane projecting the model's text, and that projection had been - without ever
+ * saying so - the only thing removing the model's own scaffolding. Under `keep`
+ * a literal `<thinking>` block is written into the player's transcript and
+ * nothing left on the Chat path takes it back out. The rule the row is asserted
+ * against: action beats are performance and stay, model scaffolding is leakage
+ * and goes, and prose that was never scaffolding is never dropped.
+ *
+ * The row is read back from a freshly reopened durable store, and the reader is
+ * the real observer configured with both production Chat choices, so a flipped
+ * `CHAT_TRANSCRIPT_SCAFFOLDING` - or a strip there - fails right here.
+ */
+test("the Chat persistence path drops model scaffolding and keeps the action beat", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-turn-scaffolding-");
+  try {
+    const { attemptId, base } = await prepareRunning(root);
+    // A reply shaped the way a real one is: the model's own reasoning around the
+    // performance, plus one markdown divider and one emphasised line.
+    const reasoning = "玩家刚醒，先顺着围裙的话题接一句。";
+    const innerThought = "她还没吃早饭。";
+    const aside = "别催她。";
+    const modelText =
+      `<thinking>${reasoning}</thinking>\n\n` +
+      "*正蹲在田埂边用小花铲抠一块顽固的碎石，听到声音抬起头。*\n\n" +
+      "“嗯？醒啦。”\n\n" +
+      `（思考：${innerThought}）\n\n` +
+      `【内心：${aside}】\n\n` +
+      "**今日提醒**：锅里有昨晚上剩的防风草汤。\n\n" +
+      "---\n\n" +
+      "*她把铲子往腰侧工具包里一插，站起来拍了拍膝盖上的土。*";
+    const presented = await chatPresentationOf(modelText);
+    assert.ok(typeof presented === "string", "the observer commits the model's final assistant text");
+
+    const committedAt = base + 10;
+    const messageId = "chat_native_attempt_scaffolding";
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId, text: presented, occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    assert.equal(committed.status, "presentation_committed");
+
+    // What the player's transcript is built from: the durable store, reopened.
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+    const row = reopened.messages.find((message) => message.messageId === messageId);
+    assert.equal(row?.role, "companion");
+    assert.equal(row?.kind, "response");
+    const stored = row?.text ?? "";
+
+    // Scaffolding is leakage: none of it reaches the durable row.
+    assert.doesNotMatch(stored, /<\/?think/iu, "the stored row still carries the model's reasoning tags");
+    assert.doesNotMatch(stored, new RegExp(reasoning, "u"), "the stored row still carries the reasoning text");
+    assert.doesNotMatch(stored, /[（【](?:思考|内心|脑内)/u, "the stored row still carries a reasoning frame");
+    assert.doesNotMatch(stored, new RegExp(innerThought, "u"), "the stored row still carries an inner thought");
+    assert.doesNotMatch(stored, new RegExp(aside, "u"), "the stored row still carries an inner monologue");
+    assert.doesNotMatch(stored, /\*\*/u, "the stored row still carries markdown emphasis markers");
+    assert.doesNotMatch(stored, /^[ \t]*---[ \t]*$/mu, "the stored row still carries a divider rule");
+
+    // Performance stays, byte for byte ...
+    assert.match(
+      stored,
+      /\*正蹲在田埂边用小花铲抠一块顽固的碎石，听到声音抬起头。\*/u,
+      "the stored row lost the first action beat",
+    );
+    assert.match(
+      stored,
+      /\*她把铲子往腰侧工具包里一插，站起来拍了拍膝盖上的土。\*/u,
+      "the stored row lost the second action beat",
+    );
+    // ... and so does every word that was never scaffolding.
+    assert.match(stored, /“嗯？醒啦。”/u, "the stored row lost the dialogue between the beats");
+    assert.match(stored, /今日提醒：锅里有昨晚上剩的防风草汤。/u, "unwrapping the emphasis dropped its words");
+    // Stated against the rule rather than the function: the row is neither the
+    // model's raw text nor the dehydrator's projection of it.
+    assert.notEqual(stored, modelText);
+    assert.notEqual(stored, dehydrateCompanionSpeech(modelText));
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
  * Runs the real Chat presentation observer over one Pi assistant message and
  * returns the text it hands the persistence lane. `CHAT_TRANSCRIPT_STAGE_DIRECTION`
- * is the production decision, so this reader cannot agree with a lane that has
- * been changed to strip.
+ * and `CHAT_TRANSCRIPT_SCAFFOLDING` are the production decisions, so this reader
+ * cannot agree with a lane that has been changed to strip, or to let the model's
+ * own scaffolding through.
  */
 async function chatPresentationOf(modelText: string): Promise<string | undefined> {
   const listeners = new Set<(event: NativeCompanionContentEvent) => void>();
@@ -568,7 +658,7 @@ async function chatPresentationOf(modelText: string): Promise<string | undefined
         rejections.push(reason);
       },
     },
-    { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION },
+    { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING },
   );
   observer.open();
   const message = Object.freeze({

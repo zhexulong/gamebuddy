@@ -1,4 +1,4 @@
-import { attachNativeCompanionContent, CHAT_TRANSCRIPT_STAGE_DIRECTION } from "../native-companion-content.js";
+import { attachNativeCompanionContent, CHAT_TRANSCRIPT_SCAFFOLDING, CHAT_TRANSCRIPT_STAGE_DIRECTION } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type {
   AttemptStartingTurn,
@@ -212,7 +212,7 @@ export async function runMountedProviderInvocation(
       onRejected: async (reason) => {
         if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
       },
-    }, { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION });
+    }, { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING });
     nativeObserver.open();
     // The observer is registered first so its final message_end callback is
     // queued before this boundary subscriber resolves running.

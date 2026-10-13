@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { attachNativeCompanionContent, type NativeCompanionContentEvent, type NativeCompanionContentOptions, type NativeCompanionContentSinks } from "./native-companion-content.js";
+import { attachNativeCompanionContent, NATIVE_BUBBLE_SCAFFOLDING, type NativeCompanionContentEvent, type NativeCompanionContentOptions, type NativeCompanionContentSinks } from "./native-companion-content.js";
 
 type Listener = (event: NativeCompanionContentEvent) => void;
 
@@ -37,13 +37,14 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => queueMicrotask(resolve));
 }
 
-/** The Game bubble / voice presentation strips stage direction. */
+/** The Game bubble / voice presentation strips stage direction and leaves scaffolding to the dehydrator. */
 function attach(
   fx: ReturnType<typeof fakeSession>,
   sinks: NativeCompanionContentSinks,
   stageDirection: NativeCompanionContentOptions["stageDirection"] = "strip",
+  scaffolding: NativeCompanionContentOptions["scaffolding"] = NATIVE_BUBBLE_SCAFFOLDING,
 ) {
-  return attachNativeCompanionContent(fx.session, sinks, { stageDirection });
+  return attachNativeCompanionContent(fx.session, sinks, { stageDirection, scaffolding });
 }
 
 test("obtains the provider response identity from its first update when Pi's start snapshot has none", async () => {

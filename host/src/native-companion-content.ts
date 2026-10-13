@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { removeModelScaffolding } from "./companion-scaffolding.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
 
@@ -45,8 +46,28 @@ export const NATIVE_BUBBLE_STAGE_DIRECTION = "strip" as const;
  */
 export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "keep" as const;
 
+/**
+ * The model-scaffolding rule, named once per surface beside the stage-direction
+ * pair above.
+ *
+ * Scaffolding (`<thinking>...</thinking>`, `（思考：...）`, `【内心：...】`,
+ * `**emphasis**`, `---` rules) is leakage and goes; action beats are performance
+ * and stay. `"drop"` removes scaffolding from the text the surface receives.
+ * `"unchanged"` adds nothing of its own: the in-game bubble and the voice
+ * already run `dehydrateCompanionSpeech`, whose frozen behaviour this axis must
+ * not change.
+ */
+export type ScaffoldingPresentation = "drop" | "unchanged";
+
+/** The Chat transcript: the row the player reads back is never the model's scratchpad. */
+export const CHAT_TRANSCRIPT_SCAFFOLDING = "drop" as const;
+
+/** The in-game bubble and the voice: their projection already removes scaffolding. */
+export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;
+
 export type NativeCompanionContentOptions = Readonly<{
   stageDirection: StageDirectionPresentation;
+  scaffolding: ScaffoldingPresentation;
 }>;
 
 export type NativeCompanionContentSinks = Readonly<{
@@ -96,9 +117,16 @@ export type NativeCompanionContentObserver = Readonly<{
  * `options.stageDirection` is the explicit presentation choice. `"strip"` is
  * for a surface that cannot draw a `*...*` beat (the in-game bubble, the voice);
  * `"keep"` is for the Chat transcript, whose renderer draws the beat
- * (`.message-action`) and whose durable row is the model's own output, not a
- * display projection. It is a parameter, not a regex exception, so the two
+ * (`.message-action`). It is a parameter, not a regex exception, so the two
  * pipes cannot silently share one behaviour again.
+ *
+ * `options.scaffolding` is the second, independent choice. `"drop"` removes
+ * model-internal scaffolding (`<thinking>`, `（思考：...）`, `【内心：...】`,
+ * `**emphasis**`, `---` rules) while leaving every `*...*` beat byte-identical;
+ * `"unchanged"` adds nothing, which is what a surface whose projection already
+ * removes scaffolding must say. The two axes are separate because they answer
+ * separate questions: whether the surface can *draw* a beat, and whether the
+ * text it receives is the player's or the model's.
  */
 export function attachNativeCompanionContent(
   session: Pick<AgentSession, "subscribe"> | Readonly<{ subscribe(listener: (event: NativeCompanionContentEvent) => void): () => void }>,
@@ -128,8 +156,12 @@ export function attachNativeCompanionContent(
   // Explicit presentation choice, never inferred from the sink shape: the Game
   // bubble and the voice strip stage direction; the Chat transcript keeps it.
   const stripStageDirection = options.stageDirection === "strip";
-  const present = (text: string): string =>
-    stripStageDirection ? dehydrateCompanionSpeech(text) : text.normalize("NFC");
+  const dropScaffolding = options.scaffolding === "drop";
+  const present = (text: string): string => {
+    if (stripStageDirection) return dehydrateCompanionSpeech(text);
+    const normalized = text.normalize("NFC");
+    return dropScaffolding ? removeModelScaffolding(normalized) : normalized;
+  };
   const presentIsEmpty = (text: string): boolean =>
     stripStageDirection ? isEmptyAfterDehydration(text) : text.trim().length === 0;
   // Completed sentences held until message_end decides whether this assistant
@@ -313,7 +345,7 @@ export function attachNativeCompanionContent(
           dispatch(async () => await sinks.onFinalText(present(residual)));
         return;
       }
-      const text = readSafeAssistantText(finalMessage, stripStageDirection);
+      const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
       if (text === null) {
         const hasText = finalMessage.content.some(isTextContent);
         const hasTool = finalMessage.content.some(
@@ -356,7 +388,11 @@ export function attachNativeCompanionContent(
   });
 }
 
-function readSafeAssistantText(message: AssistantMessage, stripStageDirection: boolean): string | null {
+function readSafeAssistantText(
+  message: AssistantMessage,
+  stripStageDirection: boolean,
+  dropScaffolding: boolean,
+): string | null {
   const joined = message.content
     .filter(isTextContent)
     .map((entry) => entry.text)
@@ -366,8 +402,13 @@ function readSafeAssistantText(message: AssistantMessage, stripStageDirection: b
   // A `strip` surface cannot draw a `*...*` beat, so its scaffolding is
   // removed here and a pure-beat reply is rejected below. A `keep` surface (the
   // Chat transcript) receives the model's exact text: its renderer draws the
-  // beat and its durable row must not be a display projection.
-  const value = stripStageDirection ? dehydrateCompanionSpeech(joined) : joined;
+  // beat, and the only thing the row drops is model scaffolding, never a beat
+  // and never ordinary prose.
+  const value = stripStageDirection
+    ? dehydrateCompanionSpeech(joined)
+    : dropScaffolding
+      ? removeModelScaffolding(joined)
+      : joined;
   if (
     value.length === 0 ||
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value) ||
