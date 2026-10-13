@@ -228,7 +228,6 @@ export function GameStatePanel({
     // region's own accessible name announces where focus landed.
     <section
       className="composed-game-drawer"
-      role="region"
       aria-label={labels.gameState}
       data-testid="game-state-panel"
       data-game-state={game === null ? "null" : "available"}

@@ -4,7 +4,6 @@ import type { Locale } from "../i18n";
 import type {
   ManagementPipelineApi,
   StCardImportHistoryV1,
-  StCardImportStageResultV1,
 } from "../management-pipeline-api";
 import { characterLabels } from "./character-domain-labels";
 import { extractCharacterCardJsonFromPng, isPngBytes } from "./png-character-card";

@@ -1,0 +1,7 @@
+{
+  "dialogue-web/src/components/management-surface-panels.tsx": {
+    "jsx-a11y/no-autofocus": {
+      "count": 1
+    }
+  }
+}

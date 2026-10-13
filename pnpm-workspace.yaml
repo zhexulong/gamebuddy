@@ -66,3 +66,18 @@ overrides:
   # transitive-only packages cannot be raised by `pnpm update`.
   'ajv>fast-uri': 3.1.8
   'knip>smol-toml': 1.9.1
+  # typescript-eslint's own packages depend on each other with carets
+  # (`^8.71.0`), so a fresh resolution always pulls the newest sibling - which
+  # the minimumReleaseAge policy then refuses while that release is hours old.
+  # Pin the family to one release, the way the Pi runtime set above is pinned.
+  '@typescript-eslint/eslint-plugin': 8.71.0
+  '@typescript-eslint/parser': 8.71.0
+  '@typescript-eslint/project-service': 8.71.0
+  '@typescript-eslint/scope-manager': 8.71.0
+  '@typescript-eslint/tsconfig-utils': 8.71.0
+  '@typescript-eslint/type-utils': 8.71.0
+  '@typescript-eslint/types': 8.71.0
+  '@typescript-eslint/typescript-estree': 8.71.0
+  '@typescript-eslint/utils': 8.71.0
+  '@typescript-eslint/visitor-keys': 8.71.0
+  'typescript-eslint': 8.71.0

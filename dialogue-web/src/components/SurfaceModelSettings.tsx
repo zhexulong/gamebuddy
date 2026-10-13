@@ -73,7 +73,6 @@ export function SurfaceModelSettings({
   if (profiles === "unavailable") return <p className="state-placeholder">{labels.modelProfilesUnavailable}</p>;
 
   const mine: TavernModelProfileV1 = surface === "chat" ? profiles.chat : profiles.game;
-  const levelOptions = surface === "chat" ? profiles.chat : profiles.game;
 
   const apply = async (): Promise<void> => {
     const trimmed = modelId.trim();

@@ -54,7 +54,6 @@ export function SurfaceView({
   return (
     <section
       className={className === undefined ? "surface-view" : `surface-view ${className}`}
-      role="region"
       aria-labelledby={titleId}
       data-testid={testId}
     >

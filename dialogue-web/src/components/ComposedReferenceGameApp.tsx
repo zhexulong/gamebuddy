@@ -33,7 +33,6 @@ import { AppBar } from "./AppBar";
 import { ChatSurface } from "./ChatSurface";
 import { GameSurface } from "./GameSurface";
 import { ContextDrawer } from "./ContextDrawer";
-import { SurfaceView } from "./SurfaceView";
 import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
