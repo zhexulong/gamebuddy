@@ -12,17 +12,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { before } from "node:test";
+import { createServer, type Server, type Socket } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   defineTool,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createDeterministicBridgePair } from "./bridge.js";
 import {
   DEFAULT_IDENTITY_PROFILE,
   identityProfileHash,
 } from "./identity-profile.js";
-import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import {
   createIntegrationActionCatalog,
@@ -30,7 +30,7 @@ import {
 } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import type { Scope } from "./protocol.js";
+import type { ActionRegistration, ExecutionReceipt, Scope, Snapshot } from "./protocol.js";
 import {
   actionRegistryRevision,
   type CompanionRunManifest,
@@ -54,7 +54,10 @@ import {
 } from "./runtime.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
-import type { GameConnection } from "./game-connection.js";
+import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
+import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
+import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge } from "./stardew-integration-launcher.js";
+import type { IntegrationLaunchHandle } from "./integration-launcher.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 // The compiled test artifact is deliberately not a production artifact, so
@@ -77,6 +80,279 @@ const identity = Object.freeze({
   worldId: "world_01",
   companionId: "companion_01",
 });
+
+const BRIDGE_SCOPE: Scope = Object.freeze({
+  integrationId: "stardew",
+  saveId: identity.saveId,
+  worldId: identity.worldId,
+  playerId: identity.playerId,
+  companionId: identity.companionId,
+});
+const BRIDGE_TOKEN = "runtime_suite_bridge_token_0123456789";
+const BRIDGE_GENERATION = "runtime_suite_generation_01";
+const BRIDGE_CATALOG_REVISION = 1;
+const BRIDGE_POLICY_IDENTITY = Object.freeze({
+  value: "0123456789abcdef0123456789abcdef",
+  capabilityRevision: 1,
+});
+
+/** The Mod always publishes at least one registration; hello_ack rejects an empty catalog. */
+const MINIMAL_REGISTRATIONS: readonly ActionRegistration[] = Object.freeze([
+  Object.freeze({
+    actionId: "move_to_tile",
+    familyId: "movement_navigation",
+    identityVersion: 1,
+    lifecycle: "published" as const,
+    kind: "execution" as const,
+  }),
+]);
+
+type StardewFixtureState = {
+  sessionId: string;
+  capabilities: string[];
+  /** Defaults to every capability that carries a published execution registration. */
+  enabledActionIds?: readonly string[];
+  catalogRegistrations: readonly ActionRegistration[];
+  snapshot: Snapshot;
+  latestReceipt?: ExecutionReceipt | null;
+  latestReasonCode?: string | null;
+};
+
+type ScriptedStardewMod = Readonly<{
+  connection: StardewBridgeConnection;
+  state: StardewFixtureState;
+  setExecute(handler: (request: any) => Promise<ExecutionReceipt>): void;
+  /** Publish a durable receipt the Mod mints outside an execute response. */
+  publishReceipt(receipt: ExecutionReceipt): Promise<void>;
+  revoke(reasonCode: string): void;
+}>;
+
+function bridgeFrame(value: unknown): Buffer {
+  const payload = Buffer.from(JSON.stringify(value), "utf8");
+  const header = Buffer.allocUnsafe(4);
+  header.writeInt32LE(payload.byteLength, 0);
+  return Buffer.concat([header, payload]);
+}
+
+async function bridgeUntil(condition: () => boolean, message: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    if (condition()) return;
+    await delay(5);
+  }
+  throw new Error(message);
+}
+
+/** The world projection every fixture shares; only the fields a case asserts vary. */
+function fixtureSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
+  return {
+    revision: 1,
+    location: "Farm",
+    tile: { x: 1, y: 2 },
+    stamina: 100,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    exhausted: false,
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    activeExecution: null,
+    ...overrides,
+  } as Snapshot;
+}
+
+/**
+ * The Stardew adapter reaches identity/scope/state/status/tool surfaces only
+ * through the exact connection an authenticated launch minted, so a caller-built
+ * object or a GameConnectionTestClient dies with
+ * `stardew_connection_not_authenticated_or_not_live` before any assertion runs.
+ * This harness stands up the narrow Mod side of the named pipe, drives the real
+ * LocalStardewBridgeClient handshake, and mints the connection through the same
+ * launch production runtime-core consumes (the pattern local-stardew-bridge-
+ * attestation.test.ts and gameplay-task-subagent.test.ts use).
+ */
+async function withAuthenticatedStardew(
+  initial: StardewFixtureState,
+  operation: (mod: ScriptedStardewMod) => Promise<void>,
+  options: Readonly<{
+    knowledge?: KnowledgeBundle;
+    gameVersion?: string;
+    continuityId?: string;
+  }> = {},
+): Promise<void> {
+  const state = initial;
+  const enabledActionIds =
+    state.enabledActionIds ??
+    state.capabilities.filter((capability) =>
+      state.catalogRegistrations.some(
+        (registration) =>
+          registration.actionId === capability && registration.kind === "execution",
+      ),
+    );
+  const pipeName = `gamebuddy_runtime_suite_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  let socket: Socket | undefined;
+  let executeHandler: (request: any) => Promise<ExecutionReceipt> = async (request) => ({
+    requestId: request.requestId,
+    executionId: "execution_01",
+    actionId: request.action,
+    state: "accepted",
+    reasonCode: "accepted",
+    revision: request.expectedRevision,
+    evidence: null,
+  });
+  const write = (value: unknown): void => {
+    socket?.write(bridgeFrame(value));
+  };
+  const snapshotPayload = () => ({
+    ...state.snapshot,
+    capabilities: [...state.capabilities],
+    catalogRevision: BRIDGE_CATALOG_REVISION,
+    enabledActionIds: [...enabledActionIds],
+    presentationLocale: "en-US",
+  });
+  const respond = async (request: any): Promise<void> => {
+    if (request.type === "hello") {
+      write({
+        ...request,
+        messageId: "mod_hello",
+        type: "hello_ack",
+        payload: {
+          sessionId: state.sessionId,
+          capabilities: [...state.capabilities],
+          catalogRevision: BRIDGE_CATALOG_REVISION,
+          policyIdentity: BRIDGE_POLICY_IDENTITY,
+          enabledActionIds: [...enabledActionIds],
+          presentationLocale: "en-US",
+          registrations: [...state.catalogRegistrations],
+          runtimeRole: "farmhand_client",
+          launchGeneration: BRIDGE_GENERATION,
+        },
+      });
+      if (state.latestReceipt !== undefined && state.latestReceipt !== null)
+        write({
+          protocolVersion: 1,
+          messageId: "mod_initial_receipt",
+          correlationId: "mod_initial_receipt",
+          timestampMs: Date.now(),
+          scope: BRIDGE_SCOPE,
+          type: "execution_receipt",
+          payload: state.latestReceipt,
+        });
+      return;
+    }
+    if (request.type === "observe_request") {
+      write({ ...request, messageId: "mod_snapshot", type: "snapshot", payload: snapshotPayload() });
+      return;
+    }
+    if (request.type === "execution_request") {
+      const receipt = await executeHandler(request.payload);
+      state.latestReceipt = receipt;
+      write({ ...request, messageId: "mod_execution_receipt", type: "execution_receipt", payload: receipt });
+      return;
+    }
+    if (request.type === "cancel_request") {
+      write({
+        ...request,
+        messageId: "mod_cancel_receipt",
+        type: "execution_receipt",
+        payload: {
+          requestId: request.payload.requestId,
+          executionId: request.payload.executionId,
+          actionId: "cancel_active_execution",
+          state: "cancelled",
+          reasonCode: request.payload.reasonCode,
+          revision: state.snapshot.revision,
+          evidence: null,
+        },
+      });
+      return;
+    }
+    write({ ...request, messageId: "mod_error", type: "error", payload: { reasonCode: "unexpected_request" } });
+  };
+  const server: Server = createServer((peer) => {
+    socket = peer;
+    peer.once("close", () => {
+      if (socket === peer) socket = undefined;
+    });
+    let buffer = Buffer.alloc(0);
+    peer.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8"));
+        buffer = buffer.subarray(4 + length);
+        void respond(request);
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolve()).once("error", reject),
+  );
+  let launch: IntegrationLaunchHandle | undefined;
+  try {
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      BRIDGE_SCOPE,
+      pipeName,
+      BRIDGE_TOKEN,
+      BRIDGE_GENERATION,
+      Date.now() + 5_000,
+      STARDEW_GAME_INTEGRATION_ADAPTER,
+      options.knowledge,
+      options.gameVersion,
+    );
+    launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+      client,
+      Object.freeze({
+        playerId: BRIDGE_SCOPE.playerId,
+        companionId: BRIDGE_SCOPE.companionId,
+        continuityId: options.continuityId ?? "continuity_runtime_suite",
+        saveId: BRIDGE_SCOPE.saveId,
+        worldId: BRIDGE_SCOPE.worldId,
+      }),
+      {
+        module: STARDEW_GAME_INTEGRATION_ADAPTER,
+        ...(options.knowledge === undefined ? {} : { knowledge: options.knowledge }),
+        ...(options.gameVersion === undefined ? {} : { gameVersion: options.gameVersion }),
+      },
+    );
+    const connection = launch.connection as StardewBridgeConnection;
+    const mod: ScriptedStardewMod = Object.freeze({
+      connection,
+      state,
+      setExecute: (handler) => {
+        executeHandler = handler;
+      },
+      publishReceipt: async (receipt) => {
+        state.latestReceipt = receipt;
+        write({
+          protocolVersion: 1,
+          messageId: "mod_receipt",
+          correlationId: "mod_receipt",
+          timestampMs: Date.now(),
+          scope: BRIDGE_SCOPE,
+          type: "execution_receipt",
+          payload: receipt,
+        });
+        await bridgeUntil(
+          () => connection.state.latestReceipt?.executionId === receipt.executionId,
+          "mod_receipt_not_admitted",
+        );
+      },
+      revoke: (reasonCode) => launch!.revoke(reasonCode),
+    });
+    await operation(mod);
+  } finally {
+    launch?.close();
+    socket?.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
 
 test("opaque identity keys partition contexts without display names", () => {
   const first = identityKey(identity);
@@ -142,71 +418,60 @@ test("offline runtime exposes only its deterministic Companion status tool", asy
 });
 
 test("mounted Companion status reports live integration facts without inferring success", async () => {
-  const integration = {
-    scope: {
-      integrationId: "stardew",
-      saveId: identity.saveId,
-      worldId: identity.worldId,
-      playerId: identity.playerId,
-      companionId: identity.companionId,
-    },
-    module: STARDEW_GAME_INTEGRATION_ADAPTER,
-    state: {
-      connected: true,
+  await withAuthenticatedStardew(
+    {
       sessionId: "session_01",
       capabilities: ["equip_tool"],
-      snapshot: {
+      catalogRegistrations: [
+        {
+          actionId: "equip_tool",
+          familyId: "body_tools",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "execution" as const,
+        },
+      ],
+      snapshot: fixtureSnapshot({
         revision: 9,
-        location: "Farm",
-        tile: { x: 1, y: 2 },
-        stamina: 100,
-        exhausted: false,
-        health: 100,
-        actionable: true,
         capabilities: ["equip_tool"],
-        catalogRevision: 1,
         enabledActionIds: ["equip_tool"],
-        presentationLocale: "en-US",
-        timeOfDay: 600,
-        dayOfMonth: 1,
-        seasonIndex: 0,
-        year: 1,
-        activeExecution: null,
-      },
+      }),
       latestReceipt: {
         executionId: "execution_01",
         requestId: "request_01",
-        state: "accepted" as const,
+        actionId: "equip_tool",
+        state: "accepted",
         reasonCode: "accepted",
         revision: 9,
         evidence: null,
       },
-      latestReasonCode: null,
     },
-  };
-  const result = await createCompanionStatusTool(integration).execute(
-    "status",
-    {},
-    new AbortController().signal,
-    () => {},
-    {} as never,
-  );
-  assert.equal((result.details as { connected: boolean }).connected, true);
-  assert.deepEqual(
-    (result.details as { capabilities: readonly string[] }).capabilities,
-    ["equip_tool"],
-  );
-  assert.equal(
-    (result.details as { snapshotRevision: number }).snapshotRevision,
-    9,
-  );
-  assert.equal(
-    (result.details as { latestReceiptState: string }).latestReceiptState,
-    "accepted",
-  );
-  assert.doesNotMatch(
-    result.content[0]?.type === "text" ? result.content[0].text : "",
-    /succeeded/,
+    async (mod) => {
+      const result = await createCompanionStatusTool(mod.connection).execute(
+        "status",
+        {},
+        new AbortController().signal,
+        () => {},
+        {} as never,
+      );
+      assert.equal((result.details as { connected: boolean }).connected, true);
+      assert.deepEqual(
+        (result.details as { capabilities: readonly string[] }).capabilities,
+        ["equip_tool"],
+      );
+      assert.equal(
+        (result.details as { snapshotRevision: number }).snapshotRevision,
+        9,
+      );
+      assert.equal(
+        (result.details as { latestReceiptState: string }).latestReceiptState,
+        "accepted",
+      );
+      assert.doesNotMatch(
+        result.content[0]?.type === "text" ? result.content[0].text : "",
+        /succeeded/,
+      );
+    },
   );
 });
 
@@ -390,100 +655,106 @@ test("runtime mounts a fake integration through the module port", async () => {
     runtime.session.dispose();
   }
 });
-test("runtime rejects a mounted integration whose save identity does not match", async () => {
-});
-
+// The mismatched-save fixture can no longer be built directly: the
+// authenticated launch refuses a scope that disagrees with its own identity
+// before the adapter is reached (stardew_bridge_identity_scope_mismatch), and a
+// hand-built connection is rejected by the authentication gate. The
+// runtime-construction layer still enforces the same binding, so the case mints
+// a live connection for save_01 and mounts it under a save_02 runtime: the
+// adapter's assertIdentityBinding must refuse it.
 test("runtime rejects a mounted integration whose save identity does not match", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-phase3-scope-"));
-  const wrongScope: Scope = {
-    integrationId: "stardew",
-    saveId: "other_save",
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
-  const integration = new GameConnectionTestClient(
-    wrongScope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      await assert.rejects(
+        () =>
+          createCompanionRuntime(
+            { ...identity, saveId: "save_02" },
+            root,
+            mod.connection,
+          ),
+        /integration_identity_binding_mismatch/,
+      );
+    },
   );
-  await assert.rejects(
-    () => createCompanionRuntime(identity, root, integration),
-    /integration_identity_binding_mismatch/,
-  );
-  integration.dispose();
 });
 
 test("generic runtime keeps an explicit game surface when the Host construction zone supplies it", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-game-surface-runtime-"));
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      const runtime = await createCompanionRuntime(
+        { ...identity, continuityId: "continuity_01" },
+        root,
+        mod.connection,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        "game_surface_01",
+        undefined,
+        "game",
+      );
+      try {
+        assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
+        assert.doesNotMatch(runtime.session.systemPrompt, /private/);
+        assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
+        assert.equal(
+          runtime.session.agent.state.tools.some(
+            (tool) =>
+              tool.name === "companion_text" || tool.name === "companion_speak",
+          ),
+          false,
+        );
+        assert.equal(runtime.paths.surfaceSessionId, "game_surface_01");
+      } finally {
+        runtime.session.dispose();
+      }
+    },
   );
-  const runtime = await createCompanionRuntime(
-    { ...identity, continuityId: "continuity_01" },
-    root,
-    integration,
-    undefined,
-    undefined,
-    undefined,
-    false,
-    undefined,
-    "game_surface_01",
-    undefined,
-    "game",
-  );
-  try {
-    assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
-    assert.doesNotMatch(runtime.session.systemPrompt, /private/);
-    assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
-    assert.equal(
-      runtime.session.agent.state.tools.some(
-        (tool) =>
-          tool.name === "companion_text" || tool.name === "companion_speak",
-      ),
-      false,
-    );
-    assert.equal(runtime.paths.surfaceSessionId, "game_surface_01");
-  } finally {
-    runtime.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("Chat surface never creates a gameplay subagent even when enabled with integration and model config", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-chat-no-gameplay-subagent-"));
-  const scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
-  const runtime = await createCompanionRuntime(
-    { ...identity, continuityId: "continuity_chat_subagent_01" }, root, integration,
-    GAMEPLAY_SUBAGENT_MODEL_CONFIG, undefined, undefined, true, undefined,
-    "chat_surface_subagent_01", undefined, "chat",
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      // A Chat surface has no live world, so it does not carry a continuityId:
+      // the Magic Context runtime-environment-facts provider is process-global
+      // and may be registered only once, and the Game-surface case above already
+      // registers it. The "never creates a gameplay subagent" invariant needs
+      // only an integration, a model config, and an explicit chat surface.
+      const runtime = await createCompanionRuntime(
+        identity, root, mod.connection,
+        GAMEPLAY_SUBAGENT_MODEL_CONFIG, undefined, undefined, true, undefined,
+        "chat_surface_subagent_01", undefined, "chat",
+      );
+      try {
+        assert.equal(runtime.gameplaySubagent, undefined);
+        assert.deepEqual(runtime.session.agent.state.tools, []);
+      } finally {
+        runtime.session.dispose();
+      }
+    },
   );
-  try {
-    assert.equal(runtime.gameplaySubagent, undefined);
-    assert.deepEqual(runtime.session.agent.state.tools, []);
-  } finally {
-    runtime.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("Chat surface runtime is a pure native-content dialogue surface with no mounted tools", async () => {
@@ -579,58 +850,54 @@ test("formal Preview Game composition does not load Magic Context", async () => 
   const root = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-preview-no-magic-context-"),
   );
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
-  );
-  const runtime = await createGameCompanionRuntime(
-    identity,
-    root,
-    integration,
-    "preview_session_01",
-    undefined,
-    undefined,
+  await withAuthenticatedStardew(
     {
-      modelConfig: DEFAULT_COMPANION_MODEL_CONFIG,
-      gameplaySubagentEnabled: false,
-      disableMagicContextMemory: true,
-      hostBindingFactory: () => undefined,
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      const runtime = await createGameCompanionRuntime(
+        identity,
+        root,
+        mod.connection,
+        "preview_session_01",
+        undefined,
+        undefined,
+        {
+          modelConfig: DEFAULT_COMPANION_MODEL_CONFIG,
+          gameplaySubagentEnabled: false,
+          disableMagicContextMemory: true,
+          hostBindingFactory: () => undefined,
+        },
+      );
+      try {
+        assert.deepEqual(runtime.extensions, []);
+        await assert.rejects(
+          access(
+            join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
+          ),
+          (error: unknown) =>
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "ENOENT",
+        );
+        const manifest = JSON.parse(
+          await readFile(runtime.paths.runManifestPath, "utf8"),
+        ) as CompanionRunManifest;
+        assert.equal(manifest.featureFlags.magicContextMemoryEnabled, false);
+        assert.equal(
+          typeof runtime.recoverStardewExecutionReceipts,
+          "function",
+          "the game runtime must expose the explicit relaunch-only recovery closure",
+        );
+      } finally {
+        runtime.session.dispose();
+      }
     },
   );
-  try {
-    assert.deepEqual(runtime.extensions, []);
-    await assert.rejects(
-      access(
-        join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
-      ),
-      (error: unknown) =>
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT",
-    );
-    const manifest = JSON.parse(
-      await readFile(runtime.paths.runManifestPath, "utf8"),
-    ) as CompanionRunManifest;
-    assert.equal(manifest.featureFlags.magicContextMemoryEnabled, false);
-    assert.equal(
-      typeof runtime.recoverStardewExecutionReceipts,
-      "function",
-      "the game runtime must expose the explicit relaunch-only recovery closure",
-    );
-  } finally {
-    runtime.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("a Game runtime attachment without a model configuration gets only the unknown placeholder model", async () => {
@@ -795,194 +1062,219 @@ test("a Game runtime attachment without a model configuration gets only the unkn
   }
 });
 
-test("Stardew action tools fail closed when a connection lacks the launcher execution gate", async () => {
+// The "connection without a launcher execution gate" fixture is unreachable
+// through the authenticated launch: the launch mints the gate as executable and
+// the adapter refuses any connection whose gate is absent or revoked before a
+// tool set is built. The fail-closed guard moved to invocation time
+// (gateIntegrationTool), so the case mounts with the live gate and then revokes
+// it: the mounted action closure must refuse rather than trust itself.
+test("Stardew action tools fail closed when the launcher execution gate is revoked", async () => {
   const root = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-runtime-no-execution-gate-"),
   );
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const integration = {
-    scope,
-    module: STARDEW_GAME_INTEGRATION_ADAPTER,
-    state: {
-      connected: true,
+  await withAuthenticatedStardew(
+    {
       sessionId: "session_01",
       capabilities: ["equip_tool"],
-      snapshot: {
-        revision: 1,
-        location: "Farm",
-        tile: { x: 1, y: 2 },
-        stamina: 100,
-        exhausted: false,
-        health: 100,
-        actionable: true,
+      catalogRegistrations: [
+        {
+          actionId: "equip_tool",
+          familyId: "body_tools",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "execution" as const,
+        },
+      ],
+      snapshot: fixtureSnapshot({
         capabilities: ["equip_tool"],
-        catalogRevision: 1,
         enabledActionIds: ["equip_tool"],
-        presentationLocale: "en-US",
-        timeOfDay: 600,
-        dayOfMonth: 1,
-        seasonIndex: 0,
-        year: 1,
-        activeExecution: null,
-      },
-      latestReceipt: null,
-      latestReasonCode: null,
+      }),
     },
-    async execute() {
-      throw new Error("must_not_execute");
+    async (mod) => {
+      const runtime = await createCompanionRuntime(identity, root, mod.connection);
+      try {
+        const equip = runtime.session.agent.state.tools.find(
+          (tool) => tool.name === "stardew_equip_tool",
+        );
+        assert.ok(equip, "the action tool mounts while the launcher gate is live");
+        assert.equal(
+          runtime.session.agent.state.tools.some(
+            (tool) => tool.name === "stardew_observe",
+          ),
+          true,
+        );
+        // A revoked launcher gate is never a legacy admission path.
+        mod.revoke("execution_gate_revoked");
+        await assert.rejects(
+          () => equip.execute("gate-revoked", {}, new AbortController().signal),
+          /integration_not_ready/,
+        );
+      } finally {
+        runtime.session.dispose();
+      }
     },
-  };
-  const runtime = await createCompanionRuntime(identity, root, integration);
-  try {
-    assert.equal(
-      runtime.session.agent.state.tools.some(
-        (tool) => tool.name === "stardew_equip_tool",
-      ),
-      false,
-    );
-    assert.equal(
-      runtime.session.agent.state.tools.some(
-        (tool) => tool.name === "stardew_observe",
-      ),
-      true,
-    );
-  } finally {
-    runtime.session.dispose();
-  }
+  );
 });
 
 test("runtime composes a ledger admission before mounting and executing a live Stardew action", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-runtime-admission-"));
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
   let executeWrites = 0;
-  const integration = {
-    scope,
-    module: STARDEW_GAME_INTEGRATION_ADAPTER,
-    executionGate: { executable: true },
-    state: {
-      connected: true,
+  await withAuthenticatedStardew(
+    {
       sessionId: "session_01",
       capabilities: ["equip_tool", "cancel_active_execution"],
-      catalogRegistrations: [
-        { actionId: "equip_tool", familyId: "body_tools", identityVersion: 1, lifecycle: "published", kind: "execution" },
-      ],
-      catalogRevision: 1,
       enabledActionIds: ["equip_tool"],
-      snapshot: {
-        revision: 1,
-        location: "Farm",
-        tile: { x: 1, y: 2 },
-        stamina: 100,
-        exhausted: false,
-        health: 100,
-        actionable: true,
+      catalogRegistrations: [
+        {
+          actionId: "equip_tool",
+          familyId: "body_tools",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "execution" as const,
+        },
+      ],
+      snapshot: fixtureSnapshot({
         capabilities: ["equip_tool", "cancel_active_execution"],
-        catalogRevision: 1,
         enabledActionIds: ["equip_tool"],
-        presentationLocale: "en-US",
-        timeOfDay: 600,
-        dayOfMonth: 1,
-        seasonIndex: 0,
-        year: 1,
-        activeExecution: null,
-      },
-      latestReceipt: null,
-      latestReasonCode: null,
+      }),
     },
-    async execute(request: { requestId: string }) {
-      executeWrites++;
-      return {
-        requestId: request.requestId,
-        executionId: "execution_equip_01",
-        actionId: "equip_tool",
-        state: "succeeded" as const,
-        reasonCode: "tool_selected",
-        revision: 1,
-        evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
-      };
+    async (mod) => {
+      mod.setExecute(async (request) => {
+        executeWrites++;
+        return {
+          requestId: request.requestId,
+          executionId: "execution_equip_01",
+          actionId: "equip_tool",
+          state: "succeeded" as const,
+          reasonCode: "tool_selected",
+          revision: 1,
+          evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+        };
+      });
+      const runtime = await createCompanionRuntime(identity, root, mod.connection);
+      try {
+        const equip = runtime.session.agent.state.tools.find(
+          (tool) => tool.name === "stardew_equip_tool",
+        );
+        assert.ok(equip);
+        const result = await equip.execute(
+          "runtime-admission-equip",
+          {
+            tool: "axe",
+            requestId: "runtime_request_01",
+            idempotencyKey: "runtime_key_01",
+          },
+          new AbortController().signal,
+        );
+        assert.equal(executeWrites, 1);
+        assert.match(
+          result.content[0]?.type === "text" ? result.content[0].text : "",
+          /execution_equip_01/,
+        );
+        assert.equal(
+          runtime.session.agent.state.tools.some(
+            (tool) => tool.name === "stardew_cancel_active_execution",
+          ),
+          false,
+        );
+      } finally {
+        runtime.interruptIntegrationExecutions?.("runtime_test_end");
+        runtime.session.dispose();
+      }
     },
-    async cancel() {
-      throw new Error("direct_adapter_cancel_must_not_be_reached");
-    },
-  };
-  const runtime = await createCompanionRuntime(identity, root, integration);
-  try {
-    const equip = runtime.session.agent.state.tools.find(
-      (tool) => tool.name === "stardew_equip_tool",
-    );
-    assert.ok(equip);
-    const result = await equip.execute(
-      "runtime-admission-equip",
-      {
-        tool: "axe",
-        requestId: "runtime_request_01",
-        idempotencyKey: "runtime_key_01",
-      },
-      new AbortController().signal,
-    );
-    assert.equal(executeWrites, 1);
-    assert.match(
-      result.content[0]?.type === "text" ? result.content[0].text : "",
-      /execution_equip_01/,
-    );
-    assert.equal(
-      runtime.session.agent.state.tools.some(
-        (tool) => tool.name === "stardew_cancel_active_execution",
-      ),
-      false,
-    );
-  } finally {
-    runtime.interruptIntegrationExecutions?.("runtime_test_end");
-    runtime.session.dispose();
-  }
+  );
 });
 
 test("runtime mounts only the explicitly verified Stardew product tools", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-phase3-tools-"));
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      const runtime = await createCompanionRuntime(identity, root, mod.connection);
+      try {
+        // The mounted name set is the adapter's frozen constant surface; live
+        // capability snapshots no longer add or withdraw a tool (admission moved
+        // to execution time), so a disconnected or empty snapshot mounts the
+        // same names a fully capable one does.
+        assert.deepEqual(
+          runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+          [
+            "companion_status",
+            "stardew_bait_crab_pot",
+            "stardew_break_rock_source",
+            "stardew_chest_retrieve",
+            "stardew_chest_store",
+            "stardew_chop_stump",
+            "stardew_chop_tree_source",
+            "stardew_clear_cask",
+            "stardew_clear_debris",
+            "stardew_clear_hoedirt",
+            "stardew_collect_animal_product",
+            "stardew_collect_crab_pot_output",
+            "stardew_cook_recipe",
+            "stardew_craft_item",
+            "stardew_cut_grass",
+            "stardew_cut_weeds",
+            "stardew_deposit_silo_hay",
+            "stardew_dig_artifact_spot",
+            "stardew_dress_mannequin",
+            "stardew_enter_exit",
+            "stardew_enter_mine",
+            "stardew_equip_tool",
+            "stardew_execution_status",
+            "stardew_feed_animal",
+            "stardew_fertilize_tile",
+            "stardew_find_destination",
+            "stardew_harvest_bush",
+            "stardew_harvest_crop",
+            "stardew_harvest_fruit_tree",
+            "stardew_inspect_world_map",
+            "stardew_interaction_catalog",
+            "stardew_machine_collect_output",
+            "stardew_machine_inspect",
+            "stardew_machine_load",
+            "stardew_mount_transport",
+            "stardew_move_to_tile",
+            "stardew_navigate_to_destination",
+            "stardew_npc_relationship",
+            "stardew_observe",
+            "stardew_pickup_forage",
+            "stardew_pickup_item",
+            "stardew_place_crab_pot",
+            "stardew_place_wood_fence",
+            "stardew_plant_sapling",
+            "stardew_plant_seed",
+            "stardew_read_scene",
+            "stardew_refill_watering_can",
+            "stardew_scythe_crop",
+            "stardew_search_interactions",
+            "stardew_set_sign_display",
+            "stardew_shake_tree",
+            "stardew_ship_item",
+            "stardew_stop_action",
+            "stardew_take_pedestal_item",
+            "stardew_till_soil",
+            "stardew_toggle_fence_gate",
+            "stardew_toggle_tool_light",
+            "stardew_travel",
+            "stardew_use_item",
+            "stardew_use_raft",
+            "stardew_water_crop",
+            "stardew_water_pet_bowl",
+            "stardew_water_slime_hutch_trough",
+            "todowrite",
+          ],
+        );
+      } finally {
+        runtime.session.dispose();
+      }
+    },
   );
-  const runtime = await createCompanionRuntime(identity, root, integration);
-  try {
-    // The executable action is absent until the Mod declares it in the
-    // player-controlled capability snapshot. Observations remain factual.
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      [
-        "companion_status",
-        "stardew_execution_status",
-        "stardew_interaction_catalog",
-        "stardew_observe",
-        "stardew_search_interactions",
-        "todowrite",
-      ],
-    );
-  } finally {
-    runtime.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("runtime materializes the optional gameplay subagent without exposing its tools to the parent by default", async () => {
@@ -991,19 +1283,6 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   );
   const delegatedRoot = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-enabled-"),
-  );
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   const config = GAMEPLAY_SUBAGENT_MODEL_CONFIG;
   const offline = await createCompanionRuntime(identity, offlineRoot);
@@ -1017,91 +1296,85 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   } finally {
     offline.session.dispose();
   }
-  const delegated = await createCompanionRuntime(
-    identity,
-    delegatedRoot,
-    integration,
-    config,
-    undefined,
-    undefined,
-    true,
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      const delegated = await createCompanionRuntime(
+        identity,
+        delegatedRoot,
+        mod.connection,
+        config,
+        undefined,
+        undefined,
+        true,
+      );
+      try {
+        assert.ok(delegated.gameplaySubagent);
+        assert.deepEqual(delegated.gameplaySubagent.modelConfig, config);
+        const manifest = JSON.parse(
+          await readFile(delegated.paths.runManifestPath, "utf8"),
+        );
+        assert.deepEqual(manifest.model, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
+        assert.deepEqual(manifest.gameplaySubagentModel, config);
+        assert.equal(
+          delegated.session.agent.state.tools.some(
+            (tool) => tool.name === "delegate_game_task",
+          ),
+          true,
+        );
+        assert.deepEqual(
+          delegated.session.agent.state.tools
+            .filter(
+              (tool) => tool.name.includes("speak") || tool.name.includes("text"),
+            )
+            .map((tool) => tool.name),
+          [],
+        );
+        delegated.gameplaySubagent?.cancel("test_cancel");
+      } finally {
+        delegated.gameplaySubagent?.dispose();
+        delegated.session.dispose();
+      }
+    },
   );
-  try {
-    assert.ok(delegated.gameplaySubagent);
-    assert.deepEqual(delegated.gameplaySubagent.modelConfig, config);
-    const manifest = JSON.parse(
-      await readFile(delegated.paths.runManifestPath, "utf8"),
-    );
-    assert.deepEqual(manifest.model, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
-    assert.deepEqual(manifest.gameplaySubagentModel, config);
-    assert.equal(
-      delegated.session.agent.state.tools.some(
-        (tool) => tool.name === "delegate_game_task",
-      ),
-      true,
-    );
-    assert.deepEqual(
-      delegated.session.agent.state.tools
-        .filter(
-          (tool) => tool.name.includes("speak") || tool.name.includes("text"),
-        )
-        .map((tool) => tool.name),
-      [],
-    );
-    delegated.gameplaySubagent?.cancel("test_cancel");
-  } finally {
-    delegated.gameplaySubagent?.dispose();
-    delegated.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("gameplay subagent composition fails closed without a mounted game model config", async () => {
   const root = await mkdtemp(
     join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-no-model-"),
   );
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: [],
+      catalogRegistrations: MINIMAL_REGISTRATIONS,
+      snapshot: fixtureSnapshot(),
+    },
+    async (mod) => {
+      await assert.rejects(
+        () =>
+          createCompanionRuntime(
+            identity,
+            root,
+            mod.connection,
+            undefined,
+            undefined,
+            undefined,
+            true,
+          ),
+        /gameplay_subagent_requires_model_and_integration/,
+      );
+    },
   );
-  try {
-    await assert.rejects(
-      () =>
-        createCompanionRuntime(
-          identity,
-          root,
-          integration,
-          undefined,
-          undefined,
-          undefined,
-          true,
-        ),
-      /gameplay_subagent_requires_model_and_integration/,
-    );
-  } finally {
-    integration.dispose();
-  }
 });
 
 test("runtime mounts Host-owned version-bound knowledge only when explicitly configured", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-phase3-knowledge-"));
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  const [hostEndpoint] = createDeterministicBridgePair(scope);
   const bundle: KnowledgeBundle = {
     bundleVersion: 1,
     integrationId: "stardew",
@@ -1116,24 +1389,38 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
       },
     ],
   };
-  const integration = new GameConnectionTestClient(
-    scope,
-    hostEndpoint,
-    STARDEW_GAME_INTEGRATION_ADAPTER,
-    bundle,
-    "1.6.15",
+  await withAuthenticatedStardew(
+    {
+      sessionId: "session_01",
+      capabilities: ["move_to_tile"],
+      catalogRegistrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "execution" as const,
+        },
+      ],
+      snapshot: fixtureSnapshot({
+        capabilities: ["move_to_tile"],
+        enabledActionIds: ["move_to_tile"],
+      }),
+    },
+    async (mod) => {
+      const runtime = await createCompanionRuntime(identity, root, mod.connection);
+      try {
+        assert.ok(
+          runtime.session.agent.state.tools.some(
+            (tool) => tool.name === "stardew_game_knowledge",
+          ),
+        );
+      } finally {
+        runtime.session.dispose();
+      }
+    },
+    { knowledge: bundle, gameVersion: "1.6.15" },
   );
-  const runtime = await createCompanionRuntime(identity, root, integration);
-  try {
-    assert.ok(
-      runtime.session.agent.state.tools.some(
-        (tool) => tool.name === "stardew_game_knowledge",
-      ),
-    );
-  } finally {
-    runtime.session.dispose();
-    integration.dispose();
-  }
 });
 
 test("runtime resolves Magic Context from the Host-declared package dependency", () => {
