@@ -15,10 +15,18 @@
  * and nowhere else, and the unlayered remainder holds nothing but the order
  * statement and the token roots (`:root`), which compete with no rule.
  *
- * This file is the reviewer's Gate 2. The token assertion overlaps the earlier
- * `style-tokens.test.mjs`; both parse the same stylesheet and both must stay
- * green - the earlier file is the token lane's own regression, this one is the
- * gate.
+ * This file now holds the layer rules only. The token rule (gate 2.1, "every
+ * custom property the stylesheet reads is declared in it") is delegated to
+ * `stylelint` with `csstools/value-no-unknown-custom-properties`: run
+ * `pnpm run check:css` in this package, which is part of `test:static`. The
+ * hand-written duplicate that lived here and in `style-tokens.test.mjs` is
+ * gone, so there is exactly one mechanism for the rule.
+ *
+ * Gate 2.2 and gate 2.3 stay here: they assert cascade *structure* (a named
+ * component rule sits inside its declared layer, and the unlayered remainder
+ * holds only the order statement and the `:root` token roots). No off-the-shelf
+ * tool expresses "this selector must be inside this `@layer` block"; stylelint
+ * parses layers but has no rule for placing a selector in one.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -27,16 +35,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const STYLESHEET = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "style.css");
-
-/** The custom properties a stylesheet reads, and the ones it declares. */
-export function customProperties(css) {
-  const body = css.replace(/\/\*[\s\S]*?\*\//gu, "");
-  const referenced = new Set();
-  const declared = new Set();
-  for (const match of body.matchAll(/var\(\s*(--[A-Za-z0-9_.-]+)/gu)) referenced.add(match[1]);
-  for (const match of body.matchAll(/(?:^|[;{\s])(--[A-Za-z0-9_.-]+)\s*:/gu)) declared.add(match[1]);
-  return { referenced, declared };
-}
 
 /** Comments and quoted strings blanked, so a brace inside them is not a brace. */
 function structural(css) {
@@ -114,27 +112,6 @@ export function unlayeredItems(css) {
   }
   return items;
 }
-
-test("gate 2.1: every custom property the stylesheet reads is declared in it", (t) => {
-  const css = readFileSync(STYLESHEET, "utf8");
-  const { declared } = customProperties(css);
-  const failures = [];
-  let reads = 0;
-  css.split("\n").forEach((line, index) => {
-    // Ignore a comment tail the way the collector does: only a real consumption point counts.
-    const code = line.replace(/\/\*.*?\*\//gu, " ");
-    for (const match of code.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/gu)) {
-      reads += 1;
-      if (!declared.has(match[1])) failures.push(`src/style.css:${index + 1} reads undeclared ${match[1]}`);
-    }
-  });
-  t.diagnostic(`gate 2.1: ${declared.size} declared properties, ${reads} read(s), ${failures.length} undeclared`);
-  assert.deepEqual(
-    failures,
-    [],
-    "an undeclared custom property is guaranteed-invalid: the declaration that reads it is dropped instead of falling back",
-  );
-});
 
 test("gate 2.2: a named component rule sits inside its declared layer, not unlayered", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
