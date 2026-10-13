@@ -813,7 +813,11 @@ test("exact authenticated launch handle projects a Mod receipt through readState
         lifecycle: "published",
         kind: "execution",
       }]);
-      assert.equal(view.snapshotRevision, 1);
+      // The bridge synchronizes the admitted snapshot's monotonic revision to a
+      // newer Mod receipt revision (see "local Stardew bridge advances the
+      // admitted snapshot revision on an unsolicited execution receipt"); the
+      // world fields still describe the pre-action moment.
+      assert.equal(view.snapshotRevision, 7);
       assert.equal(view.latestReceipt?.actionId, receipt.actionId);
       assert.equal(view.latestReceipt?.requestId, receipt.requestId);
       assert.equal(view.latestReceipt?.executionId, receipt.executionId);
