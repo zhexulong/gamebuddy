@@ -4287,19 +4287,47 @@ body {
    `component-hygiene-gate.test.mjs` now requires exactly this pair, so a file
    input that is merely *styled* - the shape this defect shipped - fails there.
 
+   The box is zero-sized and the platform's own label is not laid out (U-06).
+   The measured defect: the classic visually-hidden recipe - `width: 1px;
+   height: 1px; margin: -1px` - still gives the element a content box, so the
+   platform's own "No file chosen" text laid out inside it and every
+   layout/overflow tool reported an overflowing control (1 px high, `overX 139`).
+   Measured, in this mount: 1 px box -> `overX 139`; zero-sized box -> `scrollWidth
+   176` (the figure is the platform's label, not the box); zero-sized + `opacity:
+   0` -> still `scrollWidth 176`; zero-sized + `font-size: 0` -> `scrollWidth 20`
+   (the platform's own "Choose file" button); zero-sized + `font-size: 0` + the
+   selector button retired -> `scrollWidth 0`, `overX 0`, `offsetWidth/Height 0`,
+   a 0x0 rect. So the input now reports no overflow at all, and its inner button
+   cannot paint the platform's control face beside the product's trigger.
+
+   The hiding is still the exact pair the runtime gate names - out of the visual
+   flow by `clip-path: inset(50%)`, out of the tab order by `tabIndex={-1}` - so
+   that gate's explicit exclusion keeps matching the element it was written for;
+   nothing about the rule or its pinned test changes. Which rule excludes it, and
+   the proof that it still does, is asserted in
+   `tests/card-import-hidden-input.spec.ts`.
+
    Appended block; the rules above are untouched.
    ========================================================================== */
 
 .card-import-file-input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
+  width: 0;
+  height: 0;
+  margin: 0;
   padding: 0;
   border: 0;
   overflow: hidden;
   clip-path: inset(50%);
-  white-space: nowrap;
+  /* The label text is what gave this element its `scrollWidth` (176 px at every
+     box size): at zero font size there is no text to lay out. */
+  font-size: 0;
+}
+
+/* The platform's own "Choose file" button inside the input is the rest of that
+   intrinsic size; the product draws its own trigger, so this one is retired. */
+.card-import-file-input::file-selector-button {
+  display: none;
 }
 
 /* ==========================================================================
