@@ -727,7 +727,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail
         // on `;` and requires every field to be a non-empty `key=value`. money_before/money_after are frozen key
         // NAMES that the Host's shop_purchase completion rule requires
-        // (host/src/stardew-game-integration-adapter.ts:1914-1949, exactEvidence, money_after < money_before);
+        // (host/src/stardew-game-integration-adapter.ts:1995-2055, exactEvidence, money_after < money_before);
         // their values now carry the amount of the CURRENCY the native charge moved, so a club-coin or Qi-gem
         // purchase reports the decrease that rule looks for:
         //   * a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects -

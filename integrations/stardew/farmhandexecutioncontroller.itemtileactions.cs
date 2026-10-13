@@ -799,8 +799,19 @@ internal sealed partial class ExecutionManager
             // Only the overflow ItemGrabMenu is this action's residual; a different queued menu is not ours
             // to clear (lane 3 flagged the count check as too broad).
             || Game1.nextClickableMenu.Any(menu => menu is StardewValley.Menus.ItemGrabMenu);
+        int salvagedToInventoryUnits = 0;
+        int salvagedToDebrisUnits = 0;
         if (claimOverflowPending)
         {
+            // SALVAGE BEFORE CLEARING. The overflow menu IS the holder of the attachment the
+            // inventory could not take: `ItemGrabMenu.CreateOverflowMenu` builds its
+            // `ItemsToGrabMenu` from the very list the overflow is about (ItemGrabMenu.cs:454-461),
+            // and the public `ItemsToGrabMenu.actualInventory` IS that list. Dropping the menu
+            // would therefore discard those items, so take every one back out and put it in the
+            // world BEFORE the clear below -- the pack first, else ground debris on the actor's
+            // standing tile -- so nothing the letter delivered vanishes.
+            foreach (StardewValley.Menus.ItemGrabMenu overflow in OverflowItemGrabMenus())
+                SalvageOverflowMenu(player, overflow, ref salvagedToInventoryUnits, ref salvagedToDebrisUnits);
             Game1.exitActiveMenu();
             Game1.nextClickableMenu.Clear();
         }
@@ -817,6 +828,8 @@ internal sealed partial class ExecutionManager
             + $"mail_removed={removed.ToString().ToLowerInvariant()};mail_recorded={recorded.ToString().ToLowerInvariant()};"
             + $"letter_opened={letterOpened.ToString().ToLowerInvariant()};letter_closed={letterClosed.ToString().ToLowerInvariant()};"
             + $"collection_overflow_pending={claimOverflowPending.ToString().ToLowerInvariant()};"
+            + $"mail_salvage_inventory_units={salvagedToInventoryUnits.ToString(CultureInfo.InvariantCulture)};"
+            + $"mail_salvage_debris_units={salvagedToDebrisUnits.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
             + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(
@@ -886,6 +899,54 @@ internal sealed partial class ExecutionManager
                 count += item.Stack;
         }
         return count;
+    }
+
+    /// <summary>
+    /// Every <c>ItemGrabMenu</c> the claim left behind: the one currently mounted (the case where
+    /// the game had already drained the queue) plus every one still queued, because the letter's
+    /// own exit appends its overflow to <c>Game1.nextClickableMenu</c> (Farmer.cs:4477-4522).
+    /// </summary>
+    private static IEnumerable<StardewValley.Menus.ItemGrabMenu> OverflowItemGrabMenus()
+    {
+        if (Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu activeOverflow)
+            yield return activeOverflow;
+        foreach (StardewValley.Menus.IClickableMenu queued in Game1.nextClickableMenu)
+        {
+            if (queued is StardewValley.Menus.ItemGrabMenu queuedOverflow)
+                yield return queuedOverflow;
+        }
+    }
+
+    /// <summary>
+    /// Takes every item back out of one overflow menu and puts it back in the world, so clearing
+    /// the menu never destroys it: <c>Farmer.addItemToInventory</c> first, and whatever it leaves
+    /// becomes ground debris on the actor's standing tile through <c>Game1.createItemDebris</c>.
+    /// Counts the UNITS that reached each destination, the same conservation shape `cook_recipe`
+    /// uses, because an overflow item may merge into an existing stack rather than arrive whole.
+    /// </summary>
+    private static void SalvageOverflowMenu(
+        Farmer player,
+        StardewValley.Menus.ItemGrabMenu overflow,
+        ref int toInventoryUnits,
+        ref int toDebrisUnits)
+    {
+        IList<Item> held = overflow.ItemsToGrabMenu.actualInventory;
+        for (int index = 0; index < held.Count; index++)
+        {
+            Item? item = held[index];
+            if (item is null)
+                continue;
+            // The slot is deliberately NOT nulled: this menu is discarded by the caller's
+            // `Game1.exitActiveMenu()` / `Game1.nextClickableMenu.Clear()` right after, so the
+            // only thing that matters is that the item left it and reached the world above.
+            int unitsBefore = item.Stack;
+            Item? remainder = player.addItemToInventory(item);
+            int dropped = remainder?.Stack ?? 0;
+            if (remainder is not null && dropped > 0)
+                Game1.createItemDebris(remainder, player.getStandingPosition(), player.FacingDirection);
+            toInventoryUnits += unitsBefore - dropped;
+            toDebrisUnits += dropped;
+        }
     }
 
     /// <summary>

@@ -18,7 +18,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// success-vs-partial judgement, so a shop priced in club coins (the Casino stall) or Qi gems (the
 /// Qi gem stall) was refused while affordable, and a real purchase was judged against a purse the
 /// native charge never moves. The receipt's <c>money_before</c>/<c>money_after</c> keys are a frozen
-/// Host completion shape (host/src/stardew-game-integration-adapter.ts:1914-1949 requires exactly
+/// Host completion shape (host/src/stardew-game-integration-adapter.ts:1995-2055 requires exactly
 /// those key names and <c>money_after &lt; money_before</c>), so the values now carry the currency
 /// amount under the unchanged keys.
 /// </summary>

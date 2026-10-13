@@ -363,6 +363,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // published enter_mine gate (the Mine entrance map) does not cover.
   enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
   talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+  // Experimental until their live gates pass: the board's own accept write and the museum's computed
+  // reward set, each with its own shared-harness runner and its own fixture scenario. A runner here is
+  // neither a capability grant nor a success claim.
+  accept_special_order: "run-stardew-native-local-player-accept-special-order-smoke.mjs",
+  claim_museum_reward: "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
   // Reads what the Mod REPORTS about the conversation (the enquiry-and-hold chain stays with talk_to_npc).
   dialogue_stream: "run-stardew-native-local-player-dialogue-stream-smoke.mjs",
   // The actor's own attachment state, Experimental: each ships with its own shared-harness runner
@@ -415,6 +420,17 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
+  // The prize-ticket exchange is a public-call-sequence reproduction (B1b) with NO client argument:
+  // the prize track head is the game's own `ticketPrizesClaimed` state. Registered Experimental in the
+  // Mod catalog, so it lives in this map rather than in the published gate table. A runner is neither a
+  // capability grant nor a success claim.
+  redeem_prize_ticket: "run-stardew-native-local-player-prize-ticket-smoke.mjs",
+  // The two-slot sewing-machine pair. Both actions run over ONE fixture scenario
+  // (`native_tailoring_v1`), which arms a recipe pair and a dye pair; each ships its own shared-harness
+  // runner. Experimental in the Mod catalog, so they live in this map rather than the published gate
+  // table. A runner here is neither a capability grant nor a success claim.
+  tailor_clothing: "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
+  dye_clothing_with_item: "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

@@ -90,6 +90,13 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalUnequipWearableFixture",
         "InitializeNativeLocalDismountTransportFixture",
         "InitializeNativeLocalAcceptDailyQuestFixture",
+        "InitializeNativeLocalAcceptSpecialOrderFixture",
+        "BuildNativeLocalAcceptSpecialOrderFallbackOrder",
+        "InitializeNativeLocalClaimMuseumRewardFixture",
+        "InitializeNativeLocalRedeemPrizeTicketFixture",
+        "InitializeNativeLocalAcceptSpecialOrderFixture",
+        "BuildNativeLocalAcceptSpecialOrderFallbackOrder",
+        "InitializeNativeLocalClaimMuseumRewardFixture",
     };
 
     /// <summary>

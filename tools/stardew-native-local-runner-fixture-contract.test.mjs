@@ -74,7 +74,16 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // A synchronous name write with no target id: the subject is the actor's own horse, so the
   // fixture scenario is keyed on the action alone.
   "run-stardew-native-local-player-name-entity-smoke.mjs": "name_entity",
-"run-stardew-native-local-player-accept-daily-quest-smoke.mjs": "accept_daily_quest",
+  "run-stardew-native-local-player-accept-daily-quest-smoke.mjs": "accept_daily_quest",
+  "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
+  "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
+  // A synchronous public-call-sequence write with no target id: the subject is the actor's own ticket
+  // stack and the machine's own track position, so the fixture scenario is keyed on the action alone.
+  "run-stardew-native-local-player-prize-ticket-smoke.mjs": "redeem_prize_ticket",
+  "run-stardew-native-local-player-tailor-clothing-smoke.mjs": "tailor_clothing",
+  "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs": "dye_clothing_with_item",
+  "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
+  "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
   // The chat deed is NOT a native-local fixture: it lives on the farmhand lane of the
   // two-process launcher (a true client of the host), so the native-local fixture
   // library has no send_multiplayer_chat mapping - the policy-check subtest skipping

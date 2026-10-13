@@ -620,6 +620,14 @@ activeExecution?: ActiveExecution | null;
    * offered twice; `questType` is the native `Quest.questType`. */
   dailyQuestTargets?: readonly Readonly<{ targetId: string; questType: number; title: string }>[];
   acceptedDailyQuest?: boolean;
+  specialOrderTargets?: readonly Readonly<{ targetId: string; questKey: string; orderType: string; generationSeed: number }>[];
+  activeSpecialOrderKeys?: readonly string[];
+  museumRewardTargets?: readonly Readonly<{ targetId: string; location: string; rewardCount: number }>[];
+  /** The sewing-machine targets this actor can act on right now: the pair of backpack slots and the
+   * item ids they hold, the kind of act (`recipe` or `dye`), the qualified id the act produces, and -
+   * for a dye target - the garment's CURRENT colour and name. `garmentColour` is the fact
+   * `dye_clothing_with_item` changes, and this projection is the only read of it. */
+  tailoringTargets?: readonly Readonly<{ targetId: string; kind: string; leftSlot: number; rightSlot: number; leftQualifiedItemId: string; rightQualifiedItemId: string; outputQualifiedItemId: string; garmentColour: string | null; garmentName: string | null }>[];
   /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
    * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
   wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
@@ -663,7 +671,12 @@ export type ExecutionRequest = Readonly<{
     | "toggle_animal_door"
     | "clear_fish_pond"
     | "accept_daily_quest"
+    | "accept_special_order"
+    | "claim_museum_reward"
     | "build_farm_building"
+    | "redeem_prize_ticket"
+    | "tailor_clothing"
+    | "dye_clothing_with_item"
     | "send_multiplayer_chat"
     | "name_entity"
     | "use_warp_item"
@@ -1281,6 +1294,10 @@ const SNAPSHOT_KEYS = [
   "worldObjectTargets",
   "farmBuildingTargets",
   "dailyQuestTargets",
+  "specialOrderTargets",
+  "activeSpecialOrderKeys",
+  "museumRewardTargets",
+  "tailoringTargets",
   "acceptedDailyQuest",
   "wearableTargets",
   "warpItemTargets",
@@ -1300,6 +1317,10 @@ const SNAPSHOT_KEYS = [
     "worldObjectTargets",
     "farmBuildingTargets",
     "dailyQuestTargets",
+    "specialOrderTargets",
+    "activeSpecialOrderKeys",
+    "museumRewardTargets",
+    "tailoringTargets",
     "acceptedDailyQuest",
   "wearableTargets",
   "warpItemTargets",
@@ -1824,6 +1845,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "toggle_animal_door" &&
      value.action !== "clear_fish_pond" &&
     value.action !== "accept_daily_quest" &&
+     value.action !== "accept_special_order" &&
+     value.action !== "claim_museum_reward" &&
+     value.action !== "redeem_prize_ticket" &&
+     value.action !== "tailor_clothing" &&
+     value.action !== "dye_clothing_with_item" &&
      value.action !== "build_farm_building" &&
      value.action !== "send_multiplayer_chat" &&
      value.action !== "name_entity" &&
@@ -1995,6 +2021,12 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // branch above - refused every request the Mod would have accepted, so the action was advertised
     // and could never execute.
     if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
+
+  } else if (value.action === "accept_special_order" || value.action === "claim_museum_reward") {
+    // The offer's / reward set's identity ALONE. Neither projection publishes a tile, and the Mod's own
+    // wire parser pins exactly { expectedTargetId } for both (BridgeProtocol.ExecutionArgumentProperties),
+    // so this branch is not the sibling { x, y, expectedTargetId } shape.
+    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
   } else if (value.action === "send_multiplayer_chat") {
     // One string and nothing else, bounded by the SAME length the Mod enforces (its
     // ChatMessageMaximumLength): an argument the wire accepts but the handler refuses would be a
@@ -2039,6 +2071,19 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // reads who.ActiveObject (the HELD item, i.e. Items[CurrentToolIndex]), not "some item in the
     // pack", so the request must name the slot that is already the held one.
     if (!hasExactKeys(value.args, ["x", "y", "slot", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "redeem_prize_ticket") {
+    // No client-supplied target at all: the prize track head is the game's own `ticketPrizesClaimed`
+    // state and the subject is the actor's own ticket stack, so the args must be exactly empty - the
+    // Mod's own wire parser pins the empty set (BridgeProtocol.ExecutionArgumentProperties). A target
+    // id "for safety" would make every request invalid.
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
+  } else if (value.action === "tailor_clothing" || value.action === "dye_clothing_with_item") {
+    // The sewing-machine pair names the TWO backpack slots and the opaque pair identity discovery
+    // published; there is no coordinate. The Mod's own wire parser pins exactly this shape
+    // (BridgeProtocol.ExecutionArgumentProperties).
+    if (!hasExactKeys(value.args, ["leftSlot", "rightSlot", "expectedTargetId"])) return "invalid_execution_request";
+    if (!isNonNegativeSafeInteger(value.args.leftSlot) || !isNonNegativeSafeInteger(value.args.rightSlot))
+      return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2519,6 +2564,34 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     return "invalid_snapshot:dailyQuestTargets";
   if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
     return "invalid_snapshot:acceptedDailyQuest";
+  if (
+    value.specialOrderTargets !== undefined &&
+    (!Array.isArray(value.specialOrderTargets) ||
+      value.specialOrderTargets.length > 16 ||
+      !value.specialOrderTargets.every(isSpecialOrderTargetFact))
+  )
+    return "invalid_snapshot:specialOrderTargets";
+  if (
+    value.activeSpecialOrderKeys !== undefined &&
+    (!Array.isArray(value.activeSpecialOrderKeys) ||
+      value.activeSpecialOrderKeys.length > 16 ||
+      !value.activeSpecialOrderKeys.every((entry) => typeof entry === "string" && entry.length > 0))
+  )
+    return "invalid_snapshot:activeSpecialOrderKeys";
+  if (
+    value.museumRewardTargets !== undefined &&
+    (!Array.isArray(value.museumRewardTargets) ||
+      value.museumRewardTargets.length > 16 ||
+      !value.museumRewardTargets.every(isMuseumRewardTargetFact))
+  )
+    return "invalid_snapshot:museumRewardTargets";
+  if (
+    value.tailoringTargets !== undefined &&
+    (!Array.isArray(value.tailoringTargets) ||
+      value.tailoringTargets.length > 32 ||
+      !value.tailoringTargets.every(isTailoringTargetFact))
+  )
+    return "invalid_snapshot:tailoringTargets";
   if (
     value.wearableTargets !== undefined &&
     (!Array.isArray(value.wearableTargets) ||
@@ -3279,6 +3352,11 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
        value.action === "send_multiplayer_chat" ||
       value.action === "name_entity" ||
        value.action === "accept_daily_quest" ||
+       value.action === "accept_special_order" ||
+       value.action === "claim_museum_reward" ||
+       value.action === "redeem_prize_ticket" ||
+       value.action === "tailor_clothing" ||
+       value.action === "dye_clothing_with_item" ||
       value.action === "place_owned_object" ||
       value.action === "remove_placed_item" ||
       value.action === "break_container_source" ||
@@ -4906,6 +4984,34 @@ function dailyQuestError(value: Record<string, unknown>): string | null {
   }
   if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
     return "invalid_snapshot:acceptedDailyQuest";
+  if (
+    value.specialOrderTargets !== undefined &&
+    (!Array.isArray(value.specialOrderTargets) ||
+      value.specialOrderTargets.length > 16 ||
+      !value.specialOrderTargets.every(isSpecialOrderTargetFact))
+  )
+    return "invalid_snapshot:specialOrderTargets";
+  if (
+    value.activeSpecialOrderKeys !== undefined &&
+    (!Array.isArray(value.activeSpecialOrderKeys) ||
+      value.activeSpecialOrderKeys.length > 16 ||
+      !value.activeSpecialOrderKeys.every((entry) => typeof entry === "string" && entry.length > 0))
+  )
+    return "invalid_snapshot:activeSpecialOrderKeys";
+  if (
+    value.museumRewardTargets !== undefined &&
+    (!Array.isArray(value.museumRewardTargets) ||
+      value.museumRewardTargets.length > 16 ||
+      !value.museumRewardTargets.every(isMuseumRewardTargetFact))
+  )
+    return "invalid_snapshot:museumRewardTargets";
+  if (
+    value.tailoringTargets !== undefined &&
+    (!Array.isArray(value.tailoringTargets) ||
+      value.tailoringTargets.length > 32 ||
+      !value.tailoringTargets.every(isTailoringTargetFact))
+  )
+    return "invalid_snapshot:tailoringTargets";
   return null;
 }
 
@@ -4920,6 +5026,59 @@ function isDailyQuestTargetFact(value: unknown): boolean {
     typeof value.questType === "number" &&
     Number.isSafeInteger(value.questType) &&
     typeof value.title === "string"
+  );
+}
+
+/** One offered special order: the opaque id it was published under, its `Data/SpecialOrders` key, its
+ * board type (empty for the town board is legal), and the seed the pool generation chose for it. */
+function isSpecialOrderTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "questKey", "orderType", "generationSeed"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.questKey === "string" &&
+    value.questKey.length > 0 &&
+    typeof value.orderType === "string" &&
+    typeof value.generationSeed === "number" &&
+    Number.isSafeInteger(value.generationSeed)
+  );
+}
+
+/** The museum's whole current reward set: the opaque id it was published under, the museum location, and
+ * how many item rewards a claim would collect. */
+function isMuseumRewardTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "rewardCount"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    typeof value.rewardCount === "number" &&
+    Number.isSafeInteger(value.rewardCount) &&
+    value.rewardCount > 0
+  );
+}
+
+/** One sewing-machine target: the pair of backpack slots and the item ids they hold, the kind of act
+ * (`recipe` or `dye`), the qualified id the act produces, and - for a dye target - the garment's
+ * CURRENT colour and name. `garmentColour` is the fact `dye_clothing_with_item`'s postcondition
+ * changes, so a target whose identity ignored it could not be verified. */
+function isTailoringTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "kind", "leftSlot", "rightSlot", "leftQualifiedItemId", "rightQualifiedItemId", "outputQualifiedItemId", "garmentColour", "garmentName"]) &&
+    isOpaqueId(value.targetId) &&
+    (value.kind === "recipe" || value.kind === "dye") &&
+    isNonNegativeSafeInteger(value.leftSlot) &&
+    isNonNegativeSafeInteger(value.rightSlot) &&
+    typeof value.leftQualifiedItemId === "string" &&
+    value.leftQualifiedItemId.length > 0 &&
+    typeof value.rightQualifiedItemId === "string" &&
+    value.rightQualifiedItemId.length > 0 &&
+    typeof value.outputQualifiedItemId === "string" &&
+    value.outputQualifiedItemId.length > 0 &&
+    (value.garmentColour === null || typeof value.garmentColour === "string") &&
+    (value.garmentName === null || typeof value.garmentName === "string")
   );
 }
 

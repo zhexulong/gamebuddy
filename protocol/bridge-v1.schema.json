@@ -6197,7 +6197,12 @@
             "dismount_transport",
             "build_farm_building",
             "accept_daily_quest",
-            "name_entity"
+            "accept_special_order",
+            "claim_museum_reward",
+            "tailor_clothing",
+            "dye_clothing_with_item",
+            "name_entity",
+            "redeem_prize_ticket"
           ]
         },
         "args": {

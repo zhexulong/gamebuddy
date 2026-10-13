@@ -568,6 +568,15 @@ export function fixtureActions(action) {
   if (action === "build_farm_building") return ["build_farm_building"];
   if (action === "name_entity") return ["name_entity"];
   if (action === "accept_daily_quest") return ["accept_daily_quest"];
+  if (action === "accept_special_order") return ["accept_special_order"];
+  if (action === "claim_museum_reward") return ["claim_museum_reward"];
+  if (action === "redeem_prize_ticket") return ["redeem_prize_ticket"];
+  // The two-slot sewing-machine pair. Both are backpack transactions with no world precondition, so
+  // the fixture publishes each action alone.
+  if (action === "tailor_clothing") return ["tailor_clothing"];
+  if (action === "dye_clothing_with_item") return ["dye_clothing_with_item"];
+  if (action === "accept_special_order") return ["accept_special_order"];
+  if (action === "claim_museum_reward") return ["claim_museum_reward"];
   // The building-chest pair. Both publish the same load/collect targets over the building the
   // fixture provisions (a Load chest and a Collect chest declared by its own data); each action is
   // independently listed because neither is a precondition of the other.
@@ -786,6 +795,15 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("build_farm_building")) return "native_build_farm_building_v1";
   if (actions.includes("name_entity")) return "native_name_entity_v1";
   if (actions.includes("accept_daily_quest")) return "native_accept_daily_quest_v1";
+  if (actions.includes("accept_special_order")) return "native_accept_special_order_v1";
+  if (actions.includes("claim_museum_reward")) return "native_claim_museum_reward_v1";
+  if (actions.includes("redeem_prize_ticket")) return "native_prize_ticket_v1";
+  // The two-slot sewing-machine pair shares ONE declared Given: the fixture grants a recipe pair AND a
+  // dye pair, so a run of EITHER action arms the same scenario.
+  if (actions.includes("tailor_clothing") || actions.includes("dye_clothing_with_item"))
+    return "native_tailoring_v1";
+  if (actions.includes("accept_special_order")) return "native_accept_special_order_v1";
+  if (actions.includes("claim_museum_reward")) return "native_claim_museum_reward_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
   if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
   if (action === "talk_to_npc") return "native_talk_to_npc_v1";

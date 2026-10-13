@@ -298,12 +298,43 @@ public static class FarmhandActionCatalog
         // and are not reproduced. Experimental: it has no live gate yet, and promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
         E("accept_daily_quest", "quests_journal", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "daily_quest_accepted", "Quest.accept"), FarmhandActionLifecycle.LiveVerified),
+        // accept_special_order takes one offered special order through the creation half's public,
+        // menu-free face (FarmerTeam.AddSpecialOrder, FarmerTeam.cs:681). The board's own Accept branch also
+        // writes the board marker, which the handler reproduces; see
+        // farmhandexecutioncontroller.specialorders.cs.
+        E("accept_special_order", "quests_journal", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "special_order_accepted", "FarmerTeam.AddSpecialOrder"), FarmhandActionLifecycle.Experimental),
+        // claim_museum_reward collects the museum's computed reward set through the two native members the
+        // reward menu's own flow uses (LibraryMuseum.getRewardsForPlayer + LibraryMuseum.OnRewardCollected);
+        // see farmhandexecutioncontroller.museumrewards.cs.
+        E("claim_museum_reward", "quests_journal", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "museum_rewards_collected", "LibraryMuseum.getRewardsForPlayer"), FarmhandActionLifecycle.Experimental),
         // Give the actor's OWN horse its name through the game's own naming settlement
         // (`Horse.nameHorse`, Characters/Horse.cs:570): public, UI-free, and the body the naming
         // menu's own callback binding (Horse.cs:637) ends in. The subject is the actor's own
         // horse (`Utility.findHorseForPlayer`), so it carries the wire's one free-text argument
         // and NO target id - an unnamed horse is published by no projection.
         E("name_entity", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "entity_named", ("text", "string")), FarmhandActionLifecycle.LiveVerified),
+        // Redeeming one prize ticket at the machine. The exchange is the timed branch inside
+        // `PrizeTicketMenu.update` (Menus/PrizeTicketMenu.cs:180-185): the prize the machine's own track
+        // head derives, the native `addItemToInventoryBool` delivery, `Items.ReduceId("PrizeTicket", 1)`
+        // and `stats.Increment("ticketPrizesClaimed")`. There is no single settlement to call and the
+        // click handler only arms UI state (:145-160), so the handler reproduces that PUBLIC CALL
+        // SEQUENCE and re-derives the choice from the game's own public faces
+        // (`PrizeTicketMenu.getPrizeItem` + the live `ticketPrizesClaimed` stat) - the B1b form
+        // `design/domains/stardew/menu-bound-and-ui-boundary.md` 2.1 already ruled on.
+        // No arguments: the subject is the actor's own ticket stack and the machine's own track
+        // position, both native state that no projection publishes. Experimental: it has no live gate
+        // yet, and promotion to LiveVerified is a separate catalog edit owned by the parent.
+        E("redeem_prize_ticket", "shops_economy", FarmhandActionHandlerGroup.WorldLifecycle, new FarmhandActionDescriptor(Array.Empty<FarmhandActionArgument>(), new Dictionary<string, string>(), EmbodiedActorResource, "write", "prize_ticket_redeemed", "PrizeTicketMenu.getPrizeItem"), FarmhandActionLifecycle.Experimental),
+        // The sewing machine. Both actions are backpack transactions: the actor names TWO slots and the
+        // opaque pair identity discovery published. `tailor_clothing` consumes the cloth and the reagent a
+        // live recipe pairs and produces that recipe's garment (`TailoringMenu.CraftItem`);
+        // `dye_clothing_with_item` recolours one existing garment from one dye item
+        // (`TailoringMenu.DyeItems`). Neither carries a coordinate: the subject is the actor's own backpack,
+        // not a world tile. Experimental: each stays off the default Agent surface until it passes its own
+        // native-local live gate, and promotion to LiveVerified is a separate catalog edit owned by the
+        // parent. See farmhandexecutioncontroller.tailoringactions.cs.
+        E("tailor_clothing", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_tailored", "TailoringMenu.CraftItem"), FarmhandActionLifecycle.Experimental),
+        E("dye_clothing_with_item", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_dyed", "TailoringMenu.DyeItems"), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);

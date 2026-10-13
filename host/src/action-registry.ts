@@ -471,6 +471,36 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Move one shippable carried inventory stack into the current player's live shipping bin through the native shipping settlement.",
     ["shipping_bin", "inventory_slot"],
   ),
+  actionAdapter(
+    "accept_special_order",
+    "Accept an offered special order",
+    "Accept one of the special orders a board is offering through the game own FarmerTeam.AddSpecialOrder settlement, and record the board as used exactly as the board own Accept button does. Read the opaque target id, the `questKey` and the `orderType` from the `specialOrderTargets` projection; the Mod re-resolves the offer against the live pool and refuses by name when it is gone, already active, or its board has already been used.",
+    ["quests"],
+  ),
+  actionAdapter(
+    "claim_museum_reward",
+    "Collect the museum rewards you are owed",
+    "Collect every museum donation reward this player is entitled to, through the two native members the reward menu own flow uses (`LibraryMuseum.getRewardsForPlayer`, which both lists the items and grants the non-item rewards, and `LibraryMuseum.OnRewardCollected`, the menu own grab callback). Read the opaque target id and the `rewardCount` from the `museumRewardTargets` projection; a museum with nothing to collect is refused by name.",
+    ["museum", "rewards"],
+  ),
+  actionAdapter(
+    "redeem_prize_ticket",
+    "Redeem a prize ticket",
+    "Redeem one prize ticket at the machine through the same public call sequence the machine own reward branch performs: the prize the game own track derives, the native delivery, the ticket reduction and the ticketPrizesClaimed stat. It takes NO arguments - the subject is your own ticket stack and the machine own track position, both native state - and the receipt proves BOTH halves: the ticket stack fell by exactly one AND the prize entered your pack. It refuses by name when you hold no ticket (prize_ticket_unavailable) or your pack cannot take the prize (prize_inventory_full).",
+    ["prize_ticket"],
+  ),
+  actionAdapter(
+    "tailor_clothing",
+    "Tailor clothing from a recipe pair",
+    "Consume the cloth and the reagent a live sewing-machine recipe pairs and produce that recipe's garment into your backpack through the game own `TailoringMenu.CraftItem` settlement. Read the opaque target id, the two backpack slots (`leftSlot`/`rightSlot`) and the produced item id from the `tailoringTargets` entries of the most recent observation; the Mod re-reads both named slots on the game thread and refuses by name when the pair no longer mints the published id. When the garment only partly fits, the receipt says so (`clothing_tailoring_output_dropped`) rather than claiming a full success.",
+    ["tailoring", "inventory_slot"],
+  ),
+  actionAdapter(
+    "dye_clothing_with_item",
+    "Dye clothing with one item",
+    "Recolour one existing garment from one dye item through the game own `TailoringMenu.DyeItems` route. Read the opaque target id, the garment slot (`leftSlot`), the dye slot (`rightSlot`) and the garment's CURRENT `garmentColour` from the `tailoringTargets` entries of the most recent observation. The receipt proves the dye was spent AND the colour moved (or stayed where it was when the dye carries the same colour), and reports before/expected/after; a colour that did not settle is never reported as success.",
+    ["tailoring", "inventory_slot"],
+  ),
 ]) satisfies readonly StardewActionAdapter[];
 
 export type StardewActionId =
@@ -587,6 +617,11 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   remove_placed_item: "stardew_remove_placed_item",
   break_container_source: "stardew_break_container_source",
   use_obelisk: "stardew_use_obelisk",
+  accept_special_order: "stardew_accept_special_order",
+  claim_museum_reward: "stardew_claim_museum_reward",
+  redeem_prize_ticket: "stardew_redeem_prize_ticket",
+  tailor_clothing: "stardew_tailor_clothing",
+  dye_clothing_with_item: "stardew_dye_clothing_with_item",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -744,6 +779,11 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "claim_mail_attachment",
   "build_farm_building",
   "accept_daily_quest",
+  "accept_special_order",
+  "claim_museum_reward",
+  "redeem_prize_ticket",
+  "tailor_clothing",
+  "dye_clothing_with_item",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -1063,6 +1103,47 @@ export function isModDescriptorComplete(
     if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "daily_quest_accepted") return false;
+    return true;
+  }
+  if (actionId === "accept_special_order") {
+    // One offered special order, named by the opaque target id alone: the offer is the player team's own
+    // state rather than a tile, so there is no coordinate to carry.
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "special_order_accepted") return false;
+    return true;
+  }
+  if (actionId === "claim_museum_reward") {
+    // The museum's whole reward set, named by the opaque target id alone: the set is computed state, not a
+    // tile, so there is no coordinate to carry.
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "museum_rewards_collected") return false;
+    return true;
+  }
+  if (actionId === "redeem_prize_ticket") {
+    // No arguments at all: the prize track head is the game's own state (`ticketPrizesClaimed`) and the
+    // subject is the actor's own ticket stack, so there is no published target a caller could name. The
+    // exact wire shape is the EMPTY set, and the Host rejects extra or missing keys.
+    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "prize_ticket_redeemed") return false;
+    return true;
+  }
+  if (actionId === "tailor_clothing") {
+    // The sewing machine's two-slot recipe pair, named by BOTH backpack slots plus the opaque pair
+    // identity: the subject is the actor's own backpack, not a world tile, so there is no coordinate.
+    if (!hasExactPublishedArgumentNames(descriptor, ["leftSlot", "rightSlot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "clothing_tailored") return false;
+    return true;
+  }
+  if (actionId === "dye_clothing_with_item") {
+    // The same two-slot shape over the dye route: the garment slot, the dye slot and the opaque pair
+    // identity.
+    if (!hasExactPublishedArgumentNames(descriptor, ["leftSlot", "rightSlot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "clothing_dyed") return false;
     return true;
   }
   return false;

@@ -38,6 +38,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class DeclaredArgumentAcceptanceTests
 {
+    /// <summary>The product's bound on `build_farm_building`'s `buildingType`
+    /// (farmhandexecutionacceptance.cs: `Length is > 0 and &lt;= 128`), mirrored here so the
+    /// perturbation can go one past it.</summary>
+    private const int BuildingTypeMaximumLength = 128;
+
     // ---------------------------------------------------------------------------------------
     // Value derivation
     // ---------------------------------------------------------------------------------------
@@ -76,38 +81,42 @@ public sealed class DeclaredArgumentAcceptanceTests
     }
 
     /// <summary>
-    /// A value that must be REFUSED for this argument, or null when no single-argument
-    /// perturbation expresses the rule. The coverage test below reports what is unperturbable
-    /// rather than pretending to cover it.
+    /// The values that must be REFUSED for this argument, empty when no single-argument
+    /// perturbation expresses the rule. A TWO-SIDED bound needs both halves violated, so this is a
+    /// list rather than one value; the coverage test below reports what is unperturbable rather
+    /// than pretending to cover it.
     /// </summary>
-    private static string? InvalidValueFor(FarmhandActionArgument argument)
+    private static IReadOnlyList<string> InvalidValuesFor(FarmhandActionArgument argument)
     {
         if (argument.Enum is { Count: > 0 })
         {
-            return "not_a_declared_member";
+            return new[] { "not_a_declared_member" };
         }
         return argument.Type switch
         {
             "integer" => argument.Name switch
             {
-                "quantity" => "0",    // nothing may ask for zero units
-                "slot" => "99999",    // far outside MaximumInventorySlot
-                _ => "-1",            // below the coordinate floor
+                "quantity" => new[] { "0" },    // nothing may ask for zero units
+                "slot" => new[] { "99999" },    // far outside MaximumInventorySlot
+                _ => new[] { "-1" },            // below the coordinate floor
             },
             "string" => argument.Name switch
             {
                 // An opaque id forbids characters outside [A-Za-z0-9_-] and forbids emptiness.
-                "expectedTargetId" => "not a valid id!",
-                "buildingType" => "",              // the rule refuses blank; the invalid case perturbs to empty
+                "expectedTargetId" => new[] { "not a valid id!" },
+                // The rule is `Length is > 0 && Length <= 128`, so BOTH halves are perturbed: a
+                // blank type id is refused because a building type cannot be empty, and one past
+                // the bound is refused because a longer id is too long.
+                "buildingType" => new[] { string.Empty, new string('x', BuildingTypeMaximumLength + 1) },
                 // One character past the bound the wire and the handler both read. Emptiness is the rule's other
                 // half and is covered where it belongs: the action's own test suite has
                 // Refusal_EmptyOrBlankText_IsChatMessageInvalid, so this perturbation spends itself on the bound.
-                "text" => new string('x', GameBuddy.Stardew.Core.Policy.FarmhandActionCatalog.ChatMessageMaximumLength + 1),
-                _ => string.Empty,
+                "text" => new[] { new string('x', GameBuddy.Stardew.Core.Policy.FarmhandActionCatalog.ChatMessageMaximumLength + 1) },
+                _ => new[] { string.Empty },
             },
             // kind "label" tolerates neither a null label nor a non-null ref.
-            "destination_selector" => "label-with-ref",
-            _ => null,
+            "destination_selector" => new[] { "label-with-ref" },
+            _ => Array.Empty<string>(),
         };
     }
 
@@ -240,25 +249,26 @@ public sealed class DeclaredArgumentAcceptanceTests
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Kind == FarmhandOperationKind.Execution && registration.Descriptor is not null)
             .SelectMany(registration => registration.Descriptor!.Arguments
-                .Where(argument => InvalidValueFor(argument) is not null)
-                .Select(argument => new object[] { registration.ActionId, argument.Name }));
+                .SelectMany(argument => InvalidValuesFor(argument)
+                    .Select(invalid => new object[] { registration.ActionId, argument.Name, invalid })));
 
     [Theory]
     [MemberData(nameof(PerturbableArguments))]
-    public void DeclaredArguments_RefuseAValueOutsideTheirRule(string actionId, string argumentName)
+    public void DeclaredArguments_RefuseAValueOutsideTheirRule(string actionId, string argumentName, string invalid)
     {
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
             .First(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
         FarmhandActionDescriptor descriptor = registration.Descriptor!;
 
         FarmhandActionArgument target = descriptor.Arguments.First(argument => argument.Name == argumentName);
-        string? invalid = InvalidValueFor(target);
-        invalid.Should().NotBeNull();
+        InvalidValuesFor(target).Should().Contain(
+            invalid,
+            $"'{invalid}' must be a value this test derives for {actionId}.{argumentName}");
 
         var declared = descriptor.Arguments
             .Select(argument => (argument.Name, RepresentativeValueFor(descriptor, argument)))
             .ToList();
-        BridgeExecutionArgs args = BuildArgs(descriptor, declared, overrideName: argumentName, overrideValue: invalid!);
+        BridgeExecutionArgs args = BuildArgs(descriptor, declared, overrideName: argumentName, overrideValue: invalid);
 
         bool accepted = Accept(descriptor, args, out string reasonCode);
 
@@ -299,7 +309,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         declarations.Should().NotBeEmpty();
 
         List<string> uncovered = declarations
-            .Where(d => InvalidValueFor(d.Argument) is null)
+            .Where(d => InvalidValuesFor(d.Argument).Count == 0)
             .Select(d => d.ActionId + "." + d.Argument.Name)
             .ToList();
 

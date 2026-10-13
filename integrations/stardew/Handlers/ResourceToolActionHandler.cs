@@ -154,6 +154,20 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "tailor_clothing" => this.executions.RequestLocalTailorClothing(
+                request.RequestId,
+                request.Args.LeftSlot ?? 0,
+                request.Args.RightSlot ?? 0,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "dye_clothing_with_item" => this.executions.RequestLocalDyeClothingWithItem(
+                request.RequestId,
+                request.Args.LeftSlot ?? 0,
+                request.Args.RightSlot ?? 0,
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
     }

@@ -538,8 +538,18 @@ public sealed record BridgeSnapshot(
         // plus the world flag the accept turns true. Defaulted and LAST for the same reason as the
         // siblings above: the positional list is already closed by the parameters before them.
         IReadOnlyList<BridgeDailyQuestTarget>? DailyQuestTargets = null,
-        bool? AcceptedDailyQuest = null
-    );
+        bool? AcceptedDailyQuest = null,
+        // The offered special orders plus the team's own active-order read, published only while
+        // `accept_special_order` is advertised - the discovery projection that action's expectedTargetId
+        // comes from - and the museum's reward set for `claim_museum_reward`. Defaulted and LAST for the
+        // same reason as their siblings above.
+        IReadOnlyList<BridgeSpecialOrderTarget>? SpecialOrderTargets = null,
+        IReadOnlyList<string>? ActiveSpecialOrderKeys = null,
+        IReadOnlyList<BridgeMuseumRewardTarget>? MuseumRewardTargets = null
+    
+    // The sewing-machine targets this actor can act on right now: defaulted and LAST for the same reason as
+    // its siblings above - the positional list is already closed by the parameters before it.
+    ,IReadOnlyList<BridgeTailoringTarget>? TailoringTargets = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -621,6 +631,11 @@ public sealed class BridgeExecutionArgs
     public float? X { get; init; }
     public float? Y { get; init; }
     public int? Slot { get; init; }
+    /// <summary>The FIRST sewing-machine slot a tailoring request names (the recipe's first ingredient for
+    /// `tailor_clothing`, the garment for `dye_clothing_with_item`). Only the tailoring pair uses it.</summary>
+    public int? LeftSlot { get; init; }
+    /// <summary>The SECOND sewing-machine slot (the reagent, or the dye item).</summary>
+    public int? RightSlot { get; init; }
     /// <summary>Semantic tool selector (equip_tool/v2): a canonical category that the
     /// Mod resolves deterministically on the game thread; slot stays Mod-private.</summary>
     public string? Tool { get; init; }
@@ -674,6 +689,21 @@ public sealed record BridgeAnimalDoorTarget(string TargetId, string Location, in
 /// eject (the body spawns one fish item per occupant as ground debris, so the count is what the player
 /// recovers) - an EMPTY pond is never advertised, since it has nothing to clear.</summary>
 public sealed record BridgeFishPondTarget(string TargetId, string Location, int X, int Y, string BuildingType, int Occupants, string FishType);
+
+/// <summary>One sewing-machine target the actor can act on right now: the pair of backpack slots and the
+/// item ids they hold, the kind of act (`craft` or `dye`), the qualified id the act produces, and - for a dye
+/// target - the garment's CURRENT colour and name, because the colour is the fact
+/// `dye_clothing_with_item` changes and this projection is the only read of it.</summary>
+public sealed record BridgeTailoringTarget(
+    string TargetId,
+    string Kind,
+    int LeftSlot,
+    int RightSlot,
+    string LeftQualifiedItemId,
+    string RightQualifiedItemId,
+    string OutputQualifiedItemId,
+    string? GarmentColour,
+    string? GarmentName);
 
 
 /// <summary>One named inventory a BUILDING declares in its own data (Data/Buildings ->
@@ -742,6 +772,12 @@ public sealed record BridgePanSiteTarget(int X, int Y);
 /// hashed INTO the id and never published, so the projection carries the mail count without
 /// carrying mailbox content.</summary>
 public sealed record BridgeMailboxTarget(string TargetId, string Location, int X, int Y, int PendingCount);
+
+/// <summary>One special order the player team is offering and no board has been used for, identified opaquely so the caller names the offer and never a raw native order. QuestKey and GenerationSeed are part of the identity the action re-resolves; OrderType is the board type the accept's own marker is keyed by (empty for the town board, which is a legal value).</summary>
+public sealed record BridgeSpecialOrderTarget(string TargetId, string QuestKey, string OrderType, int GenerationSeed);
+
+/// <summary>The museum's whole current reward set, identified opaquely. RewardCount is how many item rewards a claim would collect, published because it is what the action's own precondition tests; the reward-data keys themselves are hashed INTO the id and never published.</summary>
+public sealed record BridgeMuseumRewardTarget(string TargetId, string Location, int RewardCount);
 
 /// <summary>The day's posted help-wanted quest, identified opaquely and published only while
 /// `accept_daily_quest` is advertised AND Game1.CanAcceptDailyQuest() is true - the same predicate

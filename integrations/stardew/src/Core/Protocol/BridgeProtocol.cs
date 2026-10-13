@@ -1947,6 +1947,20 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // accept_daily_quest names the day's posted help-wanted quest through the opaque target id
         // the Mod publishes. There is no coordinate: the offer is native world state, not a tile.
         "accept_daily_quest" => new[] { "expectedTargetId" },
+        // accept_special_order names one offered special order through the opaque target id the Mod
+        // publishes. There is no coordinate: the offer is the player team's own state, not a tile.
+        "accept_special_order" => new[] { "expectedTargetId" },
+        // claim_museum_reward names the museum's current reward set through the opaque target id the Mod
+        // publishes. There is no coordinate: the reward set is computed state, not a tile.
+        "claim_museum_reward" => new[] { "expectedTargetId" },
+        // redeem_prize_ticket carries NO client-supplied arguments at all: the prize track head is the
+        // game's own state (`ticketPrizesClaimed`) and the subject is the actor's own ticket stack, so
+        // there is no published target a caller could name - and none that could go stale.
+        "redeem_prize_ticket" => Array.Empty<string>(),
+        // The sewing-machine pair. Both actions are two-slot backpack transactions: the request names
+        // BOTH inventory slots and the opaque pair identity discovery published. There is no coordinate:
+        // the subject is the actor's own backpack, not a world tile.
+        "tailor_clothing" or "dye_clothing_with_item" => new[] { "leftSlot", "rightSlot", "expectedTargetId" },
         // name_entity's subject is the actor's OWN horse and its one input is the name itself,
         // so the wire carries exactly the protocol's free-text argument.
         "name_entity" => new[] { "text" },

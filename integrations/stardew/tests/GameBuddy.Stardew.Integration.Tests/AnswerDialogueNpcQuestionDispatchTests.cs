@@ -65,8 +65,11 @@ public sealed class AnswerDialogueNpcQuestionDispatchTests
 
         body.Should().Contain("\"response_key_not_offered\"");
         body.Should().Contain("\"answer_dialogue_not_accepted\"");
-        body.Should().Contain("\"postcondition_failed\"");
         body.Should().Contain("\"answer_dialogue_native_exception\"");
+        // There is deliberately NO `postcondition_failed` terminal here any more: the box's own
+        // outro has no independent synchronous read (`beginOutro()` sets only `transitioning` and
+        // `transitioningBigger`), so the old check could never fire. See the body's comment.
+        body.Should().NotContain("\"postcondition_failed\"");
     }
 
     private static string AnswerBody() =>

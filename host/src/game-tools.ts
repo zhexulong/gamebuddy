@@ -1811,6 +1811,133 @@ export function createStardewActionTools(
 
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "accept_special_order",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("accept_special_order", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("accept_special_order", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.accept_special_order,
+          label: "Accept an offered special order",
+          description:
+            "Accept one of the special orders a board is offering. Read the opaque target id, the `questKey` and the `orderType` from the `specialOrderTargets` entries of the most recent observation, and expect the order to appear in the snapshot's `activeSpecialOrderKeys` afterwards; an order that is already active, or whose board has already been used for an accept, is refused by name.",
+          parameters: schema,
+          action: "accept_special_order",
+          toArgs: (params) => ({
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "claim_museum_reward",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("claim_museum_reward", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("claim_museum_reward", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.claim_museum_reward,
+          label: "Collect the museum rewards you are owed",
+          description:
+            "Collect every museum donation reward this player is entitled to. Read the opaque target id and the `rewardCount` from the `museumRewardTargets` entries of the most recent observation; the reward items are delivered into the backpack and recorded as collected. A museum with nothing to collect is refused by name rather than reporting an empty success.",
+          parameters: schema,
+          action: "claim_museum_reward",
+          toArgs: (params) => ({
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "redeem_prize_ticket",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("redeem_prize_ticket", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("redeem_prize_ticket", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.redeem_prize_ticket,
+          label: "Redeem a prize ticket",
+          description:
+            "Redeem one prize ticket at the machine. It takes NO arguments: the prize is whatever the machine own track head offers you right now, derived by the game from your own ticketPrizesClaimed stat, so there is nothing to choose and nothing to name. The receipt proves BOTH halves - the ticket stack fell by exactly one AND the prize entered your pack - and it refuses by name when you hold no ticket (prize_ticket_unavailable) or your pack cannot take the prize (prize_inventory_full) rather than dropping it on the ground.",
+          parameters: schema,
+          action: "redeem_prize_ticket",
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "tailor_clothing",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("tailor_clothing", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("tailor_clothing", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.tailor_clothing,
+          label: "Tailor clothing from a recipe pair",
+          description:
+            "Consume the cloth and the reagent a live sewing-machine recipe pairs and produce that recipe's garment into your backpack. Read the opaque target id, the two backpack slots (`leftSlot`/`rightSlot`) and the produced item id from the `tailoringTargets` entries of the most recent observation; the Mod re-reads both named slots on the game thread and refuses by name when the pair no longer mints the published id. A garment only part of which fits is reported as `clothing_tailoring_output_dropped`, never as a full success.",
+          parameters: schema,
+          action: "tailor_clothing",
+          toArgs: (params) => ({
+            leftSlot: params.leftSlot,
+            rightSlot: params.rightSlot,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
+      (entry) => entry.actionId === "dye_clothing_with_item",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("dye_clothing_with_item", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("dye_clothing_with_item", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.dye_clothing_with_item,
+          label: "Dye clothing with one item",
+          description:
+            "Recolour one existing garment from one dye item. Read the opaque target id, the garment slot (`leftSlot`), the dye slot (`rightSlot`) and the garment's CURRENT `garmentColour` from the `tailoringTargets` entries of the most recent observation. The receipt proves the dye was spent AND the colour settled, and reports before/expected/after; a colour that did not move is never reported as success.",
+          parameters: schema,
+          action: "dye_clothing_with_item",
+          toArgs: (params) => ({
+            leftSlot: params.leftSlot,
+            rightSlot: params.rightSlot,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "toggle_animal_door",
     );
     if (

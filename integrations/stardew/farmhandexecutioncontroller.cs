@@ -2041,7 +2041,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal) ? DiscoverChestStoreTargets(player) : null,
             advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal) ? DiscoverChestRetrieveTargets(player) : null,
-            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
+            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
             advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
@@ -2081,6 +2081,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null,
                     AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player) : null,
         FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player) : null,
+    TailoringTargets: advertisedCapabilities.Contains("tailor_clothing", StringComparer.Ordinal) || advertisedCapabilities.Contains("dye_clothing_with_item", StringComparer.Ordinal) ? DiscoverTailoringTargets(player) : null,
             // Item/tile lane projections, each published only while its own action is advertised.
             WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
             PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? DiscoverPanSites(player) : null,
@@ -2103,7 +2104,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
             DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
-            AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null
+            AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null,
+            SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
+            ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
+            MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null
         );
     }
 

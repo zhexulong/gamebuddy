@@ -27,6 +27,9 @@ internal sealed class WorldLifecycleActionHandler : IFarmhandActionHandler
         {
             "advance_day" => this.executions.RequestLocalAdvanceDay(request.RequestId, request.DeadlineMs),
             "accept_daily_quest" => this.executions.RequestLocalAcceptDailyQuest(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
+            "accept_special_order" => this.executions.RequestLocalAcceptSpecialOrder(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
+            "claim_museum_reward" => this.executions.RequestLocalClaimMuseumReward(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
+            "redeem_prize_ticket" => this.executions.RequestLocalRedeemPrizeTicket(request.RequestId, request.DeadlineMs),
             _ => new LocalExecutionReceipt(
                 Guid.NewGuid().ToString("N"),
                 request.RequestId,

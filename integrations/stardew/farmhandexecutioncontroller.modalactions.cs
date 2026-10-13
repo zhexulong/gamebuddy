@@ -250,17 +250,17 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     this.TryCreateLocalObservation(actor));
             }
 
+            // NO OUTRO POSTCONDITION CAN BE READ. `beginOutro()` (DialogueBox.cs:256-261) sets
+            // `transitioning = true` and `transitioningBigger = false` and nothing else, and this
+            // body answers through the leaves the native box itself uses (DialogueBox.cs:381-404)
+            // rather than through `receiveLeftClick`, so those two flags are the ONLY DialogueBox
+            // state the answer changes synchronously. A check on them is true merely because the
+            // call returned -- the previous `!transitioning || transitioningBigger` test could
+            // never fire -- and no other native read distinguishes a started outro from an
+            // unanswered question, so this body keeps no postcondition beyond the native
+            // acceptance that `answered` already proves (answer_dialogue_not_accepted). The later
+            // frame settlement belongs to the asynchronous modal chain, not to this receipt.
             dialogue.beginOutro();
-            if (!dialogue.transitioning || dialogue.transitioningBigger)
-            {
-                return this.RememberTerminal(
-                    request.RequestId,
-                    executionId,
-                    ExecutionState.Failed,
-                    "postcondition_failed",
-                    $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered=true;outro_started=false",
-                    this.TryCreateLocalObservation(actor));
-            }
         }
         catch (Exception nativeException)
         {

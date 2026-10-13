@@ -452,6 +452,274 @@ function hasStardewCompletionEvidence(
           },
         )
       );
+    case "tailor_clothing":
+      // Evidence literal: farmhandexecutioncontroller.tailoringactions.cs - the opaque pair identity, both
+      // backpack slots, the two item ids, the produced item id, both item counts before/after, whether the
+      // right spot was spent, the output count before/after, and the delivered/dropped disposition. The
+      // native `CraftItem` settlement builds the garment AND the menu's own completion consumes the
+      // reagents, so the rule requires both halves: the left reagent fell by exactly one (and the right one
+      // when the recipe spends it) and the produced stack reached the world (backpack plus ground drop).
+      return (
+        receipt.reasonCode === "clothing_tailored" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "left_slot",
+            "right_slot",
+            "location",
+            "left",
+            "right",
+            "output",
+            "left_before",
+            "left_after",
+            "right_before",
+            "right_after",
+            "right_spent",
+            "output_before",
+            "output_after",
+            "delivered",
+            "dropped",
+            "disposition",
+            "dropped_debris",
+          ],
+          (e) => {
+            const leftBefore = integerEvidenceValue(e.left_before);
+            const leftAfter = integerEvidenceValue(e.left_after);
+            const rightBefore = integerEvidenceValue(e.right_before);
+            const rightAfter = integerEvidenceValue(e.right_after);
+            const outputBefore = integerEvidenceValue(e.output_before);
+            const outputAfter = integerEvidenceValue(e.output_after);
+            const delivered = integerEvidenceValue(e.delivered);
+            const dropped = integerEvidenceValue(e.dropped);
+            const rightSpent = e.right_spent === "true";
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasOpaqueEvidenceValue(e.left) &&
+              hasOpaqueEvidenceValue(e.right) &&
+              hasOpaqueEvidenceValue(e.output) &&
+              leftBefore !== null &&
+              leftAfter !== null &&
+              leftAfter === leftBefore - 1 &&
+              rightBefore !== null &&
+              rightAfter !== null &&
+              rightAfter === (rightSpent ? rightBefore - 1 : rightBefore) &&
+              outputBefore !== null &&
+              outputAfter !== null &&
+              delivered !== null &&
+              dropped !== null &&
+              delivered >= 1 &&
+              dropped >= 0 &&
+              outputAfter === outputBefore + delivered &&
+              delivered + dropped >= 1
+            );
+          },
+        )
+      );
+    case "dye_clothing_with_item":
+      // Evidence literal: farmhandexecutioncontroller.tailoringactions.cs - the opaque pair identity, the
+      // garment and dye slots, the two item ids, the colour before/expected/after, the strength and its
+      // source, whether the colour moved, the prismatic flag after, the dye counts before/after and which
+      // spot was spent. `DyeItems` is a no-op on a garment it cannot recolour, so the rule requires the
+      // colour to have SETTLED (moved when the dye carries a different colour, stayed when it carries the
+      // same one) and the dye to have been consumed as the native spend rule says.
+      return (
+        receipt.reasonCode === "clothing_dyed" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "garment_slot",
+            "dye_slot",
+            "location",
+            "garment",
+            "dye",
+            "colour_before",
+            "colour_expected",
+            "colour_after",
+            "strength",
+            "strength_source",
+            "colour_changed",
+            "prismatic_after",
+            "dye_before",
+            "dye_after",
+            "dye_spent",
+            "colour_route",
+          ],
+          (e) => {
+            const dyeBefore = integerEvidenceValue(e.dye_before);
+            const dyeAfter = integerEvidenceValue(e.dye_after);
+            const dyeSpent = e.dye_spent === "true";
+            const changed = e.colour_before !== e.colour_after;
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasOpaqueEvidenceValue(e.garment) &&
+              hasOpaqueEvidenceValue(e.dye) &&
+              e.colour_before.length > 0 &&
+              e.colour_expected.length > 0 &&
+              e.colour_after.length > 0 &&
+              e.colour_changed === String(changed) &&
+              (e.prismatic_after === "true" || e.prismatic_after === "false") &&
+              dyeBefore !== null &&
+              dyeAfter !== null &&
+              dyeAfter === (dyeSpent ? dyeBefore - 1 : dyeBefore) &&
+              e.colour_route === "TailoringMenu.GetDyeColor"
+            );
+          },
+        )
+      );
+    case "accept_special_order":
+      // Evidence literal: farmhandexecutioncontroller.specialorders.cs - the opaque target, the board type,
+      // the order key and seed, the board marker before and after, the team order-list length before and
+      // after, and the two facts read back off the added order. The accept is the board's own two writes, so
+      // the rule requires both halves: the list grew by exactly one, the order is present and InProgress, and
+      // the board marker flipped from unset to set.
+      return (
+        receipt.reasonCode === "special_order_accepted" &&
+        exactEvidence(
+          detail,
+          [
+            "special_order_id",
+            "board_type",
+            "quest_key",
+            "generation_seed",
+            "board_marker_before",
+            "board_marker_after",
+            "orders_before",
+            "orders_after",
+            "order_present_after",
+            "order_in_progress_after",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.orders_before);
+            const after = integerEvidenceValue(e.orders_after);
+            const seed = integerEvidenceValue(e.generation_seed);
+            return (
+              hasOpaqueIdEvidenceValue(e.special_order_id) &&
+              hasBoundedNonemptyEvidenceValue(e.board_type) &&
+              hasBoundedNonemptyEvidenceValue(e.quest_key) &&
+              seed !== null &&
+              e.board_marker_before === "false" &&
+              e.board_marker_after === "true" &&
+              before !== null &&
+              after !== null &&
+              after - before === 1 &&
+              e.order_present_after === "true" &&
+              e.order_in_progress_after === "true"
+            );
+          },
+        )
+      );
+    case "claim_museum_reward":
+      // Evidence literal: farmhandexecutioncontroller.museumrewards.cs - the opaque target, the museum
+      // location, the reward counts before/returned/delivered/recorded/after, the mail-flag counts, and the
+      // inventory units. `rewards_collected` is the body's own verdict, so the rule re-derives it: the
+      // published set was non-empty, the enumeration returned exactly that many, every one was delivered AND
+      // recorded, and a fresh read found nothing left.
+      return (
+        receipt.reasonCode === "museum_rewards_collected" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "rewards_before",
+            "rewards_returned",
+            "rewards_delivered",
+            "rewards_recorded",
+            "rewards_after",
+            "mail_flags_before",
+            "mail_flags_after",
+            "inventory_units_before",
+            "inventory_units_after",
+            "rewards_collected",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.rewards_before);
+            const returned = integerEvidenceValue(e.rewards_returned);
+            const delivered = integerEvidenceValue(e.rewards_delivered);
+            const recorded = integerEvidenceValue(e.rewards_recorded);
+            const after = integerEvidenceValue(e.rewards_after);
+            const mailBefore = integerEvidenceValue(e.mail_flags_before);
+            const mailAfter = integerEvidenceValue(e.mail_flags_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              before !== null &&
+              before >= 1 &&
+              returned !== null &&
+              returned === before &&
+              delivered !== null &&
+              delivered === returned &&
+              recorded !== null &&
+              recorded === returned &&
+              after === 0 &&
+              mailBefore !== null &&
+              mailAfter !== null &&
+              mailAfter > mailBefore &&
+              integerEvidenceValue(e.inventory_units_before) !== null &&
+              integerEvidenceValue(e.inventory_units_after) !== null &&
+              e.rewards_collected === "true"
+            );
+          },
+        )
+      );
+    case "redeem_prize_ticket":
+      // Evidence literal: farmhandexecutioncontroller.prizeticketactions.cs ExecuteRedeemPrizeTicket -
+      // prize_level;prize_item_id;prize_stack;prize_held_before;prize_held_after;ticket_item_id;
+      // tickets_before;tickets_after;prizes_claimed_before;prizes_claimed_after;prize_delivered.
+      // The exchange is BOTH halves, so the rule demands both: the ticket stack fell by exactly one from
+      // a stack that held one, the pack holds exactly the delivered prize stack more than it did, and the
+      // machine's own stat advanced by one. The level the receipt names must be the stat it read, so a
+      // receipt cannot report a prize its own level does not produce.
+      return (
+        receipt.reasonCode === "prize_ticket_redeemed" &&
+        exactEvidence(
+          detail,
+          [
+            "prize_level",
+            "prize_item_id",
+            "prize_stack",
+            "prize_held_before",
+            "prize_held_after",
+            "ticket_item_id",
+            "tickets_before",
+            "tickets_after",
+            "prizes_claimed_before",
+            "prizes_claimed_after",
+            "prize_delivered",
+          ],
+          (e) => {
+            const ticketsBefore = integerEvidenceValue(e.tickets_before);
+            const ticketsAfter = integerEvidenceValue(e.tickets_after);
+            const heldBefore = integerEvidenceValue(e.prize_held_before);
+            const heldAfter = integerEvidenceValue(e.prize_held_after);
+            const claimedBefore = integerEvidenceValue(e.prizes_claimed_before);
+            const claimedAfter = integerEvidenceValue(e.prizes_claimed_after);
+            const stack = integerEvidenceValue(e.prize_stack);
+            return (
+              ticketsBefore !== null &&
+              ticketsBefore >= 1 &&
+              ticketsAfter !== null &&
+              ticketsAfter === ticketsBefore - 1 &&
+              claimedBefore !== null &&
+              claimedAfter !== null &&
+              claimedAfter === claimedBefore + 1 &&
+              stack !== null &&
+              stack >= 1 &&
+              heldBefore === 0 &&
+              heldAfter !== null &&
+              heldAfter === heldBefore + stack &&
+              e.prize_delivered === "true" &&
+              typeof e.prize_item_id === "string" &&
+              e.prize_item_id.length > 0 &&
+              typeof e.ticket_item_id === "string" &&
+              e.ticket_item_id.length > 0 &&
+              integerEvidenceValue(e.prize_level) === claimedBefore
+            );
+          },
+        )
+      );
     case "name_entity":
       // Evidence literal: farmhandexecutioncontroller.nameentityactions.cs - the subject, the horse
       // id, the requested name, the name read back and the Mod's own read-back verdict. The
