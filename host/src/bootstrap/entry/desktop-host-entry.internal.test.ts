@@ -73,7 +73,7 @@ test("compiled entry rejects malformed bootstrap wire without acknowledgement", 
   for (const frame of frames) {
     const result = await runEntry(frame);
     assert.notEqual(result.code, 0);
-    assert.deepEqual(result.stdout, Buffer.alloc(0));
+    assertStdoutCarriesNoAcknowledgement(result.stdout);
   }
 });
 
@@ -85,7 +85,7 @@ test("a rejected bootstrap frame reports one bounded failure code on stderr", as
   const result = await runEntry(Buffer.from(`${validFrame.slice(0, -1)},"unknown":true}\n`, "utf8"));
 
   assert.notEqual(result.code, 0);
-  assert.deepEqual(result.stdout, Buffer.alloc(0));
+  assertStdoutCarriesNoAcknowledgement(result.stdout);
   const lines = result.stderr
     .toString("utf8")
     .split(/\r?\n/)
@@ -188,7 +188,7 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
-  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, generationRoot)");
+  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
   const mint = source.indexOf("const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame)");
@@ -239,4 +239,21 @@ function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Us
 
 async function runEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local", environment: Readonly<Record<string, string>> = {}): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
   return await startEntry(frame, entry, localAppData, environment).result;
+}
+
+/**
+ * A rejected frame still receives the informational status frame the wire writes
+ * before it reads anything: `d6170ae8` gave the handshake a status channel on the
+ * same stdout the acknowledgement uses, and the launcher tells the two apart by
+ * `schema` (`IsAcknowledgement` in RuntimeSupervisor.cs keys off
+ * `gamebuddy-desktop-host-bootstrap/v1`). The rejected frame must never produce the
+ * acknowledgement itself, so every document that reaches stdout here must be the
+ * status schema - not the empty stdout this assertion predated the status channel with.
+ */
+function assertStdoutCarriesNoAcknowledgement(stdout: Buffer): void {
+  for (const line of stdout.toString("utf8").split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    const document = JSON.parse(line) as { readonly schema?: unknown };
+    assert.equal(document.schema, "gamebuddy-desktop-host-bootstrap-status/v1", `rejected bootstrap wrote a non-status frame: ${line}`);
+  }
 }
