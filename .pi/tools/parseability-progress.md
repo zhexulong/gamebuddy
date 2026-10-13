@@ -337,3 +337,14 @@ lane's file:
 
 **Not staged, deliberately**: the six `.pi/tools/*.md` deletions another lane left in the worktree, and
 every `M`/`??` file belonging to a live lane listed in Unit 1.
+
+## Handover revision
+
+At this lane's own commit `2a784754c48a` (HEAD when the note was closed):
+
+- `node tools/check-head-typecheck.mjs` -> `head_typecheck_ok rev=2a784754c48a projects=tsconfig.json` (exit 0).
+- wide parse sweep -> `parse_sweep files=1388 broken=0` (exit 0).
+- host ratchet -> `test_typecheck_ratchet_ok total=161 baseline=167 codes=13`, exit 0,
+  `excluded=1 error(s) in 16 uncommitted file(s)`, and **no** `semantic_pass_skipped` line — i.e. the
+  semantic pass ran and 161 is a real count for the committed tree, not the artefact of a suppressed
+  pass. Before this lane it read `total=0` with 159 errors suppressed across 13 dirty files.
