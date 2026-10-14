@@ -792,14 +792,15 @@ export async function createRuntimeWithFixedToolsCore(
           embedding: { provider: "off" },
           // Production selects the embedded-SDK, no-tool Historian. The internal
           // override can still disable it for A/B fixtures without changing any
-          // Memory authority or exposing an authoring API.
+          // Memory authority or exposing an authoring API. No `disallowed_tools` here: a historian runs with
+          // zero tools by default upstream (measured: the flag survived as a no-op), so the intent needs no
+          // key, and `expand_tools` stays off for the same reason - the historian reads plain text only.
           historian: !magicContextHistorianEnabled
             ? { disable: true }
             : {
                 model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
                 thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
                   .thinkingLevel,
-                disallowed_tools: ["*"],
               },
           ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
           undefined

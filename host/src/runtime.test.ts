@@ -1479,7 +1479,9 @@ test("runtime loads only Magic Context and preserves a session partition", async
       config.historian.thinking_level,
       DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
     );
-    assert.deepEqual(config.historian.disallowed_tools, ["*"]);
+    // Owner ruling C4: the historian is tool-less by upstream's default, so the Host no longer writes
+    // `disallowed_tools` at all - the key survived only as a no-op, and `expand_tools` stays off.
+    assert.equal("disallowed_tools" in config.historian, false);
     assert.deepEqual(config.todowrite, { enabled: true, overlay: false });
     // Owner ruling D: narrow-open Dreamer (memory hygiene only).
     assert.equal(config.dreamer.disable, false);
