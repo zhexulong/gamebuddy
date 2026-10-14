@@ -2553,91 +2553,154 @@ export function serializeBounded(value: unknown): string {
   return json;
 }
 
-function diagnoseSnapshot(value: Record<string, unknown>): string {
+/**
+ * One array-valued snapshot family: the wire field, the entry cap, and the entry predicate.
+ *
+ * Every family is declared ONCE here. `diagnoseSnapshot` walks this table to NAME the offending
+ * field (and, where the publisher needs it, the offending entry) and `validateSnapshot` walks the
+ * same table to decide. The two hand-written lists this replaced had already drifted: families were
+ * validated while the diagnostic returned its SUCCESS marker, which is how a rejected snapshot
+ * surfaced as `bridge_disconnected:accepted` instead of naming its culprit.
+ *
+ * The table is the Host's projection of `protocol/bridge-v1.schema.json`'s `$defs.snapshot`;
+ * `schema-contract.test.ts` proves the field set and every cap against the schema, so a family the
+ * schema declares cannot go unvalidated here and a bound changed on one side alone fails the suite.
+ */
+export type SnapshotFamilyRule = Readonly<{
+  field: keyof Snapshot;
+  /** Entry cap. Must equal the schema's `maxItems` for the same field. */
+  maxItems: number;
+  accepts: (entry: unknown) => boolean;
+  /** Set only for families whose publisher needs the offending entry named, not just the field. */
+  narrate?: (targets: unknown, rule: SnapshotFamilyRule) => string;
+}>;
 
-  if (
-    value.worldObjectTargets !== undefined &&
-    (!Array.isArray(value.worldObjectTargets) ||
-      value.worldObjectTargets.length > 48 ||
-      !value.worldObjectTargets.every(isWorldObjectTargetFact))
-  )
-    return "invalid_snapshot:worldObjectTargets";
-  if (
-    value.farmBuildingTargets !== undefined &&
-    (!Array.isArray(value.farmBuildingTargets) ||
-      value.farmBuildingTargets.length > 16 ||
-      !value.farmBuildingTargets.every(isFarmBuildingTargetFact))
-  )
-    return "invalid_snapshot:farmBuildingTargets";
-  if (
-    value.dailyQuestTargets !== undefined &&
-    (!Array.isArray(value.dailyQuestTargets) ||
-      value.dailyQuestTargets.length > 16 ||
-      !value.dailyQuestTargets.every(isDailyQuestTargetFact))
-  )
-    return "invalid_snapshot:dailyQuestTargets";
-  if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
-    return "invalid_snapshot:acceptedDailyQuest";
-  if (
-    value.specialOrderTargets !== undefined &&
-    (!Array.isArray(value.specialOrderTargets) ||
-      value.specialOrderTargets.length > 16 ||
-      !value.specialOrderTargets.every(isSpecialOrderTargetFact))
-  )
-    return "invalid_snapshot:specialOrderTargets";
-  if (
-    value.activeSpecialOrderKeys !== undefined &&
-    (!Array.isArray(value.activeSpecialOrderKeys) ||
-      value.activeSpecialOrderKeys.length > 16 ||
-      !value.activeSpecialOrderKeys.every((entry) => typeof entry === "string" && entry.length > 0))
-  )
-    return "invalid_snapshot:activeSpecialOrderKeys";
-  if (
-    value.museumRewardTargets !== undefined &&
-    (!Array.isArray(value.museumRewardTargets) ||
-      value.museumRewardTargets.length > 16 ||
-      !value.museumRewardTargets.every(isMuseumRewardTargetFact))
-  )
-    return "invalid_snapshot:museumRewardTargets";
-  const tailoringVerdict = tailoringTargetsVerdict(value);
-  if (tailoringVerdict !== null) return tailoringVerdict;
-  const colorVerdict = colorTargetsVerdict(value);
-  if (colorVerdict !== null) return colorVerdict;
-  if (
-    value.wearableTargets !== undefined &&
-    (!Array.isArray(value.wearableTargets) ||
-      value.wearableTargets.length > 16 ||
-      !value.wearableTargets.every(isWearableTargetFact))
-  )
-    return "invalid_snapshot:wearableTargets";
-  if (
-    value.warpItemTargets !== undefined &&
-    (!Array.isArray(value.warpItemTargets) ||
-      value.warpItemTargets.length > 16 ||
-      !value.warpItemTargets.every(isWarpItemTargetFact))
-  )
-    return "invalid_snapshot:warpItemTargets";
-  if (
-    value.panSites !== undefined &&
-    (!Array.isArray(value.panSites) ||
-      value.panSites.length > 16 ||
-      !value.panSites.every(isPanSiteFact))
-  )
-    return "invalid_snapshot:panSites";
-  if (
-    value.mailboxTargets !== undefined &&
-    (!Array.isArray(value.mailboxTargets) ||
-      value.mailboxTargets.length > 16 ||
-      !value.mailboxTargets.every(isMailboxTargetFact))
-  )
-    return "invalid_snapshot:mailboxTargets";
-  if (
-    value.fishPondTargets !== undefined &&
-    (!Array.isArray(value.fishPondTargets) ||
-      value.fishPondTargets.length > 16 ||
-      !value.fishPondTargets.every(isFishPondTargetFact))
-  )
-    return "invalid_snapshot:fishPondTargets";
+export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freeze([
+  { field: "worldObjectTargets", maxItems: 48, accepts: isWorldObjectTargetFact },
+  { field: "farmBuildingTargets", maxItems: 16, accepts: isFarmBuildingTargetFact },
+  { field: "dailyQuestTargets", maxItems: 16, accepts: isDailyQuestTargetFact },
+  { field: "specialOrderTargets", maxItems: 16, accepts: isSpecialOrderTargetFact },
+  { field: "activeSpecialOrderKeys", maxItems: 16, accepts: (entry) => typeof entry === "string" && entry.length > 0 },
+  { field: "museumRewardTargets", maxItems: 16, accepts: isMuseumRewardTargetFact },
+  { field: "tailoringTargets", maxItems: 32, accepts: isTailoringTargetFact, narrate: namedEntryReason },
+  { field: "colorTargets", maxItems: 32, accepts: isColorTargetFact, narrate: namedEntryReason },
+  { field: "wearableTargets", maxItems: 16, accepts: isWearableTargetFact },
+  { field: "warpItemTargets", maxItems: 16, accepts: isWarpItemTargetFact },
+  { field: "panSites", maxItems: 16, accepts: isPanSiteFact },
+  { field: "mailboxTargets", maxItems: 16, accepts: isMailboxTargetFact },
+  { field: "fishPondTargets", maxItems: 16, accepts: isFishPondTargetFact },
+  { field: "warps", maxItems: 512, accepts: isWarp },
+  { field: "doorTargets", maxItems: 64, accepts: isWarp },
+  { field: "soilTiles", maxItems: 64, accepts: isSoilTile },
+  { field: "toolSlots", maxItems: 36, accepts: isToolSlotFact },
+  { field: "forageTargets", maxItems: 64, accepts: isForageTargetFact },
+  { field: "itemTargets", maxItems: 64, accepts: isItemTargetFact },
+  { field: "wateringCanFacts", maxItems: 36, accepts: isWateringCanFact },
+  { field: "refillWateringCanTargets", maxItems: 8, accepts: isRefillWateringCanTargetFact },
+  { field: "cropTargets", maxItems: 64, accepts: isCropTargetFact },
+  { field: "petBowlTargets", maxItems: 8, accepts: isPetBowlTargetFact },
+  { field: "slimeHutchTroughTargets", maxItems: 4, accepts: isSlimeHutchTroughTargetFact },
+  { field: "harvestTargets", maxItems: 64, accepts: isHarvestTargetFact },
+  { field: "bushTargets", maxItems: 32, accepts: isBushTargetFact },
+  { field: "fruitTreeTargets", maxItems: 16, accepts: isBushTargetFact },
+  { field: "shakeTreeTargets", maxItems: 16, accepts: isBushTargetFact },
+  { field: "pedestalTargets", maxItems: 16, accepts: isPedestalTargetFact },
+  { field: "fenceGateTargets", maxItems: 16, accepts: isFenceGateTargetFact },
+  { field: "seedTargets", maxItems: 64, accepts: isSeedTargetFact },
+  { field: "fertilizerTargets", maxItems: 64, accepts: isSeedTargetFact },
+  { field: "debrisTargets", maxItems: 64, accepts: isDebrisTargetFact },
+  { field: "rockSourceTargets", maxItems: 8, accepts: isRockSourceTargetFact },
+  { field: "clearHoeDirtTargets", maxItems: 8, accepts: isClearHoeDirtTargetFact },
+  { field: "artifactSpotTargets", maxItems: 8, accepts: isArtifactSpotTargetFact },
+  { field: "artifactSpotResultTargets", maxItems: 1, accepts: isArtifactSpotResultTargetFact },
+  { field: "machineTargets", maxItems: 64, accepts: isMachineTargetFact },
+  { field: "treeChopSourceTargets", maxItems: 64, accepts: isTreeChopSourceTargetFact },
+  { field: "treeChopResultTargets", maxItems: 64, accepts: isTreeChopResultTargetFact },
+  { field: "treeStumpTargets", maxItems: 16, accepts: isTreeStumpTargetFact },
+  { field: "treeSaplingTargets", maxItems: 64, accepts: isTreeSaplingTargetFact },
+  { field: "weedTargets", maxItems: 16, accepts: isWeedTargetFact },
+  { field: "grassTargets", maxItems: 16, accepts: isGrassTargetFact },
+  { field: "caskTargets", maxItems: 16, accepts: isCaskTargetFact },
+  { field: "mannequinTargets", maxItems: 16, accepts: isFacilityTargetFact },
+  { field: "signTargets", maxItems: 16, accepts: isSignTargetFact },
+  { field: "siloTargets", maxItems: 16, accepts: isSiloTargetFact },
+  { field: "lanternSlots", maxItems: 16, accepts: isLanternSlotFact },
+  { field: "scytheCropTargets", maxItems: 16, accepts: isScytheCropTargetFact },
+  { field: "npcRelationshipTargets", maxItems: 64, accepts: isNpcRelationshipTargetFact },
+  { field: "villagerWhereabouts", maxItems: 64, accepts: isVillagerWhereaboutsFact },
+  { field: "harvestWhereabouts", maxItems: 64, accepts: isHarvestWhereaboutsFact },
+  { field: "petTargets", maxItems: 16, accepts: isPetTargetFact },
+  { field: "animalProductTargets", maxItems: 32, accepts: isAnimalProductTargetFact },
+  { field: "feedTroughTargets", maxItems: 32, accepts: isFeedTroughTargetFact },
+  { field: "chestStoreTargets", maxItems: 16, accepts: isChestStoreTargetFact },
+  { field: "chestRetrieveTargets", maxItems: 16, accepts: isChestRetrieveTargetFact },
+  { field: "inventoryItemFacts", maxItems: 36, accepts: isInventoryItemFact },
+  { field: "foodTargets", maxItems: 36, accepts: isFoodTargetFact },
+  { field: "shippingBinTargets", maxItems: 1, accepts: isShippingBinTargetFact },
+  { field: "craftingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact },
+  { field: "cookingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact },
+  { field: "cookingStationTargets", maxItems: 16, accepts: isCookingStationTargetFact },
+  { field: "mineElevatorFloorTargets", maxItems: 32, accepts: isMineElevatorFloorFact },
+  { field: "minecartTargets", maxItems: 24, accepts: isMinecartTargetFact },
+  { field: "raftTargets", maxItems: 16, accepts: isRaftTargetFact },
+  { field: "woodFenceTargets", maxItems: 16, accepts: isWoodFenceTargetFact },
+  { field: "woodFenceResultTargets", maxItems: 1, accepts: isWoodFenceResultTargetFact },
+  { field: "crabPotTargets", maxItems: 16, accepts: isCrabPotTargetFact },
+  { field: "crabPotResultTargets", maxItems: 1, accepts: isCrabPotResultTargetFact },
+  { field: "crabPotCollectTargets", maxItems: 16, accepts: isCrabPotCollectTargetFact },
+  { field: "baitCrabPotTargets", maxItems: 16, accepts: isBaitCrabPotTargetFact },
+  { field: "baitCrabPotResultTargets", maxItems: 1, accepts: isBaitCrabPotTargetFact },
+  { field: "shopTargets", maxItems: 32, accepts: isShopTargetFact },
+  { field: "horseTargets", maxItems: 16, accepts: isHorseTargetFact },
+  { field: "mineEntranceTargets", maxItems: 16, accepts: isMineEntranceTargetFact },
+  { field: "animalDoorTargets", maxItems: 32, accepts: isAnimalDoorTargetFact },
+  { field: "obeliskTargets", maxItems: 32, accepts: isObeliskTargetFact },
+  { field: "buildingChestTargets", maxItems: 16, accepts: isBuildingChestTargetFact },
+]);
+
+/** The verdict for one family, or null when the field is absent or acceptable. */
+function snapshotFamilyVerdict(value: Record<string, unknown>, rule: SnapshotFamilyRule): string | null {
+  const targets = value[rule.field];
+  if (targets === undefined) return null;
+  if (Array.isArray(targets) && targets.length <= rule.maxItems && targets.every(rule.accepts)) return null;
+  return rule.narrate?.(targets, rule) ?? `invalid_snapshot:${rule.field}`;
+}
+
+/**
+ * The reason a family with opaque entries was refused, naming why and which entry: an entry the Mod
+ * emitted but the Host cannot read is exactly what a field-only message hides.
+ */
+function namedEntryReason(targets: unknown, rule: SnapshotFamilyRule): string {
+  if (!Array.isArray(targets)) return `invalid_snapshot:${rule.field}:not_an_array`;
+  if (targets.length > rule.maxItems) return `invalid_snapshot:${rule.field}:count=${targets.length}`;
+  const index = targets.findIndex((entry) => !rule.accepts(entry));
+  const entry: unknown = targets[index];
+  return `invalid_snapshot:${rule.field}:entry${index}:keys=${
+    isRecord(entry) ? Object.keys(entry).join("|") : typeof entry
+  }`;
+}
+
+/** The first family its table rule refuses, or null when every family is acceptable. */
+function firstSnapshotFamilyVerdict(value: Record<string, unknown>): string | null {
+  for (const rule of SNAPSHOT_FAMILY_RULES) {
+    const verdict = snapshotFamilyVerdict(value, rule);
+    if (verdict !== null) return verdict;
+  }
+  return null;
+}
+
+/** `acceptedDailyQuest` is a scalar, but both paths report it, so it lives beside the families. */
+function acceptedDailyQuestVerdict(value: Record<string, unknown>): string | null {
+  return value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean"
+    ? "invalid_snapshot:acceptedDailyQuest"
+    : null;
+}
+
+function diagnoseSnapshot(value: Record<string, unknown>): string {
+  const familyVerdict = firstSnapshotFamilyVerdict(value);
+  if (familyVerdict !== null) return familyVerdict;
+  const dailyQuestVerdict = acceptedDailyQuestVerdict(value);
+  if (dailyQuestVerdict !== null) return dailyQuestVerdict;
   if (!Number.isSafeInteger(value.revision)) return "invalid_snapshot:revision";
   if (typeof value.location !== "string") return "invalid_snapshot:location";
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
@@ -2673,132 +2736,6 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
     return "invalid_snapshot:inventorySlots";
   if (
-    value.warps !== undefined &&
-    (!Array.isArray(value.warps) || value.warps.length > 512 || !value.warps.every(isWarp))
-  )
-    return "invalid_snapshot:warps";
-  if (
-    value.doorTargets !== undefined &&
-    (!Array.isArray(value.doorTargets) || value.doorTargets.length > 64 || !value.doorTargets.every(isWarp))
-  )
-    return "invalid_snapshot:doorTargets";
-  if (
-    value.soilTiles !== undefined &&
-    (!Array.isArray(value.soilTiles) || value.soilTiles.length > 64 || !value.soilTiles.every(isSoilTile))
-  )
-    return "invalid_snapshot:soilTiles";
-  if (
-    value.toolSlots !== undefined &&
-    (!Array.isArray(value.toolSlots) || value.toolSlots.length > 36 || !value.toolSlots.every(isToolSlotFact))
-  )
-    return "invalid_snapshot:toolSlots";
-  if (
-    value.forageTargets !== undefined &&
-    (!Array.isArray(value.forageTargets) ||
-      value.forageTargets.length > 64 ||
-      !value.forageTargets.every(isForageTargetFact))
-  )
-    return "invalid_snapshot:forageTargets";
-  if (
-    value.itemTargets !== undefined &&
-    (!Array.isArray(value.itemTargets) || value.itemTargets.length > 64 || !value.itemTargets.every(isItemTargetFact))
-  )
-    return "invalid_snapshot:itemTargets";
-  if (
-    value.wateringCanFacts !== undefined &&
-    (!Array.isArray(value.wateringCanFacts) ||
-      value.wateringCanFacts.length > 36 ||
-      !value.wateringCanFacts.every(isWateringCanFact))
-  )
-    return "invalid_snapshot:wateringCanFacts";
-  if (
-    value.refillWateringCanTargets !== undefined &&
-    (!Array.isArray(value.refillWateringCanTargets) ||
-      value.refillWateringCanTargets.length > 8 ||
-      !value.refillWateringCanTargets.every(isRefillWateringCanTargetFact))
-  )
-    return "invalid_snapshot:refillWateringCanTargets";
-  if (
-    value.cropTargets !== undefined &&
-    (!Array.isArray(value.cropTargets) || value.cropTargets.length > 64 || !value.cropTargets.every(isCropTargetFact))
-  )
-    return "invalid_snapshot:cropTargets";
-  if (
-    value.petBowlTargets !== undefined &&
-    (!Array.isArray(value.petBowlTargets) ||
-      value.petBowlTargets.length > 8 ||
-      !value.petBowlTargets.every(isPetBowlTargetFact))
-  )
-    return "invalid_snapshot:petBowlTargets";
-  if (
-    value.slimeHutchTroughTargets !== undefined &&
-    (!Array.isArray(value.slimeHutchTroughTargets) ||
-      value.slimeHutchTroughTargets.length > 4 ||
-      !value.slimeHutchTroughTargets.every(isSlimeHutchTroughTargetFact))
-  )
-    return "invalid_snapshot:slimeHutchTroughTargets";
-  if (
-    value.harvestTargets !== undefined &&
-    (!Array.isArray(value.harvestTargets) ||
-      value.harvestTargets.length > 64 ||
-      !value.harvestTargets.every(isHarvestTargetFact))
-  )
-    return "invalid_snapshot:harvestTargets";
-  if (value.bushTargets !== undefined &&
-    (!Array.isArray(value.bushTargets) || value.bushTargets.length > 32 || !value.bushTargets.every(isBushTargetFact)))
-    return "invalid_snapshot:bushTargets";
-  if (value.fruitTreeTargets !== undefined && (!Array.isArray(value.fruitTreeTargets) || value.fruitTreeTargets.length > 16 || !value.fruitTreeTargets.every(isBushTargetFact))) return "invalid_snapshot:fruitTreeTargets";
-  if (value.shakeTreeTargets !== undefined && (!Array.isArray(value.shakeTreeTargets) || value.shakeTreeTargets.length > 16 || !value.shakeTreeTargets.every(isBushTargetFact))) return "invalid_snapshot:shakeTreeTargets";
-  if (value.pedestalTargets !== undefined && (!Array.isArray(value.pedestalTargets) || value.pedestalTargets.length > 16 || !value.pedestalTargets.every(isPedestalTargetFact))) return "invalid_snapshot:pedestalTargets";
-  if (value.fenceGateTargets !== undefined && (!Array.isArray(value.fenceGateTargets) || value.fenceGateTargets.length > 16 || !value.fenceGateTargets.every(isFenceGateTargetFact))) return "invalid_snapshot:fenceGateTargets";
-  if (
-    value.seedTargets !== undefined &&
-    (!Array.isArray(value.seedTargets) || value.seedTargets.length > 64 || !value.seedTargets.every(isSeedTargetFact))
-  )
-    return "invalid_snapshot:seedTargets";
-  if (
-    value.fertilizerTargets !== undefined &&
-    (!Array.isArray(value.fertilizerTargets) ||
-      value.fertilizerTargets.length > 64 ||
-      !value.fertilizerTargets.every(isSeedTargetFact))
-  )
-    return "invalid_snapshot:fertilizerTargets";
-  if (
-    value.debrisTargets !== undefined &&
-    (!Array.isArray(value.debrisTargets) ||
-      value.debrisTargets.length > 64 ||
-      !value.debrisTargets.every(isDebrisTargetFact))
-  )
-    return "invalid_snapshot:debrisTargets";
-  if (
-    value.rockSourceTargets !== undefined &&
-    (!Array.isArray(value.rockSourceTargets) ||
-      value.rockSourceTargets.length > 8 ||
-      !value.rockSourceTargets.every(isRockSourceTargetFact))
-  )
-    return "invalid_snapshot:rockSourceTargets";
-  if (
-    value.clearHoeDirtTargets !== undefined &&
-    (!Array.isArray(value.clearHoeDirtTargets) ||
-      value.clearHoeDirtTargets.length > 8 ||
-      !value.clearHoeDirtTargets.every(isClearHoeDirtTargetFact))
-  )
-    return "invalid_snapshot:clearHoeDirtTargets";
-  if (
-    value.artifactSpotTargets !== undefined &&
-    (!Array.isArray(value.artifactSpotTargets) ||
-      value.artifactSpotTargets.length > 8 ||
-      !value.artifactSpotTargets.every(isArtifactSpotTargetFact))
-  )
-    return "invalid_snapshot:artifactSpotTargets";
-  if (
-    value.artifactSpotResultTargets !== undefined &&
-    (!Array.isArray(value.artifactSpotResultTargets) ||
-      value.artifactSpotResultTargets.length > 1 ||
-      !value.artifactSpotResultTargets.every(isArtifactSpotResultTargetFact))
-  )
-    return "invalid_snapshot:artifactSpotResultTargets";
-  if (
     value.artifactSpotFarmSourceCount !== undefined &&
     value.artifactSpotFarmSourceCount !== null &&
     (typeof value.artifactSpotFarmSourceCount !== "number" ||
@@ -2806,179 +2743,6 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       value.artifactSpotFarmSourceCount < 0)
   )
     return "invalid_snapshot:artifactSpotFarmSourceCount";
-  if (
-    value.machineTargets !== undefined &&
-    (!Array.isArray(value.machineTargets) ||
-      value.machineTargets.length > 64 ||
-      !value.machineTargets.every(isMachineTargetFact))
-  )
-    return "invalid_snapshot:machineTargets";
-  if (
-    value.treeChopSourceTargets !== undefined &&
-    (!Array.isArray(value.treeChopSourceTargets) ||
-      value.treeChopSourceTargets.length > 64 ||
-      !value.treeChopSourceTargets.every(isTreeChopSourceTargetFact))
-  )
-    return "invalid_snapshot:treeChopSourceTargets";
-  if (
-    value.treeChopResultTargets !== undefined &&
-    (!Array.isArray(value.treeChopResultTargets) ||
-      value.treeChopResultTargets.length > 64 ||
-      !value.treeChopResultTargets.every(isTreeChopResultTargetFact))
-  )
-    return "invalid_snapshot:treeChopResultTargets";
-  if (
-    value.treeStumpTargets !== undefined &&
-    (!Array.isArray(value.treeStumpTargets) ||
-      value.treeStumpTargets.length > 16 ||
-      !value.treeStumpTargets.every(isTreeStumpTargetFact))
-  )
-    return "invalid_snapshot:treeStumpTargets";
-  if (
-    value.treeSaplingTargets !== undefined &&
-    (!Array.isArray(value.treeSaplingTargets) ||
-      value.treeSaplingTargets.length > 64 ||
-      !value.treeSaplingTargets.every(isTreeSaplingTargetFact))
-  )
-    return "invalid_snapshot:treeSaplingTargets";
-  if (
-    value.weedTargets !== undefined &&
-    (!Array.isArray(value.weedTargets) ||
-      value.weedTargets.length > 16 ||
-      !value.weedTargets.every(isWeedTargetFact))
-  )
-    return "invalid_snapshot:weedTargets";
-   if (
-     value.grassTargets !== undefined &&
-     (!Array.isArray(value.grassTargets) ||
-       value.grassTargets.length > 16 ||
-       !value.grassTargets.every(isGrassTargetFact))
-   )
-     return "invalid_snapshot:grassTargets";
-    if (value.caskTargets !== undefined && (!Array.isArray(value.caskTargets) || value.caskTargets.length > 16 || !value.caskTargets.every(isCaskTargetFact)))
-      return "invalid_snapshot:caskTargets";
-    if (value.mannequinTargets !== undefined && (!Array.isArray(value.mannequinTargets) || value.mannequinTargets.length > 16 || !value.mannequinTargets.every(isFacilityTargetFact))) return "invalid_snapshot:mannequinTargets";
-    if (value.signTargets !== undefined && (!Array.isArray(value.signTargets) || value.signTargets.length > 16 || !value.signTargets.every(isSignTargetFact))) return "invalid_snapshot:signTargets";
-    if (value.siloTargets !== undefined && (!Array.isArray(value.siloTargets) || value.siloTargets.length > 16 || !value.siloTargets.every(isSiloTargetFact))) return "invalid_snapshot:siloTargets";
-    if (value.lanternSlots !== undefined && (!Array.isArray(value.lanternSlots) || value.lanternSlots.length > 16 || !value.lanternSlots.every(isLanternSlotFact))) return "invalid_snapshot:lanternSlots";
-  if (
-    value.scytheCropTargets !== undefined &&
-    (!Array.isArray(value.scytheCropTargets) ||
-      value.scytheCropTargets.length > 16 ||
-      !value.scytheCropTargets.every(isScytheCropTargetFact))
-  )
-    return "invalid_snapshot:scytheCropTargets";
-  if (
-    value.npcRelationshipTargets !== undefined &&
-    (!Array.isArray(value.npcRelationshipTargets) ||
-      value.npcRelationshipTargets.length > 64 ||
-      !value.npcRelationshipTargets.every(isNpcRelationshipTargetFact))
-  )
-    return "invalid_snapshot:npcRelationshipTargets";
-  if (
-    value.villagerWhereabouts !== undefined &&
-    (!Array.isArray(value.villagerWhereabouts) ||
-      value.villagerWhereabouts.length > 64 ||
-      !value.villagerWhereabouts.every(isVillagerWhereaboutsFact))
-  )
-    return "invalid_snapshot:villagerWhereabouts";
-  if (
-    value.harvestWhereabouts !== undefined &&
-    (!Array.isArray(value.harvestWhereabouts) ||
-      value.harvestWhereabouts.length > 64 ||
-      !value.harvestWhereabouts.every(isHarvestWhereaboutsFact))
-  )
-    return "invalid_snapshot:harvestWhereabouts";
-  if (
-    value.petTargets !== undefined &&
-    (!Array.isArray(value.petTargets) || value.petTargets.length > 16 || !value.petTargets.every(isPetTargetFact))
-  )
-    return "invalid_snapshot:petTargets";
-  if (
-    value.animalProductTargets !== undefined &&
-    (!Array.isArray(value.animalProductTargets) ||
-      value.animalProductTargets.length > 32 ||
-      !value.animalProductTargets.every(isAnimalProductTargetFact))
-  )
-    return "invalid_snapshot:animalProductTargets";
-  if (
-    value.feedTroughTargets !== undefined &&
-    (!Array.isArray(value.feedTroughTargets) ||
-      value.feedTroughTargets.length > 32 ||
-      !value.feedTroughTargets.every(isFeedTroughTargetFact))
-  )
-    return "invalid_snapshot:feedTroughTargets";
-  if (
-    value.chestStoreTargets !== undefined &&
-    (!Array.isArray(value.chestStoreTargets) ||
-      value.chestStoreTargets.length > 16 ||
-      !value.chestStoreTargets.every(isChestStoreTargetFact))
-  )
-    return "invalid_snapshot:chestStoreTargets";
-  if (
-    value.chestRetrieveTargets !== undefined &&
-    (!Array.isArray(value.chestRetrieveTargets) ||
-      value.chestRetrieveTargets.length > 16 ||
-      !value.chestRetrieveTargets.every(isChestRetrieveTargetFact))
-  )
-    return "invalid_snapshot:chestRetrieveTargets";
-  if (
-    value.inventoryItemFacts !== undefined &&
-    (!Array.isArray(value.inventoryItemFacts) ||
-      value.inventoryItemFacts.length > 36 ||
-      !value.inventoryItemFacts.every(isInventoryItemFact))
-  )
-    return "invalid_snapshot:inventoryItemFacts";
-  if (
-    value.foodTargets !== undefined &&
-    (!Array.isArray(value.foodTargets) || value.foodTargets.length > 36 || !value.foodTargets.every(isFoodTargetFact))
-  )
-    return "invalid_snapshot:foodTargets";
-  if (
-    value.shippingBinTargets !== undefined &&
-    (!Array.isArray(value.shippingBinTargets) ||
-      value.shippingBinTargets.length > 1 ||
-      !value.shippingBinTargets.every(isShippingBinTargetFact))
-  )
-    return "invalid_snapshot:shippingBinTargets";
-  if (
-    value.craftingRecipeTargets !== undefined &&
-    (!Array.isArray(value.craftingRecipeTargets) ||
-      value.craftingRecipeTargets.length > 64 ||
-      !value.craftingRecipeTargets.every(isRecipeTargetFact))
-  )
-    return "invalid_snapshot:craftingRecipeTargets";
-  if (
-    value.cookingRecipeTargets !== undefined &&
-    (!Array.isArray(value.cookingRecipeTargets) ||
-      value.cookingRecipeTargets.length > 64 ||
-      !value.cookingRecipeTargets.every(isRecipeTargetFact))
-  )
-    return "invalid_snapshot:cookingRecipeTargets";
-  if (
-    value.cookingStationTargets !== undefined &&
-    (!Array.isArray(value.cookingStationTargets) ||
-      value.cookingStationTargets.length > 16 ||
-      !value.cookingStationTargets.every(isCookingStationTargetFact))
-  )
-    return "invalid_snapshot:cookingStationTargets";
-   if (
-     value.mineElevatorFloorTargets !== undefined &&
-     (!Array.isArray(value.mineElevatorFloorTargets) ||
-       value.mineElevatorFloorTargets.length > 32 ||
-       !value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))
-   )
-     return "invalid_snapshot:mineElevatorFloorTargets";
-   if (
-     value.minecartTargets !== undefined &&
-     (!Array.isArray(value.minecartTargets) ||
-       value.minecartTargets.length > 24 ||
-       !value.minecartTargets.every(isMinecartTargetFact))
-   )
-     return "invalid_snapshot:minecartTargets";
-   if (value.raftTargets !== undefined &&
-     (!Array.isArray(value.raftTargets) || value.raftTargets.length > 16 || !value.raftTargets.every(isRaftTargetFact)))
-     return "invalid_snapshot:raftTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -2988,90 +2752,6 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     (!isRecord(value.activeExecution) || validateActiveExecution(value.activeExecution) !== null)
   )
     return "invalid_snapshot:activeExecution";
-  // These ten families were validated but never diagnosed, so a failure in any of them
-  // made this function return its success marker and the real culprit was erased from
-  // the close reason. Kept beside the checks above so the two validators cannot drift
-  // apart without this list going stale visibly.
-  // These families were validated but never diagnosed, so a failure in any of them made
-  // this function return its SUCCESS marker and the real culprit was erased from the close
-  // reason — which is exactly how a rejected snapshot surfaced as
-  // `bridge_disconnected:accepted`. They are checked here so the next one is named.
-  if (
-    value.woodFenceTargets !== undefined &&
-    (!Array.isArray(value.woodFenceTargets) || value.woodFenceTargets.length > 16 || !value.woodFenceTargets.every(isWoodFenceTargetFact))
-  )
-    return "invalid_snapshot:woodFenceTargets";
-  if (
-    value.woodFenceResultTargets !== undefined &&
-    (!Array.isArray(value.woodFenceResultTargets) || value.woodFenceResultTargets.length > 1 || !value.woodFenceResultTargets.every(isWoodFenceResultTargetFact))
-  )
-    return "invalid_snapshot:woodFenceResultTargets";
-  if (
-    value.crabPotTargets !== undefined &&
-    (!Array.isArray(value.crabPotTargets) || value.crabPotTargets.length > 16 || !value.crabPotTargets.every(isCrabPotTargetFact))
-  )
-    return "invalid_snapshot:crabPotTargets";
-  if (
-    value.crabPotResultTargets !== undefined &&
-    (!Array.isArray(value.crabPotResultTargets) || value.crabPotResultTargets.length > 1 || !value.crabPotResultTargets.every(isCrabPotResultTargetFact))
-  )
-    return "invalid_snapshot:crabPotResultTargets";
-  if (
-    value.crabPotCollectTargets !== undefined &&
-    (!Array.isArray(value.crabPotCollectTargets) || value.crabPotCollectTargets.length > 16 || !value.crabPotCollectTargets.every(isCrabPotCollectTargetFact))
-  )
-    return "invalid_snapshot:crabPotCollectTargets";
-  if (
-    value.baitCrabPotTargets !== undefined &&
-    (!Array.isArray(value.baitCrabPotTargets) || value.baitCrabPotTargets.length > 16 || !value.baitCrabPotTargets.every(isBaitCrabPotTargetFact))
-  )
-    return "invalid_snapshot:baitCrabPotTargets";
-  if (
-    value.baitCrabPotResultTargets !== undefined &&
-    (!Array.isArray(value.baitCrabPotResultTargets) || value.baitCrabPotResultTargets.length > 1 || !value.baitCrabPotResultTargets.every(isBaitCrabPotTargetFact))
-  )
-    return "invalid_snapshot:baitCrabPotResultTargets";
-  if (
-    value.shopTargets !== undefined &&
-    (!Array.isArray(value.shopTargets) || value.shopTargets.length > 32 || !value.shopTargets.every(isShopTargetFact))
-  )
-    return "invalid_snapshot:shopTargets";
-  if (
-    value.horseTargets !== undefined &&
-    (!Array.isArray(value.horseTargets) || value.horseTargets.length > 16 || !value.horseTargets.every(isHorseTargetFact))
-  )
-    return "invalid_snapshot:horseTargets";
-  if (
-    value.mineEntranceTargets !== undefined &&
-    (!Array.isArray(value.mineEntranceTargets) || value.mineEntranceTargets.length > 16 || !value.mineEntranceTargets.every(isMineEntranceTargetFact))
-  )
-    return "invalid_snapshot:mineEntranceTargets";
-  if (
-    value.animalDoorTargets !== undefined &&
-    (!Array.isArray(value.animalDoorTargets) ||
-      value.animalDoorTargets.length > 32 ||
-      !value.animalDoorTargets.every(isAnimalDoorTargetFact))
-  )
-    return "invalid_snapshot:animalDoorTargets";
-  if (
-    value.fishPondTargets !== undefined &&
-    (!Array.isArray(value.fishPondTargets) ||
-      value.fishPondTargets.length > 16 ||
-      !value.fishPondTargets.every(isFishPondTargetFact))
-  )
-    return "invalid_snapshot:fishPondTargets";
-  if (
-    value.obeliskTargets !== undefined &&
-    (!Array.isArray(value.obeliskTargets) || value.obeliskTargets.length > 32 || !value.obeliskTargets.every(isObeliskTargetFact))
-  )
-    return "invalid_snapshot:obeliskTargets";
-  if (
-    value.buildingChestTargets !== undefined &&
-    (!Array.isArray(value.buildingChestTargets) ||
-      value.buildingChestTargets.length > 16 ||
-      !value.buildingChestTargets.every(isBuildingChestTargetFact))
-  )
-    return "invalid_snapshot:buildingChestTargets";
   // The key set, which this function did NOT check: an unexpected key therefore made it return its
   // "accepted" sentinel, the bridge's guard discarded that, and the operator saw a bare
   // `invalid_snapshot` naming nothing. Keys are schema names, so naming them leaks no player data.
@@ -3084,23 +2764,16 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   return "accepted";
 }
 
-function validateSnapshot(value: Record<string, unknown>): string | null {
-
-  const worldObjectTargetsVerdict = worldObjectTargetsError(value);
-  const wearableTargetsVerdict = wearableTargetsError(value);
-  if (wearableTargetsVerdict !== null) return wearableTargetsVerdict;
-  const warpItemTargetsVerdict = warpItemTargetsError(value);
-  if (warpItemTargetsVerdict !== null) return warpItemTargetsVerdict;
-  const panSitesVerdict = panSitesError(value);
-  if (panSitesVerdict !== null) return panSitesVerdict;
-  const mailboxTargetsVerdict = mailboxTargetsError(value);
-  if (mailboxTargetsVerdict !== null) return mailboxTargetsVerdict;
-  if (worldObjectTargetsVerdict !== null) return worldObjectTargetsVerdict;
-  const farmBuildingTargetsVerdict = farmBuildingTargetsError(value);
-  if (farmBuildingTargetsVerdict !== null) return farmBuildingTargetsVerdict;
-  const dailyQuestVerdict = dailyQuestError(value);
-  if (dailyQuestVerdict !== null) return dailyQuestVerdict;
-  return hasOnlyKeys(value, SNAPSHOT_KEYS) &&
+/**
+ * The non-family snapshot members the decision path requires.
+ *
+ * These rules are deliberately NOT shared with `diagnoseSnapshot`: three of them genuinely differ
+ * (the exact `tile` key set is only demanded here, `weather` may not be null here, and the disposition
+ * is only type-checked here while the diagnostic enforces the closed set), so merging the two would
+ * change which snapshots the bridge admits.
+ */
+function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolean {
+  return (
     Number.isSafeInteger(value.revision) &&
     typeof value.location === "string" &&
     isRecord(value.tile) &&
@@ -3115,243 +2788,39 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     (value.inventorySlots === undefined || Number.isSafeInteger(value.inventorySlots)) &&
     isBcp47Locale(value.presentationLocale) &&
-  isNonNegativeSafeInteger(value.timeOfDay) &&
-  value.timeOfDay <= 2600 &&
-  isNonNegativeSafeInteger(value.dayOfMonth) &&
-  value.dayOfMonth <= 28 &&
-  isNonNegativeSafeInteger(value.seasonIndex) &&
-  value.seasonIndex <= 3 &&
-  isNonNegativeSafeInteger(value.year) &&
+    isNonNegativeSafeInteger(value.timeOfDay) &&
+    value.timeOfDay <= 2600 &&
+    isNonNegativeSafeInteger(value.dayOfMonth) &&
+    value.dayOfMonth <= 28 &&
+    isNonNegativeSafeInteger(value.seasonIndex) &&
+    value.seasonIndex <= 3 &&
+    isNonNegativeSafeInteger(value.year) &&
     (value.weather === undefined || isWeatherToken(value.weather)) &&
-    (value.warps === undefined ||
-      (Array.isArray(value.warps) && value.warps.length <= 512 && value.warps.every(isWarp))) &&
-    (value.doorTargets === undefined ||
-      (Array.isArray(value.doorTargets) && value.doorTargets.length <= 64 && value.doorTargets.every(isWarp))) &&
-    (value.soilTiles === undefined ||
-      (Array.isArray(value.soilTiles) && value.soilTiles.length <= 64 && value.soilTiles.every(isSoilTile))) &&
-    (value.toolSlots === undefined ||
-      (Array.isArray(value.toolSlots) && value.toolSlots.length <= 36 && value.toolSlots.every(isToolSlotFact))) &&
-    (value.forageTargets === undefined ||
-      (Array.isArray(value.forageTargets) &&
-        value.forageTargets.length <= 64 &&
-        value.forageTargets.every(isForageTargetFact))) &&
-    (value.itemTargets === undefined ||
-      (Array.isArray(value.itemTargets) &&
-        value.itemTargets.length <= 64 &&
-        value.itemTargets.every(isItemTargetFact))) &&
-    (value.wateringCanFacts === undefined ||
-      (Array.isArray(value.wateringCanFacts) &&
-        value.wateringCanFacts.length <= 36 &&
-        value.wateringCanFacts.every(isWateringCanFact))) &&
-    (value.refillWateringCanTargets === undefined ||
-      (Array.isArray(value.refillWateringCanTargets) &&
-        value.refillWateringCanTargets.length <= 8 &&
-        value.refillWateringCanTargets.every(isRefillWateringCanTargetFact))) &&
-    (value.cropTargets === undefined ||
-      (Array.isArray(value.cropTargets) &&
-        value.cropTargets.length <= 64 &&
-        value.cropTargets.every(isCropTargetFact))) &&
-    (value.petBowlTargets === undefined ||
-      (Array.isArray(value.petBowlTargets) &&
-        value.petBowlTargets.length <= 8 &&
-        value.petBowlTargets.every(isPetBowlTargetFact))) &&
-    (value.slimeHutchTroughTargets === undefined ||
-      (Array.isArray(value.slimeHutchTroughTargets) &&
-        value.slimeHutchTroughTargets.length <= 4 &&
-        value.slimeHutchTroughTargets.every(isSlimeHutchTroughTargetFact))) &&
-    (value.harvestTargets === undefined ||
-      (Array.isArray(value.harvestTargets) &&
-        value.harvestTargets.length <= 64 &&
-        value.harvestTargets.every(isHarvestTargetFact))) &&
-    (value.seedTargets === undefined ||
-      (Array.isArray(value.seedTargets) &&
-        value.seedTargets.length <= 64 &&
-        value.seedTargets.every(isSeedTargetFact))) &&
-    (value.fertilizerTargets === undefined ||
-      (Array.isArray(value.fertilizerTargets) &&
-        value.fertilizerTargets.length <= 64 &&
-        value.fertilizerTargets.every(isSeedTargetFact))) &&
-    (value.woodFenceTargets === undefined ||
-      (Array.isArray(value.woodFenceTargets) &&
-        value.woodFenceTargets.length <= 16 &&
-        value.woodFenceTargets.every(isWoodFenceTargetFact))) &&
-    (value.woodFenceResultTargets === undefined ||
-      (Array.isArray(value.woodFenceResultTargets) &&
-        value.woodFenceResultTargets.length <= 1 &&
-        value.woodFenceResultTargets.every(isWoodFenceResultTargetFact))) &&
-    (value.crabPotTargets === undefined ||
-      (Array.isArray(value.crabPotTargets) &&
-        value.crabPotTargets.length <= 16 &&
-        value.crabPotTargets.every(isCrabPotTargetFact))) &&
-    (value.crabPotResultTargets === undefined ||
-      (Array.isArray(value.crabPotResultTargets) &&
-        value.crabPotResultTargets.length <= 1 &&
-        value.crabPotResultTargets.every(isCrabPotResultTargetFact))) &&
-    (value.crabPotCollectTargets === undefined ||
-      (Array.isArray(value.crabPotCollectTargets) &&
-        value.crabPotCollectTargets.length <= 16 &&
-        value.crabPotCollectTargets.every(isCrabPotCollectTargetFact))) &&
-    (value.baitCrabPotTargets === undefined ||
-      (Array.isArray(value.baitCrabPotTargets) &&
-        value.baitCrabPotTargets.length <= 16 &&
-        value.baitCrabPotTargets.every(isBaitCrabPotTargetFact))) &&
-    (value.baitCrabPotResultTargets === undefined ||
-      (Array.isArray(value.baitCrabPotResultTargets) &&
-        value.baitCrabPotResultTargets.length <= 1 &&
-        value.baitCrabPotResultTargets.every(isBaitCrabPotTargetFact))) &&
-    (value.debrisTargets === undefined ||
-      (Array.isArray(value.debrisTargets) &&
-        value.debrisTargets.length <= 64 &&
-        value.debrisTargets.every(isDebrisTargetFact))) &&
-    (value.rockSourceTargets === undefined ||
-      (Array.isArray(value.rockSourceTargets) &&
-        value.rockSourceTargets.length <= 8 &&
-        value.rockSourceTargets.every(isRockSourceTargetFact))) &&
-    (value.clearHoeDirtTargets === undefined ||
-      (Array.isArray(value.clearHoeDirtTargets) &&
-        value.clearHoeDirtTargets.length <= 8 &&
-        value.clearHoeDirtTargets.every(isClearHoeDirtTargetFact))) &&
-    (value.artifactSpotTargets === undefined ||
-      (Array.isArray(value.artifactSpotTargets) &&
-        value.artifactSpotTargets.length <= 8 &&
-        value.artifactSpotTargets.every(isArtifactSpotTargetFact))) &&
-    (value.artifactSpotResultTargets === undefined ||
-      (Array.isArray(value.artifactSpotResultTargets) &&
-        value.artifactSpotResultTargets.length <= 1 &&
-        value.artifactSpotResultTargets.every(isArtifactSpotResultTargetFact))) &&
     (value.artifactSpotFarmSourceCount === undefined ||
       value.artifactSpotFarmSourceCount === null ||
       (typeof value.artifactSpotFarmSourceCount === "number" &&
         Number.isSafeInteger(value.artifactSpotFarmSourceCount) &&
         value.artifactSpotFarmSourceCount >= 0)) &&
-    (value.machineTargets === undefined ||
-      (Array.isArray(value.machineTargets) &&
-        value.machineTargets.length <= 64 &&
-        value.machineTargets.every(isMachineTargetFact))) &&
-    (value.treeChopSourceTargets === undefined ||
-      (Array.isArray(value.treeChopSourceTargets) &&
-        value.treeChopSourceTargets.length <= 64 &&
-        value.treeChopSourceTargets.every(isTreeChopSourceTargetFact))) &&
-    (value.treeChopResultTargets === undefined ||
-      (Array.isArray(value.treeChopResultTargets) &&
-        value.treeChopResultTargets.length <= 64 &&
-        value.treeChopResultTargets.every(isTreeChopResultTargetFact))) &&
-    (value.treeStumpTargets === undefined ||
-      (Array.isArray(value.treeStumpTargets) &&
-        value.treeStumpTargets.length <= 16 &&
-        value.treeStumpTargets.every(isTreeStumpTargetFact))) &&
-    (value.treeSaplingTargets === undefined ||
-      (Array.isArray(value.treeSaplingTargets) &&
-        value.treeSaplingTargets.length <= 64 &&
-        value.treeSaplingTargets.every(isTreeSaplingTargetFact))) &&
-    (value.weedTargets === undefined ||
-      (Array.isArray(value.weedTargets) &&
-        value.weedTargets.length <= 16 &&
-        value.weedTargets.every(isWeedTargetFact))) &&
-     (value.grassTargets === undefined ||
-       (Array.isArray(value.grassTargets) &&
-         value.grassTargets.length <= 16 &&
-         value.grassTargets.every(isGrassTargetFact))) &&
-      (value.caskTargets === undefined || (Array.isArray(value.caskTargets) && value.caskTargets.length <= 16 && value.caskTargets.every(isCaskTargetFact))) &&
-      (value.mannequinTargets === undefined || (Array.isArray(value.mannequinTargets) && value.mannequinTargets.length <= 16 && value.mannequinTargets.every(isFacilityTargetFact))) &&
-      (value.signTargets === undefined || (Array.isArray(value.signTargets) && value.signTargets.length <= 16 && value.signTargets.every(isSignTargetFact))) &&
-      (value.siloTargets === undefined || (Array.isArray(value.siloTargets) && value.siloTargets.length <= 16 && value.siloTargets.every(isSiloTargetFact))) &&
-      (value.lanternSlots === undefined || (Array.isArray(value.lanternSlots) && value.lanternSlots.length <= 16 && value.lanternSlots.every(isLanternSlotFact))) &&
-    (value.scytheCropTargets === undefined ||
-      (Array.isArray(value.scytheCropTargets) &&
-        value.scytheCropTargets.length <= 16 &&
-        value.scytheCropTargets.every(isScytheCropTargetFact))) &&
-    (value.bushTargets === undefined || (Array.isArray(value.bushTargets) && value.bushTargets.length <= 32 && value.bushTargets.every(isBushTargetFact))) &&
-    (value.fruitTreeTargets === undefined || (Array.isArray(value.fruitTreeTargets) && value.fruitTreeTargets.length <= 16 && value.fruitTreeTargets.every(isBushTargetFact))) &&
-    (value.shakeTreeTargets === undefined || (Array.isArray(value.shakeTreeTargets) && value.shakeTreeTargets.length <= 16 && value.shakeTreeTargets.every(isBushTargetFact))) &&
-    (value.pedestalTargets === undefined || (Array.isArray(value.pedestalTargets) && value.pedestalTargets.length <= 16 && value.pedestalTargets.every(isPedestalTargetFact))) &&
-    (value.fenceGateTargets === undefined || (Array.isArray(value.fenceGateTargets) && value.fenceGateTargets.length <= 16 && value.fenceGateTargets.every(isFenceGateTargetFact))) &&
-    (value.npcRelationshipTargets === undefined ||
-      (Array.isArray(value.npcRelationshipTargets) &&
-        value.npcRelationshipTargets.length <= 64 &&
-        value.npcRelationshipTargets.every(isNpcRelationshipTargetFact))) &&
-    (value.villagerWhereabouts === undefined ||
-      (Array.isArray(value.villagerWhereabouts) &&
-        value.villagerWhereabouts.length <= 64 &&
-        value.villagerWhereabouts.every(isVillagerWhereaboutsFact))) &&
-    (value.harvestWhereabouts === undefined ||
-      (Array.isArray(value.harvestWhereabouts) &&
-        value.harvestWhereabouts.length <= 64 &&
-        value.harvestWhereabouts.every(isHarvestWhereaboutsFact))) &&
-    (value.petTargets === undefined ||
-      (Array.isArray(value.petTargets) && value.petTargets.length <= 16 && value.petTargets.every(isPetTargetFact))) &&
-    (value.animalProductTargets === undefined ||
-      (Array.isArray(value.animalProductTargets) &&
-        value.animalProductTargets.length <= 32 &&
-        value.animalProductTargets.every(isAnimalProductTargetFact))) &&
-    (value.feedTroughTargets === undefined ||
-      (Array.isArray(value.feedTroughTargets) &&
-        value.feedTroughTargets.length <= 32 &&
-        value.feedTroughTargets.every(isFeedTroughTargetFact))) &&
-    (value.chestStoreTargets === undefined ||
-      (Array.isArray(value.chestStoreTargets) &&
-        value.chestStoreTargets.length <= 16 &&
-        value.chestStoreTargets.every(isChestStoreTargetFact))) &&
-    (value.chestRetrieveTargets === undefined ||
-      (Array.isArray(value.chestRetrieveTargets) &&
-        value.chestRetrieveTargets.length <= 16 &&
-        value.chestRetrieveTargets.every(isChestRetrieveTargetFact))) &&
-    (value.inventoryItemFacts === undefined ||
-      (Array.isArray(value.inventoryItemFacts) &&
-        value.inventoryItemFacts.length <= 36 &&
-        value.inventoryItemFacts.every(isInventoryItemFact))) &&
-    (value.foodTargets === undefined ||
-      (Array.isArray(value.foodTargets) &&
-        value.foodTargets.length <= 36 &&
-        value.foodTargets.every(isFoodTargetFact))) &&
-    (value.shippingBinTargets === undefined ||
-      (Array.isArray(value.shippingBinTargets) &&
-        value.shippingBinTargets.length <= 1 &&
-        value.shippingBinTargets.every(isShippingBinTargetFact))) &&
-    (value.craftingRecipeTargets === undefined ||
-      (Array.isArray(value.craftingRecipeTargets) &&
-        value.craftingRecipeTargets.length <= 64 &&
-        value.craftingRecipeTargets.every(isRecipeTargetFact))) &&
-    (value.cookingRecipeTargets === undefined ||
-      (Array.isArray(value.cookingRecipeTargets) &&
-        value.cookingRecipeTargets.length <= 64 &&
-        value.cookingRecipeTargets.every(isRecipeTargetFact))) &&
-    (value.cookingStationTargets === undefined ||
-      (Array.isArray(value.cookingStationTargets) &&
-        value.cookingStationTargets.length <= 16 &&
-        value.cookingStationTargets.every(isCookingStationTargetFact))) &&
-    (value.shopTargets === undefined ||
-      (Array.isArray(value.shopTargets) && value.shopTargets.length <= 32 && value.shopTargets.every(isShopTargetFact))) &&
-    (value.mineElevatorFloorTargets === undefined ||
-      (Array.isArray(value.mineElevatorFloorTargets) &&
-        value.mineElevatorFloorTargets.length <= 32 &&
-        value.mineElevatorFloorTargets.every(isMineElevatorFloorFact))) &&
-    (value.animalDoorTargets === undefined ||
-      (Array.isArray(value.animalDoorTargets) &&
-        value.animalDoorTargets.length <= 32 &&
-        value.animalDoorTargets.every(isAnimalDoorTargetFact))) &&
-    (value.obeliskTargets === undefined ||
-      (Array.isArray(value.obeliskTargets) && value.obeliskTargets.length <= 32 && value.obeliskTargets.every(isObeliskTargetFact))) &&
-    (value.buildingChestTargets === undefined ||
-      (Array.isArray(value.buildingChestTargets) &&
-        value.buildingChestTargets.length <= 16 &&
-        value.buildingChestTargets.every(isBuildingChestTargetFact))) &&
-    (value.minecartTargets === undefined ||
-     (Array.isArray(value.minecartTargets) &&
-       value.minecartTargets.length <= 24 &&
-       value.minecartTargets.every(isMinecartTargetFact))) &&
-    (value.raftTargets === undefined ||
-      (Array.isArray(value.raftTargets) && value.raftTargets.length <= 16 && value.raftTargets.every(isRaftTargetFact))) &&
-    (value.horseTargets === undefined || (Array.isArray(value.horseTargets) && value.horseTargets.length <= 16 && value.horseTargets.every(isHorseTargetFact))) &&
-    (value.mineEntranceTargets === undefined || (Array.isArray(value.mineEntranceTargets) && value.mineEntranceTargets.length <= 16 && value.mineEntranceTargets.every(isMineEntranceTargetFact))) &&
-     isStringArray(value.capabilities) &&
+    isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&
     (value.activeExecution === undefined ||
       value.activeExecution === null ||
       (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null))
-    ? null
-    : "invalid_snapshot";
+  );
+}
+
+/**
+ * The decision path. Every array family is decided by `SNAPSHOT_FAMILY_RULES`, so a family can no
+ * longer be validated here and forgotten by the diagnostic. The reason stays the bare
+ * `invalid_snapshot` that `local-stardew-bridge` resolves through `diagnoseSnapshot` into the field
+ * and entry name; that is why a family fault is reported by name on the diagnostic path and not here.
+ */
+function validateSnapshot(value: Record<string, unknown>): string | null {
+  if (!hasOnlyKeys(value, SNAPSHOT_KEYS)) return "invalid_snapshot";
+  if (firstSnapshotFamilyVerdict(value) !== null) return "invalid_snapshot";
+  if (acceptedDailyQuestVerdict(value) !== null) return "invalid_snapshot";
+  return snapshotDecisionScalarsAccepted(value) ? null : "invalid_snapshot";
 }
 
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
@@ -4860,42 +4329,11 @@ function isAnimalDoorTargetFact(value: unknown): boolean {
   );
 }
 
-/** One building-declared chest. The counts are the live chest's own (`stackCount` slots, `itemCount`
- * items) and the branch is the native branch the chest's data declares; a Chest-type chest is never
- * published, so the union below is closed. */
-
-
-/** The world-object lane's projection. Every member is always written (the Mod omits nulls,
- * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
- * missing or malformed array must fail closed rather than read as a transport fault. */
-
-function wearableTargetsError(value: Record<string, unknown>): string | null {
-  if (value.wearableTargets === undefined) return null;
-  if (
-    !Array.isArray(value.wearableTargets) ||
-    value.wearableTargets.length > 16 ||
-    !value.wearableTargets.every(isWearableTargetFact)
-  )
-    return "invalid_snapshot:wearableTargets";
-  return null;
-}
-
 function isWearableTargetFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
   return hasExactKeys(record, ["targetId","bodySlot","occupantQualifiedItemId","occupantDisplayName"]);
-}
-
-function warpItemTargetsError(value: Record<string, unknown>): string | null {
-  if (value.warpItemTargets === undefined) return null;
-  if (
-    !Array.isArray(value.warpItemTargets) ||
-    value.warpItemTargets.length > 16 ||
-    !value.warpItemTargets.every(isWarpItemTargetFact)
-  )
-    return "invalid_snapshot:warpItemTargets";
-  return null;
 }
 
 function isWarpItemTargetFact(value: unknown): boolean {
@@ -4905,17 +4343,6 @@ function isWarpItemTargetFact(value: unknown): boolean {
   return hasExactKeys(record, ["slot","qualifiedItemId","displayName","stack","destination","destinationX","destinationY"]);
 }
 
-function panSitesError(value: Record<string, unknown>): string | null {
-  if (value.panSites === undefined) return null;
-  if (
-    !Array.isArray(value.panSites) ||
-    value.panSites.length > 16 ||
-    !value.panSites.every(isPanSiteFact)
-  )
-    return "invalid_snapshot:panSites";
-  return null;
-}
-
 function isPanSiteFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -4923,16 +4350,6 @@ function isPanSiteFact(value: unknown): boolean {
   return hasExactKeys(record, ["x","y"]);
 }
 
-function mailboxTargetsError(value: Record<string, unknown>): string | null {
-  if (value.mailboxTargets === undefined) return null;
-  if (
-    !Array.isArray(value.mailboxTargets) ||
-    value.mailboxTargets.length > 16 ||
-    !value.mailboxTargets.every(isMailboxTargetFact)
-  )
-    return "invalid_snapshot:mailboxTargets";
-  return null;
-}
 
 function isMailboxTargetFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -4940,17 +4357,9 @@ function isMailboxTargetFact(value: unknown): boolean {
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
   return hasExactKeys(record, ["targetId","location","x","y","pendingCount"]);
 }
-function worldObjectTargetsError(value: Record<string, unknown>): string | null {
-  if (value.worldObjectTargets === undefined) return null;
-  if (
-    !Array.isArray(value.worldObjectTargets) ||
-    value.worldObjectTargets.length > 48 ||
-    !value.worldObjectTargets.every(isWorldObjectTargetFact)
-  )
-    return "invalid_snapshot:worldObjectTargets";
-  return null;
-}
-
+/** The world-object lane's projection. Every member is always written (the Mod omits nulls,
+ * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
+ * missing or malformed array must fail closed rather than read as a transport fault. */
 function isWorldObjectTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -4974,56 +4383,6 @@ function isWorldObjectTargetFact(value: unknown): boolean {
     typeof value.displayName === "string"
   );
 }
-function farmBuildingTargetsError(value: Record<string, unknown>): string | null {
-  if (value.farmBuildingTargets === undefined) return null;
-  if (
-    !Array.isArray(value.farmBuildingTargets) ||
-    value.farmBuildingTargets.length > 16 ||
-    !value.farmBuildingTargets.every(isFarmBuildingTargetFact)
-  )
-    return "invalid_snapshot:farmBuildingTargets";
-  return null;
-}
-
-function dailyQuestError(value: Record<string, unknown>): string | null {
-  if (value.dailyQuestTargets !== undefined) {
-    if (
-      !Array.isArray(value.dailyQuestTargets) ||
-      value.dailyQuestTargets.length > 16 ||
-      !value.dailyQuestTargets.every(isDailyQuestTargetFact)
-    )
-      return "invalid_snapshot:dailyQuestTargets";
-  }
-  if (value.acceptedDailyQuest !== undefined && typeof value.acceptedDailyQuest !== "boolean")
-    return "invalid_snapshot:acceptedDailyQuest";
-  if (
-    value.specialOrderTargets !== undefined &&
-    (!Array.isArray(value.specialOrderTargets) ||
-      value.specialOrderTargets.length > 16 ||
-      !value.specialOrderTargets.every(isSpecialOrderTargetFact))
-  )
-    return "invalid_snapshot:specialOrderTargets";
-  if (
-    value.activeSpecialOrderKeys !== undefined &&
-    (!Array.isArray(value.activeSpecialOrderKeys) ||
-      value.activeSpecialOrderKeys.length > 16 ||
-      !value.activeSpecialOrderKeys.every((entry) => typeof entry === "string" && entry.length > 0))
-  )
-    return "invalid_snapshot:activeSpecialOrderKeys";
-  if (
-    value.museumRewardTargets !== undefined &&
-    (!Array.isArray(value.museumRewardTargets) ||
-      value.museumRewardTargets.length > 16 ||
-      !value.museumRewardTargets.every(isMuseumRewardTargetFact))
-  )
-    return "invalid_snapshot:museumRewardTargets";
-  const tailoringVerdict = tailoringTargetsVerdict(value);
-  if (tailoringVerdict !== null) return tailoringVerdict;
-  const colorVerdict = colorTargetsVerdict(value);
-  if (colorVerdict !== null) return colorVerdict;
-  return null;
-}
-
 /** One posted help-wanted quest the actor can name: the opaque id it was published under, the native
  * quest type, and the title a human would recognize. */
 function isDailyQuestTargetFact(value: unknown): boolean {
@@ -5068,40 +4427,6 @@ function isMuseumRewardTargetFact(value: unknown): boolean {
   );
 }
 
-/** One sewing-machine target: the pair of backpack slots and the item ids they hold, the kind of act
- * (`recipe` or `dye`), the qualified id the act produces, and - for a dye target - the garment's
- * CURRENT colour and name. `garmentColour` is the fact `dye_clothing_with_item`'s postcondition
- * changes, so a target whose identity ignored it could not be verified. */
-/** Why the tailoring projection was refused, naming the offending entry and its keys, or null when acceptable. */
-function tailoringTargetsVerdict(value: Record<string, unknown>): string | null {
-  const targets = value.tailoringTargets;
-  if (targets === undefined) return null;
-  if (!Array.isArray(targets)) return "invalid_snapshot:tailoringTargets:not_an_array";
-  if (targets.length > 32) return `invalid_snapshot:tailoringTargets:count=${targets.length}`;
-  for (let index = 0; index < targets.length; index += 1) {
-    if (isTailoringTargetFact(targets[index])) continue;
-    const entry = targets[index];
-    const keys = isRecord(entry) ? Object.keys(entry).join("|") : typeof entry;
-    return `invalid_snapshot:tailoringTargets:entry${index}:keys=${keys}`;
-  }
-  return null;
-}
-
-/** Why the chest-colour projection was refused, naming the offending entry and its keys, or null when acceptable. */
-function colorTargetsVerdict(value: Record<string, unknown>): string | null {
-  const targets = value.colorTargets;
-  if (targets === undefined) return null;
-  if (!Array.isArray(targets)) return "invalid_snapshot:colorTargets:not_an_array";
-  if (targets.length > 32) return `invalid_snapshot:colorTargets:count=${targets.length}`;
-  for (let index = 0; index < targets.length; index += 1) {
-    if (isColorTargetFact(targets[index])) continue;
-    const entry = targets[index];
-    const keys = isRecord(entry) ? Object.keys(entry).join("|") : typeof entry;
-    return `invalid_snapshot:colorTargets:entry${index}:keys=${keys}`;
-  }
-  return null;
-}
-
 /** One placed chest the actor can repaint: the opaque id discovery published, its location and tile, and
  * the colour it currently carries (the field the write changes, so the caller can see whether a repaint
  * would move anything). */
@@ -5122,6 +4447,10 @@ function isColorTargetFact(value: unknown): boolean {
   );
 }
 
+/** One sewing-machine target: the pair of backpack slots and the item ids they hold, the kind of act
+ * (`recipe` or `dye`), the qualified id the act produces, and - for a dye target - the garment's
+ * CURRENT colour and name. `garmentColour` is the fact `dye_clothing_with_item`'s postcondition
+ * changes, so a target whose identity ignored it could not be verified. */
 function isTailoringTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -5190,6 +4519,9 @@ function isFarmBuildingTargetFact(value: unknown): boolean {
   );
 }
 
+/** One building-declared chest. The counts are the live chest's own (`stackCount` slots, `itemCount`
+ * items) and the branch is the native branch the chest's data declares; a Chest-type chest is never
+ * published, so the union below is closed. */
 function isBuildingChestTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&

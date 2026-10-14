@@ -191,27 +191,11 @@ public sealed partial class ModEntry : Mod
             FixtureScenario = fixture.FixtureScenario,
             Bootstrap = new NativeLocalPlayerFixtureBootstrapConfig { Enable = false, SaveName = requestedFilteredName, PlayerName = bootstrap.PlayerName },
         };
-        this.config = new ModConfig
-        {
-            EnableLocalBridge = this.config.EnableLocalBridge,
-            PipeName = this.config.PipeName,
-            BridgeToken = this.config.BridgeToken,
-            SaveId = Game1.uniqueIDForThisGame.ToString(),
-            WorldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(),
-            PlayerId = Game1.player.UniqueMultiplayerID.ToString(),
-            CompanionId = this.config.CompanionId,
-            NativeLocalPlayerFixture = completedFixture,
-            // Retain the frontend-set companion language preference across the
-            // fixture bootstrap handoff so presentation locale stays aligned
-            // with the Agent session locale after the save is recorded.
-            PresentationLocale = this.config.PresentationLocale,
-            // Carry the live deny-by-exception policy across the fixture
-            // bootstrap handoff. The policy is now derived from the Mod's own
-            // registration catalog, so there is no allowlist to preserve.
-            DeniedActions = new List<string>(this.config.DeniedActions),
-            DeniedActionFamilies = new List<string>(this.config.DeniedActionFamilies),
-            ExperimentalActions = new List<string>(this.config.ExperimentalActions),
-        };
+        this.config = this.RebuildConfigWithLiveScope(
+            Game1.uniqueIDForThisGame.ToString(),
+            Game1.MasterPlayer.UniqueMultiplayerID.ToString(),
+            Game1.player.UniqueMultiplayerID.ToString(),
+            completedFixture);
         this.Helper.WriteConfig(this.config);
         this.nativeLocalPlayerFixtureBootstrapTerminal = true;
         this.Monitor.Log("GameBuddy recorded target-version native local fixture scope and disarmed fixture bootstrap before opening bridge.", LogLevel.Info);

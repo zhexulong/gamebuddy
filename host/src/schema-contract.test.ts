@@ -4,6 +4,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
+import {
+  SNAPSHOT_FAMILY_RULES,
+  diagnoseBridgeMessage,
+  validateBridgeMessage,
+  type Scope,
+  type SnapshotFamilyRule,
+} from "./protocol.js";
+
 type ReplayFixture = Readonly<{ messages: readonly unknown[] }>;
 
 const snapshotCatalogFacts = Object.freeze({
@@ -162,13 +170,16 @@ test("language-neutral schema and Host share closed shapes for every published s
   // The family list is DERIVED from the Host, never hand-typed: every snapshot field
   // the Host diagnoses by name (`invalid_snapshot:<field>`) must be declared by the
   // language-neutral schema, whose `additionalProperties:false` makes a missing entry
-  // unshippable. A hand-written `targets` array below once claimed to cover "every
-  // published snapshot target family" while stopping at `shippingBinTargets`, so six
-  // real families (`fishPondTargets`, `farmBuildingTargets`, `dailyQuestTargets`,
-  // `specialOrderTargets`, `museumRewardTargets`, `tailoringTargets`) were never
-  // probed and the suite stayed green. The old snake_case tokens below
-  // (`missing_required_key`, `unexpected_keys`) come from the generic key helper, not
-  // from a field, so the negative lookahead keeps only the field tokens.
+  // unshippable. The array families are declared by `SNAPSHOT_FAMILY_RULES` rather
+  // than by a literal, so they are read from that table; the regex below keeps every
+  // member that is still diagnosed from a literal. A hand-written `targets` array
+  // below once claimed to cover "every published snapshot target family" while
+  // stopping at `shippingBinTargets`, so six real families (`fishPondTargets`,
+  // `farmBuildingTargets`, `dailyQuestTargets`, `specialOrderTargets`,
+  // `museumRewardTargets`, `tailoringTargets`) were never probed and the suite stayed
+  // green. The old snake_case tokens below (`missing_required_key`,
+  // `unexpected_keys`) come from the generic key helper, not from a field, so the
+  // negative lookahead keeps only the field tokens.
   const protocolSource = await readFile(
     fileURLToPath(new URL("../../host/src/protocol.ts", import.meta.url)),
     "utf8",
@@ -177,11 +188,12 @@ test("language-neutral schema and Host share closed shapes for every published s
     await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
   ) as { $defs: { snapshot: { properties: Record<string, unknown> } } };
   const hostSnapshotFields = [
-    ...new Set(
-      [...protocolSource.matchAll(/invalid_snapshot:([a-z][A-Za-z0-9]*)(?![A-Za-z0-9_])/g)]
+    ...new Set([
+      ...[...protocolSource.matchAll(/invalid_snapshot:([a-z][A-Za-z0-9]*)(?![A-Za-z0-9_])/g)]
         .map((match) => match[1])
         .filter((field): field is string => field !== undefined),
-    ),
+      ...SNAPSHOT_FAMILY_RULES.map((rule) => rule.field),
+    ]),
   ];
   const schemaSnapshotFields = new Set(Object.keys(schemaDocument.$defs.snapshot.properties));
   for (const field of hostSnapshotFields)
@@ -1263,5 +1275,283 @@ test("language-neutral schema closes body-node admission challenge and grant fra
         }
       }
     }
+  }
+});
+
+/* ------------------------------------------------------------------------------------------------ *
+ * The schema owns the per-family snapshot SHAPE; the Host projects it.
+ *
+ * `SNAPSHOT_FAMILY_RULES` in `host/src/protocol.ts` is that projection: one declaration per array
+ * family, consulted by both `diagnoseSnapshot` and `validateSnapshot`. Every expectation below is
+ * derived from `protocol/bridge-v1.schema.json` alone - never from a hand-typed family list - so a
+ * family the schema declares and the Host forgets, a bound that changed on one side, and an instance
+ * the schema admits while the Host refuses all fail here. The hand-typed probe list this replaces had
+ * already drifted: it stopped at `shippingBinTargets` and stayed green while six live families, and
+ * then `colorTargets`/`tailoringTargets`, were never probed at all.
+ * ------------------------------------------------------------------------------------------------ */
+
+type SchemaNode = Record<string, unknown>;
+
+/** Array members the Host validates outside `SNAPSHOT_FAMILY_RULES`: its two capability lists. Their
+ * entries are bare identifiers rather than discovered world targets, and their entry bound is still
+ * left to the frame limit, so they are named here rather than silently skipped. */
+const SNAPSHOT_ARRAYS_OUTSIDE_THE_FAMILY_TABLE: readonly string[] = Object.freeze([
+  "capabilities",
+  "enabledActionIds",
+]);
+
+/** Families where the Host is STRICTER than the schema: the language-neutral contract admits an
+ * instance the Host would refuse, which is the failure class that once disconnected the bridge.
+ * Relaxing them would change what the bridge accepts, so the gap is pinned instead of closed, and the
+ * pin fails as soon as the two sides agree so it cannot outlive the divergence. */
+const HOST_CAPS_STRICTER_THAN_SCHEMA: ReadonlyMap<string, Readonly<{ host: number; schema: number }>> = new Map([
+  ["animalDoorTargets", { host: 32, schema: 64 }],
+  ["mineElevatorFloorTargets", { host: 32, schema: 64 }],
+  ["obeliskTargets", { host: 32, schema: 64 }],
+]);
+
+async function snapshotSchema(): Promise<
+  Readonly<{ defs: Record<string, SchemaNode>; families: readonly (readonly [string, SchemaNode])[] }>
+> {
+  const document = JSON.parse(
+    await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
+  ) as { $defs: Record<string, SchemaNode> };
+  const properties = ((document.$defs.snapshot ?? {}) as SchemaNode).properties as Record<string, SchemaNode>;
+  return Object.freeze({
+    defs: document.$defs,
+    families: Object.freeze(Object.entries(properties).filter(([, property]) => property.type === "array")),
+  });
+}
+
+/** A schema node with its `$ref` inlined, so the generator never needs a second lookup. */
+function dereference(defs: Record<string, SchemaNode>, node: SchemaNode): SchemaNode {
+  const reference = node.$ref;
+  if (typeof reference !== "string") return node;
+  const rest: Record<string, unknown> = { ...node };
+  delete rest.$ref;
+  return { ...(defs[reference.split("/").pop() ?? ""] as SchemaNode), ...rest };
+}
+
+/** A witness for the bounded character-class patterns the snapshot families use. */
+function patternWitness(pattern: string): string {
+  const body = pattern.replace(/^\^/, "").replace(/\$$/, "").replace(/\(\?!\[\\s\\S\]\)$/, "");
+  const sampleOf = (charClass: string): string => {
+    if (charClass.includes("0-9")) return "7";
+    if (charClass.includes("a-f")) return "a";
+    if (charClass.includes("A-Z")) return "A";
+    return "a";
+  };
+  let out = "";
+  for (let index = 0; index < body.length; ) {
+    if (body[index] === "[") {
+      const end = body.indexOf("]", index);
+      const charClass = body.slice(index + 1, end);
+      index = end + 1;
+      const quantifier = /^\{(\d+)(?:,\d+)?\}/.exec(body.slice(index));
+      if (quantifier === null) {
+        out += sampleOf(charClass);
+        continue;
+      }
+      index += quantifier[0].length;
+      out += sampleOf(charClass).repeat(Number(quantifier[1]));
+      continue;
+    }
+    if (body[index] === "\\") {
+      out += body[index + 1];
+      index += 2;
+      continue;
+    }
+    // A group would need a real regex witness. Refusing loudly keeps an unsupported pattern from
+    // silently shrinking this suite's coverage.
+    if (body[index] === "(") throw new Error(`unsupported schema pattern: ${pattern}`);
+    out += body[index];
+    index += 1;
+  }
+  return out;
+}
+
+/** The smallest instance the schema admits for this node; throws on a keyword it cannot witness. */
+function generateSchemaValue(defs: Record<string, SchemaNode>, node: SchemaNode, depth = 0): unknown {
+  if (depth > 12) throw new Error("schema_contract_generation_too_deep");
+  const schema = dereference(defs, node);
+  if (schema.const !== undefined) return schema.const;
+  if (Array.isArray(schema.enum)) return schema.enum[0];
+  if (Array.isArray(schema.oneOf)) return generateSchemaValue(defs, schema.oneOf[0] as SchemaNode, depth + 1);
+  if (Array.isArray(schema.allOf)) {
+    let merged: Record<string, unknown> = {};
+    for (const part of schema.allOf) {
+      const generated = generateSchemaValue(defs, part as SchemaNode, depth + 1);
+      if (generated !== null && typeof generated === "object" && !Array.isArray(generated))
+        merged = { ...merged, ...(generated as Record<string, unknown>) };
+    }
+    return merged;
+  }
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.length === 1 && types[0] === "null") return null;
+  const type = types.find((candidate) => candidate !== "null");
+  if (type === "string") {
+    if (typeof schema.pattern === "string") return patternWitness(schema.pattern);
+    const length = Math.max(1, typeof schema.minLength === "number" ? schema.minLength : 1);
+    return "s".repeat(typeof schema.maxLength === "number" ? Math.min(length, schema.maxLength) : length);
+  }
+  if (type === "integer" || type === "number") {
+    const base =
+      typeof schema.exclusiveMinimum === "number"
+        ? schema.exclusiveMinimum + 1
+        : Math.max(typeof schema.minimum === "number" ? schema.minimum : 0, 0);
+    return typeof schema.maximum === "number" ? Math.min(base, schema.maximum) : base;
+  }
+  if (type === "boolean") return false;
+  if (type === "array") {
+    const length = Math.max(1, typeof schema.minItems === "number" ? schema.minItems : 1);
+    return Array.from({ length }, () => generateSchemaValue(defs, schema.items as SchemaNode, depth + 1));
+  }
+  if (type === "object" || schema.properties !== undefined) {
+    const properties = (schema.properties ?? {}) as Record<string, SchemaNode>;
+    const generated: Record<string, unknown> = {};
+    for (const key of (schema.required ?? []) as string[])
+      generated[key] = generateSchemaValue(defs, properties[key] as SchemaNode, depth + 1);
+    // A member the schema pins to one value is always written by the Mod, so it belongs to the
+    // smallest faithful instance even when the schema does not require it.
+    for (const [key, property] of Object.entries(properties)) {
+      if (key in generated) continue;
+      const resolved = dereference(defs, property);
+      if (resolved.const !== undefined || Array.isArray(resolved.enum))
+        generated[key] = generateSchemaValue(defs, property, depth + 1);
+    }
+    return generated;
+  }
+  throw new Error(`unsupported schema node: ${JSON.stringify(schema).slice(0, 200)}`);
+}
+
+const schemaContractScope: Scope = {
+  integrationId: "stardew",
+  saveId: "save_01",
+  worldId: "world_01",
+  playerId: "player_01",
+  companionId: "companion_01",
+};
+
+const schemaContractBase = Object.freeze({
+  revision: 2,
+  location: "Farm",
+  tile: { x: 10, y: 11 },
+  stamina: 100,
+  exhausted: false,
+  health: 100,
+  actionable: true,
+  capabilities: [] as readonly string[],
+  catalogRevision: 1,
+  enabledActionIds: [] as readonly string[],
+  presentationLocale: "en-US",
+  timeOfDay: 600,
+  dayOfMonth: 1,
+  seasonIndex: 0,
+  year: 1,
+  weather: "sunny",
+  activeExecution: null,
+});
+
+function snapshotWith(field: string, entries: readonly unknown[]): unknown {
+  return {
+    protocolVersion: 1,
+    messageId: `schema_contract_${field}`,
+    correlationId: `schema_contract_${field}`,
+    timestampMs: Date.now(),
+    scope: schemaContractScope,
+    type: "snapshot",
+    payload: { ...schemaContractBase, [field]: entries },
+  };
+}
+
+test("the schema owns every snapshot family bound the Host projects", async () => {
+  const { families } = await snapshotSchema();
+  const rules = new Map<string, SnapshotFamilyRule>(SNAPSHOT_FAMILY_RULES.map((rule) => [rule.field, rule]));
+  assert.deepEqual(
+    families
+      .map(([field]) => field)
+      .filter((field) => !rules.has(field))
+      .sort(),
+    [...SNAPSHOT_ARRAYS_OUTSIDE_THE_FAMILY_TABLE].sort(),
+    "every array family the schema declares must be validated by the Host, except the named capability lists",
+  );
+  const schemaFields = new Set(families.map(([field]) => field));
+  for (const rule of SNAPSHOT_FAMILY_RULES)
+    assert.ok(
+      schemaFields.has(rule.field),
+      `${rule.field} is validated by the Host but the schema declares no such array family`,
+    );
+  for (const [field, family] of families) {
+    const rule = rules.get(field);
+    if (rule === undefined) continue;
+    const schemaMaxItems = family.maxItems as number;
+    const stricter = HOST_CAPS_STRICTER_THAN_SCHEMA.get(field);
+    assert.equal(
+      rule.maxItems,
+      stricter === undefined ? schemaMaxItems : stricter.host,
+      `${field}: the Host cap must be the schema's, or a named divergence`,
+    );
+    assert.ok(
+      rule.maxItems <= schemaMaxItems,
+      `${field}: the Host must not admit more entries than the schema declares`,
+    );
+    if (stricter !== undefined)
+      assert.equal(
+        schemaMaxItems,
+        stricter.schema,
+        `${field} now agrees with the schema, so drop it from HOST_CAPS_STRICTER_THAN_SCHEMA`,
+      );
+  }
+});
+
+test("the Host admits the schema's own smallest instance of every snapshot family", async () => {
+  const { defs, families } = await snapshotSchema();
+  for (const [field, family] of families) {
+    const sample = generateSchemaValue(defs, family.items as SchemaNode);
+    const message = snapshotWith(field, [sample]);
+    assert.equal(
+      diagnoseBridgeMessage(message, schemaContractScope),
+      "accepted",
+      `${field} refused what the schema declares: ${JSON.stringify(sample)}`,
+    );
+    assert.equal(
+      validateBridgeMessage(message, schemaContractScope),
+      null,
+      `${field} refused what the schema declares: ${JSON.stringify(sample)}`,
+    );
+  }
+});
+
+test("the Host refuses a snapshot family entry the schema's shape does not allow, naming the field", async () => {
+  const { defs, families } = await snapshotSchema();
+  const caps = new Map<string, number>(SNAPSHOT_FAMILY_RULES.map((rule) => [rule.field, rule.maxItems]));
+  for (const [field, family] of families) {
+    const sample = generateSchemaValue(defs, family.items as SchemaNode);
+    const maxItems = caps.get(field);
+    if (maxItems !== undefined) {
+      const message = snapshotWith(field, Array.from({ length: maxItems + 1 }, () => sample));
+      assert.equal(
+        validateBridgeMessage(message, schemaContractScope),
+        "invalid_snapshot",
+        `${field} accepted ${maxItems + 1} entries`,
+      );
+      const refused = diagnoseBridgeMessage(message, schemaContractScope);
+      assert.ok(
+        refused !== null && refused.startsWith(`invalid_snapshot:${field}`),
+        `${field} over its cap was not named: ${refused}`,
+      );
+    }
+    if (sample === null || typeof sample !== "object" || Array.isArray(sample)) continue;
+    const message = snapshotWith(field, [{ ...sample, unexpected: true }]);
+    assert.equal(
+      validateBridgeMessage(message, schemaContractScope),
+      "invalid_snapshot",
+      `${field} accepted an unknown key`,
+    );
+    const refused = diagnoseBridgeMessage(message, schemaContractScope);
+    assert.ok(
+      refused !== null && refused.startsWith(`invalid_snapshot:${field}`),
+      `${field} with an unknown key was not named: ${refused}`,
+    );
   }
 });
