@@ -11,15 +11,9 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  executionWakeSourceFor,
-  normalizeExecutionWake,
-} from "./action-execution-coordinator.internal.js";
+import { executionWakeSourceFor, normalizeExecutionWake } from "./action-execution-coordinator.internal.js";
 import { finalAssistantText } from "./agent-expression.js";
-import type {
-  ExecutionWake,
-  ExecutionWakeSource,
-} from "./integration-launcher.js";
+import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
 import type {
   IntegrationActionCatalog,
   IntegrationActionPolicy,
@@ -80,12 +74,7 @@ export type GameplayTaskRecord = Readonly<{
 }>;
 
 export type GameplayTaskStep = Readonly<{
-  name:
-    | "worker_finished"
-    | "worker_reported_completed"
-    | "authoritatively_completed"
-    | "blocked"
-    | "cancelled";
+  name: "worker_finished" | "worker_reported_completed" | "authoritatively_completed" | "blocked" | "cancelled";
   reasonCode: string;
 }>;
 
@@ -115,8 +104,7 @@ type GameplayTaskDispatchAdmission = IntegrationDispatchAdmission &
     cancelPending(reasonCode: string): void;
   }>;
 
-export type GameplayTaskDispatchAdmissionFactory =
-  () => GameplayTaskDispatchAdmission;
+export type GameplayTaskDispatchAdmissionFactory = () => GameplayTaskDispatchAdmission;
 
 type MutableTaskRecord = {
   taskId: string;
@@ -193,8 +181,7 @@ export class GameplayTaskSubagent {
     executionWakeSource?: ExecutionWakeSource,
     private readonly dispatchAdmissionFactory?: GameplayTaskDispatchAdmissionFactory,
   ) {
-    this.#executionWakeSource =
-      executionWakeSource ?? executionWakeSourceFor(integration);
+    this.#executionWakeSource = executionWakeSource ?? executionWakeSourceFor(integration);
   }
 
   public get modelConfig(): CompanionModelConfig {
@@ -245,33 +232,21 @@ export class GameplayTaskSubagent {
     // A request can be on the wire before execute() has returned its execution
     // id. Seal cancellation admission now; settling the response below issues
     // the exact owned cancel once the Mod correlation is known.
-    if (active.record.pendingDispatch !== null)
-      active.record.pendingDispatch.cancelRequired = true;
+    if (active.record.pendingDispatch !== null) active.record.pendingDispatch.cancelRequired = true;
     if (active.cancellationIssued) return;
     active.cancellationIssued = true;
     this.#cancellationEpoch++;
     active.controller.abort(reasonCode);
-    issueTaskOwnedCancellation(
-      active.record,
-      active.dispatchAdmission,
-      reasonCode,
-    );
+    issueTaskOwnedCancellation(active.record, active.dispatchAdmission, reasonCode);
     void active.session?.abort().catch(() => undefined);
   }
 
-  public async run(
-    task: string,
-    parentSignal?: AbortSignal,
-  ): Promise<GameplayTaskResult> {
-    if (this.#active !== undefined)
-      throw new Error("gameplay_task_already_active");
+  public async run(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
+    if (this.#active !== undefined) throw new Error("gameplay_task_already_active");
     return (this.#lastTaskResult = await this.runTask(task, parentSignal));
   }
 
-  private async runTask(
-    task: string,
-    parentSignal?: AbortSignal,
-  ): Promise<GameplayTaskResult> {
+  private async runTask(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
     const steps: GameplayTaskStep[] = [];
     this.#lastTaskSteps = Object.freeze([]);
     const taskId = `gameplay_${crypto.randomUUID()}`;
@@ -285,10 +260,7 @@ export class GameplayTaskSubagent {
       pendingDispatch: null,
       terminalReceipt: null,
       terminalReasonCode: null,
-      wakeMode:
-        this.#executionWakeSource === undefined
-          ? "polling"
-          : "event_with_reconcile_poll",
+      wakeMode: this.#executionWakeSource === undefined ? "polling" : "event_with_reconcile_poll",
     };
     const controller = new AbortController();
     // Reserve synchronously, before the first await. This is also the exact
@@ -321,22 +293,16 @@ export class GameplayTaskSubagent {
     let session: AgentSession | undefined;
     let taskReport: GameplayTaskReport | null = null;
     try {
-      taskRoot = await (this.sessionFactory?.createWorkspace?.(
-        join(this.paths.runtimeCwd, "gameplay-task-"),
-      ) ?? mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-")));
+      taskRoot = await (this.sessionFactory?.createWorkspace?.(join(this.paths.runtimeCwd, "gameplay-task-")) ??
+        mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-")));
       const agentDir = join(taskRoot, "pi-agent");
       await mkdir(agentDir, { recursive: true });
       const reportTool = defineTool({
         name: "report_to_parent",
         label: "Report Gameplay Task",
-        description:
-          "Return a bounded structured task status to the parent Agent. This never speaks to the player.",
+        description: "Return a bounded structured task status to the parent Agent. This never speaks to the player.",
         parameters: Type.Object({
-          state: Type.Union([
-            Type.Literal("completed"),
-            Type.Literal("blocked"),
-            Type.Literal("cancelled"),
-          ]),
+          state: Type.Union([Type.Literal("completed"), Type.Literal("blocked"), Type.Literal("cancelled")]),
           reasonCode: Type.String({ minLength: 1, maxLength: 128 }),
           evidence: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
         }),
@@ -344,9 +310,7 @@ export class GameplayTaskSubagent {
           const report: GameplayTaskReport = Object.freeze({
             state: params.state,
             reasonCode: params.reasonCode,
-            ...(params.evidence === undefined
-              ? {}
-              : { evidence: params.evidence }),
+            ...(params.evidence === undefined ? {} : { evidence: params.evidence }),
           });
           // The action branch reconciles the owned execution immediately before
           // admission; the report boundary is the other place a verdict is
@@ -356,8 +320,7 @@ export class GameplayTaskSubagent {
           // reconcileKnownExecution moves it into this task's lineage cache. With
           // no reconcile here, a task that has just watched its last receipt
           // succeed can never prove the completion it is reporting.
-          if (report.state === "completed")
-            reconcileKnownExecution(record, this.integration);
+          if (report.state === "completed") reconcileKnownExecution(record, this.integration);
           if (
             report.state === "completed" &&
             !hasAuthoritativeCompletion(
@@ -380,13 +343,10 @@ export class GameplayTaskSubagent {
       const status = defineTool({
         name: "companion_status",
         label: "Companion Status",
-        description:
-          "Read the mounted integration status for this private gameplay task.",
+        description: "Read the mounted integration status for this private gameplay task.",
         parameters: Type.Object({}),
         execute: async () => {
-          const state = requireIntegrationAdapter(this.integration).readState(
-            this.integration,
-          );
+          const state = requireIntegrationAdapter(this.integration).readState(this.integration);
           const details = {
             host: "ready",
             connected: state.connected,
@@ -416,32 +376,21 @@ export class GameplayTaskSubagent {
       const integrationToolSet = integrationAdapter.createToolSet({
         connection: this.integration,
         knowledge: this.integration.knowledge,
-        ...(this.integration.gameVersion === undefined
-          ? {}
-          : { gameVersion: this.integration.gameVersion }),
+        ...(this.integration.gameVersion === undefined ? {} : { gameVersion: this.integration.gameVersion }),
         ...(this.actionPolicy === undefined ? {} : { policy: this.actionPolicy }),
-        ...(dispatchAdmissionFactory === undefined
-          ? {}
-          : { dispatchAdmissionFactory }),
+        ...(dispatchAdmissionFactory === undefined ? {} : { dispatchAdmissionFactory }),
       });
       const integrationTools = [
         ...integrationToolSet.observation,
         ...integrationToolSet.actions,
         ...integrationToolSet.knowledge,
       ];
-      const cancelSettledPendingDispatch = (
-        requestId: string,
-        executionId: string,
-      ) => {
+      const cancelSettledPendingDispatch = (requestId: string, executionId: string) => {
         if (!active.cancellationIssued) return;
         const admission = active.dispatchAdmission;
         if (admission === undefined) return;
         void admission
-          .cancelExact(
-            requestId,
-            executionId,
-            record.terminalReasonCode ?? "gameplay_task_cancelled",
-          )
+          .cancelExact(requestId, executionId, record.terminalReasonCode ?? "gameplay_task_cancelled")
           .catch(() => undefined);
       };
       const scopedIntegrationTools = integrationTools.map((tool) =>
@@ -486,36 +435,26 @@ export class GameplayTaskSubagent {
           customTools,
         });
       } else {
-        session = await createProductionGameplayTaskSession(
-          taskRoot,
-          agentDir,
-          taskId,
-          allowedToolNames,
-          customTools,
-        );
+        session = await createProductionGameplayTaskSession(taskRoot, agentDir, taskId, allowedToolNames, customTools);
       }
-      const actualToolNames = session.agent.state.tools
-        .map((tool) => tool.name)
-        .sort();
+      const actualToolNames = session.agent.state.tools.map((tool) => tool.name).sort();
       if (JSON.stringify(actualToolNames) !== JSON.stringify(allowedToolNames))
         throw new Error("gameplay_subagent_tool_isolation_failed");
       active.session = session;
       // Liveness is fail-closed for this task only: stop further tool admission,
       // issue at most one owned cancellation, then let the existing bounded
       // receipt watchdog determine the terminal outcome.
-      const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake(
-        (candidate) => {
-          const wake = normalizeExecutionWake(candidate);
-          if (wake?.kind === "terminal") {
-            // A bridge write can still be awaiting its response when STOP lands.
-            // The adapter's terminal wake lets the task reconcile that exact
-            // request immediately; polling remains only a lost-wake fallback.
-            settlePendingTerminalWake(record, this.integration, wake);
-          }
-          if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
-            cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
-        },
-      );
+      const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake((candidate) => {
+        const wake = normalizeExecutionWake(candidate);
+        if (wake?.kind === "terminal") {
+          // A bridge write can still be awaiting its response when STOP lands.
+          // The adapter's terminal wake lets the task reconcile that exact
+          // request immediately; polling remains only a lost-wake fallback.
+          settlePendingTerminalWake(record, this.integration, wake);
+        }
+        if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
+          cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
+      });
       try {
         if (controller.signal.aborted)
           return await abortedTaskResult(
@@ -577,12 +516,7 @@ export class GameplayTaskSubagent {
         // the global latestReceipt never moves this task's verdict.
         const ownedReceipt = taskOwnedReceipt(record, finalReport);
         if (
-          !hasAuthoritativeCompletion(
-            finalReport,
-            ownedReceipt,
-            record.executions,
-            integrationAdapter.actionCatalog,
-          )
+          !hasAuthoritativeCompletion(finalReport, ownedReceipt, record.executions, integrationAdapter.actionCatalog)
         ) {
           record.terminalReasonCode = "authoritative_completion_receipt_lost";
           steps.push(
@@ -598,8 +532,7 @@ export class GameplayTaskSubagent {
             report: Object.freeze({ reasonCode: record.terminalReasonCode }),
           };
         }
-        if (ownedReceipt === null)
-          throw new Error("authoritative_completion_receipt_lost");
+        if (ownedReceipt === null) throw new Error("authoritative_completion_receipt_lost");
         record.terminalReceipt = Object.freeze({
           requestId: ownedReceipt.requestId,
           executionId: ownedReceipt.executionId,
@@ -610,10 +543,7 @@ export class GameplayTaskSubagent {
       record.terminalReasonCode ??= finalReport.reasonCode;
       steps.push(
         Object.freeze({
-          name:
-            finalReport.state === "completed"
-              ? "authoritatively_completed"
-              : finalReport.state,
+          name: finalReport.state === "completed" ? "authoritatively_completed" : finalReport.state,
           reasonCode: record.terminalReasonCode,
         }),
       );
@@ -624,10 +554,7 @@ export class GameplayTaskSubagent {
         report: finalReport,
       };
     } catch (error) {
-      if (
-        controller.signal.aborted ||
-        (error instanceof Error && /aborted|cancelled/i.test(error.message))
-      )
+      if (controller.signal.aborted || (error instanceof Error && /aborted|cancelled/i.test(error.message)))
         return await abortedTaskResult(
           taskId,
           record,
@@ -636,8 +563,7 @@ export class GameplayTaskSubagent {
           controller.signal,
           this.#executionWakeSource,
         );
-      record.terminalReasonCode ??=
-        error instanceof Error ? error.message : "gameplay_subagent_failed";
+      record.terminalReasonCode ??= error instanceof Error ? error.message : "gameplay_subagent_failed";
       return {
         taskId,
         state: "blocked",
@@ -651,10 +577,7 @@ export class GameplayTaskSubagent {
       // Never let a stale task's finalizer erase a task that replaced it.
       if (this.#active === active) this.#active = undefined;
       session?.dispose();
-      if (taskRoot !== undefined)
-        await rm(taskRoot, { recursive: true, force: true }).catch(
-          () => undefined,
-        );
+      if (taskRoot !== undefined) await rm(taskRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 }
@@ -666,16 +589,9 @@ async function createProductionGameplayTaskSession(
   allowedToolNames: readonly string[],
   customTools: readonly ToolDefinition[],
 ): Promise<AgentSession> {
-  const modelRuntime = await createTaskModelRuntime(
-    agentDir,
-    GAMEPLAY_SUBAGENT_MODEL_CONFIG,
-  );
-  const model = modelRuntime.getModel(
-    GAMEPLAY_SUBAGENT_MODEL_CONFIG.provider,
-    GAMEPLAY_SUBAGENT_MODEL_CONFIG.modelId,
-  );
-  if (model === undefined)
-    throw new Error("gameplay_subagent_model_unavailable");
+  const modelRuntime = await createTaskModelRuntime(agentDir, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
+  const model = modelRuntime.getModel(GAMEPLAY_SUBAGENT_MODEL_CONFIG.provider, GAMEPLAY_SUBAGENT_MODEL_CONFIG.modelId);
+  if (model === undefined) throw new Error("gameplay_subagent_model_unavailable");
   const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
   const loader = new DefaultResourceLoader({
     cwd: taskRoot,
@@ -712,10 +628,27 @@ async function createProductionGameplayTaskSession(
   return session;
 }
 
-async function createTaskModelRuntime(
-  agentDir: string,
-  config: CompanionModelConfig,
-): Promise<ModelRuntime> {
+/**
+ * The context window the gameplay sub-agent declares for its task model.
+ * Same fixture-only channel as the runtime's own window: opt-in, reported when used, invalid values reported
+ * and ignored, so a pressure measurement is reusable here too rather than a product-scale run.
+ */
+const TASK_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+function declaredTaskModelWindow(): number {
+  const raw = process.env[TASK_MODEL_WINDOW_ENV];
+  if (raw === undefined || raw.trim() === "") return 272_000;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(value) || value < 4_000) {
+    process.stderr.write(
+      `[gameplay-subagent] ignoring ${TASK_MODEL_WINDOW_ENV}=${JSON.stringify(raw)}: not an integer of at least 4000\n`,
+    );
+    return 272_000;
+  }
+  process.stderr.write(`[gameplay-subagent] fixture model window: ${value} tokens\n`);
+  return value;
+}
+
+async function createTaskModelRuntime(agentDir: string, config: CompanionModelConfig): Promise<ModelRuntime> {
   const modelsPath = join(agentDir, "models.json");
   await writeFile(
     modelsPath,
@@ -750,8 +683,10 @@ async function createTaskModelRuntime(
                   max: "max",
                 },
                 input: ["text"],
-                contextWindow: 272_000,
-                maxTokens: 128_000,
+                contextWindow: declaredTaskModelWindow(),
+                // Travel with the window: a shrunk window must not ask the provider for a bigger output than
+                // its capacity, and 128k keeps the production ratio (.47) the same as the original fixed pair.
+                maxTokens: Math.min(128_000, Math.floor(declaredTaskModelWindow() * 0.4706)),
                 cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
               },
             ],
@@ -777,26 +712,19 @@ export function selectTaskOwnedCancellation(
     executionId: string;
     state: string;
   }>[],
-  observed:
-    Readonly<{ requestId: string; executionId: string }> | null | undefined,
+  observed: Readonly<{ requestId: string; executionId: string }> | null | undefined,
 ): Readonly<{ requestId: string; executionId: string }> | null {
   if (
     observed !== null &&
     observed !== undefined &&
-    taskExecutions.some(
-      (known) =>
-        known.requestId === observed.requestId &&
-        known.executionId === observed.executionId,
-    )
+    taskExecutions.some((known) => known.requestId === observed.requestId && known.executionId === observed.executionId)
   ) {
     return Object.freeze({
       requestId: observed.requestId,
       executionId: observed.executionId,
     });
   }
-  const nonterminal = taskExecutions.find(
-    (known) => !isTerminalReceiptState(known.state),
-  );
+  const nonterminal = taskExecutions.find((known) => !isTerminalReceiptState(known.state));
   return nonterminal === undefined
     ? null
     : Object.freeze({
@@ -809,20 +737,11 @@ export type GameplayActionAdmission =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      reasonCode:
-        | "unknown_gameplay_action"
-        | "gameplay_task_active_execution_exists"
-        | "gameplay_task_snapshot_stale";
+      reasonCode: "unknown_gameplay_action" | "gameplay_task_active_execution_exists" | "gameplay_task_snapshot_stale";
     }>;
 
-type GameplayActionAdmissionRecord = Readonly<
-  Pick<MutableTaskRecord, "executions">
-> &
-  Readonly<
-    Partial<
-      Pick<MutableTaskRecord, "pendingDispatch" | "minimumSnapshotRevision">
-    >
-  >;
+type GameplayActionAdmissionRecord = Readonly<Pick<MutableTaskRecord, "executions">> &
+  Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch" | "minimumSnapshotRevision">>>;
 
 /**
  * Pure Host admission decision used immediately before a Game Action tool call.
@@ -831,8 +750,7 @@ type GameplayActionAdmissionRecord = Readonly<
 export function admitGameplayAction(
   actionId: string,
   record: GameplayActionAdmissionRecord,
-  activeExecution:
-    Readonly<{ requestId: string; executionId: string }> | null | undefined,
+  activeExecution: Readonly<{ requestId: string; executionId: string }> | null | undefined,
   catalog: IntegrationActionCatalog,
   registrations: readonly IntegrationActionRegistration[],
   capabilities: readonly string[],
@@ -842,13 +760,10 @@ export function admitGameplayAction(
   const entry = catalog
     .visibleActions(registrations, capabilities, policy)
     .find((candidate) => candidate.actionId === actionId);
-  if (entry === undefined)
-    return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
+  if (entry === undefined) return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
   if (
     record.minimumSnapshotRevision != null &&
-    (snapshotRevision === null ||
-      snapshotRevision === undefined ||
-      snapshotRevision < record.minimumSnapshotRevision)
+    (snapshotRevision === null || snapshotRevision === undefined || snapshotRevision < record.minimumSnapshotRevision)
   ) {
     return Object.freeze({
       ok: false,
@@ -889,10 +804,7 @@ export function hasAuthoritativeCompletion(
     return false;
   const requestId = report.evidence.requestId;
   const executionId = report.evidence.executionId;
-  const execution = taskExecutions.find(
-    (known) =>
-      known.requestId === requestId && known.executionId === executionId,
-  );
+  const execution = taskExecutions.find((known) => known.requestId === requestId && known.executionId === executionId);
   return (
     requestId === receipt.requestId &&
     executionId === receipt.executionId &&
@@ -948,17 +860,9 @@ function hasTargetedCompletionIdentity(
 function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
   return Object.freeze({
     ...record,
-    executions: Object.freeze(
-      record.executions.map((execution) => Object.freeze({ ...execution })),
-    ),
-    pendingDispatch:
-      record.pendingDispatch === null
-        ? null
-        : Object.freeze({ ...record.pendingDispatch }),
-    terminalReceipt:
-      record.terminalReceipt === null
-        ? null
-        : Object.freeze({ ...record.terminalReceipt }),
+    executions: Object.freeze(record.executions.map((execution) => Object.freeze({ ...execution }))),
+    pendingDispatch: record.pendingDispatch === null ? null : Object.freeze({ ...record.pendingDispatch }),
+    terminalReceipt: record.terminalReceipt === null ? null : Object.freeze({ ...record.terminalReceipt }),
   });
 }
 
@@ -969,10 +873,7 @@ function taskScopedTool(
   integration: GameConnection,
   integrationAdapter: ReturnType<typeof requireIntegrationAdapter>,
   mountedPolicy: import("./game-integration-adapter.js").IntegrationActionPolicy,
-  cancelSettledPendingDispatch: (
-    requestId: string,
-    executionId: string,
-  ) => void,
+  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
 ): ToolDefinition {
   const actionId = integrationAdapter.actionIdForToolName(tool.name);
   const isCancel = integrationAdapter.isCancellationTool(tool.name);
@@ -980,19 +881,14 @@ function taskScopedTool(
     ...tool,
     executionMode: "sequential",
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      if (controller.signal.aborted)
-        throw new Error(record.terminalReasonCode ?? "gameplay_task_cancelled");
+      if (controller.signal.aborted) throw new Error(record.terminalReasonCode ?? "gameplay_task_cancelled");
       if (isCancel) {
         const requestId = isRecord(params) ? params.requestId : undefined;
         const executionId = isRecord(params) ? params.executionId : undefined;
         if (
           typeof requestId !== "string" ||
           typeof executionId !== "string" ||
-          !record.executions.some(
-            (known) =>
-              known.requestId === requestId &&
-              known.executionId === executionId,
-          )
+          !record.executions.some((known) => known.requestId === requestId && known.executionId === executionId)
         ) {
           throw new Error("gameplay_task_cancel_not_owned");
         }
@@ -1019,9 +915,7 @@ function taskScopedTool(
         // Record ownership before yielding to the transport. Do not infer an
         // execution id or issue a cancel until the Mod has returned one.
         const expectedTargetId =
-          isRecord(params) && typeof params.expectedTargetId === "string"
-            ? params.expectedTargetId
-            : undefined;
+          isRecord(params) && typeof params.expectedTargetId === "string" ? params.expectedTargetId : undefined;
         const sceneTargetRef =
           isRecord(params) && isRecord(params.sceneTarget) && typeof params.sceneTarget.ref === "string"
             ? params.sceneTarget.ref
@@ -1035,26 +929,13 @@ function taskScopedTool(
           ...(sceneTargetRef === undefined ? {} : { sceneTargetRef }),
         };
         try {
-          const result = await tool.execute(
-            toolCallId,
-            params,
-            signal,
-            onUpdate,
-            ctx,
-          );
-          settlePendingDispatch(
-            record,
-            integration,
-            integrationAdapter,
-            result.details,
-            cancelSettledPendingDispatch,
-          );
+          const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
+          settlePendingDispatch(record, integration, integrationAdapter, result.details, cancelSettledPendingDispatch);
           return result;
         } catch (error) {
           // A post-write transport failure is not proof that no execution
           // exists. Retain a bounded uncertain correlation for reconciliation.
-          if (record.pendingDispatch?.requestId === requestId)
-            record.pendingDispatch.state = "uncertain";
+          if (record.pendingDispatch?.requestId === requestId) record.pendingDispatch.state = "uncertain";
           throw error;
         }
       }
@@ -1076,17 +957,10 @@ async function abortedTaskResult(
   // authoritative terminal receipt inside the bounded watchdog window.
   const cancellation =
     record.pendingDispatch !== null || record.executions.length > 0
-      ? await awaitPendingDispatchAndOwnedTerminalReceipt(
-          record,
-          integration,
-          wakeSource,
-        )
+      ? await awaitPendingDispatchAndOwnedTerminalReceipt(record, integration, wakeSource)
       : null;
   if (cancellation !== null) record.terminalReceipt = cancellation;
-  if (
-    record.pendingDispatch !== null ||
-    (record.executions.length > 0 && cancellation === null)
-  ) {
+  if (record.pendingDispatch !== null || (record.executions.length > 0 && cancellation === null)) {
     record.terminalReasonCode = "cancellation_receipt_missing";
     return {
       taskId,
@@ -1119,9 +993,7 @@ async function awaitOwnedTerminalReceipt(
     // already observed cannot be lost to a later unrelated receipt; the global
     // latestReceipt is only a fallback while the world has not yet moved.
     readReceipt: () =>
-      taskOwnedReceiptFromCache(record) ??
-      requireIntegrationAdapter(integration).readState(integration)
-        .latestReceipt,
+      taskOwnedReceiptFromCache(record) ?? requireIntegrationAdapter(integration).readState(integration).latestReceipt,
   });
 }
 
@@ -1148,9 +1020,7 @@ export async function awaitTaskOwnedTerminalReceipt(
     receipt !== null &&
     isTerminalReceiptState(receipt.state) &&
     input.executions.some(
-      (execution) =>
-        execution.requestId === receipt.requestId &&
-        execution.executionId === receipt.executionId,
+      (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
     )
       ? Object.freeze({
           requestId: receipt.requestId,
@@ -1187,10 +1057,7 @@ export async function awaitTaskOwnedTerminalReceipt(
     const onAbort = () => finish(null);
     input.signal?.addEventListener("abort", onAbort, { once: true });
     poll = setInterval(reconcile, 250);
-    deadline = setTimeout(
-      () => finish(null),
-      Math.max(0, input.deadlineMs - Date.now()),
-    );
+    deadline = setTimeout(() => finish(null), Math.max(0, input.deadlineMs - Date.now()));
     if (input.wakeSource !== undefined) {
       unsubscribe = input.wakeSource.onExecutionWake((candidate) => {
         const wake = normalizeExecutionWake(candidate);
@@ -1198,9 +1065,7 @@ export async function awaitTaskOwnedTerminalReceipt(
         if (wake.kind === "terminal") {
           if (
             !input.executions.some(
-              (execution) =>
-                execution.requestId === wake.requestId &&
-                execution.executionId === wake.executionId,
+              (execution) => execution.requestId === wake.requestId && execution.executionId === wake.executionId,
             )
           )
             return;
@@ -1241,14 +1106,8 @@ function ownedReceiptKey(requestId: string, executionId: string): string {
  * task-owned tuples: a later unrelated receipt can displace the global
  * latestReceipt without ever moving this task's verdict.
  */
-function rememberOwnedReceipt(
-  record: MutableTaskRecord,
-  receipt: IntegrationExecutionReceipt,
-): void {
-  record.ownedReceipts.set(
-    ownedReceiptKey(receipt.requestId, receipt.executionId),
-    receipt,
-  );
+function rememberOwnedReceipt(record: MutableTaskRecord, receipt: IntegrationExecutionReceipt): void {
+  record.ownedReceipts.set(ownedReceiptKey(receipt.requestId, receipt.executionId), receipt);
 }
 
 /**
@@ -1264,37 +1123,26 @@ function taskOwnedReceipt(
   if (!isRecord(report.evidence)) return null;
   const requestId = report.evidence.requestId;
   const executionId = report.evidence.executionId;
-  if (typeof requestId !== "string" || typeof executionId !== "string")
-    return null;
-  return (
-    record.ownedReceipts.get(ownedReceiptKey(requestId, executionId)) ?? null
-  );
+  if (typeof requestId !== "string" || typeof executionId !== "string") return null;
+  return record.ownedReceipts.get(ownedReceiptKey(requestId, executionId)) ?? null;
 }
 
 /**
  * The first terminal receipt this task already observed, if any. Used by the
  * terminal waiter so a task-owned outcome is never lost to displacement.
  */
-function taskOwnedReceiptFromCache(
-  record: MutableTaskRecord,
-): IntegrationExecutionReceipt | null {
+function taskOwnedReceiptFromCache(record: MutableTaskRecord): IntegrationExecutionReceipt | null {
   for (const receipt of record.ownedReceipts.values()) {
     if (isTerminalReceiptState(receipt.state)) return receipt;
   }
   return null;
 }
 
-function reconcileKnownExecution(
-  record: MutableTaskRecord,
-  integration: GameConnection,
-): void {
-  const receipt =
-    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
+function reconcileKnownExecution(record: MutableTaskRecord, integration: GameConnection): void {
+  const receipt = requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   if (receipt === null) return;
   const known = record.executions.find(
-    (execution) =>
-      execution.requestId === receipt.requestId &&
-      execution.executionId === receipt.executionId,
+    (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
   );
   if (known !== undefined) {
     known.state = receipt.state;
@@ -1303,20 +1151,10 @@ function reconcileKnownExecution(
   }
 }
 
-function recordTerminalReceiptRevision(
-  record: MutableTaskRecord,
-  receipt: IntegrationExecutionReceipt,
-): void {
-  if (
-    !isTerminalReceiptState(receipt.state) ||
-    receipt.revision === null ||
-    !Number.isSafeInteger(receipt.revision)
-  )
+function recordTerminalReceiptRevision(record: MutableTaskRecord, receipt: IntegrationExecutionReceipt): void {
+  if (!isTerminalReceiptState(receipt.state) || receipt.revision === null || !Number.isSafeInteger(receipt.revision))
     return;
-  record.minimumSnapshotRevision = Math.max(
-    record.minimumSnapshotRevision ?? 0,
-    receipt.revision,
-  );
+  record.minimumSnapshotRevision = Math.max(record.minimumSnapshotRevision ?? 0, receipt.revision);
 }
 
 function settlePendingDispatch(
@@ -1324,19 +1162,11 @@ function settlePendingDispatch(
   integration: GameConnection,
   integrationAdapter: ReturnType<typeof requireIntegrationAdapter>,
   details: unknown,
-  cancelSettledPendingDispatch: (
-    requestId: string,
-    executionId: string,
-  ) => void,
+  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
 ): void {
   const receipt = parseReceipt(details, integrationAdapter);
   const pending = record.pendingDispatch;
-  if (
-    pending == null ||
-    receipt === null ||
-    receipt.requestId !== pending.requestId
-  )
-    return;
+  if (pending == null || receipt === null || receipt.requestId !== pending.requestId) return;
   const cancelRequired = pending.cancelRequired;
   settlePendingCorrelation(
     record,
@@ -1349,15 +1179,9 @@ function settlePendingDispatch(
   rememberOwnedReceipt(record, receipt);
   recordTerminalReceiptRevision(record, receipt);
   const execution = record.executions.find(
-    (known) =>
-      known.requestId === receipt.requestId &&
-      known.executionId === receipt.executionId,
+    (known) => known.requestId === receipt.requestId && known.executionId === receipt.executionId,
   );
-  if (
-    cancelRequired &&
-    execution !== undefined &&
-    !isTerminalReceiptState(execution.state)
-  )
+  if (cancelRequired && execution !== undefined && !isTerminalReceiptState(execution.state))
     cancelSettledPendingDispatch(receipt.requestId, receipt.executionId);
 }
 
@@ -1375,17 +1199,13 @@ function settlePendingCorrelation(
   // A receipt event may arrive before the execute response. Preserve that
   // authoritative terminal state rather than issuing a stale cancel from a
   // delayed accepted/running response.
-  const latest =
-    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
+  const latest = requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   const resolvedState =
-    latest?.requestId === requestId &&
-    latest.executionId === executionId &&
-    isTerminalReceiptState(latest.state)
+    latest?.requestId === requestId && latest.executionId === executionId && isTerminalReceiptState(latest.state)
       ? latest.state
       : state;
   const existing = record.executions.find(
-    (known) =>
-      known.requestId === requestId && known.executionId === executionId,
+    (known) => known.requestId === requestId && known.executionId === executionId,
   );
   if (existing === undefined) {
     record.executions.push({
@@ -1397,11 +1217,7 @@ function settlePendingCorrelation(
       ...(pending.sceneTargetRef === undefined ? {} : { sceneTargetRef: pending.sceneTargetRef }),
     });
   } else existing.state = resolvedState;
-  if (
-    latest !== null &&
-    latest.requestId === requestId &&
-    latest.executionId === executionId
-  )
+  if (latest !== null && latest.requestId === requestId && latest.executionId === executionId)
     recordTerminalReceiptRevision(record, latest);
 }
 
@@ -1416,9 +1232,7 @@ function issueTaskOwnedCancellation(
     admission.cancelPending(reasonCode);
     return;
   }
-  void admission
-    .cancelExact(execution.requestId, execution.executionId, reasonCode)
-    .catch(() => undefined);
+  void admission.cancelExact(execution.requestId, execution.executionId, reasonCode).catch(() => undefined);
 }
 
 function settlePendingTerminalWake(
@@ -1428,8 +1242,7 @@ function settlePendingTerminalWake(
 ): void {
   const pending = record.pendingDispatch;
   if (pending === null || pending.requestId !== wake.requestId) return;
-  const receipt =
-    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
+  const receipt = requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   if (
     receipt !== null &&
     receipt.requestId === wake.requestId &&
@@ -1454,19 +1267,9 @@ async function awaitPendingDispatchAndOwnedTerminalReceipt(
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
   const deadline = Date.now() + 5_000;
-  await awaitPendingDispatchSettlement(
-    record,
-    integration,
-    wakeSource,
-    deadline,
-  );
+  await awaitPendingDispatchSettlement(record, integration, wakeSource, deadline);
   if (record.pendingDispatch !== null) return null;
-  return await awaitOwnedTerminalReceipt(
-    record,
-    integration,
-    undefined,
-    wakeSource,
-  );
+  return await awaitOwnedTerminalReceipt(record, integration, undefined, wakeSource);
 }
 
 /**
@@ -1499,11 +1302,7 @@ async function awaitPendingDispatchSettlement(
       const pending = record.pendingDispatch;
       if (pending === null) return finish();
       const receipt = integrationAdapter.readState(integration).latestReceipt;
-      if (
-        receipt !== null &&
-        receipt.requestId === pending.requestId &&
-        isTerminalReceiptState(receipt.state)
-      ) {
+      if (receipt !== null && receipt.requestId === pending.requestId && isTerminalReceiptState(receipt.state)) {
         settlePendingCorrelation(
           record,
           integration,
@@ -1520,11 +1319,7 @@ async function awaitPendingDispatchSettlement(
     if (wakeSource !== undefined) {
       unsubscribe = wakeSource.onExecutionWake((candidate) => {
         const wake = normalizeExecutionWake(candidate);
-        if (
-          wake?.kind === "terminal" &&
-          wake.requestId === record.pendingDispatch?.requestId
-        )
-          reconcile();
+        if (wake?.kind === "terminal" && wake.requestId === record.pendingDispatch?.requestId) reconcile();
       });
     }
     reconcile();
@@ -1539,8 +1334,7 @@ function parseReceipt(
 }
 
 function requireIntegrationAdapter(integration: GameConnection) {
-  if (integration.module === undefined)
-    throw new Error("integration_module_required");
+  if (integration.module === undefined) throw new Error("integration_module_required");
   return integration.module;
 }
 
@@ -1549,9 +1343,5 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function cap(value: string | null): string | null {
-  return value === null
-    ? null
-    : value.length <= 2_000
-      ? value
-      : `${value.slice(0, 1_997)}...`;
+  return value === null ? null : value.length <= 2_000 ? value : `${value.slice(0, 1_997)}...`;
 }
