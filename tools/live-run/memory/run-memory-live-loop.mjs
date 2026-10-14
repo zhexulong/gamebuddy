@@ -1021,6 +1021,44 @@ function resolveSeededMemoryId(root, seedText) {
 }
 
 /**
+ * What Magic Context's own tag table says about tool results: per tool name, how many are still active and how
+ * many have been reclaimed. This is the only place the protection policy's effect is observable - the reclaim
+ * lanes are the ones that flip a tag's status - so a run that calls a protected tool and then reports nothing
+ * here has measured nothing.
+ */
+function readTagWindows(root) {
+  const contextsRoot = join(root, "contexts");
+  if (!existsSync(contextsRoot)) return null;
+  const contextKeys = readdirSync(contextsRoot);
+  if (contextKeys.length !== 1) return null;
+  const dbPath = join(contextsRoot, contextKeys[0], "data", "cortexkit", "magic-context", "context.db");
+  if (!existsSync(dbPath)) return null;
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const rows = db.prepare("SELECT tool_name, status, COUNT(*) AS n FROM tags WHERE type = 'tool' GROUP BY tool_name, status").all();
+    const perTool = new Map();
+    for (const row of rows) {
+      const name = typeof row.tool_name === "string" ? row.tool_name : "(unnamed)";
+      const entry = perTool.get(name) ?? { active: 0, dropped: 0, other: 0 };
+      if (row.status === "active") entry.active += row.n;
+      else if (row.status === "dropped") entry.dropped += row.n;
+      else entry.other += row.n;
+      perTool.set(name, entry);
+    }
+    return {
+      tools: Object.fromEntries([...perTool.entries()].sort()),
+      total: rows.reduce((sum, row) => sum + row.n, 0),
+    };
+  } catch {
+    // A store without a tags table (an older schema) is a gap, not a failure.
+    return null;
+  } finally {
+    db?.close?.();
+  }
+}
+
+/**
  * Parse the vendor's rendered-memory markers using the FROZEN funnel rule, not a
  * second implementation: the two loops must never disagree about whether L2 was
  * observed.
@@ -1275,6 +1313,9 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
   // mechanical obligations are checked against real output rather than against the prompt text. This is
   // what makes a prompt edit comparable: same fixture, two prompt variants, one table of obligations.
   const historianRubric = checkHistorianRubric(readCompartments(root));
+  // The reclaim lanes are the only thing that flips a tag's status, so this is where a `protected_tools`
+  // policy shows up: a protected tool should keep its newest frame active while older ones are dropped.
+  const protectedTools = readTagWindows(root);
   const historianPrompt = identifyHistorianPrompt(
     process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT === undefined
       ? root
@@ -1349,7 +1390,8 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         // S3: the kinds of reviewed authored context the vendor compiled into the
         // m[0] it presented. `lorebookConstantPresent` is the claim itself; the
         // kinds are reported raw so a reader can see what else rode the baseline.
-        m0Sources: Object.freeze({
+        protectedTools,
+    m0Sources: Object.freeze({
           markerObserved: m0Sources?.observed === true,
           stableKinds: m0Sources?.stableKinds ?? null,
           volatileKinds: m0Sources?.volatileKinds ?? null,

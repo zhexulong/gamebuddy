@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
@@ -107,10 +108,7 @@ test("every protected tool names a tool this Host registers, apart from upstream
   // An action or receipt tool result is the record of what happened, not a frame of the world: the
   // newest one is already carried by the live snapshot/status surfaces, and protecting it would keep a
   // superseded receipt in front of the model.
-  const actionAndReceiptNames = [
-    ...Object.values(STARDEW_ACTION_TOOL_NAMES),
-    "stardew_execution_status",
-  ];
+  const actionAndReceiptNames = [...Object.values(STARDEW_ACTION_TOOL_NAMES), "stardew_execution_status"];
   assert.deepEqual(
     protectedNames.filter((name) => actionAndReceiptNames.includes(name)),
     [],
@@ -134,4 +132,14 @@ test("every protected count is a non-negative whole number upstream's schema acc
       Number.isSafeInteger(count) && count >= 0,
       `${name} must be a whole number of results to keep, read ${String(count)}`,
     );
+});
+
+test("the runtime writes the policy into the config Magic Context reads", () => {
+  // The table above is only half the contract: it has to reach the file the extension loads. Magic Context
+  // accepts the key and its own suite (protection-window.test.ts, config/protected-tools.test.ts) covers the
+  // reclaim that honours it, so this pins the one seam between them - if a future edit stops passing the table
+  // to the config writer, nothing else would notice.
+  const source = readFileSync(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8");
+  assert.match(source, /protected_tools: GAMEBUDDY_PROTECTED_TOOLS,/u);
+  assert.match(source, /from "\.\/magic-context-protected-tools\.js"/u);
 });
