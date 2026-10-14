@@ -1,4 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
+import { availableParallelism, cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runBoundedChild } from "./child-process-tool.mjs";
@@ -8,11 +9,13 @@ const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultTestRoot = resolve(hostRoot, "dist-test");
 const defaultScriptTestRoot = resolve(hostRoot, "scripts");
 const DEFAULT_TEST_BATCH_SIZE = 10;
+/** The highest default the machine's own capacity may raise concurrency to; see below. */
+const MAX_DEFAULT_TEST_CONCURRENCY = 2;
 // Each compiled file still gets its own Node coordinator, but spawning 230 of
 // them one after another spends most of the run inside Node startup. A small
 // bound lets one file's startup overlap its neighbours' work without a single
-// leaked handle ever sharing a process. Four stays within a 4-vCPU Windows CI
-// runner and the compiled batch size, so a batch's tail stays short.
+// leaked handle ever sharing a process. Two is the ceiling: it overlaps Node
+// startup inside a batch while keeping the batch's tail short.
 /**
  * Files that contend on one machine-global resource must not run at the same time, even
  * though every other file may. This is the runner's job because the runner is the only layer
@@ -41,7 +44,28 @@ export function exclusiveGroupsFor(relativePath) {
   return EXCLUSIVE_FILE_GROUPS.filter((group) => group.pattern.test(normalized));
 }
 
-const DEFAULT_TEST_CONCURRENCY = 2;
+/**
+ * The runner must not add parallelism the machine cannot absorb.
+ *
+ * Excess concurrency never reports itself as "the runner was too eager"; it reports itself as a
+ * per-file stall-budget expiry or a loopback `ECONNRESET` on a file that is individually fine,
+ * and both are then attributed to that file. Measured on the development machine: with ~60
+ * unrelated node processes already running, `gameplay-task-subagent.test.js` exceeds a 180s
+ * budget inside a batch although it takes 2s alone, and `tavern-management-dialogue-web.test.js`
+ * returned `TypeError: fetch failed / read ECONNRESET` in a full run while passing 28/28 alone.
+ *
+ * So the default is derived from what THIS machine reports it can run, never from a constant.
+ * `availableParallelism()` honours the process's own CPU affinity and CPU-group limits, so a
+ * container restricted to one effective CPU decodes to 1 instead of to a constant 2; `cpus()`
+ * is only the fallback because it reports hardware the process may not be allowed to use.
+ * An explicit `GAMEBUDDY_HOST_TEST_COMPILED_CONCURRENCY` still wins, and an invalid one still
+ * fails closed with `invalid_test_concurrency`.
+ */
+export function machineDefaultConcurrency(parallelism = availableParallelism?.() ?? cpus().length) {
+  return Math.max(1, Math.min(MAX_DEFAULT_TEST_CONCURRENCY, parallelism));
+}
+
+const DEFAULT_TEST_CONCURRENCY = machineDefaultConcurrency();
 /**
  * Per-file budget: a STALL detector, not a speed bound. It exists so a file that never
  * resolves is named and bounded instead of consuming the run; the suite deadline owns the real

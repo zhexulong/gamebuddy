@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -318,11 +318,22 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
   assert.deepEqual(started, paths);
 });
 
-  test("defaults to two concurrent file children within a batch", async () => {
+  test("derives the default concurrency from the machine's own capacity, capped at two", () => {
+    // Two overlapping Node startups is the ceiling; below it the machine decides. A process
+    // restricted to one effective CPU must never be handed a second child, because the extra
+    // parallelism surfaces as a stall-budget expiry or a loopback reset on a file that is fine.
+    assert.equal(machineDefaultConcurrency(1), 1, "one effective CPU gets one child");
+    assert.equal(machineDefaultConcurrency(0), 1, "a machine reporting nothing still gets one child");
+    assert.equal(machineDefaultConcurrency(2), 2);
+    assert.equal(machineDefaultConcurrency(32), 2, "the ceiling is two, however wide the machine is");
+  });
+
+  test("defaults to the machine-derived concurrency within a batch", async () => {
   const paths = ["a", "b", "c", "d", "e"].map((name) => `${name}.test.js`);
   const releases = [];
   let inFlight = 0;
   let peak = 0;
+  const expected = machineDefaultConcurrency();
   const suite = runTestBatches(paths, {
     suite: "fixture",
     batchSize: 5,
@@ -335,13 +346,13 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
     },
   });
     await nextTurn();
-    assert.equal(peak, 2);
+    assert.equal(peak, expected);
     while (releases.length > 0) {
       releases.shift()();
       await nextTurn();
     }
     await suite;
-    assert.equal(peak, 2);
+    assert.equal(peak, expected);
   });
 
   test("a failed file fails the run and still awaits its in-flight siblings", async () => {
