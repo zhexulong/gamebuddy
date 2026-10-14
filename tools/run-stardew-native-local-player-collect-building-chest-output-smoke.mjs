@@ -30,8 +30,14 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  *
  * The runner chooses neither the chest tile nor the branch: both come from the `buildingChestTargets`
  * entries the Mod publishes, and the Mod re-resolves the chest on the game thread.
+ *
+ * The fixture arms the actor where the Collect chest is already inside the action's own reach, so the
+ * gate proves the transfer rather than the shared approach leg (a walk to a blocked building-chest
+ * tile is a route the native planner does not resolve). `terminalTimeoutMs` is walk-capable anyway,
+ * so a request that DOES take the approach leg is observed to the Mod's own terminal instead of being
+ * reported as a missing receipt.
  */
-export async function runCollectBuildingChestOutputSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
+export async function runCollectBuildingChestOutputSmoke(client, receipts, _config, { terminalTimeoutMs = 20_000 } = {}) {
   const trace = [];
   try {
     const opening = await observeFresh(client, { actionable: true });
@@ -150,7 +156,16 @@ async function request(client, receipts, terminalTimeoutMs, args) {
   });
   // A request whose native work resolves synchronously answers with an immediate terminal instead
   // of `accepted`; waitForTerminal covers both shapes by searching the immediate receipt first.
-  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+  // An absent terminal is named HERE, with the last fact the Mod published, because the harness's
+  // bare `native_terminal_receipt_missing_or_stale` does not say which request had no terminal nor
+  // what the Mod was doing: the 2026-10-13 live run reported exactly that while the Mod was still
+  // walking toward the Collect chest (its last fact was `meaningful_progress/tile_advanced`).
+  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs).catch((error) => {
+    const latest = client.state?.latestReceipt ?? null;
+    throw new Error(
+      `building_chest_collect_terminal_absent:last=${latest?.state ?? "none"}/${latest?.reasonCode ?? "none"}:${String(error instanceof Error ? error.message : error)}`,
+    );
+  });
   if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
     throw new Error("native_local_terminal_identity_mismatch");
   return { snapshot, accepted, terminal };

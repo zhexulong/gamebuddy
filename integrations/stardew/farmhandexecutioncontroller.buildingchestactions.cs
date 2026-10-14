@@ -102,10 +102,14 @@ namespace GameBuddy.Stardew;
 //
 // POSTCONDITIONS ARE OBSERVED WORLD CHANGES, re-read after the call. Neither the Load
 // branch's `bool` nor the Collect branch's is accepted as evidence:
-//   * load succeeds only when the chest's count of the held item rose, the held stack fell
-//     by the SAME amount, and that amount is a positive whole number of the conversion's
-//     `RequiredCount` quanta (`BuildingItemConversion.RequiredCount`, applied at
-//     Building.cs:783);
+//   * load succeeds only when the chest's count of the item rose, the actor's own HOLDING of
+//     that item fell by the SAME amount, and that amount is a positive whole number of the
+//     conversion's `RequiredCount` quanta (`BuildingItemConversion.RequiredCount`, applied at
+//     Building.cs:783). The hand's half is read as a COUNT of the item in the pack, not as the
+//     captured object's `Stack`, because the native branch's `ConsumeStack` does not decrement
+//     on a full consume (`Item.ConsumeStack`, Item.cs:658-670) while the Load branch takes
+//     `Math.Min(capacity, stack) / RequiredCount * RequiredCount` quanta (:783) — the WHOLE
+//     stack whenever `RequiredCount` is 1, which is the Mill's wheat→flour conversion;
 //   * collect succeeds only when the named stack left the chest (the chest's count of it
 //     fell, and its slot count fell) AND the actor's inventory gained exactly that many of
 //     the same item.
@@ -223,7 +227,19 @@ internal sealed partial class ExecutionManager
         BuildingItemConversion? conversion = building.GetItemConversionForItem(heldObject, chest);
         int requiredCount = conversion?.RequiredCount ?? 0;
         int chestCapacityBefore = conversion is null ? 0 : Utility.GetNumberOfItemThatCanBeAddedToThisInventoryList(heldObject, chest.Items, 36);
-        int heldStackBefore = heldObject.Stack;
+        // The hand's half of the transfer is the actor's own HOLDING of the item — its count in the
+        // pack — and NOT the captured object's `Stack`. `Item.ConsumeStack` returns null WITHOUT
+        // decrementing when the whole stack goes (Item.cs:664-667), and the Load branch then clears
+        // the slot (`who.ActiveObject = null`, Building.cs:793-796); the object this action captured
+        // still reports its pre-call stack, so reading it made a real load look like a no-op. The
+        // native amount is `Math.Min(capacity, stack) / RequiredCount * RequiredCount` (:783), which
+        // for `RequiredCount == 1` is the WHOLE stack. A pack count reads the same fact in the full
+        // and the partial case, and reads zero when the world truly did not move.
+        // The native branch's own three gates are LABELLED from the facts that branch reads:
+        // the HELD SLOT's stack as this action found it (`who.ActiveObject.Stack`, :778/:783).
+        // That is deliberately not the pack count the released half below is observed with.
+        int heldSlotStackBefore = heldObject.Stack;
+        int heldCountBefore = CountQualifiedItem(Game1.player, qualifiedItemId);
         int chestItemBefore = ChestItemCount(chest, qualifiedItemId);
         int chestSlotsBefore = BuildingChestSlotCount(chest);
         bool menuBefore = Game1.activeClickableMenu is not null;
@@ -247,7 +263,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "building_chest_native_exception",
-                $"{resolution.Identity};item={qualifiedItemId};held_stack_before={heldStackBefore};chest_item_before={chestItemBefore};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"{resolution.Identity};item={qualifiedItemId};held_stack_before={heldCountBefore};chest_item_before={chestItemBefore};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
         }
         finally
         {
@@ -256,17 +272,18 @@ internal sealed partial class ExecutionManager
 
         // Re-read the world AFTER the call: both halves of the quantised transfer are
         // observations, not the seam's return value.
+        int heldCountAfter = CountQualifiedItem(Game1.player, qualifiedItemId);
         int chestItemAfter = ChestItemCount(chest, qualifiedItemId);
         int chestSlotsAfter = BuildingChestSlotCount(chest);
         int movedCount = chestItemAfter - chestItemBefore;
-        int releasedCount = heldStackBefore - heldObject.Stack;
+        int releasedCount = heldCountBefore - heldCountAfter;
         bool nativeMenuOpened = Game1.activeClickableMenu is not null && !menuBefore;
         string evidence =
-            $"{resolution.Identity};item={qualifiedItemId};held_stack_before={heldStackBefore};held_stack_after={heldObject.Stack};"
+            $"{resolution.Identity};item={qualifiedItemId};held_stack_before={heldCountBefore};held_stack_after={heldCountAfter};"
             + $"chest_item_before={chestItemBefore};chest_item_after={chestItemAfter};chest_slots_before={chestSlotsBefore};chest_slots_after={chestSlotsAfter};"
             + $"moved_count={movedCount};released_count={releasedCount};required_count={requiredCount};chest_capacity_before={chestCapacityBefore};"
             + $"item_accepted={(conversion is not null).ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};"
-            + $"native_refusal={DescribeNativeLoadRefusal(conversion is not null, requiredCount, heldStackBefore, chestCapacityBefore)};"
+            + $"native_refusal={DescribeNativeLoadRefusal(conversion is not null, requiredCount, heldSlotStackBefore, chestCapacityBefore)};"
             + $"native_menu_opened={nativeMenuOpened.ToString().ToLowerInvariant()}";
 
         bool postcondition = nativeAccepted

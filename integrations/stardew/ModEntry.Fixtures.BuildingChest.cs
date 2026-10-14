@@ -17,10 +17,13 @@ public sealed partial class ModEntry
 
     /// <summary>
     /// load_building_chest pre-attachment Given: one FINISHED building whose DATA declares both
-    /// a Load and a Collect chest, a Load chest that is EMPTY, and the actor HOLDING an item the
-    /// Load chest's own conversion accepts, one quantum above what that conversion requires —
-    /// so a successful load consumes exactly one quantum and must leave the remainder in the
-    /// hand.
+    /// a Load and a Collect chest, a Load chest that is EMPTY, the actor HOLDING an item the
+    /// Load chest's own conversion accepts (at least one whole quantum), and the actor standing
+    /// where BOTH chests are inside the reach horizon each action admits on. The native Load
+    /// branch consumes `Math.Min(capacity, stack) / RequiredCount * RequiredCount` quanta
+    /// (Building.cs:783), so with a conversion that needs ONE item per quantum — the Mill's
+    /// wheat→flour rule — a successful load takes the WHOLE held stack; there is no configuration
+    /// in which this Given can leave a remainder behind.
     ///
     /// Only that declared Given is established. The load itself — the native
     /// `Building.PerformBuildingChestAction` call, the quantised transfer and both observed
@@ -94,7 +97,10 @@ public sealed partial class ModEntry
             throw new InvalidOperationException("fixture_native_local_building_chest_interaction_tile_missing");
         if (!ExecutionManager.TryFindBuildingChestInteractionTile(building, collectChestId, out int outputTileX, out int outputTileY))
             throw new InvalidOperationException("fixture_native_local_building_chest_output_tile_missing");
-        Vector2? standing = FindNativeLocalBuildingChestStandingTile(farm, building, chestTileX, chestTileY);
+        // BOTH chests must be inside the reach each action admits on: the load runner acts on the
+        // Load chest and the collect runner on the Collect chest, and neither may depend on the
+        // shared approach leg (a walk to a blocked building-chest tile).
+        Vector2? standing = FindNativeLocalBuildingChestStandingTile(farm, building, chestTileX, chestTileY, outputTileX, outputTileY);
         if (standing is null)
             throw new InvalidOperationException("fixture_native_local_building_chest_standing_tile_missing");
         // Both chests must be inside the horizon the snapshot publishes targets within, or the
@@ -110,15 +116,16 @@ public sealed partial class ModEntry
                 + $"building={building.buildingType.Value};origin={building.tileX.Value},{building.tileY.Value};load_chest={loadChestId};"
                 + $"collect_chest={collectChestId};item={itemId};required_count={requiredCount};held_slot={slot};held_stack={held.Stack};"
                 + $"collect_stacks={expectedStacks};load_chest_tile={chestTileX},{chestTileY};collect_chest_tile={outputTileX},{outputTileY};"
-                + $"standing={(int)standing.Value.X},{(int)standing.Value.Y}; production alone loads or collects and emits the receipt.",
+                + $"standing={(int)standing.Value.X},{(int)standing.Value.Y};standing_reach=load+collect; production alone loads or collects and emits the receipt.",
             LogLevel.Info);
     }
 
     /// <summary>
-    /// A finished chest-bearing building already on the farm, else the declared Given: a
-    /// constructed building of <see cref="BuildingChestFixtureBuildingType"/> placed on the first
-    /// free footprint. A save that already owns such a building is reused, so the fixture never
-    /// rewrites a player's farm layout for nothing.
+    /// A finished chest-bearing building already on the farm that this scenario can be ARMED on
+    /// (both chests reachable from one standing tile), else the declared Given: a constructed
+    /// building of <see cref="BuildingChestFixtureBuildingType"/> placed on the first free footprint
+    /// that can be armed the same way. A save that already owns such a building is reused, so the
+    /// fixture never rewrites a player's farm layout for nothing.
     ///
     /// A freshly constructed building has NO chest objects: the game creates them while applying
     /// the data of a building that has loaded or is being constructed
@@ -135,6 +142,10 @@ public sealed partial class ModEntry
             if (candidate is null || candidate.daysOfConstructionLeft.Value > 0)
                 continue;
             if (!TryFindBuildingChestFixturePair(candidate, out _, out _))
+                continue;
+            // A building this scenario cannot be ARMED on is not the fixture's building: the
+            // declared Given includes a standing tile BOTH chests are in reach of.
+            if (FindNativeLocalBuildingChestFixtureStandingTile(farm, candidate) is null)
                 continue;
             return candidate;
         }
@@ -243,19 +254,24 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// A walkable tile one Chebyshev step from the Load chest's interaction tile and outside
-    /// every building footprint — the exact reach horizon `load_building_chest` admits on.
-    /// Preferred order is the cardinal ring first, then the diagonals. Shares
-    /// <see cref="IsFixtureWalkableFarmTile"/> with the sibling fixtures.
+    /// A walkable tile one Chebyshev step from BOTH chests' interaction tiles and outside every
+    /// building footprint — the exact reach horizon `load_building_chest` and
+    /// `collect_building_chest_output` both admit on. One scenario arms BOTH runners (the load one
+    /// acts on the Load chest, the collect one on the Collect chest), and neither action's gate may
+    /// depend on the shared approach leg: walking to a building-chest tile is a walk to a BLOCKED
+    /// building tile, which the native planner does not resolve (a measured live run walked the
+    /// actor 26 tiles AWAY from the Mill). So the Given is a tile both chests are in reach of.
+    /// Preferred order is the Load chest's cardinal ring first, then the diagonals.
     /// </summary>
-    private static Vector2? FindNativeLocalBuildingChestStandingTile(GameLocation farm, Building building, int tileX, int tileY)
+    private static Vector2? FindNativeLocalBuildingChestStandingTile(GameLocation farm, Building building, int loadTileX, int loadTileY, int collectTileX, int collectTileY)
     {
         Vector2[] ring =
         {
-            new(tileX, tileY + 1), new(tileX - 1, tileY), new(tileX + 1, tileY), new(tileX, tileY - 1),
-            new(tileX - 1, tileY + 1), new(tileX + 1, tileY + 1), new(tileX - 1, tileY - 1), new(tileX + 1, tileY - 1),
+            new(loadTileX, loadTileY + 1), new(loadTileX - 1, loadTileY), new(loadTileX + 1, loadTileY), new(loadTileX, loadTileY - 1),
+            new(loadTileX - 1, loadTileY + 1), new(loadTileX + 1, loadTileY + 1), new(loadTileX - 1, loadTileY - 1), new(loadTileX + 1, loadTileY - 1),
         };
         return ring
+            .Where(tile => ChebyshevTileDistance(tile, new Vector2(collectTileX, collectTileY)) <= 1)
             .Where(tile => !building.occupiesTile((int)tile.X, (int)tile.Y)
                 && !farm.buildings.Any(other => other is not null && !ReferenceEquals(other, building) && other.occupiesTile((int)tile.X, (int)tile.Y))
                 && IsFixtureWalkableFarmTile(farm, tile))
@@ -266,14 +282,16 @@ public sealed partial class ModEntry
     /// <summary>
     /// The standing tile used only while SCANNING for a free footprint, before the building is
     /// placed: the building in question is not on the farm yet, so the footprint test reduces to
-    /// the chest interaction tiles the placement will need to be reachable from.
+    /// the chest interaction tiles the placement will need to be reachable from — BOTH of them.
     /// </summary>
     private static Vector2? FindNativeLocalBuildingChestFixtureStandingTile(GameLocation farm, Building building)
     {
-        if (!TryFindBuildingChestFixturePair(building, out string loadChestId, out _))
+        if (!TryFindBuildingChestFixturePair(building, out string loadChestId, out string collectChestId))
             return null;
-        if (!ExecutionManager.TryFindBuildingChestInteractionTile(building, loadChestId, out int tileX, out int tileY))
+        if (!ExecutionManager.TryFindBuildingChestInteractionTile(building, loadChestId, out int loadTileX, out int loadTileY))
             return null;
-        return FindNativeLocalBuildingChestStandingTile(farm, building, tileX, tileY);
+        if (!ExecutionManager.TryFindBuildingChestInteractionTile(building, collectChestId, out int collectTileX, out int collectTileY))
+            return null;
+        return FindNativeLocalBuildingChestStandingTile(farm, building, loadTileX, loadTileY, collectTileX, collectTileY);
     }
 }

@@ -4,7 +4,6 @@ import { runLoadBuildingChestSmoke } from "./run-stardew-native-local-player-loa
 
 const ACTION = "load_building_chest";
 const REQUIRED_COUNT = 5;
-
 /** One advertised Load chest, whose own conversion needs {@link REQUIRED_COUNT} per quantum. */
 const loadTarget = (overrides = {}) => ({
   targetId: "building_chest_aaaaaaaaaaaaaaaa",
@@ -104,7 +103,10 @@ function handle(request, world, revision) {
   if (args.slot !== world.load.loadInputSlot)
     return terminal("rejected", "item_not_owned_in_slot", `tile=${args.x},${args.y};target=${args.expectedTargetId};chest_id=${named.chestId};slot=${args.slot}`);
 
-  const moved = REQUIRED_COUNT;
+  // The native branch's own quantum: `Math.Min(capacity, stack) / RequiredCount * RequiredCount`
+  // (Building.cs:783) with INTEGER division, so a remainder below one quantum is never taken.
+  const required = world.load.requiredCount ?? REQUIRED_COUNT;
+  const moved = Math.floor(Math.min(36, world.load.loadInputStack) / required) * required;
   const heldBefore = world.load.loadInputStack;
   const heldAfter = heldBefore - moved;
   const chestBefore = world.load.itemCount;
@@ -124,7 +126,7 @@ function handle(request, world, revision) {
     `tile=${args.x},${args.y};location=Farm;target=${args.expectedTargetId};building_type=Mill;building_origin=31,20;chest_id=${named.chestId};branch=load`
       + `;item=(O)262;held_stack_before=${heldBefore};held_stack_after=${heldAfter}`
       + `;chest_item_before=${chestBefore};chest_item_after=${chestAfter};chest_slots_before=0;chest_slots_after=1`
-      + `;moved_count=${moved};released_count=${moved};required_count=${REQUIRED_COUNT};chest_capacity_before=36`
+      + `;moved_count=${moved};released_count=${moved};required_count=${world.load.requiredCount ?? REQUIRED_COUNT};chest_capacity_before=36`
       + ";item_accepted=true;native_accepted=true;native_refusal=none;native_menu_opened=false",
   );
 }
@@ -136,6 +138,57 @@ const run = (options) => {
     result: () => runLoadBuildingChestSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000 }),
   };
 };
+
+test("load_building_chest: a load that took the WHOLE held stack is still proved", async () => {
+  // The Mill's conversion needs ONE item per quantum, so the native branch consumes
+  // `Math.min(capacity, stack)` quanta — the whole stack — and `Item.ConsumeStack` returns null
+  // WITHOUT decrementing the captured object (Item.cs:664-667). The hand's half must therefore be
+  // observed as the actor's own holding of the item: 2 -> 0 with the chest 0 -> 2 is one whole
+  // quantum, and demanding a remainder in the hand would fail every honest Mill load.
+  const session = run({ load: loadTarget({ requiredCount: 1, loadInputStack: 2 }) });
+  const result = await session.result();
+  assert.equal(result.state, "passed");
+  assert.equal(result.moved, 2);
+  assert.equal(result.requiredCount, 1);
+  assert.equal(result.evidence.held_stack_before, "2");
+  assert.equal(result.evidence.held_stack_after, "0");
+  assert.equal(result.chest.after, 2);
+});
+
+test("load_building_chest: a held half that did not fall is not a load", async () => {
+  // The receipt the first live run produced: the chest gained a whole quantum while the hand's
+  // observed holding did not fall at all. That is the receipt of a load this Mod cannot prove.
+  const session = run({ load: loadTarget({ requiredCount: 1, loadInputStack: 2 }) });
+  const original = session.client.execute;
+  session.client.execute = async (request) => {
+    const receipt = await original(request);
+    if (receipt.state === "succeeded")
+      receipt.evidence = { detail: receipt.evidence.detail.replace("held_stack_after=0", "held_stack_after=2") };
+    return receipt;
+  };
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /building_chest_held_half_mismatch/);
+});
+
+test("load_building_chest: a request with no terminal names the last fact the Mod published", async () => {
+  const session = run();
+  session.client.execute = async (request) => {
+    // A correlated acceptance that never settles: the wait must name what the Mod last published
+    // rather than report the harness's bare code.
+    session.client.state.latestReceipt = { state: "meaningful_progress", reasonCode: "tile_advanced", revision: 3 };
+    return {
+      requestId: request.requestId,
+      executionId: `execution-${request.requestId}`,
+      state: "accepted",
+      reasonCode: "accepted",
+      revision: 2,
+    };
+  };
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /building_chest_load_terminal_absent:last=meaningful_progress\/tile_advanced/);
+});
 
 test("load_building_chest: the quantised load is asserted from the world and from both halves", async () => {
   const session = run();

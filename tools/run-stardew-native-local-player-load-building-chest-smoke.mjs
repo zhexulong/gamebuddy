@@ -167,7 +167,15 @@ async function request(client, receipts, terminalTimeoutMs, action, args) {
   });
   // A request whose native work resolves synchronously answers with an immediate terminal instead
   // of `accepted`; waitForTerminal covers both shapes by searching the immediate receipt first.
-  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+  // An absent terminal is named HERE, with the last fact the Mod published, because the harness's
+  // bare `native_terminal_receipt_missing_or_stale` does not say which request had no terminal nor
+  // what the Mod was doing.
+  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs).catch((error) => {
+    const latest = client.state?.latestReceipt ?? null;
+    throw new Error(
+      `building_chest_load_terminal_absent:last=${latest?.state ?? "none"}/${latest?.reasonCode ?? "none"}:${String(error instanceof Error ? error.message : error)}`,
+    );
+  });
   if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
     throw new Error("native_local_terminal_identity_mismatch");
   return { snapshot, accepted, terminal };

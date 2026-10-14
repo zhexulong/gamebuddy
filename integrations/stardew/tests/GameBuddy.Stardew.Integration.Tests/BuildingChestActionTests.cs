@@ -265,6 +265,8 @@ public sealed class BuildingChestActionTests
         runner.Should().Contain("building_chest_chest_half_mismatch");
         runner.Should().Contain("building_chest_quantum_mismatch");
         runner.Should().Contain("building_chest_loaded");
+        // A request with no terminal is named locally, with the last fact the Mod published.
+        runner.Should().Contain("building_chest_load_terminal_absent");
     }
 
     [Fact]
@@ -285,6 +287,10 @@ public sealed class BuildingChestActionTests
         runner.Should().Contain("native_menu_opened");
         runner.Should().Contain("building_chest_slot_half_mismatch");
         runner.Should().Contain("building_chest_carried_half_mismatch");
+        // A request with no terminal is named locally, with the last fact the Mod published, and the
+        // honest collect's wait is walk-capable so the Mod's own terminal is observed when it walks.
+        runner.Should().Contain("building_chest_collect_terminal_absent");
+        runner.Should().Contain("terminalTimeoutMs = 20_000");
     }
 
     [Fact]
@@ -344,6 +350,43 @@ public sealed class BuildingChestActionTests
             // by the live gate.
             receipt.ReasonCode.Should().Be("world_not_ready");
         }
+    }
+
+    [Fact]
+    public void Handler_ObservesTheHandsHalfAsTheActorsHolding_NotTheCapturedObjectsStack()
+    {
+        string source = ReadHandlerSource();
+        string load = MethodBody(source, "private LocalExecutionReceipt ExecuteLoadBuildingChest(");
+
+        // The first live failure this pins: the native Load branch takes
+        // `Math.Min(capacity, stack) / RequiredCount * RequiredCount` quanta (Building.cs:783), which
+        // for a one-item-per-quantum conversion is the WHOLE held stack, and `Item.ConsumeStack`
+        // returns null WITHOUT decrementing `Stack` when the whole stack goes (Item.cs:664-667).
+        // Reading the captured object's `Stack` after the call therefore read "nothing released" for a
+        // load that had emptied the hand, and the action reported Uncertain for a transfer the world
+        // had already made. The hand's half is the actor's own HOLDING of the item, read as a count.
+        load.Should().Contain("int heldCountBefore = CountQualifiedItem(Game1.player, qualifiedItemId);");
+        load.Should().Contain("int heldCountAfter = CountQualifiedItem(Game1.player, qualifiedItemId);");
+        load.Should().Contain("int releasedCount = heldCountBefore - heldCountAfter;");
+        load.Should().NotContain("releasedCount = heldStackBefore - heldObject.Stack");
+        // The native-gate label still names the stack the BRANCH reads, and it is read BEFORE the call.
+        load.Should().Contain("int heldSlotStackBefore = heldObject.Stack;");
+        load.Should().Contain("DescribeNativeLoadRefusal(conversion is not null, requiredCount, heldSlotStackBefore, chestCapacityBefore)");
+    }
+
+    [Fact]
+    public void Fixture_StandsTheActorWhereBothChestsAreInReach()
+    {
+        string fixture = ReadRepositoryFile(Path.Combine("integrations", "stardew", FixtureFile));
+
+        // One scenario arms BOTH runners (the load runner acts on the Load chest, the collect runner
+        // on the Collect chest), and neither gate may depend on the shared approach leg: a walk to a
+        // blocked building-chest tile is a route the native planner does not resolve — the first
+        // collect live run produced 26 progress receipts walking AWAY from the Mill and then no
+        // terminal at all. So the declared standing tile is one BOTH chests are in reach of.
+        fixture.Should().Contain("FindNativeLocalBuildingChestStandingTile(farm, building, chestTileX, chestTileY, outputTileX, outputTileY)");
+        fixture.Should().Contain("ChebyshevTileDistance(tile, new Vector2(collectTileX, collectTileY)) <= 1");
+        fixture.Should().Contain("FindNativeLocalBuildingChestFixtureStandingTile(farm, candidate) is null");
     }
 
     // ---------------------------------------------------------------------------------

@@ -120,6 +120,29 @@ const run = (options) => {
   };
 };
 
+test("collect_building_chest_output: a request with no terminal names the last fact the Mod published", async () => {
+  // The 2026-10-13 live shape: the wrong-branch case settled, then the honest collect had no
+  // terminal at all while the Mod was still walking (its last fact was `meaningful_progress`).
+  // The harness's bare `native_terminal_receipt_missing_or_stale` cannot say any of that.
+  const session = run();
+  const original = session.client.execute;
+  session.client.execute = async (request) => {
+    if (request.args.expectedTargetId === session.world.load.targetId) return await original(request);
+    session.client.state.latestReceipt = { state: "meaningful_progress", reasonCode: "tile_advanced", revision: 3 };
+    return {
+      requestId: request.requestId,
+      executionId: `execution-${request.requestId}`,
+      state: "accepted",
+      reasonCode: "accepted",
+      revision: 2,
+    };
+  };
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /building_chest_collect_terminal_absent:last=meaningful_progress\/tile_advanced/);
+  assert.deepEqual(result.trace.find((step) => step.step === "wrong_branch").receipt.reasonCode, "building_chest_not_collectable");
+});
+
 test("collect_building_chest_output: the single advertised stack must leave the chest and arrive", async () => {
   const session = run();
   const result = await session.result();
