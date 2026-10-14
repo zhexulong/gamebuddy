@@ -79,7 +79,7 @@ export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   // resolved from `vendor/magic-context/packages/pi-plugin`. Keep this equal to
   // that package's `version`; a run manifest must never record an identity no
   // artifact carries.
-  magicContext: "0.44.4-airp.1",
+  magicContext: "0.48.0-airp.1",
 });
 
 /** The selected fork domain; activation gates remain independently fail-closed. */
