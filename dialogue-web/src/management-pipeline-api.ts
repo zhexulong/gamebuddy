@@ -925,6 +925,12 @@ const PROBLEM_CODES = [
   // A companion record that is absent, incomplete or unreadable: a data-integrity fact, not a
   // retryable runtime outage.
   "companion_record_unreadable",
+  // Transport: the over-ceiling request body the management dispatcher refuses before any route
+  // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
+  // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
+  // `dialogue-web/tests/problem-code-gate.test.mjs` (`problem-code.7`) holds this set equal to the
+  // contract's union.
+  "payload_too_large",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;

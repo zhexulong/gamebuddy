@@ -273,6 +273,12 @@ const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
+// Every code the `tavern_browser_api/v1` router can send: the contract's `ProblemCode` union
+// (`host/src/tavern/browser-contract/index.ts`) plus the transport-level `payload_too_large` the
+// router answers an over-ceiling body with (`reference-pipeline-dialogue-web.ts:434`, deliberately
+// outside its own schema check). The set must EQUAL that union, not approximate it - a code this
+// list does not know turns a typed refusal into `TavernProtocolError` - and
+// `dialogue-web/tests/problem-code-gate.test.mjs` (`problem-code.7`) fails on any difference.
 const PROBLEM_CODES = [
   "unauthorized",
   "csrf_failed",
@@ -293,6 +299,38 @@ const PROBLEM_CODES = [
   "presentation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
+  "settings_revision_conflict",
+  // design/28 §5.3: activation may not switch a running turn, and the connection
+  // routes carry their own closed problem codes.
+  "dialogue_busy",
+  "connection_not_found",
+  "connection_not_ready",
+  "connection_conflict",
+  "connection_limit_reached",
+  // design/28 §2 Character/Persona rows: library + authored-content operations.
+  "companion_not_found",
+  "companion_conflict",
+  "persona_conflict",
+  "scenario_conflict",
+  "greeting_conflict",
+  "authored_content_invalid",
+  // design/28 §2 import/export row: the reviewed ST-card pipeline's own closed codes.
+  "st_card_import_rejected",
+  "character_import_not_found",
+  "character_import_review_invalid",
+  "character_import_confirm_invalid",
+  // The new-chat opening choice's bounded refusals (sealed opening / not a greeting / unknown variant).
+  "chat_opening_locked",
+  "chat_opening_not_greeting",
+  "chat_opening_variant_not_found",
+  // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
+  // not a retryable runtime outage.
+  "companion_record_unreadable",
+  // The companion's performance directive is CASed on the exact profile revision the browser
+  // read; a stale edit is its own bounded refusal.
+  "character_voice_conflict",
+  // Transport: the over-ceiling request body the router refuses before any route runs.
+  "payload_too_large",
 ] as const;
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;

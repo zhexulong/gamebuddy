@@ -27,6 +27,24 @@
  * `code:` unions), so this is scoped to the browser-contract handlers and the client
  * mirrors, which is the boundary the owner named.
  *
+ * The mirror half of the defect is the opposite direction, and subset-only checking let
+ * it live: `problem-code.3` fails a mirror that declares a code the contract does not,
+ * and a mirror that does *not know* a declared code passes it. Both mirrors had drifted
+ * that way - `reference-pipeline-api.ts` knew 19 of the 41 codes the tavern router can
+ * send, `management-pipeline-api.ts` 40 - so `payload_too_large`, the typed 413 the Host
+ * sends for an over-ceiling body (`reference-pipeline-dialogue-web.ts:434`, deliberately
+ * outside the schema check at `:539`), arrived as an unrecognised code and the client
+ * turned a legitimate, actionable refusal into an opaque `TavernProtocolError`. Rule
+ * `problem-code.7` asserts EQUALITY with the same derived authority, so a contract that
+ * grows a code fails here until every mirror learns it.
+ *
+ * Why equality and not a longer hand-written list: the browser bundle cannot import the
+ * contract (`dialogue-web/src/management-pipeline-api.ts:9` - "no Host package, no
+ * typebox, no runtime code"; `dialogue-web` has no typebox dependency, so the Vite bundle
+ * cannot resolve `host/src/tavern/browser-contract`), so the Host's declaration is read
+ * here, in the gate, from the repository source root - and this gate is what holds the
+ * mirrors to it.
+ *
  * Reading a code out of a call is positional, not "any string argument": the
  * argument index comes from the callee's own parameter named `code`, so
  * `sendSseResync(response, stream, "ambiguous_cursor", generation)` - whose third
@@ -282,13 +300,17 @@ test("problem-code.2: every composed route code is declared by a contract", (t) 
 });
 
 test("problem-code.3: every client mirror is a subset of the declared set", (t) => {
-  const { tavern, turn, game } = authorities();
+  const { tavern, turn, game, transport } = authorities();
+  // The router's own `ProblemCode` alias declares the transport refusal
+  // (`payload_too_large`) beside the schema union, so a mirror naming it is declaring a
+  // code the contract declares - the same authority `problem-code.1` holds handlers to.
+  const declared = new Set([...tavern, ...transport]);
   const failures = [];
   let mirrored = 0;
   for (const file of CLIENT_MIRRORS) {
     for (const entry of literalsInDeclaration(file, "PROBLEM_CODES")) {
       mirrored += 1;
-      if (!tavern.has(entry.value))
+      if (!declared.has(entry.value))
         failures.push(`${entry.where} mirrors undeclared code ${JSON.stringify(entry.value)}`);
     }
     for (const entry of literalsInDeclaration(file, "TURN_PROBLEM_CODES")) {
@@ -385,4 +407,60 @@ test("problem-code.6 (mutation): an invented code and a catch that decides nothi
   );
   assert.deepEqual(causeDropping, ["gate-mutation.ts:9"]);
   t.diagnostic("problem-code.6: invented code at :2, catch that decides nothing at gate-mutation.ts:9");
+});
+
+/**
+ * The two ways a mirror can drift from the derived authority, by code: a declared code the
+ * mirror does not know (a typed refusal the client reads as protocol corruption), and a
+ * code the mirror knows that no tavern route declares (unreachable branch). Pure, so the
+ * mutation half of `problem-code.7` exercises the same comparison the gate asserts.
+ */
+export function codeSetDrift(where, mirrored, authority) {
+  return [
+    ...[...authority]
+      .filter((code) => !mirrored.has(code))
+      .map((code) => `${where} does not recognise declared code ${JSON.stringify(code)}`),
+    ...[...mirrored]
+      .filter((code) => !authority.has(code))
+      .map((code) => `${where} recognises a code no tavern route declares ${JSON.stringify(code)}`),
+  ];
+}
+
+/** The mirror's declared vocabulary, as a set, with the source path a finding names. */
+function mirrorVocabulary(file, authority) {
+  const entries = literalsInDeclaration(file, "PROBLEM_CODES");
+  const where = file.replace(/\\/gu, "/").split("/dialogue-web/").pop();
+  const mirrored = new Set(entries.map((entry) => entry.value));
+  return { where, size: mirrored.size, findings: codeSetDrift(where, mirrored, authority) };
+}
+
+test("problem-code.7: every client mirror IS the declared set, not a stale subset of it", (t) => {
+  const { tavern, transport } = authorities();
+  const authority = new Set([...tavern, ...transport]);
+  const failures = [];
+  let mirrored = 0;
+  for (const file of CLIENT_MIRRORS) {
+    const vocabulary = mirrorVocabulary(file, authority);
+    mirrored += vocabulary.size;
+    failures.push(...vocabulary.findings);
+  }
+  t.diagnostic(
+    `problem-code.7: ${mirrored} mirrored code(s) across ${CLIENT_MIRRORS.length} mirror(s) checked for equality against ${authority.size} declared (${tavern.size} tavern + ${transport.size} transport), ${failures.length} drifted`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "a mirror that does not know a declared code reads that typed refusal as protocol corruption",
+  );
+
+  // The comparison itself, exercised on a vocabulary one member short and on one that
+  // invents a member: a future edit that turns this back into a subset check fails here
+  // instead of passing quietly on the drift it is here to catch.
+  const short = new Set([...authority].filter((code) => code !== "payload_too_large"));
+  assert.deepEqual(codeSetDrift("mutation.ts", short, authority), [
+    'mutation.ts does not recognise declared code "payload_too_large"',
+  ]);
+  assert.deepEqual(codeSetDrift("mutation.ts", new Set([...authority, "invented_code"]), authority), [
+    'mutation.ts recognises a code no tavern route declares "invented_code"',
+  ]);
 });

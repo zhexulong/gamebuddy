@@ -530,6 +530,31 @@ test("submit surfaces a validated problem on non-2xx", async () => {
   });
 });
 
+test("the Host's typed 413 payload_too_large surfaces as a problem, not as protocol corruption", async () => {
+  // `8aa196ce` reclassified an over-ceiling request body from the generic 400
+  // `invalid_request` to the typed 413 `payload_too_large`
+  // (`host/src/reference-pipeline-dialogue-web.test.ts:396-402`). The Host sends that code
+  // outside its own schema check (`reference-pipeline-dialogue-web.ts:539`), so the mirror
+  // is the only thing that can read it: before the fix this code was not in
+  // `PROBLEM_CODES`, and a legitimate player-facing refusal became `TavernProtocolError`.
+  const problem = {
+    type: "about:blank",
+    title: "Payload too large",
+    status: 413,
+    code: "payload_too_large",
+    requestId: HANDLE,
+    retryable: false,
+  };
+  assert.doesNotThrow(() => validateProblem(problem));
+  const api = createReferencePipelineApi(async () => jsonResponse(problem, 413));
+  await assert.rejects(api.bootstrap(HANDLE), (error) => {
+    assert.ok(error instanceof TavernProblemError, `expected the typed problem, got ${error?.name}`);
+    assert.equal(error.code, "payload_too_large");
+    assert.equal(error.status, 413);
+    return true;
+  });
+});
+
 test("submit requires the exact 202 success status", async () => {
   const api = createReferencePipelineApi(async () => jsonResponse(turnAndResult(), 200));
   await assertProtocolError(api.submit(COMMAND, { csrfToken: HANDLE, idempotencyKey: KEY }));
