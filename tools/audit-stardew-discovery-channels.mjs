@@ -67,6 +67,9 @@ export const TARGET_FIELD = Object.freeze({
   // Both wearable actions name the actor's OWN body slots through the same published list
   // (WearableTargets). dismount_transport publishes no target list: its subject is the actor's own
   // mount, so it has no discovery leg to declare here (the same reason advance_day has none).
+  // The chest repaint names the chest through ColorTargets, whose entries carry the tile AND the colour the
+  // chest currently has (so a caller can see whether a repaint would move anything).
+  color_placed_object: "ColorTargets",
   equip_wearable: "WearableTargets",
   unequip_wearable: "WearableTargets",
   pet_animal: "PetTargets",

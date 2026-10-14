@@ -142,6 +142,7 @@
     "answer_dialogue",
     "advance_day",
     "send_multiplayer_chat",
+    "color_placed_object",
     "clear_fish_pond",
     "build_farm_building",
     "accept_daily_quest",
@@ -1582,6 +1583,23 @@
         "verdict": "admits_multiplayer"
       },
       "requiredLiveTopology": "shared_world_multiplayer"
+    },
+    {
+      "actionId": "color_placed_object",
+      "lifecycle": "live_verified",
+      "seams": [
+        {
+          "kind": "native",
+          "file": "StardewValley.Menus/DiscreteColorPicker.cs",
+          "signature": "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+          "sensitivity": "mp-insensitive",
+          "modeNeutralReason": "the write is a public NetColor assignment on the chest plus the game's own lid refresh; its body reads no"
+        }
+      ],
+      "admission": {
+        "verdict": "admits_multiplayer"
+      },
+      "requiredLiveTopology": "single_player_native_companion"
     },
     {
       "actionId": "clear_fish_pond",

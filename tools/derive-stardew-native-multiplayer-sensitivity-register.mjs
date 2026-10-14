@@ -449,6 +449,15 @@ const TABLE = {
     "mp-insensitive",
     "the colour comes from the dye item's own context tags; no multiplayer-decisive token is read.",
   ],
+  // The chest repaint: the game has no callable settlement, so the action reproduces the two public statements
+  // inside the picker's click handler against the chest the caller means.
+  color_placed_object: [
+    "StardewValley.Menus/DiscreteColorPicker.cs",
+    "public override void receiveLeftClick(int x, int y, bool playSound = true)",
+    "mp-insensitive",
+    "the write is a public NetColor assignment on the chest plus the game's own lid refresh; its body reads no",
+    "multiplayer-decisive token, and the palette comes from the game's own public map.",
+  ],
   build_farm_building: [
     "StardewValley/GameLocation.cs",
     "public bool buildStructure(string typeId, BuildingData data, Vector2 tileLocation, Farmer who, out Building constructed, bool magicalConstruction = false, bool skipSafetyChecks = false)",

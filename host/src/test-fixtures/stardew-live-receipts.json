@@ -158,6 +158,21 @@
       }
     },
     {
+      "fromRun": "color_placed_object",
+      "actionId": "color_placed_object",
+      "state": "succeeded",
+      "reasonCode": "placed_object_recolored",
+      "evidence": {
+        "target": "color_2aad788f4d7cbb33",
+        "tile": "2,9",
+        "location": "Farm",
+        "color_selection": "2",
+        "color_before": "85,85,255",
+        "color_after": "119,191,255",
+        "color_changed": "true"
+      }
+    },
+    {
       "fromRun": "dye_clothing_with_item",
       "actionId": "dye_clothing_with_item",
       "state": "succeeded",

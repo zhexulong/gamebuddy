@@ -292,6 +292,8 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("tailor_clothing", 1, "run-stardew-native-local-player-tailor-clothing-smoke.mjs", "clothing_tailored", "native_tailoring_v1"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate("dye_clothing_with_item", 1, "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs", "clothing_dyed", "native_tailoring_v1"),
+  // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
+  gate("color_placed_object", 1, "run-stardew-native-local-player-color-placed-object-smoke.mjs", "placed_object_recolored", "native_color_placed_object_v1"),
 ]);
 
 /**
@@ -320,10 +322,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // runner is identical; only the fixture scenario (kitchen instead of a placed
   // chest) and the resulting evidence identity differ.
   fridge_store: "run-stardew-native-local-player-chest-store-smoke.mjs",
-  // The chest repaint: the game has NO callable settlement for this write, so the handler reproduces the
-  // picker's own two public statements (`chest.playerChoiceColor.Value = ...` + `chest.resetLidFrame()`).
-  // Experimental until its own native-local gate passes.
-  color_placed_object: "run-stardew-native-local-player-color-placed-object-smoke.mjs",
+
   fridge_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
   // Same ship_item capability over IslandWest's island bin. The runner is
   // identical because the action advertises through the same shippingBinTargets

@@ -2508,6 +2508,39 @@
         }
       },
       {
+        "actionId": "color_placed_object",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          },
+          "colorSelection": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "placed_object_recolored"
+        }
+      },
+      {
         "actionId": "clear_fish_pond",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -2832,6 +2865,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "advance_day",
+      "color_placed_object",
       "clear_fish_pond",
       "build_farm_building",
       "accept_daily_quest",
@@ -2949,6 +2983,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "advance_day",
+      "color_placed_object",
       "clear_fish_pond",
       "build_farm_building",
       "accept_daily_quest",
