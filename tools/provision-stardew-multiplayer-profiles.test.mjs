@@ -22,7 +22,10 @@ test("the argument set is bounded and an unknown key fails rather than being ign
 });
 
 test("the companion id must be an opaque id", () => {
-  assert.throws(() => parseProvisionArgs(["--profile-root", "D:\\lane", "--companion-id", "not a valid id!"]), /invalid_companion_id/);
+  assert.throws(
+    () => parseProvisionArgs(["--profile-root", "D:\\lane", "--companion-id", "not a valid id!"]),
+    /invalid_companion_id/,
+  );
 });
 
 test("the host half enables the host role and disables the client role", () => {
@@ -49,7 +52,14 @@ test("the manifest path is absolute and uses the protocol's own file name", () =
   assert.equal(ai.FarmhandProvisioner.ManifestPath, SESSION + "\\stardew-farmhand-manifest.json");
   const wrongName = structuredClone(ai);
   wrongName.FarmhandProvisioner.ManifestPath = SESSION + "\\manifest.json";
-  assert.throws(() => assertProvisionedShape({ host: hostProfileConfig({ sessionDirectory: SESSION, sessionToken: TOKEN, companionId: "c" }), ai: wrongName }), /manifest_file_name_not_the_protocol_name/);
+  assert.throws(
+    () =>
+      assertProvisionedShape({
+        host: hostProfileConfig({ sessionDirectory: SESSION, sessionToken: TOKEN, companionId: "c" }),
+        ai: wrongName,
+      }),
+    /manifest_file_name_not_the_protocol_name/,
+  );
 });
 
 test("a short token, a mismatched token and a missing authorization all fail by name", () => {

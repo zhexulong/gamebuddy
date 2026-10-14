@@ -107,7 +107,13 @@ export function parseProvisionArgs(argv = []) {
 }
 
 /** The host profile's formal config, field for field. */
-export function hostProfileConfig({ sessionDirectory, sessionToken, companionId, fixtureScenario = "", triggerNativeSaveAfterAttachment = false }) {
+export function hostProfileConfig({
+  sessionDirectory,
+  sessionToken,
+  companionId,
+  fixtureScenario = "",
+  triggerNativeSaveAfterAttachment = false,
+}) {
   return {
     EnableLocalBridge: true,
     PipeName: "gamebuddy-stardew-host",
@@ -216,7 +222,14 @@ export function assertProvisionedShape({ host, ai, checkOnly = false }) {
   const sessionRoot = join(host.HostFarmhandProvisioning.SessionDirectory);
   if (join(ai.FarmhandProvisioner.ManifestPath) !== join(sessionRoot, MANIFEST_FILE_NAME))
     throw new Error("manifest_path_not_inside_the_session_directory");
-  for (const id of [host.CompanionId, ai.CompanionId, host.SaveId, host.WorldId, host.PlayerId, host.HostFarmhandProvisioning.AuthorizedCompanionIds[0]])
+  for (const id of [
+    host.CompanionId,
+    ai.CompanionId,
+    host.SaveId,
+    host.WorldId,
+    host.PlayerId,
+    host.HostFarmhandProvisioning.AuthorizedCompanionIds[0],
+  ])
     if (!OPAQUE_ID.test(id)) throw new Error(`not_an_opaque_id:${id}`);
   if (host.HostFarmhandProvisioning.AuthorizedCompanionIds.length === 0) throw new Error("no_authorized_companion_id");
   if (checkOnly) return true;
@@ -259,8 +272,7 @@ async function main(argv) {
     const modRoot = join(request.profileRoot, profile, "Mods", "GameBuddy");
     await writeJson(join(sidecarRoot, "config.json"), config);
     await writeJson(join(modRoot, "config.json"), config);
-    for (const fileName of BUNDLE_FILE_NAMES)
-      await cp(join(request.releaseDir, fileName), join(modRoot, fileName));
+    for (const fileName of BUNDLE_FILE_NAMES) await cp(join(request.releaseDir, fileName), join(modRoot, fileName));
   }
 
   // Verify by READING BACK what was written, not by trusting the objects above.
@@ -284,7 +296,7 @@ async function main(argv) {
     // Named so the operator knows the two steps this tool does NOT perform.
     stillRequired: [
       "a save NAMED GameBuddyFixture_<id> on disk: the formal Host loads it by name, and HostAutomationConfig.IsValid",
-      "requires SaveName.StartsWith(\"GameBuddyFixture_\") for any armed scenario",
+      'requires SaveName.StartsWith("GameBuddyFixture_") for any armed scenario',
       "a Cabin building inside that save:",
       "  the fixture scenario native_build_farmhand_cabin_v1 builds exactly one through the game's own",
       "  BuildStartingCabins shape (GameLocation.cs:17574-17580) and the driver's post-attachment save persists it",

@@ -23,7 +23,15 @@ const COLOR_SELECTION = 2;
  * requires the emitted key COUNT to equal its expected list length, so the count is part of the contract
  * and this runner checks the shape before it reads any value.
  */
-export const EXPECTED_EVIDENCE_KEYS = ["target", "tile", "location", "color_selection", "color_before", "color_after", "color_changed"];
+export const EXPECTED_EVIDENCE_KEYS = [
+  "target",
+  "tile",
+  "location",
+  "color_selection",
+  "color_before",
+  "color_after",
+  "color_changed",
+];
 /**
  * An index that cannot exist in the palette. The runner deliberately does NOT know the palette size
  * (that bound is the game's own, `DiscreteColorPicker.totalColors`, read on the game thread): it asks
@@ -72,7 +80,13 @@ export async function runColorPlacedObjectSmoke(client, receipts, _config, { ter
     snapshot,
     timeoutMs: 30_000,
   });
-  trace.push({ step: "recolor", action: ACTION, target: target.targetId, selection: COLOR_SELECTION, receipt: summarizeReceipt(accepted) });
+  trace.push({
+    step: "recolor",
+    action: ACTION,
+    target: target.targetId,
+    selection: COLOR_SELECTION,
+    receipt: summarizeReceipt(accepted),
+  });
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
     throw new Error("color_placed_object terminal does not belong to this request");
@@ -93,18 +107,38 @@ export async function runColorPlacedObjectSmoke(client, receipts, _config, { ter
     before: { color: target.color },
     after: { color: colourOfTarget(after, target.targetId) },
   });
-  trace.push({ step: "observed", before: target.color, after: colourOfTarget(after, target.targetId), evidence, checks });
+  trace.push({
+    step: "observed",
+    before: target.color,
+    after: colourOfTarget(after, target.targetId),
+    evidence,
+    checks,
+  });
 
   // Negative 1: the chest already carries the requested palette colour, so the Mod's fresh game-thread
   // read refuses it by name. This is also the independent world read-back described in the header.
   const alreadyRequestId = `native_local_color_placed_object_already_${Date.now()}`;
-  const already = await submitRefused(client, receipts, alreadyRequestId, () => target, COLOR_SELECTION, terminalTimeoutMs);
+  const already = await submitRefused(
+    client,
+    receipts,
+    alreadyRequestId,
+    () => target,
+    COLOR_SELECTION,
+    terminalTimeoutMs,
+  );
   trace.push({ step: "negative_already_set", receipt: already.receipt });
   checks.alreadySetRefused = already.state === "rejected" && already.reasonCode === "color_already_set";
 
   // Negative 2: an index outside the palette. The runner does not know the bound; the Mod owns it.
   const outOfRangeRequestId = `native_local_color_placed_object_range_${Date.now()}`;
-  const outOfRange = await submitRefused(client, receipts, outOfRangeRequestId, () => target, OUT_OF_RANGE_SELECTION, terminalTimeoutMs);
+  const outOfRange = await submitRefused(
+    client,
+    receipts,
+    outOfRangeRequestId,
+    () => target,
+    OUT_OF_RANGE_SELECTION,
+    terminalTimeoutMs,
+  );
   trace.push({ step: "negative_out_of_range", receipt: outOfRange.receipt });
   checks.outOfRangeRefused = outOfRange.state === "rejected" && outOfRange.reasonCode === "invalid_color_selection";
 
@@ -226,7 +260,12 @@ function evidenceShapeIsFrozen(detail) {
   if (fields.length !== EXPECTED_EVIDENCE_KEYS.length) return false;
   return fields.every((field, index) => {
     const at = field.indexOf("=");
-    return at > 0 && field.slice(0, at) === EXPECTED_EVIDENCE_KEYS[index] && field.length > at + 1 && field.indexOf("=", at + 1) === -1;
+    return (
+      at > 0 &&
+      field.slice(0, at) === EXPECTED_EVIDENCE_KEYS[index] &&
+      field.length > at + 1 &&
+      field.indexOf("=", at + 1) === -1
+    );
   });
 }
 

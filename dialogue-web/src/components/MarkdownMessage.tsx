@@ -115,9 +115,6 @@ export function MarkdownMessage({
 }) {
   // The parse is memoised per text so a streaming preview delta elsewhere in the
   // surface never re-parses (or re-sanitises) a settled message.
-  const html = useMemo(
-    () => withTrailingHtml(renderCompanionMarkdown(text), trailingHtml),
-    [text, trailingHtml],
-  );
+  const html = useMemo(() => withTrailingHtml(renderCompanionMarkdown(text), trailingHtml), [text, trailingHtml]);
   return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }

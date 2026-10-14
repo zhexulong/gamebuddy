@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  isRefusedTurnEvent,
-  MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE,
-} from "./companion-turn-refusal.js";
+import { isRefusedTurnEvent, MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 
 /** Pi's own `entry_appended` shape for `pi.appendEntry(customType, data)`. */
 function entryAppended(customType: string) {

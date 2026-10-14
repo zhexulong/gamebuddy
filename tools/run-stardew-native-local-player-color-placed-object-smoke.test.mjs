@@ -152,7 +152,9 @@ test("the evidence shape is exactly the seven frozen keys, in order", () => {
  * not load-bearing, and this reports the observed result either way.
  */
 test("mutation: breaking the world-did-move check turns the happy path red", async () => {
-  const runnerPath = fileURLToPath(new URL("./run-stardew-native-local-player-color-placed-object-smoke.mjs", import.meta.url));
+  const runnerPath = fileURLToPath(
+    new URL("./run-stardew-native-local-player-color-placed-object-smoke.mjs", import.meta.url),
+  );
   const mutationDir = fileURLToPath(new URL("../scratch/.tmp/", import.meta.url));
   const anchor = 'worldShowsColourMoved: worldObservable ? afterColour !== beforeColour : "not_checked",';
   const broken = 'worldShowsColourMoved: worldObservable ? afterColour === beforeColour : "not_checked",';
