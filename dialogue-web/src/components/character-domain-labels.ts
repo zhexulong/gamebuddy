@@ -44,6 +44,16 @@ export type CharacterLabels = Readonly<{
   importFailedPng: string;
   importFailedText: string;
   importFailedTooLarge: string;
+  /**
+   * The staged-card review (design/26 §4.6): the Host's own field report is what
+   * the player approves, so the words here name the decision, not the mechanics.
+   */
+  importReviewTitle: string;
+  importReviewHint: string;
+  importReviewName: string;
+  importReviewWillKeep: string;
+  importReviewConfirm: string;
+  importReviewCancel: string;
   historyTitle: string;
   historyHint: string;
   historyEmpty: string;
@@ -52,6 +62,12 @@ export type CharacterLabels = Readonly<{
   companionsTitle: string;
   companionsEmpty: string;
   companionCurrent: string;
+  /**
+   * When a companion ADDED to the library becomes the one in play. The companion
+   * in play comes from the deployment the Host starts with, and there is no
+   * activation operation, so this surface offers no control and says so.
+   */
+  companionInPlay: string;
   newCompanionTitle: string;
   newCompanionHint: string;
   newCompanionCreate: string;
@@ -134,7 +150,8 @@ const en: CharacterLabels = Object.freeze({
   importSubmit: "Import card",
   importBusy: "Importing…",
   importCreated: "Imported {{name}}.",
-  importCreatedDetail: "It is now a companion you can chat with.",
+  importCreatedDetail:
+    "She joins your library; the companion in play is fixed at start-up, so she becomes the one in play only when GameBuddy later starts with her.",
   importKept: "Kept {{count}} card fields.",
   importLorebookCount: "Carries {{count}} lorebook entries.",
   importPreserved: "Kept {{count}} fields unchanged.",
@@ -147,6 +164,13 @@ const en: CharacterLabels = Object.freeze({
   importFailedPng: "That PNG does not contain a character card.",
   importFailedText: "That file is not readable character card text.",
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
+  importReviewTitle: "Review before importing",
+  importReviewHint:
+    "Nothing has been imported yet. This is what the Host staged from the card - what it will keep and what it could not use - and the companion is created only when you confirm.",
+  importReviewName: "The card names it {{name}}.",
+  importReviewWillKeep: "Will keep {{count}} card fields: {{fields}}.",
+  importReviewConfirm: "Import this card",
+  importReviewCancel: "Cancel",
   historyTitle: "Imported cards",
   historyHint: "Every imported card and what it kept or dropped.",
   historyEmpty: "No cards imported yet.",
@@ -155,6 +179,8 @@ const en: CharacterLabels = Object.freeze({
   companionsTitle: "Companions",
   companionsEmpty: "No companions yet.",
   companionCurrent: "current",
+  companionInPlay:
+    "The companion in play is fixed when GameBuddy starts — a companion imported or created here joins your library, and becomes the one in play only when GameBuddy later starts with her.",
   newCompanionTitle: "New companion",
   newCompanionHint: "A display name only; GameBuddy mints every identity.",
   newCompanionCreate: "Create companion",
@@ -235,7 +261,8 @@ const zh: CharacterLabels = Object.freeze({
   importSubmit: "导入角色卡",
   importBusy: "正在导入…",
   importCreated: "已导入 {{name}}。",
-  importCreatedDetail: "它现在是一个可以聊天的伙伴。",
+  importCreatedDetail:
+    "她已加入伙伴库；在玩的伙伴在启动时确定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
   importKept: "已保留 {{count}} 个卡片字段。",
   importLorebookCount: "包含 {{count}} 条世界书词条。",
   importPreserved: "有 {{count}} 个字段原样保留。",
@@ -248,6 +275,12 @@ const zh: CharacterLabels = Object.freeze({
   importFailedPng: "该 PNG 不包含角色卡数据。",
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
+  importReviewTitle: "导入前确认",
+  importReviewHint: "尚未导入任何内容。以下是 Host 从卡片中暂存的结果——将保留什么、无法使用什么；只有你确认后才会创建伙伴。",
+  importReviewName: "卡片中的名称为 {{name}}。",
+  importReviewWillKeep: "将保留 {{count}} 个卡片字段：{{fields}}。",
+  importReviewConfirm: "导入此角色卡",
+  importReviewCancel: "取消",
   historyTitle: "已导入的角色卡",
   historyHint: "每次导入的角色卡，以及保留或丢弃的内容。",
   historyEmpty: "暂无已导入的角色卡。",
@@ -256,6 +289,8 @@ const zh: CharacterLabels = Object.freeze({
   companionsTitle: "伙伴",
   companionsEmpty: "还没有伙伴。",
   companionCurrent: "当前",
+  companionInPlay:
+    "在玩的伙伴在 GameBuddy 启动时就已确定——你在这里导入或创建的伙伴会加入伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
   newCompanionTitle: "新建伙伴",
   newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
   newCompanionCreate: "创建伙伴",

@@ -219,6 +219,11 @@ test("one-click clear removes the field, and a re-import of the same card does n
     buffer: Buffer.from(cardText, "utf8"),
   });
   await expect.poll(() => imports).toBe(1);
+  // Choosing the card stages it: the player approves the Host's own staged
+  // report before anything is provisioned.
+  const review = surface.locator("[data-card-import-review]");
+  await expect(review).toBeVisible();
+  await review.locator("[data-card-import-review-confirm]").click();
   await expect(surface.locator("[data-card-import-result=created]")).toContainText("Imported Nova.");
   await expect(surface.locator("#character-voice-text")).toHaveCount(0);
 });

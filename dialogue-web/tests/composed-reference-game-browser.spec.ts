@@ -2628,16 +2628,18 @@ async function chooseCardFile(page: Page, text: string): Promise<void> {
 }
 
 /**
- * "choosing a card file imports it in one action and reports the Host's own
- * result" fails if the primary path is not a real file input (the owner's
- * complaint: a staged review ceremony instead of a picker), if choosing a file
- * does not post the file's own text as `character.import.stage`, if the review
- * is not the Host's own eligible field set, if confirm is not CSRF-bound, if
- * the notice claims a companion the Host never confirmed, or if the "could not
+ * "choosing a character card file stages a review the player approves, and
+ * reports what the Host kept and could not use" fails if the primary path is not
+ * a real file input (the owner's complaint: a staged review ceremony *instead of*
+ * a picker), if choosing a file does not post the file's own text as
+ * `character.import.stage`, if the Host's staged report is not what the player
+ * sees before approving it, if anything is confirmed before that approval, if the
+ * review is not the Host's own eligible field set, if confirm is not CSRF-bound,
+ * if the notice claims a companion the Host never confirmed, or if the "could not
  * use" list is locally invented instead of read from the Host's dispositions.
  * It also pins that the paste path still produces the same durable result.
  */
-test("choosing a character card file imports it in one action, and reports what the Host kept and could not use", async ({
+test("choosing a character card file stages a review, and reports what the Host kept and could not use", async ({
   page,
 }) => {
   const cardText = JSON.stringify({
@@ -2652,8 +2654,20 @@ test("choosing a character card file imports it in one action, and reports what 
   const surface = page.getByTestId("characters-surface");
 
   // The file picker is the primary path: the player chooses a file their own
-  // browser reads; the card text is what the Host receives.
+  // browser reads; the card text is what the Host receives, and what comes back
+  // is the Host's own staged report - not a companion yet.
   await chooseCardFile(page, cardText);
+  const review = surface.locator("[data-card-import-review]");
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("The card names it Nova.");
+  await expect(review).toContainText("Will keep 2 card fields: name, persona_core.");
+  await expect(review).toContainText("Carries 2 lorebook entries.");
+  await expect(review).toContainText("Could not use: alternate_greetings.");
+  await expect(surface.locator("[data-card-import-result=created]")).toHaveCount(0);
+  expect(confirms.length, "the companion was confirmed before the player approved the review").toBe(0);
+  expect(reviews.length, "a review was recorded before the player approved it").toBe(0);
+
+  await review.locator("[data-card-import-review-confirm]").click();
   await expect.poll(() => confirms.length).toBe(1);
 
   expect(imports[0]?.body).toEqual({ apiVersion: 1, card: cardText });
@@ -2668,16 +2682,61 @@ test("choosing a character card file imports it in one action, and reports what 
   await expect(created).toContainText("Imported Nova.");
   await expect(created).toContainText("Kept 2 card fields.");
   await expect(created).toContainText("Could not use: alternate_greetings.");
+  await expect(review).toHaveCount(0);
 
-  // The secondary paste path produces the same durable result as the picker.
+  // The secondary paste path produces the same durable result as the picker,
+  // and it stages the same review: the paste button is not the approval either.
   await surface.locator("[data-card-import] summary").click();
   await surface
     .getByRole("textbox", { name: "Paste card text" })
     .fill(JSON.stringify({ spec: "chara_card_v3", data: { name: "Nova" } }));
   await surface.getByRole("button", { name: "Import card" }).click();
+  await expect(review).toBeVisible();
+  expect(confirms.length).toBe(1);
+  await review.locator("[data-card-import-review-confirm]").click();
   await expect.poll(() => confirms.length).toBe(2);
   expect(reviewedFields(reviews[1]?.body)).toEqual(reviewedFields(reviews[0]?.body));
   expect(confirms[1]?.body).toEqual(confirms[0]?.body);
+});
+
+/**
+ * "a staged card can be cancelled without importing anything" fails if the
+ * cancel leaves a companion behind, if it records a review, or if the surface
+ * keeps claiming the staged card afterwards. The durable companion list is the
+ * authority: the mount reads it once and nothing in this journey may change it.
+ */
+test("cancelling the staged review imports nothing and leaves the companion list unchanged", async ({ page }) => {
+  const cardText = JSON.stringify({ spec: "chara_card_v3", data: { name: "Nova" } });
+  await stubCharacterReads(page, { companions: [{ handle: characterHandle, name: "Nova", isCurrent: true }] });
+  const companionReads: unknown[] = [];
+  await page.route("**/api/tavern/v1/companions", async (route) => {
+    companionReads.push(route.request().method());
+    await route.fulfill(
+      jsonOk({ apiVersion: 1, companions: [{ handle: characterHandle, name: "Nova", isCurrent: true }] }),
+    );
+  });
+  const { imports, reviews, confirms } = await stubImportSuccess(page);
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openCharactersSurface(page);
+  const surface = page.getByTestId("characters-surface");
+  const readsBefore = companionReads.length;
+
+  await chooseCardFile(page, cardText);
+  const review = surface.locator("[data-card-import-review]");
+  await expect(review).toBeVisible();
+  await review.locator("[data-card-import-review-cancel]").click();
+
+  // The staged card is dropped, nothing was confirmed and no review was signed.
+  await expect(review).toHaveCount(0);
+  expect(imports.length, "the card was staged").toBe(1);
+  expect(reviews.length, "cancel recorded a review").toBe(0);
+  expect(confirms.length, "cancel confirmed the card").toBe(0);
+  await expect(surface.locator("[data-card-import-result=created]")).toHaveCount(0);
+  // The durable companion list is unchanged: the same single companion, and not
+  // one extra read of it either - a cancel is not a mutation.
+  await expect(surface.locator("[data-companion-entry]")).toContainText("Nova");
+  expect(companionReads.length).toBe(readsBefore);
 });
 
 /**
@@ -2722,6 +2781,10 @@ test("a card whose lorebook entries import produces them on the character's own 
   const surface = page.getByTestId("characters-surface");
 
   await chooseCardFile(page, cardText);
+  const review = surface.locator("[data-card-import-review]");
+  await expect(review).toBeVisible();
+  await expect(review).toContainText("Carries 2 lorebook entries.");
+  await review.locator("[data-card-import-review-confirm]").click();
   await expect.poll(() => confirms.length).toBe(1);
   await expect(surface.locator("[data-card-import-result=created]")).toContainText("Carries 2 lorebook entries.");
 
@@ -2836,6 +2899,12 @@ test("a refused import is reported as a failure and never as a created companion
   const surface = page.getByTestId("characters-surface");
 
   await chooseCardFile(page, cardText);
+  // The refusal is reported at the confirm step: the Host's staged report is what
+  // the player approves, and the 422 is what the surface shows - never a created
+  // companion.
+  const review = surface.locator("[data-card-import-review]");
+  await expect(review).toBeVisible();
+  await review.locator("[data-card-import-review-confirm]").click();
   await expect(surface.locator("[data-card-import-result=error]")).toContainText(
     "The card could not be imported.",
   );

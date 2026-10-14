@@ -4,8 +4,9 @@ import type { Locale } from "../i18n";
 import type {
   ManagementPipelineApi,
   StCardImportHistoryV1,
+  StCardImportStageResultV1,
 } from "../management-pipeline-api";
-import { characterLabels } from "./character-domain-labels";
+import { characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { extractCharacterCardJsonFromPng, isPngBytes } from "./png-character-card";
 
 /** The stage route accepts card JSON text up to 2 MiB (StageStCardImportCommandV1). */
@@ -13,36 +14,124 @@ const MAX_CARD_TEXT_LENGTH = 2_097_152;
 /** Do not pull an unbounded file into memory just to look for a card chunk. */
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
+/**
+ * The Host's own staged facts for one card, in the one shape both the
+ * pre-confirm review and the post-confirm result render. Every value comes from
+ * the `character.import.stage` response; nothing is re-parsed from the card.
+ */
+type StagedReport = Readonly<{
+  /** The field names the Host marked `profile_eligible_after_explicit_review`. */
+  keptFields: readonly string[];
+  lorebookCount: number;
+  preserved: number;
+  notUsed: readonly string[];
+  longFieldChars: number | null;
+  /** The card carried its own performance directive and it was kept. */
+  voiceCarried: boolean;
+  /** The card's directive was dropped by the decoder's own loss ledger. */
+  voiceDropped: boolean;
+}>;
+
 type ImportOutcome =
-  | Readonly<{
-      kind: "created";
-      name: string;
-      kept: number;
-      lorebookCount: number;
-      preserved: number;
-      notUsed: readonly string[];
-      longFieldChars: number | null;
-      /** The card carried its own performance directive and it was kept. */
-      voiceCarried: boolean;
-      /** The card's directive was dropped by the decoder's own loss ledger. */
-      voiceDropped: boolean;
-    }>
+  | Readonly<{ kind: "created"; name: string; report: StagedReport }>
   | Readonly<{ kind: "error"; message: string }>;
 
+/** The Host's staged report, read from its own field/disposition output. */
+function reportOf(staged: StCardImportStageResultV1): StagedReport {
+  const keptFields = staged.fields
+    .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+    .map((field) => field.field);
+  const notUsed = staged.dispositions
+    .filter(
+      (disposition) =>
+        disposition.classification === "dropped_unsupported" || disposition.classification === "rejected_invalid",
+    )
+    .map((disposition) => disposition.field)
+    .filter((field, index, all) => all.indexOf(field) === index);
+  const longField = staged.fields.find((field) => field.field === "persona_core" && field.chars > 4_000);
+  return {
+    keptFields,
+    lorebookCount: staged.fields.filter((field) => field.field.startsWith("worldbook_")).length,
+    preserved: staged.dispositions.filter((disposition) => disposition.classification === "preserved_opaque").length,
+    notUsed,
+    longFieldChars: longField?.chars ?? null,
+    // The card's own performance directive is a profile-eligible field like the
+    // persona: carrying it is reported from the field list, and the decoder's own
+    // loss ledger is what reports a directive it had to refuse.
+    voiceCarried: staged.fields.some((field) => field.field === "system_prompt"),
+    voiceDropped: (staged.losses ?? []).some(
+      (loss) => loss.field === "system_prompt" && loss.reason === "character_voice_too_long",
+    ),
+  };
+}
+
 /**
- * Import a character card (design/28 §2).
+ * The staged-report rows the review and the result share, so the two can never
+ * disagree about what the Host kept or could not use.
+ */
+function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement[] {
+  return [
+    <div key="notUsed">
+      <dd>
+        {report.notUsed.length === 0
+          ? labels.importAllUsed
+          : labels.importNotUsed.replace("{{fields}}", report.notUsed.join(", "))}
+      </dd>
+    </div>,
+    ...(report.lorebookCount > 0
+      ? [
+          <div key="lorebook">
+            <dd>{labels.importLorebookCount.replace("{{count}}", String(report.lorebookCount))}</dd>
+          </div>,
+        ]
+      : []),
+    ...(report.preserved > 0
+      ? [
+          <div key="preserved">
+            <dd>{labels.importPreserved.replace("{{count}}", String(report.preserved))}</dd>
+          </div>,
+        ]
+      : []),
+    ...(report.longFieldChars !== null
+      ? [
+          <div key="longField">
+            <dd>{labels.importLongField.replace("{{chars}}", String(report.longFieldChars))}</dd>
+          </div>,
+        ]
+      : []),
+    ...(report.voiceCarried
+      ? [
+          <div key="voiceCarried" data-card-import-voice="carried">
+            <dd>{labels.importVoiceCarried}</dd>
+          </div>,
+        ]
+      : []),
+    ...(report.voiceDropped
+      ? [
+          <div key="voiceDropped" data-card-import-voice="dropped">
+            <dd>{labels.importVoiceDropped}</dd>
+          </div>,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Import a character card (design/28 §2, design/26 §4.6).
  *
  * The primary path is the player choosing a `.json` / `.png` file from disk:
  * the browser reads that file locally and posts the card text. Pasting card
- * text stays available as a secondary path. There is no multi-step
- * classification review: the player choosing a card is the approval, so the
- * component stages, records the eligible fields the Host itself marked, and
- * confirms in one action.
+ * text stays available as a secondary path. Choosing a card is the *staging*
+ * step, not the approval: the Host answers `character.import.stage` with its own
+ * field/disposition report, the component shows that report - what the Host will
+ * keep and what it could not use - and the companion is provisioned only when
+ * the player confirms (design/26 §4.6: "Review every returned field
+ * classification ... Confirm `Create New Character`"). Cancelling sends
+ * nothing, so the durable companion list is unchanged.
  *
- * Nothing is claimed as created until `confirm` returns the Host's own name for
- * the provisioned companion, and the summary of what was kept or could not be
- * used is read from the Host's staged field/disposition report - never derived
- * locally.
+ * Everything the review shows is read from the Host's staged field/disposition
+ * report - never re-parsed from the card. Nothing is claimed as created until
+ * `confirm` returns the Host's own name for the provisioned companion.
  */
 export function CharacterCardImport({
   api,
@@ -60,6 +149,8 @@ export function CharacterCardImport({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
+  /** The Host's staged report, held until the player confirms or cancels it. */
+  const [staged, setStaged] = useState<StCardImportStageResultV1 | null>(null);
   const [pasted, setPasted] = useState("");
   const [history, setHistory] = useState<StCardImportHistoryV1 | "failed" | "unavailable">("unavailable");
 
@@ -86,57 +177,55 @@ export function CharacterCardImport({
     }
   };
 
-  const runImport = async (cardText: string): Promise<void> => {
+  /**
+   * Staging is not importing: this posts the card's own text as
+   * `character.import.stage` and keeps the Host's report until the player
+   * decides. No companion exists and the durable list is untouched either way.
+   */
+  const stageCard = async (cardText: string): Promise<void> => {
     if (busy) return;
     setBusy(true);
+    setStaged(null);
     setOutcome(null);
     try {
-      const staged = await api.stageStCardImport(cardText, csrfToken);
-      const eligible = staged.fields
-        .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
-        .map((field) => field.field);
-      if (eligible.length > 0)
-        await api.reviewStCardImport(staged.importId, eligible, Date.now(), csrfToken);
-      const confirmed = await api.confirmStCardImport(staged.importId, csrfToken);
-      if (confirmed.name.trim().length === 0) throw new Error("import_not_confirmed");
-      const notUsed = staged.dispositions
-        .filter(
-          (disposition) =>
-            disposition.classification === "dropped_unsupported" ||
-            disposition.classification === "rejected_invalid",
-        )
-        .map((disposition) => disposition.field)
-        .filter((field, index, all) => all.indexOf(field) === index);
-      const preserved = staged.dispositions.filter(
-        (disposition) => disposition.classification === "preserved_opaque",
-      ).length;
-      const longField = staged.fields.find((field) => field.field === "persona_core" && field.chars > 4_000);
-      const lorebookCount = staged.fields.filter((field) => field.field.startsWith("worldbook_")).length;
-      // The card's own performance directive is a profile-eligible field like the
-      // persona: carrying it is reported from the field list, and the decoder's
-      // own loss ledger is what reports a directive it had to refuse.
-      const voiceCarried = staged.fields.some((field) => field.field === "system_prompt");
-      const voiceDropped = (staged.losses ?? []).some(
-        (loss) => loss.field === "system_prompt" && loss.reason === "character_voice_too_long",
-      );
-      setOutcome({
-        kind: "created",
-        name: confirmed.name,
-        kept: eligible.length,
-        lorebookCount,
-        preserved,
-        notUsed,
-        longFieldChars: longField?.chars ?? null,
-        voiceCarried,
-        voiceDropped,
-      });
-      onCreated?.();
-      await refreshHistory();
+      setStaged(await api.stageStCardImport(cardText, csrfToken));
     } catch {
       setOutcome({ kind: "error", message: labels.importFailed });
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * The player's approval: record the explicit review over exactly the fields the
+   * Host itself marked eligible, then provision. The created companion is named
+   * only from the Host's own confirm read-back.
+   */
+  const confirmStaged = async (): Promise<void> => {
+    const stagedCard = staged;
+    if (busy || stagedCard === null) return;
+    setBusy(true);
+    try {
+      const report = reportOf(stagedCard);
+      if (report.keptFields.length > 0)
+        await api.reviewStCardImport(stagedCard.importId, report.keptFields, Date.now(), csrfToken);
+      const confirmed = await api.confirmStCardImport(stagedCard.importId, csrfToken);
+      if (confirmed.name.trim().length === 0) throw new Error("import_not_confirmed");
+      setStaged(null);
+      setOutcome({ kind: "created", name: confirmed.name, report });
+      onCreated?.();
+      await refreshHistory();
+    } catch {
+      setStaged(null);
+      setOutcome({ kind: "error", message: labels.importFailed });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Cancelling drops the staged card client-side; no route is called. */
+  const cancelStaged = (): void => {
+    setStaged(null);
   };
 
   const readFile = async (
@@ -160,8 +249,10 @@ export function CharacterCardImport({
       setOutcome({ kind: "error", message: read.message });
       return;
     }
-    await runImport(read.text);
+    await stageCard(read.text);
   };
+
+  const stagedReport = staged === null ? null : reportOf(staged);
 
   return (
     <section aria-label={labels.importTitle} data-card-import>
@@ -217,12 +308,52 @@ export function CharacterCardImport({
             type="button"
             className="small-button"
             disabled={busy || pasted.trim().length === 0}
-            onClick={() => void runImport(pasted.trim())}
+            onClick={() => void stageCard(pasted.trim())}
           >
             {busy ? labels.importBusy : labels.importSubmit}
           </button>
         </div>
       </details>
+
+      {staged !== null && stagedReport !== null && (
+        <section aria-label={labels.importReviewTitle} data-card-import-review>
+          <h4>{labels.importReviewTitle}</h4>
+          <p className="management-settings-hint">{labels.importReviewHint}</p>
+          <dl className="management-settings-details" data-card-import-review-details>
+            <div>
+              <dd>{labels.importReviewName.replace("{{name}}", staged.name)}</dd>
+            </div>
+            <div>
+              <dd>
+                {labels.importReviewWillKeep
+                  .replace("{{count}}", String(stagedReport.keptFields.length))
+                  .replace("{{fields}}", stagedReport.keptFields.join(", "))}
+              </dd>
+            </div>
+            {reportRows(stagedReport, labels)}
+          </dl>
+          <div className="composer-actions">
+            <button
+              type="button"
+              className="small-button primary"
+              data-card-import-review-confirm
+              disabled={busy}
+              onClick={() => void confirmStaged()}
+            >
+              {busy ? labels.importBusy : labels.importReviewConfirm}
+            </button>
+            <button
+              type="button"
+              className="small-button"
+              data-card-import-review-cancel
+              disabled={busy}
+              onClick={cancelStaged}
+            >
+              {labels.importReviewCancel}
+            </button>
+          </div>
+        </section>
+      )}
 
       {outcome !== null && (
         <div role="status" className={outcome.kind === "created" ? "success-banner" : "error-banner"} data-card-import-result={outcome.kind}>
@@ -230,29 +361,8 @@ export function CharacterCardImport({
             <dl className="management-settings-details" data-card-import-details>
               <div><dd>{labels.importCreated.replace("{{name}}", outcome.name)}</dd></div>
               <div><dd>{labels.importCreatedDetail}</dd></div>
-              <div><dd>{labels.importKept.replace("{{count}}", String(outcome.kept))}</dd></div>
-              {outcome.lorebookCount > 0 && (
-                <div><dd>{labels.importLorebookCount.replace("{{count}}", String(outcome.lorebookCount))}</dd></div>
-              )}
-              {outcome.preserved > 0 && (
-                <div><dd>{labels.importPreserved.replace("{{count}}", String(outcome.preserved))}</dd></div>
-              )}
-              <div>
-                <dd>
-                  {outcome.notUsed.length === 0
-                    ? labels.importAllUsed
-                    : labels.importNotUsed.replace("{{fields}}", outcome.notUsed.join(", "))}
-                </dd>
-              </div>
-              {outcome.longFieldChars !== null && (
-                <div><dd>{labels.importLongField.replace("{{chars}}", String(outcome.longFieldChars))}</dd></div>
-              )}
-              {outcome.voiceCarried && (
-                <div data-card-import-voice="carried"><dd>{labels.importVoiceCarried}</dd></div>
-              )}
-              {outcome.voiceDropped && (
-                <div data-card-import-voice="dropped"><dd>{labels.importVoiceDropped}</dd></div>
-              )}
+              <div><dd>{labels.importKept.replace("{{count}}", String(outcome.report.keptFields.length))}</dd></div>
+              {reportRows(outcome.report, labels)}
             </dl>
           ) : (
             <p>{outcome.message}</p>
