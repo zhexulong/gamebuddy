@@ -23,6 +23,10 @@ allowBuilds:
   tree-sitter: true
   tree-sitter-c-sharp: true
 
+# Supply-chain policy, stated explicitly so a developer machine and CI agree on it: a package must
+# be at least this old before the lockfile may reference it. Versions listed below are re-reviewed and
+# accepted deliberately; the exclusion list is the only way to reference one earlier.
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@earendil-works/chord@1.0.0'
   - '@earendil-works/pi-agent-core@1.0.0'
