@@ -89,9 +89,9 @@ test("provider attempt claimer claims exactly one durable generation-one attempt
   };
   assert.ok(first);
   const state = result.state as {
-    messages: unknown[];
+    messages: { kind: string; role: string; messageId: string }[];
     draft: { revision: number; text: string | null };
-    turnLedger: typeof first;
+    turnLedger: typeof first & { messageId: string };
     idempotency: unknown[];
   };
   assert.equal(first.status, "attempt_starting");
@@ -102,7 +102,15 @@ test("provider attempt claimer claims exactly one durable generation-one attempt
   assert.ok(first.attempt.runtimeOwner);
   assert.equal(state.turnLedger.status, "attempt_starting");
   assert.deepEqual(state.turnLedger.attempt, first.attempt);
-  assert.equal(state.messages.length, 1);
+  // The fresh root's initial Chat already opens on the companion's own seeded
+  // greeting (359389da seeds the reviewed preset; 2a0fe8db draws the opening
+  // from that greeting record), so the transcript is that opening plus exactly
+  // the one durable message the claim left untouched.
+  assert.deepEqual(
+    state.messages.map(({ kind, role }) => `${kind}:${role}`),
+    ["opening:companion", "player:player"],
+  );
+  assert.equal(state.messages[1]?.messageId, state.turnLedger.messageId);
   assert.deepEqual(state.draft, { revision: 1, text: null });
   assert.equal(state.idempotency.length, 1);
   assert.deepEqual(result.sessionKeys, ["profile"]);
@@ -284,12 +292,24 @@ test("raw transitions reject saved attempt facts after mounted lease close witho
     } catch (error) { p5Rejection = String(error); }
     const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     await authority.close();
-    process.stdout.write(JSON.stringify({ p4Rejection, p5Rejection, status: state.turnLedger.status, messages: state.messages.length }));
+    process.stdout.write(JSON.stringify({ p4Rejection, p5Rejection, status: state.turnLedger.status, messages: state.messages.map(({ kind, role, messageId }) => ({ kind, role, messageId })) }));
   `);
   assert.equal(result.p4Rejection, "Error: p4_p5_transition_authority_unavailable");
   assert.equal(result.p5Rejection, "Error: p4_p5_transition_authority_unavailable");
   assert.equal(result.status, "attempt_starting");
-  assert.equal(result.messages, 1);
+  // The fresh root's initial Chat already carries the companion's seeded opening
+  // (359389da + 2a0fe8db), so the mounted baseline is that opening plus the
+  // claimed player message; neither rejected raw transition may append the
+  // forged presentation message.
+  const messages = result.messages as { kind: string; role: string; messageId: string }[];
+  assert.deepEqual(
+    messages.map(({ kind, role }) => `${kind}:${role}`),
+    ["opening:companion", "player:player"],
+  );
+  assert.equal(
+    messages.some(({ messageId }) => messageId === "response_raw_01"),
+    false,
+  );
 });
 
 test("private STOP rejects an attempt before running without poisoning its presentation epoch", async () => {
