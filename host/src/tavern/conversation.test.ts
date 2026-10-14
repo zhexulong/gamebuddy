@@ -339,7 +339,11 @@ test("semantic content port classifies exact missing and existing without confla
     (error: unknown) =>
       error instanceof TavernExactContentError && error.code === "tavern_exact_content_already_exists",
   );
-  assert.deepEqual(existingCalls, ["create"]);
+  assert.deepEqual(
+    existingCalls,
+    [],
+    "a refused create is classified from the creation outcome alone: no store readback and no fallback to resume",
+  );
 
   const unavailable: ChatThreadStore = {
     ...selectionMethods,
