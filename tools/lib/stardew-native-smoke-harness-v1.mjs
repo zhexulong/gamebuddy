@@ -281,7 +281,7 @@ export function classifyTopology(config) {
  * Both modes still prove the action under test and every precondition it
  * depends on are advertised and executable by this exact live publication.
  */
-export function assertTopologyCapabilities(snapshot, topology, requiredCapabilities) {
+function assertTopologyCapabilities(snapshot, topology, requiredCapabilities) {
   if (topology === "shared_world_farmhand") return assertRequiredCapabilities(snapshot, requiredCapabilities);
   if (topology === "native_local_player_fixture") return assertExactCapabilities(snapshot, requiredCapabilities);
   throw new NativeSmokeHarnessError("unknown_topology");

@@ -72,7 +72,7 @@ async function readStoredVoicePreference(runtimeRoot) {
 }
 
 /** Reads MIMO_API_KEY from the process env, then from the optional local env file. */
-export async function resolveVoiceApiKey() {
+async function resolveVoiceApiKey() {
   const fromEnv = process.env.MIMO_API_KEY;
   if (typeof fromEnv === "string" && fromEnv.trim().length >= 16) return fromEnv.trim();
   try {

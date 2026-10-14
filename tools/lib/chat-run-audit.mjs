@@ -44,7 +44,7 @@
  */
 import { randomUUID } from "node:crypto";
 export const CHAT_RUN_AUDIT_SCHEMA = "chat_run_audit/v1";
-export const CHAT_RUN_AUDIT_REPORT_SCHEMA = "chat_run_audit_report/v1";
+const CHAT_RUN_AUDIT_REPORT_SCHEMA = "chat_run_audit_report/v1";
 
 /** §3.1 frozen vocabulary. Exported so the live-run harness emits exactly these. */
 export const CHAT_RUN_AUDIT_KINDS = Object.freeze([
@@ -58,7 +58,7 @@ export const CHAT_RUN_AUDIT_KINDS = Object.freeze([
   "probe",
 ]);
 
-export const CHAT_RUN_AUDIT_ACTORS = Object.freeze(["harness", "host", "provider", "player"]);
+const CHAT_RUN_AUDIT_ACTORS = Object.freeze(["harness", "host", "provider", "player"]);
 
 export const CHAT_RUN_AUDIT_CODES_BY_KIND = Object.freeze({
   lifecycle: Object.freeze(["run.started", "run.finished", "turn.submitted", "turn.terminal"]),
@@ -130,13 +130,13 @@ export const IDLE_STALL_THRESHOLD_MS = 30_000;
 export const MAX_STATE_READS_PER_TURN = 12;
 
 /** "Repeated" Memory CAS conflicts. */
-export const MEMORY_CONFLICT_STORM_MIN = 3;
+const MEMORY_CONFLICT_STORM_MIN = 3;
 
 /** Repeated `/state` conflicts carrying no new information. */
-export const FEEDBACK_STARVATION_MIN_CONFLICTS = 3;
+const FEEDBACK_STARVATION_MIN_CONFLICTS = 3;
 
 /** Conflict-shaped events inside an open turn before it counts as contention. */
-export const SETTLEMENT_CONTENTION_MIN_CONFLICTS = 2;
+const SETTLEMENT_CONTENTION_MIN_CONFLICTS = 2;
 
 /** Closed component set. Every finding is attributed to exactly one of these. */
 export const FINDING_COMPONENTS = Object.freeze([

@@ -29,13 +29,13 @@ export const STARDEW_DECOMPILE_ROOT_RELATIVE_PATH = "ref/external/StardewValleyD
 export const STARDEW_DECOMPILER_VERSION = "ilspycmd: 9.1.0.7988";
 
 /** The stable failure code every consumer's message is prefixed with. */
-export const STARDEW_DECOMPILE_ROOT_MISSING = "stardew_decompile_root_missing";
+const STARDEW_DECOMPILE_ROOT_MISSING = "stardew_decompile_root_missing";
 
 /** A bounded walk so a pathological tree cannot hang a gate. */
 const MAX_DIRECTORIES_PROBED = 4096;
 
 /** The operator-facing restore recipe, kept in one place so every gate says the same thing. */
-export function stardewDecompileRootRestoreHint() {
+function stardewDecompileRootRestoreHint() {
   return (
     "The tree is gitignored (.gitignore: /ref/), so a checkout does not create it. " +
     `Re-decompile the pinned assembly with ${STARDEW_DECOMPILER_VERSION}: ` +

@@ -38,7 +38,7 @@
  * single-player save and a shared world, or between two farmers in one world.
  * Presence of any of these in a native seam means the seam's behaviour can differ.
  */
-export const MP_DECISIVE_PATTERN =
+const MP_DECISIVE_PATTERN =
   /IsMultiplayer|otherFarmers|IsLocalPlayer|IsMainPlayer|useSeparateWallets|multiplayerMode|Game1\.server\b|IsMasterGame|Game1\.multiplayer\b|UniqueMultiplayerID/g;
 
 /**
@@ -54,9 +54,9 @@ export const MP_DECISIVE_PATTERN =
  * but the register must then state WHY the read is mode-neutral. This keeps the
  * judgement explicit instead of silently regex-matching it away.
  */
-export const MP_CONTEXT_PATTERN = /team\.|netWorldState/g;
+const MP_CONTEXT_PATTERN = /team\.|netWorldState/g;
 
-export const SEAM_KINDS = Object.freeze(["native", "mod_owned"]);
+const SEAM_KINDS = Object.freeze(["native", "mod_owned"]);
 
 /**
  * Mechanisms whose single-player and shared-world execution paths are not the
@@ -77,7 +77,7 @@ export function deriveRequiredSharedWorldMechanisms(mechanisms) {
  * observable game result, so the gate only checks that the citation is real and
  * that the reason names the branch code it rests on.
  */
-export const MECHANISM_FORK_CLASSES = Object.freeze(["outcome_fork", "collateral_fork"]);
+const MECHANISM_FORK_CLASSES = Object.freeze(["outcome_fork", "collateral_fork"]);
 
 /**
  * Validate the mechanism axis against the exact decompiled source. Every fork
@@ -128,9 +128,9 @@ export function validateMultiplayerMechanisms(mechanisms, sources) {
   return Object.freeze(validated);
 }
 
-export const SEAM_SENSITIVITY = Object.freeze(["mp-insensitive", "mp-observational", "mp-semantic"]);
-export const REQUIRED_LIVE_TOPOLOGY = Object.freeze(["single_player_native_companion", "shared_world_multiplayer"]);
-export const ADMISSION_VERDICTS = Object.freeze([
+const SEAM_SENSITIVITY = Object.freeze(["mp-insensitive", "mp-observational", "mp-semantic"]);
+const REQUIRED_LIVE_TOPOLOGY = Object.freeze(["single_player_native_companion", "shared_world_multiplayer"]);
+const ADMISSION_VERDICTS = Object.freeze([
   "admits_multiplayer",
   "rejects_multiplayer",
   // Read-only actions are served by the navigation/scene read pipelines, which

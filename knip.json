@@ -3,7 +3,15 @@
     ".": {
       "entry": [
         "tools/*.mjs",
-        "tools/lib/stardew-csharp-syntax-structural-canary.mjs"
+        "tools/lib/stardew-csharp-syntax-structural-canary.mjs",
+        "tools/live-run/**/*.mjs",
+        "tools/lib/chat-run-audit.mjs!",
+        "tools/lib/stardew-decompile-root.mjs!",
+        "tools/lib/stardew-native-multiplayer-sensitivity.mjs!",
+        "tools/lib/stardew-native-smoke-harness-v1.mjs!",
+        "tools/lib/stardew-shared-world-navigation.mjs!",
+        "tools/lib/tavern-mounted-operation-vocabulary.mjs!",
+        "tools/lib/voice-gateway-launch.mjs!"
       ],
       "project": [
         "tools/**/*.mjs"
@@ -14,11 +22,6 @@
       "project": [
         "src/**/*.mjs",
         "tests/**/*.mjs"
-      ]
-    },
-    "packages/voice-protocol": {
-      "project": [
-        "src/**/*.ts"
       ]
     },
     "host": {
@@ -40,20 +43,42 @@
         "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.ts",
         "src/test-fixtures/semantic-initial-chat-process-worker.ts",
         "src/test-fixtures/semantic-known-game-process-worker.ts",
-        "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts"
+        "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts",
+        "scripts/compile-default-companion-preset.mjs!",
+        "src/game-browser-contract/index.ts!",
+        "src/tavern/types.ts!",
+        "src/tavern/provider-catalog.ts!",
+        "src/tavern/connection-store.ts!",
+        "src/tavern/companion-world-book-service.ts!",
+        "src/tavern/st-card-import-history.ts!",
+        "src/snapshot-projection.ts!",
+        "src/native-companion-content.ts!",
+        "src/host-service.ts!",
+        "src/event-pump.ts!",
+        "src/identity-profile.ts!",
+        "src/action-registry.ts!",
+        "src/stardew-compatibility.ts!",
+        "src/settings/player-preference-store.ts!",
+        "src/composition/desktop-host-composition.ts!",
+        "src/composition/stardew/stardew-guardian-platform.ts!",
+        "src/games/stardew/provider.ts!",
+        "src/stardew-ai-client-process-owner.ts!",
+        "src/stardew-role-lifecycle-projection.internal.ts!",
+        "src/voice-gateway-artifact-admission.ts!",
+        "scripts/dotnet-sdk-lock.mjs!",
+        "scripts/run-tests.mjs!",
+        "src/containment/runtime/contract/game-runtime.ts!",
+        "src/stardew-logical-action-recovery-journal.ts!",
+        "src/composition/stardew/stardew-native-role-launch-plan.private.ts!",
+        "src/continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.ts!",
+        "src/games/stardew/lifecycle/stardew-private-bootstrap-composer.test-fixtures.ts!",
+        "src/containment/auth/desktop-guardian-session.internal.ts!",
+        "src/continuity-semantic-store/continuity-semantic-production-store.ts!",
+        "src/tavern/world-info-management/tavern-lorebook-importer.ts!"
       ],
       "project": [
         "src/**/*.{ts,tsx,mjs}",
         "scripts/**/*.mjs"
-      ]
-    },
-    "voice-gateway": {
-      "entry": [
-        "src/main.ts!",
-        "src/gateway.ts!"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx}"
       ]
     },
     "dialogue-web": {
@@ -62,7 +87,17 @@
         "src/components/ComposedReferenceGameApp.tsx!",
         "src/components/Composer.tsx!",
         "src/components/drawers/ChatsDrawer.tsx!",
-        "vite.config.ts"
+        "vite.config.ts",
+        "src/types.ts!",
+        "src/components/management-panels.tsx!",
+        "src/components/MarkdownMessage.tsx!",
+        "src/composed-problem-view.ts!",
+        "src/game-presentation.ts!",
+        "src/pi-settings-model.ts!",
+        "src/components/memory-notebook-labels.ts!",
+        "tests/**/*.mjs",
+        "tests/**/*.ts",
+        "src/composed-reference-game-browser-api.ts!"
       ],
       "project": [
         "src/**/*.{ts,tsx,mjs}"
@@ -75,7 +110,10 @@
         "src/action-surface-export-check.mjs",
         "src/wire-parity.mjs",
         "tests/fixtures/fake-scenario-child.mjs",
-        "scenarios/write-lifecycle-result.mjs"
+        "scenarios/write-lifecycle-result.mjs",
+        "src/static-projection/write-parity-snapshot.mjs!",
+        "src/stardew-source-analysis-vocabulary.mjs!",
+        "src/analysis/**/*.mjs"
       ],
       "project": [
         "src/**/*.mjs",
@@ -91,6 +129,13 @@
     "host/src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
     "integrations/stardew/action-development/src/devkit-local/**",
     "tools/lib/voice-final-gate-server.mjs",
-    "tools/fixtures/chat-run-audit/memory-probes/**"
+    "tools/fixtures/chat-run-audit/memory-probes/**",
+    "tools/.tmp-*"
+  ],
+  "ignoreBinaries": [
+    "playwright",
+    "where.exe",
+    "taskkill.exe",
+    "game-action"
   ]
 }

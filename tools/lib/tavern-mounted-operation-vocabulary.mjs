@@ -27,7 +27,7 @@ const PROFILE_SOURCE = new URL(
 );
 
 /** The ids declared by `composeTavernManagementProfile()`'s `operationIds`. */
-export function readMountedTavernManagementOperationIds() {
+function readMountedTavernManagementOperationIds() {
   const ids = readProfileField("operationIds");
   if (ids.length === 0 || new Set(ids).size !== ids.length) {
     throw new Error("mounted_profile_operation_ids_invalid");
@@ -95,7 +95,7 @@ const KNOWN = new Set(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS);
  * `false` result means the profile on disk and the profile source disagree,
  * which must fail closed rather than drop the unknown id.
  */
-export function declaresOnlyKnownOperations(profile) {
+function declaresOnlyKnownOperations(profile) {
   return (
     Array.isArray(profile?.operationIds) &&
     profile.operationIds.length > 0 &&
@@ -108,6 +108,6 @@ export function declaresOnlyKnownOperations(profile) {
  * operation through the route of the same id, which is what the browser
  * contract declares for the settings surfaces.
  */
-export const MOUNTED_TAVERN_MANAGEMENT_OPERATION_ROUTES = Object.freeze(
+const MOUNTED_TAVERN_MANAGEMENT_OPERATION_ROUTES = Object.freeze(
   Object.fromEntries(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.map((id) => [id, id])),
 );

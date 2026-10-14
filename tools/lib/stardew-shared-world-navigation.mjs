@@ -93,7 +93,7 @@ function rank(tile, target) {
  * Walk the actor onto one exact tile in its current location.
  * Returns the terminal receipt, or null when the tile is not reachable.
  */
-export async function moveToTile(client, receipts, tile, trace, { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
+async function moveToTile(client, receipts, tile, trace, { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
   const snapshot = await freshActionable(client, timeoutMs);
   const requestId = `shared_world_move_${Date.now()}_${tile.x}_${tile.y}`;
   const args = { x: tile.x, y: tile.y };
