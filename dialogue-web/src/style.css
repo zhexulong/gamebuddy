@@ -3122,9 +3122,16 @@ body {
    Narration and Markdown rhythm
 
    `*beat*` is the companion's stage direction, so it reads as narration rather
-   than as emphasised speech: warm grey, italic, on its own line rhythm. The
-   colour is a de-emphasis, never the only carrier - the text and its `<em>`
-   are.
+   than as emphasised speech: the secondary tone, italic, on its own line rhythm.
+   The tone is deliberately neither the dialogue's `--text-primary` nor the
+   disabled grey a field's placeholder carries (`--palette-gray-400`): a stage
+   direction is a quieter voice, not an unavailable control, and that grey is
+   under the 4.5:1 floor the moment the same beat is drawn on the player's own
+   burgundy bubble (measured 3.20:1 there, 4.74:1 on the companion card) instead
+   of on the card. `--text-secondary` measures 9.30:1 on the companion card and
+   6.27:1 on the player's bubble, so the beat is both quieter than the speech
+   (14.75:1) and clear of the floor. The colour is a de-emphasis, never the only
+   carrier - the text and its `<em>` are.
 
    The bubble's `pre-wrap` is neutralised for rendered Markdown: with `pre-wrap`
    the newlines between `<p>`/`<blockquote>`/`<li>` are preserved *as well as*
@@ -3141,16 +3148,16 @@ body {
 }
 
 .message-bubble em.message-action {
-  color: var(--palette-gray-400);
+  color: var(--text-secondary);
   letter-spacing: 0.01em;
 }
 
 /* CJK type has no true italic: a slanted CJK beat renders as a mechanically
-   smeared face. The beat is de-emphasised by colour (the base rule) and weight
-   instead. Latin keeps the italic the base rule leaves in place. */
+   smeared face, so this rule retires the slant. It retires the slant *only*:
+   the weight stays the dialogue's own, because a bolder beat is not a quieter
+   one. Latin keeps the italic the base rule leaves in place. */
 .message-bubble em.message-action:lang(zh) {
   font-style: normal;
-  font-weight: 600;
 }
 
 .message-bubble :is(p, blockquote, pre, ul, ol, hr) {
