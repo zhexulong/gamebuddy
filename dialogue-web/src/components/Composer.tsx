@@ -1,5 +1,5 @@
 import { FileText, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, type Ref, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -31,31 +31,6 @@ export type ComposerDraftActions = Readonly<{
 }>;
 
 /**
- * The card's own openings, offered on a conversation that has not started yet.
- *
- * The chips are not a second composer and they are not reviewer-invented
- * starters: each one is one of the character card's own opening lines, read from
- * the companion's greeting record, and tapping it says exactly that line through
- * this composer's one submit path. The chip's *visible* label is that opening's
- * own short first sentence, so the first screen is a row of invitations and not
- * the card's paragraphs, while what a tap sends stays the opening verbatim. The
- * chips live in the composer band rather than in the reading flow because the
- * conversation column is the transcript and the composer and nothing else, and
- * they leave with the first message.
- */
-export type ComposerChips = Readonly<{
-  /** The group's own name: the card's word for this material, never a sentence. */
-  label: string;
-  items: readonly Readonly<{
-    id: string;
-    /** The card's own opening line: exactly what the chip sends, and the source
-     * of the short label it shows (see `chipLabel`). */
-    text: string;
-    onClick: () => void;
-  }>[];
-}>;
-
-/**
  * The one control that opens this surface's model settings, as a popout
  * (design/104 §3: the model a surface uses belongs on that surface). It sits in
  * the send-form action row - the same place the vendor's own front ends keep
@@ -68,17 +43,6 @@ export type ComposerSettingsAction = Readonly<{
   ref?: Ref<HTMLButtonElement>;
 }>;
 
-/**
- * The chip's visible label: the opening's own first sentence, cut to
- * `CHIP_LABEL_MAX` characters on a word boundary.
- *
- * The chip's rendered content used to be the whole opening, so a card's own
- * paragraph reached the first screen as a single-line slab - measured on a fresh
- * root at 4578 / 3161 / 3315 px, one per variant - which is the wall of prose
- * the owner rejected. The label is derived from the card's text, never authored
- * here, and the text the chip records and sends is the opening verbatim (the
- * `title` and the preview a hover or focus reveals below).
- */
 /**
  * The compact band's own breakpoint (the width the app bar retires its brand
  * word at). The field is 212 px wide at a 400 px viewport, where the wide
@@ -102,19 +66,6 @@ function useCompactComposer(): boolean {
   return compact;
 }
 
-const CHIP_LABEL_MAX = 32;
-function chipLabel(text: string): string {
-  const normalized = text
-    .replace(/\s+/gu, " ")
-    .trim()
-    .replace(/^\*+/u, "");
-  const firstSentence = /^[^。！？!?]*[。！？!?]/u.exec(normalized)?.[0] ?? normalized;
-  if (firstSentence.length <= CHIP_LABEL_MAX) return firstSentence;
-  const cut = firstSentence.slice(0, CHIP_LABEL_MAX);
-  const boundary = cut.lastIndexOf(" ");
-  return `${(boundary > 0 ? cut.slice(0, boundary) : cut).trimEnd()}…`;
-}
-
 export function Composer({
   value,
   onChange,
@@ -126,7 +77,6 @@ export function Composer({
   voice,
   draftActions,
   settingsAction,
-  chips,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -146,20 +96,9 @@ export function Composer({
   draftActions?: ComposerDraftActions;
   /** Present when this surface has model settings to open. */
   settingsAction?: ComposerSettingsAction;
-  /**
-   * The card's own openings, rendered directly above the input. Absent (or
-   * empty) when the card carries no opening material: this composer never
-   * invents a line the card did not carry.
-   */
-  chips?: ComposerChips;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const chipsLabelId = useId();
   const placeholder = useCompactComposer() ? labels.typeMessagePlaceholderCompact : labels.typeMessagePlaceholder;
-  // The opening a player is currently reading: hovering or focusing a chip shows
-  // its whole text above the row, so nothing has to be sent to see what would be.
-  const [previewChipId, setPreviewChipId] = useState<string | null>(null);
-  const previewChip = chips?.items.find((item) => item.id === previewChipId) ?? null;
 
   // The row exists while there is something for it to do: a durable draft to
   // save or discard, freshly typed text to keep as a first draft, or a *failed*
@@ -201,38 +140,6 @@ export function Composer({
 
   return (
     <section className="composer-section" aria-label={labels.typeMessagePlaceholder}>
-      {chips !== undefined && chips.items.length > 0 && (
-        <div className="composer-chips">
-          <span className="composer-chips-label" id={chipsLabelId}>
-            {chips.label}
-          </span>
-          <div className="composer-chips-row" role="group" aria-labelledby={chipsLabelId}>
-            {chips.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="composer-chip"
-                // The chip shows its opening's first words. The text it carries
-                // is the card's opening, whole, in the tooltip here and in the
-                // preview the hover/focus below reveals; nothing local replaces
-                // it, and the tap still sends exactly that text.
-                title={item.text}
-                aria-label={labels.openingChipUse.replace("{{opening}}", chipLabel(item.text))}
-                onMouseEnter={() => setPreviewChipId(item.id)}
-                onMouseLeave={() => setPreviewChipId(null)}
-                onFocus={() => setPreviewChipId(item.id)}
-                onBlur={() => setPreviewChipId(null)}
-                onClick={item.onClick}
-              >
-                {chipLabel(item.text)}
-              </button>
-            ))}
-          </div>
-          {previewChip !== null && (
-            <p className="composer-chip-preview" data-chip-preview={previewChip.id}>{previewChip.text}</p>
-          )}
-        </div>
-      )}
       {showDraftRow && draftActions !== undefined && (
         // The row is the draft's own verbs, in the composer band the draft is
         // edited in, and it disappears with the draft instead of occupying the

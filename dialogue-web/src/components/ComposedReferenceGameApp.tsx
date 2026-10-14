@@ -83,28 +83,6 @@ function terminalTurn(turn: BrowserTurnV1 | null): boolean {
 }
 
 /**
- * Whether the conversation still shows its first screen: nothing has been said
- * yet, or the only thing on it is the companion's own committed opening.
- *
- * The product's initial-Chat saga draws message zero from the greeting record
- * whenever the companion was provisioned from a card
- * (`host/src/tavern/initial-chat-exact-content-port.ts` `companionOwnOpening`,
- * invoked by `continuity-semantic-production-coordinator.internal.ts`
- * `materializeExpectedChatContent`), so a card-provisioned first screen already
- * carries one message - and a gate on "no messages at all" can never be true for
- * it. The opening is exactly the one message the Host projects with
- * `openingVariant`, so it is the only message a not-yet-started conversation is
- * allowed to show; a player line, a companion reply after the opening, or an
- * opening the Host could not describe (no `openingVariant`) ends the first
- * screen.
- */
-function firstScreenOpen(transcript: readonly BrowserMessageV1[]): boolean {
-  return transcript.every(
-    (message) => message.role === "companion" && message.openingVariant !== undefined,
-  );
-}
-
-/**
  * Same-origin composed reference-game shell. The composed root is the only
  * authority used to refresh either projection; the nested Reference pipeline
  * client remains the sole Chat mutation/events client.
@@ -124,11 +102,6 @@ export function ComposedReferenceGameApp() {
     setInputText(text);
   };
   const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
-  // The character card's own openings, for a conversation that has not started:
-  // read from the companion's greeting record and never invented. `null` means
-  // "not read yet", an empty array means "the card carries none".
-  const [icebreakers, setIcebreakers] = useState<readonly Readonly<{ index: number; text: string }>[] | null>(null);
-  const icebreakerReadRef = useRef(false);
   // The chat mutation currently in flight. The submit button already has its own
   // gate; swipe and regenerate had none, so a double click issued two admitted
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
@@ -698,45 +671,6 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The first screen's break-ice chips are the card's own openings, so they are
-   * read from the companion's greeting record rather than authored here. Only a
-   * conversation that has not started yet has a first thing to say - which
-   * includes the companion's committed opening message, the state a
-   * card-provisioned Chat actually opens in (`firstScreenOpen`) - so the record
-   * is read once per such conversation and dropped as soon as the first screen
-   * ends. A record that cannot be read, or that carries no variant, yields no
-   * chip at all - this surface never fabricates an opening the card does not
-   * carry.
-   */
-  useEffect(() => {
-    if (view.kind !== "ready") return;
-    if (!firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])) {
-      icebreakerReadRef.current = false;
-      setIcebreakers(null);
-      return;
-    }
-    if (icebreakerReadRef.current) return;
-    icebreakerReadRef.current = true;
-    let active = true;
-    void (async () => {
-      try {
-        const greeting = await managementPipelineApiRef.current.readGreeting();
-        if (!active) return;
-        setIcebreakers(
-          greeting.present
-            ? greeting.variants.map((variant, index) => Object.freeze({ index, text: variant.text }))
-            : [],
-        );
-      } catch {
-        if (active) setIcebreakers([]);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [view]);
-
-  /**
    * Durable draft authoring, merged from the removed management surface: the
    * PUT/DELETE carries this mount's exact expected revision and the validated
    * durable read-back replaces the draft - nothing is ever guessed locally.
@@ -848,37 +782,6 @@ export function ComposedReferenceGameApp() {
       chatMutationRef.current = false;
       setChatMutation(null);
     }
-  };
-
-  /**
-   * A break-ice chip: one of the card's own openings, on a conversation that has
-   * not started. Tapping it records that opening through the Host's own
-   * `chat.opening` route and then says it through this composer's one submit
-   * path - there is no second composer and no second submit authority. The
-   * record is legal only while the mounted Chat's opening is an unlocked
-   * greeting; a refusal must not eat the message the player tapped, and the
-   * authoritative reread - never this handler - is what the transcript shows.
-   */
-  const handleIcebreaker = (chip: Readonly<{ index: number; text: string }>): void => {
-    const current = viewRef.current;
-    if (current.kind !== "ready" || current.session.pending !== null) return;
-    const selection = current.session.snapshot.selection;
-    void (async () => {
-      if (selection !== null) {
-        try {
-          await managementPipelineApiRef.current.selectOpeningVariant(
-            { apiVersion: 1, selectionGeneration: selection.generation, targetIndex: chip.index },
-            current.session.snapshot.csrfToken,
-          );
-        } catch {
-          // The Chat's opening is not a greeting variant that can be chosen here,
-          // or the route is not served on this profile. The chip's line is still
-          // the player's to send, so the send below is not conditional on it.
-        }
-      }
-      writeInput(chip.text);
-      await handleSend();
-    })();
   };
 
   const handleRegenerate = async (messageHandle: string): Promise<void> => {
@@ -1138,27 +1041,6 @@ export function ComposedReferenceGameApp() {
                   durable: view.draft.text !== null,
                   notice: draftNotice,
                 }}
-                chips={
-                  // The card's own openings, and only where a first thing to say
-                  // still exists: a conversation that has started (the player has
-                  // spoken, or the Host committed a reply after the opening), an
-                  // unread record, a card with no opening material and a locked
-                  // composer all render none. The companion's own committed
-                  // opening is still the first screen, not a started conversation.
-                  submitAvailable &&
-                  icebreakers !== null &&
-                  icebreakers.length > 0 &&
-                  firstScreenOpen(view.session.snapshot.chat?.transcript ?? [])
-                    ? {
-                        label: labels().openingChipsLabel,
-                        items: icebreakers.map((chip) => ({
-                          id: `opening-${chip.index}`,
-                          text: chip.text,
-                          onClick: () => handleIcebreaker(chip),
-                        })),
-                      }
-                    : undefined
-                }
               />
             )}
             <GameSurface

@@ -1,6 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { expect, test, type Page } from "@playwright/test";
 import {
   assertAccessibilityBaseline,
   assertCriteriaCoverage,
@@ -3936,415 +3934,12 @@ test("a chat with no durable draft lets the player save the first one from the c
 });
 
 /**
- * The shipped companion card's own openings, read from the asset the product
- * installs. The defect this journey pins was measured on a fresh runtime root
- * against exactly these three paragraphs - 4578 / 3161 / 3315 px of single-line
- * chip text, one per variant - so the chip journeys run against the real
- * material and not a comfortable fixture.
- */
-const shippedCard = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../../assets/tavern/presets/default-companion/card.json", import.meta.url)),
-    "utf8",
-  ),
-) as Readonly<{ data: Readonly<{ first_mes: string; alternate_greetings: readonly string[] }> }>;
-
-/** The chip's own facts, read from the rendered DOM. */
-async function chipFacts(surface: Locator) {
-  return await surface.locator(".composer-chip").evaluateAll((nodes) =>
-    nodes.map((node) => {
-      const chip = node as HTMLElement;
-      return {
-        text: (chip.textContent ?? "").trim(),
-        title: chip.getAttribute("title"),
-        name: chip.getAttribute("aria-label"),
-        width: chip.getBoundingClientRect().width,
-        clientWidth: chip.clientWidth,
-        scrollWidth: chip.scrollWidth,
-      };
-    }),
-  );
-}
-
-/** The width of the composer band the chips sit in: their own bound. */
-async function composerWidth(page: Page): Promise<number> {
-  return await page.locator(".composer-container").evaluate((node) => node.getBoundingClientRect().width);
-}
-
-/**
- * The chip contract, asserted from the rendered DOM rather than from a second
- * copy of the label rule: the *payload* stays the card's opening verbatim while
- * the *label* is a short prefix of that opening, renders inside its own box, and
- * fits the composer band; the accessible name is the tap's action, not prose.
- *
- * A chip that renders the paragraph (the measured 4578 / 3161 / 3315 px slab)
- * fails the overflow and prefix assertions; a chip that quietly shortened the
- * message fails the verbatim one; a chip named after the paragraph fails the
- * name's own bound.
- */
-function expectChipsCarryTheOpenings(
-  facts: readonly Readonly<{
-    text: string;
-    title: string | null;
-    name: string | null;
-    width: number;
-    clientWidth: number;
-    scrollWidth: number;
-  }>[],
-  openings: readonly Readonly<{ text: string }>[],
-  composerBandWidth: number,
-): void {
-  expect(facts.length, "one chip per opening the card carries").toBe(openings.length);
-  facts.forEach((chip, index) => {
-    const opening = openings[index]!.text;
-    // The opening as the label is derived from it: whitespace collapsed and a
-    // leading roleplay marker dropped. The label must be a prefix of *this* and
-    // not a summarised rewrite of it.
-    const source = opening.replace(/\s+/gu, " ").trim().replace(/^\*+/u, "");
-    expect(chip.title, `chip ${index} carries the card's opening verbatim as the text it sends`).toBe(opening);
-    const stem = chip.text.endsWith("…") ? chip.text.slice(0, -1).trimEnd() : chip.text;
-    expect(stem.length, `chip ${index} shows a label`).toBeGreaterThan(0);
-    expect(chip.text.length, `chip ${index}'s label is no longer than the opening`).toBeLessThanOrEqual(
-      opening.length,
-    );
-    expect(source.startsWith(stem), `chip ${index}'s label is the opening's own words, not a summary`).toBe(true);
-    expect(
-      chip.scrollWidth,
-      `chip ${index} renders exactly its label: nothing is hidden behind an ellipsis`,
-    ).toBeLessThanOrEqual(chip.clientWidth + 1);
-    expect(chip.width, `chip ${index} fits the composer band`).toBeLessThanOrEqual(composerBandWidth);
-    expect(chip.name ?? "", `chip ${index} is named by what a tap does`).toMatch(/^Say this opening: /u);
-    expect((chip.name ?? "").length, `chip ${index}'s accessible name is an action, not a paragraph`).toBeLessThan(80);
-  });
-}
-
-/**
- * The conversation's first screen: the card's own openings (owner's item 1).
- *
- * The owner looked at the first screen and found a void with one line in it -
- * "开启一段新的旅程" - and nothing a player could say first. The correction that
- * decides the content is explicit: the chips are the character card's own
- * opening lines ("首屏场景破冰胶囊应该按角色卡开场白来"), not reviewer-invented
- * starters. The card's opening material is real data - the companion's greeting
- * record carries its variants, and `PUT /api/tavern/v1/chat/opening` chooses
- * among them - so the chips are read from that record and each tap records the
- * opening *and* says it through the composer's one submit path.
- *
- * The failure each assertion catches, in order:
- *
- * 1. `reflects the card's own openings` - chips that carry reviewer prose
- *    (a generic "今天农场有什么要忙的") fail; each chip's payload is compared to
- *    the greeting record, line for line, and its short label must be the
- *    opening's own first words - never a summary and never the paragraph.
- * 2. `records the opening through the Host's own route` - a chip that only
- *    fills the composer, or that holds the chosen variant locally, fails; the
- *    route body, the CSRF header and the target index are asserted.
- * 3. `says it through the one submit path` - a second composer or a second
- *    submit authority fails; the send is the composed `POST /messages` with the
- *    idempotency key, and the surface still holds exactly one textarea.
- * 4. `adopts the Host's read-back, never its own optimism` - a shell that
- *    appends the sent message itself fails; while the state route still reports
- *    an empty conversation, nothing is rendered, and the chips only leave once
- *    the Host's own projection carries the committed transcript.
- */
-test("the first screen offers the card's own openings, and a tap says one and records it as the opening", async ({ page }) => {
-  const openings = [
-    { label: "Default", text: "The lantern over the porch is still lit." },
-    { label: "Alternate 1", text: "Rain has been falling since dawn." },
-  ];
-  const openingVariantId = "V".repeat(42) + "A";
-  const openedMessageHandle = "W".repeat(42) + "A";
-  const playerMessageHandle = "X".repeat(42) + "A";
-  const turnHandle = "Y".repeat(42) + "A";
-
-  const emptyRoot = {
-    ...root,
-    chat: {
-      ...chat,
-      operations: [
-        {
-          operationId: "chat.submit",
-          labelKey: "tavern.operation.submit",
-          availability: "available",
-          routeId: "chat.submit",
-        },
-      ],
-      chat: {
-        ...chat.chat,
-        transcript: [],
-        draft: { revision: 0, present: false },
-      },
-    },
-  };
-
-  /** The Host's projection, before and after its own opening commit. */
-  let openingCommitted = false;
-  const projection = () =>
-    openingCommitted
-      ? {
-          ...emptyRoot,
-          chat: {
-            ...emptyRoot.chat,
-            chat: {
-              ...emptyRoot.chat.chat,
-              transcript: [
-                {
-                  handle: openedMessageHandle,
-                  role: "companion",
-                  text: openings[1]!.text,
-                  locale: "und",
-                  order: 0,
-                  revision: 1,
-                  openingVariant: { variantId: openingVariantId, index: 1, count: 2, label: openings[1]!.label, locked: false },
-                },
-                { handle: playerMessageHandle, role: "player", text: openings[1]!.text, locale: "und", order: 1, revision: 1 },
-              ],
-              turn: { handle: turnHandle, state: "completed", projectionRevision: 1, canCancel: false },
-            },
-          },
-        }
-      : emptyRoot;
-
-  const greetingReads: number[] = [];
-  const openingCommits: Array<Readonly<{ body: unknown; csrf: string | undefined }>> = [];
-  const sends: Array<Readonly<{ body: unknown; csrf: string | undefined; idempotencyKey: string | undefined }>> = [];
-
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill(jsonOk(emptyRoot)),
-  );
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/tavern/v1/draft", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
-  );
-  await page.route("**/api/tavern/v1/greeting", (route) => {
-    greetingReads.push(1);
-    return route.fulfill(
-      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
-    );
-  });
-  await page.route("**/api/tavern/v1/chat/opening", async (route) => {
-    openingCommits.push({
-      body: route.request().postDataJSON(),
-      csrf: route.request().headers()["x-csrf-token"],
-    });
-    await route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        openingVariant: { variantId: openingVariantId, index: 1, count: 2, label: openings[1]!.label, locked: false },
-      }),
-    );
-  });
-  await page.route("**/api/tavern/v1/messages", async (route) => {
-    sends.push({
-      body: route.request().postDataJSON(),
-      csrf: route.request().headers()["x-csrf-token"],
-      idempotencyKey: route.request().headers()["idempotency-key"],
-    });
-    await route.fulfill({
-      status: 202,
-      contentType: "application/json",
-      body: JSON.stringify({
-        apiVersion: 1,
-        disposition: "accepted",
-        message: {
-          handle: playerMessageHandle,
-          role: "player",
-          text: openings[1]!.text,
-          locale: "und",
-          order: 1,
-          revision: 1,
-        },
-        turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
-      }),
-    });
-  });
-  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        disposition: "accepted",
-        committedResult: {
-          apiVersion: 1,
-          disposition: "accepted",
-          message: {
-            handle: playerMessageHandle,
-            role: "player",
-            text: openings[1]!.text,
-            locale: "und",
-            order: 1,
-            revision: 1,
-          },
-          turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
-        },
-      }),
-    ),
-  );
-
-  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-  const surface = page.getByTestId("chat-surface");
-  await expect(surface).toBeVisible();
-  await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
-
-  // 1. The chips are the greeting record's own variants: each carries the card's
-  // line verbatim as the payload it will send, while the visible label is the
-  // opening's own short first sentence so the row stays a row of invitations.
-  const chips = surface.locator(".composer-chip");
-  await expect(chips).toHaveCount(2);
-  expectChipsCarryTheOpenings(await chipFacts(surface), openings, await composerWidth(page));
-  await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
-  expect(greetingReads.length, "the card's opening record is read for the empty conversation").toBeGreaterThan(0);
-
-  // Above the input, not in the reading flow, and a real 44 px target.
-  const geometry = await page.evaluate(() => {
-    const row = document.querySelector<HTMLElement>(".composer-chips-row");
-    const chip = document.querySelector<HTMLElement>(".composer-chip");
-    const input = document.querySelector<HTMLElement>(".composer-textarea");
-    return {
-      rowBottom: row === null ? -1 : row.getBoundingClientRect().bottom,
-      chipHeight: chip === null ? 0 : chip.getBoundingClientRect().height,
-      inputTop: input === null ? -1 : input.getBoundingClientRect().top,
-    };
-  });
-  expect(geometry.rowBottom, "the chips sit above the input").toBeLessThanOrEqual(geometry.inputTop + 1);
-  expect(geometry.chipHeight, "a chip clears the 44 px touch floor").toBeGreaterThanOrEqual(44);
-
-  // The composer's own keys are untouched by the chips beside them.
-  const composer = surface.locator(".composer-textarea");
-  await composer.fill("kept");
-  await composer.press("Shift+Enter");
-  await expect(composer).toHaveValue("kept\n");
-  await composer.fill("");
-
-  await chips.nth(1).click();
-
-  // 2 + 3. One tap: the Host's opening route with that variant's index, then the
-  // composed send under the same CSRF and a fresh idempotency key.
-  await expect.poll(() => openingCommits.length).toBe(1);
-  await expect.poll(() => sends.length).toBe(1);
-  expect(openingCommits[0]!.body).toEqual({ apiVersion: 1, selectionGeneration: 1, targetIndex: 1 });
-  expect(openingCommits[0]!.csrf).toBe(csrfToken);
-  expect(sends[0]!.body).toEqual({
-    apiVersion: 1,
-    selectionGeneration: 1,
-    text: openings[1]!.text,
-    locale: "en",
-    expectedDraftRevision: 0,
-  });
-  expect(sends[0]!.csrf).toBe(csrfToken);
-  expect(sends[0]!.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{22}$/);
-  await expect(surface.locator(".composer-textarea")).toHaveCount(1);
-
-  // 4. The Host has not published the committed opening yet, so the surface still
-  // paints the first screen's own zero state: no local echo of the line it sent,
-  // and no second submit while the admitted turn is in flight.
-  expect(openingCommitted, "the fixture has not published the opening yet").toBe(false);
-  await expect(surface.locator(".message-list")).toHaveCount(0);
-  await expect(surface.locator("[data-empty-anchor]")).toBeVisible();
-  await expect(chips).toHaveCount(0);
-
-  // The Host's own projection is the only thing that can move the screen on.
-  openingCommitted = true;
-  await expect(chips).toHaveCount(0, { timeout: 15_000 });
-  await expect(surface.locator(".message-list > li")).toHaveCount(2);
-  await expect(surface.locator(".message-bubble").first()).toContainText(openings[1]!.text);
-});
-
-/**
- * The regression the lane measured on a fresh runtime root: the chip's rendered
- * content was the whole opening, so the three shipped openings reached the first
- * screen as single-line slabs - 4578 / 3161 / 3315 px, one per variant, exactly
- * the card's paragraphs on one line. The owner's first screen must be a few
- * tappable invitations, not a wall of prose.
- *
- * This journey mounts the shipped card's own openings and asserts the fix in the
- * terms the defect was measured, without weakening the payload:
- *
- * 1. `a chip never carries the paragraph` - every chip renders its label inside
- *    its own box (`scrollWidth <= clientWidth`, so nothing is hidden behind an
- *    ellipsis) and no chip is wider than the composer band. The failure this
- *    catches: the measured slab itself, and its cousin - a chip that looks short
- *    only because the paragraph is clipped below the ellipsis.
- * 2. `the payload is still the card's opening` - each chip's `title` is the
- *    opening verbatim and the label is the opening's own first words, so a chip
- *    whose short label quietly became the message fails.
- * 3. `the whole opening is readable before it is sent` - hovering or focusing a
- *    chip reveals the full text, verbatim, with nothing sent. The failure this
- *    catches: a truncation that hides the payload from a pointer or keyboard
- *    player, the one thing a short label must not do.
- * 4. `the first screen does not overflow` - the document's own scroll width
- *    stays inside the window, so the row wraps instead of running off the page.
- */
-test("the shipped card's real openings stay short invitations, and hovering one shows what it will send", async ({
-  page,
-}) => {
-  const openings = [
-    { label: "Default", text: shippedCard.data.first_mes },
-    ...shippedCard.data.alternate_greetings.map((text, index) => ({ label: `Alternate ${index + 1}`, text })),
-  ];
-  const emptyRoot = {
-    ...root,
-    chat: {
-      ...chat,
-      operations: [
-        {
-          operationId: "chat.submit",
-          labelKey: "tavern.operation.submit",
-          availability: "available",
-          routeId: "chat.submit",
-        },
-      ],
-      chat: { ...chat.chat, transcript: [], draft: { revision: 0, present: false } },
-    },
-  };
-
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(emptyRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(emptyRoot)));
-  await page.route("**/api/tavern/v1/draft", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
-  );
-  await page.route("**/api/tavern/v1/greeting", (route) =>
-    route.fulfill(
-      jsonOk({ apiVersion: 1, present: true, revision: 1, label: "Initial Greeting", variants: openings }),
-    ),
-  );
-
-  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-  const surface = page.getByTestId("chat-surface");
-  const chips = surface.locator(".composer-chip");
-  await expect(chips).toHaveCount(openings.length);
-
-  const composerBandWidth = await composerWidth(page);
-  const facts = await chipFacts(surface);
-  console.log(
-    `[chip-width] composer=${Math.round(composerBandWidth)} chips=${JSON.stringify(
-      facts.map((chip) => ({ width: Math.round(chip.width), scrollWidth: chip.scrollWidth, label: chip.text })),
-    )}`,
-  );
-  expectChipsCarryTheOpenings(facts, openings, composerBandWidth);
-
-  // 3. The whole opening is one hover - or one Tab - away, verbatim.
-  const preview = surface.locator("[data-chip-preview]");
-  await expect(preview).toHaveCount(0);
-  await chips.nth(2).hover();
-  expect(await preview.textContent(), "hovering a chip reveals the opening verbatim").toBe(openings[2]!.text);
-  await chips.nth(1).focus();
-  expect(await preview.textContent(), "focusing a chip reveals the opening verbatim").toBe(openings[1]!.text);
-
-  // 4. The row holds the page: no horizontal overflow anywhere.
-  const scroll = await page.evaluate(() => ({
-    document: document.documentElement.scrollWidth,
-    window: window.innerWidth,
-  }));
-  expect(scroll.document, "the first screen does not scroll sideways").toBeLessThanOrEqual(scroll.window);
-});
-
-/**
- * The first screen only: a conversation that has already started keeps its
- * openings out of the way, and the shell does not even read the card's record
- * for it. The failure this catches: chips that survive the first message (an
- * affordance offered where it can no longer mean anything), and a shell that
- * reads the greeting record on every chat - the read itself is asserted here,
- * not only the rendering.
+ * The first screen only: a conversation that has already started offers no
+ * opening row and the shell does not read the card's record for it. The failure
+ * this catches: an opening affordance that survives the first message (offered
+ * where it can no longer mean anything), and a shell that reads the greeting
+ * record on every chat - the read itself is asserted here, not only the
+ * rendering.
  */
 test("a conversation with a message offers no opening chips and does not read the card's record", async ({ page }) => {
   let greetingReads = 0;
@@ -4369,16 +3964,17 @@ test("a conversation with a message offers no opening chips and does not read th
   await expect(surface).toBeVisible();
   await expect(surface.locator(".message-list > li")).toHaveCount(1);
   await expect(surface.locator(".composer-chip")).toHaveCount(0);
+  await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
   expect(greetingReads, "a started conversation asks for no opening material").toBe(0);
 });
 
 /**
  * The honest empty case: a card whose greeting record carries nothing (the state
- * the owner's own screenshot was taken in - "还没有保存开场白") offers no chip at
- * all, and the surface does not invent one. The failure this catches: fabricated
- * starters and a greeting read that never completes leaving the first screen
- * blank instead of falling back to the conversation's own zero state.
+ * the owner's own screenshot was taken in - "还没有保存开场白") offers no opening
+ * row at all, and the surface invents none. The failure this catches: fabricated
+ * starters, and a first screen that stays blank instead of falling back to the
+ * conversation's own zero state.
  */
 test("a card with no opening material shows no chip and invents none", async ({ page }) => {
   const emptyRoot = {
@@ -4423,18 +4019,14 @@ test("a card with no opening material shows no chip and invents none", async ({ 
  * `continuity-semantic-production-coordinator.internal.ts`
  * `materializeExpectedChatContent`), so by the time a player looks at the first
  * screen it already carries the companion's committed opening, projected with
- * `openingVariant`. The chips must be offered THERE - the card's own openings are
- * exactly what a player needs to know what to say - and must leave once the player
- * speaks.
+ * `openingVariant`. Choosing among those variants is that message's own `< 1/2 >`
+ * switcher, which records the choice through the Host's `chat.opening` route.
  *
- * The failure this catches: chips gated on `transcript.length === 0`. That state
- * holds only for a Chat that opened on a *blank* opening, and a blank opening has
- * no greeting material to offer, so the state the gate required and the state that
- * can supply a chip were mutually exclusive - the chips could never appear in a
- * real product, which is what the acceptance run measured (`chipCount: 0` with the
- * card's opening on screen).
+ * The failure this catches: a variant chooser anywhere but that switcher - a
+ * composer row whose taps submitted the companion's own paragraph as the
+ * player's line, which is the inverted path this replaces.
  */
-test("the first screen offers the card's openings when the companion's own opening is already message zero", async ({ page }) => {
+test("the opening's variant switcher lives on the opening bubble, and the composer offers no opening row", async ({ page }) => {
   const openings = [
     { label: "Default", text: "The lantern over the porch is still lit." },
     { label: "Alternate 1", text: "Rain has been falling since dawn." },
@@ -4493,23 +4085,25 @@ test("the first screen offers the card's openings when the companion's own openi
   await expect(surface.locator(".message-list > li")).toHaveCount(1);
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
-  // ... and the chips are the greeting record's own variants, still offered.
-  const chips = surface.locator(".composer-chip");
-  await expect(chips).toHaveCount(2);
-  expectChipsCarryTheOpenings(await chipFacts(surface), openings, await composerWidth(page));
-  await expect(surface.locator(".composer-chips-row")).toHaveAccessibleName("Openings");
-  expect(greetingReads, "the card's opening record is read for the not-yet-started conversation").toBeGreaterThan(0);
+  // ... and choosing among the variants is the opening bubble's own control, not
+  // a composer row: the message carries the Host's unlocked `1/2` switcher.
+  await expect(surface.locator(".composer-chip, .composer-chips-row")).toHaveCount(0);
+  const opening = surface.locator(".message.companion").first();
+  await expect(opening.locator(".swipe-indicator")).toHaveText("1/2");
+  await expect(opening.locator(".swipe-btn")).toHaveCount(2);
+  expect(greetingReads, "the composer column reads no opening material").toBe(0);
 });
 
 /**
- * Once the player has spoken, the opening is no longer the whole first screen and
- * the chips leave - the shell does not even read the card's record for it.
+ * Once the player has spoken, the opening can no longer be re-chosen: the Host
+ * seals it (`openingVariant.locked`), so the bubble's own variant switcher is
+ * gone and the composer carries no opening row either.
  *
- * The failure this catches: chips that survive the first player message, and a
- * first-screen predicate that treats the companion's opening as "nothing has
- * happened yet" forever.
+ * The failure this catches: a switcher that survives the first player message,
+ * and a first-screen predicate that treats the companion's opening as "nothing
+ * has happened yet" forever.
  */
-test("chips leave once a player message follows the companion's opening", async ({ page }) => {
+test("the opening's variant switcher is sealed once a player message follows the opening", async ({ page }) => {
   const openings = [
     { label: "Default", text: "The lantern over the porch is still lit." },
     { label: "Alternate 1", text: "Rain has been falling since dawn." },
@@ -4564,6 +4158,9 @@ test("chips leave once a player message follows the companion's opening", async 
   await expect(surface.locator(".message-list > li")).toHaveCount(2);
   await expect(surface.locator(".composer-chip")).toHaveCount(0);
   await expect(surface.locator(".composer-chips-row")).toHaveCount(0);
+  // The opening is sealed once the player has spoken, so its own variant
+  // switcher is gone too: the choice cannot be reopened behind the transcript.
+  await expect(surface.locator(".swipe-controls")).toHaveCount(0);
   expect(greetingReads, "a conversation the player has spoken in asks for no opening material").toBe(0);
 });
 

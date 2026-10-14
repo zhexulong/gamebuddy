@@ -3750,108 +3750,6 @@ body {
   color: var(--text-primary);
 }
 
-
-/* ==========================================================================
-   The card's own openings, on a conversation that has not started
-   (conversation-surface lane block)
-
-   The owner's report: the first screen is a void with one line in it, and a
-   player does not know what to say first. The chips above the input are the
-   character card's own opening lines, read from the companion's greeting
-   record; tapping one says it and records it as the Chat's opening. They are
-   not a second composer - they sit in the composer band, so the reading column
-   stays the transcript and the composer and nothing else - and they leave with
-   the first message.
-
-   The chip's visible line is the opening's own first words, never the whole
-   paragraph: as paragraphs the three shipped openings rendered as single-line
-   slabs (4578 / 3161 / 3315 px), a wall of prose rather than the row of
-   invitations this block is for. The whole opening stays one hover or one Tab
-   away, in `.composer-chip-preview`. Appended block; the rules above are
-   untouched.
-   ========================================================================== */
-
-.composer-chips {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  /* The chips' own column is the composer's measure, so the preview below can be
-     bounded to it and the row can wrap instead of widening the page. */
-  width: 100%;
-  max-width: var(--timeline-reading-measure);
-  position: relative;
-}
-
-.composer-chips-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-/* The row wraps inside the composer band: a chip's own text can be long, and the
-   conversation column must never grow a horizontal scrollbar for it. */
-.composer-chips-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.composer-chip {
-  flex: 0 0 auto;
-  max-width: 100%;
-  min-height: var(--touch-target-min);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background-color: var(--surface-card);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  /* The chip renders its short label; the unclamped opening it carries lives in
-     the tooltip and in the preview below, so this line never has to hold it. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.composer-chip:hover {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-}
-
-.composer-chip:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-/* The whole opening, verbatim, revealed by the hover or focus on its chip. It
-   floats above the row rather than sitting in it, so reading what a chip would
-   send never moves the composer, and it is bounded to the composer's measure so
-   a paragraph reads as prose instead of widening the page. */
-.composer-chip-preview {
-  position: absolute;
-  inset-inline: 0;
-  bottom: calc(100% + var(--space-2));
-  z-index: 6;
-  margin: 0;
-  max-height: 12em;
-  overflow-y: auto;
-  padding: var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-raised);
-  color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-}
-
 /* --- game-surface lane: the companion capability board and the start guide ---
    The board leads the panel and the machine facts are demoted last, so the
    surface reads as what the companion can do with the player. Nothing here owns
@@ -4222,57 +4120,6 @@ body {
     }
   }
 /* ==========================================================================
-   The card's own openings stay one row on the phone strip
-   (composer-chips lane block)
-
-   The measured defect (audit `shots-final4/00-fresh-first-400x800.png`, evidence
-   `shots-final4/b-surfaces.txt:15`): at 400x800 the three shipped openings
-   wrapped to three lines (tops 578 / 630 / 682), so the composer band came out
-   at 256 px - 32% of the window - and the transcript kept only 426 of 800 px:
-   the companion's own first line and the 重新生成 control ended at bottom 806 >
-   800. The longest opening was also clipped behind an ellipsis at that width
-   (chip scrollWidth 54 px past its clientWidth), so the row cost the reading
-   column height *and* hid its own label.
-
-   Below 480 the row is one line that scrolls sideways instead of stacking: the
-   reading column keeps its height, and the overshoot is reachable rather than
-   spent. The chips keep their meaning - each is still one of the card's own
-   openings, still sends through the composer's one submit path, and still says
-   what a tap does in its accessible name - and each keeps its own natural
-   width, so a long opening is *reached* by scrolling rather than hidden behind
-   an ellipsis. The row is not a tab stop: Tab still walks the chips, and the
-   browser scrolls the focused chip into view, which is the keyboard path a
-   scroller of focusable content already has.
-
-   The affordance is the row's own: the product's thin themed scrollbar, and a
-   20 px fade at the trailing edge. The fade sits over the row's own 12 px of
-   trailing padding, so once the row is scrolled out it covers padding rather
-   than the last chip.
-
-   Above 480 nothing changes: there is vertical room there, and wrapping is the
-   row's long-standing behaviour. Appended block; the rules above are untouched.
-   ========================================================================== */
-
-@media (max-width: 480px) {
-  .composer-chips-row {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    /* A sideways swipe over the chips must not become the browser's back gesture. */
-    overscroll-behavior-x: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
-    /* Room under the fade's own 20 px, so the affordance never covers a chip. */
-    padding-right: var(--space-3);
-    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
-  }
-
-  .composer-chip {
-    /* The row is the scroller: a chip is as wide as the card's own opening. */
-    max-width: none;
-  }
-}
-
-/* ==========================================================================
    The card-import file control (character-import lane block)
 
    The audit's screenshot `10-角色-1440x900.png`: the character surface's primary
@@ -4334,41 +4181,6 @@ body {
    intrinsic size; the product draws its own trigger, so this one is retired. */
 .card-import-file-input::file-selector-button {
   display: none;
-}
-
-/* ==========================================================================
-   The chips row's affordance, without the platform's own scrollbar
-   (ruling-and-ui-defects lane block, U-01)
-
-   The measured defect at 400x800: the row already scrolled (`overflow-x: auto`)
-   and already faded at its trailing edge, but it kept the platform's scrollbar
-   - a 4 px native track drawn inside the composer band, over the fade, in a
-   product that themes every other surface. Panning and the fade are the
-   affordance; the native bar is not part of it.
-
-   So the bar is retired (`scrollbar-width: none`, plus the WebKit pseudo-element
-   that `scrollbar-width` does not cover in this engine) and everything the row
-   actually does is kept: it still scrolls, a sideways swipe is still contained
-   rather than becoming the browser's back gesture, touch panning still has
-   momentum, and the 20 px trailing fade still says "there is more". A scroller
-   with a hidden bar is still a scroller for the keyboard and for AT: Tab walks
-   the chips and the browser scrolls the focused one into view.
-
-   Appended block; the rules above are untouched.
-   ========================================================================== */
-
-@media (max-width: 480px) {
-  .composer-chips-row {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .composer-chips-row::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
 }
 
 /* ==========================================================================

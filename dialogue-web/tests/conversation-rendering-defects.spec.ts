@@ -310,12 +310,6 @@ test("defect 3: the surface heading's scripted focus is a colourless hairline, n
 
 test("defect 4: the first screen's title stack is collapsed and the void is guided", async ({ page }) => {
   await mountShell(page, { root: composedRoot({ transcript: [] }), openings: OPENINGS });
-  // The card's record is read after the first paint; wait for the chips to land
-  // (or for the read to prove it offers none) before the screen is measured.
-  await page
-    .locator(".composer-chips-row")
-    .waitFor({ state: "visible", timeout: 5_000 })
-    .catch(() => undefined);
 
   const measured = await page.evaluate(() => {
     const read = (selector: string) => {
@@ -335,7 +329,7 @@ test("defect 4: the first screen's title stack is collapsed and the void is guid
         nameplate: read(".empty-state-nameplate"),
         openingLine: read(".empty-state-opening"),
       },
-      chips: document.querySelectorAll(".composer-chip").length,
+      chips: document.querySelectorAll(".composer-chip, .composer-chips-row").length,
       timelineHeight: timeline === null ? 0 : Math.round(timeline.getBoundingClientRect().height),
       anchorHeight: anchor === null ? 0 : Math.round(anchor.getBoundingClientRect().height),
     };
@@ -352,9 +346,10 @@ test("defect 4: the first screen's title stack is collapsed and the void is guid
   expect(measured.stack.appBarCompanion?.text, "the app bar keeps the companion identity").toBe("Mira");
   expect(measured.stack.surfaceHeading?.text, "the surface keeps its own heading").toBe("聊天");
   expect(measured.stack.openingLine?.text, "the invitation names the companion").toContain("Mira");
-  // The void is guided: the card's own openings reach the first screen, and the
-  // zero state still fills the transcript.
-  expect(measured.chips, "a chip per opening the card carries").toBe(OPENINGS.length);
+  // The void is guided by the zero state alone: the composer offers no
+  // break-ice row, because the only text it could submit is the companion's own
+  // opening (choosing a variant lives on the opening bubble's own switcher).
+  expect(measured.chips, "the composer offers no inverted opening path").toBe(0);
   expect(measured.anchorHeight, "the zero state fills the transcript").toBeGreaterThanOrEqual(
     measured.timelineHeight * 0.5,
   );

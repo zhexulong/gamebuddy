@@ -3,7 +3,6 @@ import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import {
   Composer,
-  type ComposerChips,
   type ComposerDraftActions,
   type ComposerSettingsAction,
   type VoiceSurfaceStateV1,
@@ -42,7 +41,6 @@ export function ChatSurface({
   voice,
   settingsAction,
   draftActions,
-  chips,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview: Readonly<{ turnHandle: string; text: string }> | null;
@@ -73,7 +71,6 @@ export function ChatSurface({
   voice?: VoiceSurfaceStateV1 | null;
   settingsAction: ComposerSettingsAction;
   draftActions: ComposerDraftActions;
-  chips?: ComposerChips;
 }) {
   return (
     <SurfaceView
@@ -128,7 +125,6 @@ export function ChatSurface({
         voice={voice}
         settingsAction={settingsAction}
         draftActions={draftActions}
-        chips={chips}
       />
     </SurfaceView>
   );
