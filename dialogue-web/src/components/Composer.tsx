@@ -1,5 +1,5 @@
 import { FileText, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, type Ref, useId, useLayoutEffect, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, type Ref, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -79,6 +79,29 @@ export type ComposerSettingsAction = Readonly<{
  * here, and the text the chip records and sends is the opening verbatim (the
  * `title` and the preview a hover or focus reveals below).
  */
+/**
+ * The compact band's own breakpoint (the width the app bar retires its brand
+ * word at). The field is 212 px wide at a 400 px viewport, where the wide
+ * catalogue's hint needs three lines and advises a keystroke no phone has; the
+ * compact wording is one line and drops the keystroke. Nothing else about the
+ * composer changes with the width - only which sentence is written on it.
+ */
+const COMPACT_COMPOSER_QUERY = "(max-width: 640px)";
+
+function useCompactComposer(): boolean {
+  const [compact, setCompact] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(COMPACT_COMPOSER_QUERY).matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia(COMPACT_COMPOSER_QUERY);
+    const update = () => setCompact(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return compact;
+}
+
 const CHIP_LABEL_MAX = 32;
 function chipLabel(text: string): string {
   const normalized = text
@@ -132,6 +155,7 @@ export function Composer({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chipsLabelId = useId();
+  const placeholder = useCompactComposer() ? labels.typeMessagePlaceholderCompact : labels.typeMessagePlaceholder;
   // The opening a player is currently reading: hovering or focusing a chip shows
   // its whole text above the row, so nothing has to be sent to see what would be.
   const [previewChipId, setPreviewChipId] = useState<string | null>(null);
@@ -254,10 +278,10 @@ export function Composer({
           value={value}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={labels.typeMessagePlaceholder}
+          placeholder={placeholder}
           rows={1}
           disabled={disabled || isGenerating}
-          aria-label={labels.typeMessagePlaceholder}
+          aria-label={placeholder}
         />
         <div className="composer-actions">
           {settingsAction !== undefined && (

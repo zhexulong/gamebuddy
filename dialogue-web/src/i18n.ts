@@ -145,6 +145,10 @@ const en = {
 
   // Composer
   typeMessagePlaceholder: "Type a message to your companion… (Enter to send, Shift+Enter for newline)",
+  // The compact band's own hint: the composer's field is 212px wide at a 400px
+  // viewport, where the sentence above needs three lines and names a key no phone
+  // has. The compact wording keeps the invitation and drops the keystroke.
+  typeMessagePlaceholderCompact: "Message your companion…",
   send: "Send",
   stop: "Stop",
   chatStopped: "Reply stopped. You can send another message.",
@@ -669,6 +673,8 @@ const zh: Messages = {
 
   // Composer
   typeMessagePlaceholder: "给伴侣发送消息… (Enter 发送, Shift+Enter 换行)",
+  // 紧凑布局的提示：见英文目录同名字段的说明。
+  typeMessagePlaceholderCompact: "给伴侣发送消息…",
   send: "发送",
   stop: "停止生成",
   chatStopped: "回复已停止。你可以发送另一条消息。",
