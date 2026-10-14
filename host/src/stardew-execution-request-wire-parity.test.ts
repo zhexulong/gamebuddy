@@ -16,6 +16,23 @@ const scope: Scope = {
 };
 const parserTest =
   "GameBuddy.Stardew.Core.Tests.BridgeProtocolSerializationTests.TryDeserializeExecutionRequest_HostSerializedNavigationRequest_IsAccepted";
+/**
+ * The signature of a build that lost a race for the shared C# project: four
+ * compiled Host test files run `dotnet test` against the same
+ * `GameBuddy.Stardew.Core.Tests` project, so a build that finds `obj/` held by a
+ * sibling fails with an MSBuild/C# file-in-use error instead of a parse verdict.
+ */
+const sharedProjectName = "GameBuddy.Stardew.Core.Tests";
+const sharedBuildContention = /being used by another process|MSB3491|CS2012/;
+const parserBudgetMs = 120_000;
+/**
+ * `close` fires only once stdout and stderr end. A shared-build descendant
+ * (testhost or a reused MSBuild node) can inherit those pipes and outlive the
+ * `dotnet` process, so waiting on `close` alone can neither resolve nor reject
+ * and the compiled file never exits. Five seconds is far above the normal
+ * millisecond gap between `exit` and `close`.
+ */
+const stdioDrainMs = 5_000;
 
 function runParser(inputPath: string): Promise<void> {
   const repoRoot = /[\\/]host$/i.test(process.cwd()) ? resolve(process.cwd(), "..") : resolve(process.cwd());
@@ -38,20 +55,49 @@ function runParser(inputPath: string): Promise<void> {
     };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
-    const timer = setTimeout(() => child.kill(), 120_000);
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let drain: ReturnType<typeof setTimeout> | undefined;
+    const failure = (detail: string, code: number | null, signal: NodeJS.Signals | null) => {
+      const output = Buffer.concat(chunks).toString("utf8");
+      const cause = sharedBuildContention.test(output)
+        ? `shared project ${sharedProjectName} build was contended by a concurrent wire-parity test`
+        : "parser test failed";
+      return new Error(
+        `execution request wire parity ${cause} (code=${String(code)}, signal=${String(signal)})${detail}: ${output}`,
+      );
+    };
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (drain !== undefined) clearTimeout(drain);
+      // Release inherited pipe handles: without this a killed `dotnet` whose
+      // shared-build descendants still hold our stdio leaves `close` pending
+      // forever, and this file then hangs the suite instead of failing.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (error === undefined) resolvePromise();
+      else reject(error);
+    };
+    timer = setTimeout(() => {
+      child.kill();
+      settle(
+        new Error(
+          `execution request wire parity parser test exceeded ${parserBudgetMs}ms and was killed; it waits on the shared project ${sharedProjectName} build`,
+        ),
+      );
+    }, parserBudgetMs);
+    child.once("error", (error) => settle(error));
+    child.once("exit", (code, signal) => {
+      drain = setTimeout(
+        () => settle(failure(" (stdio stayed open after exit; a shared-build descendant held the pipe)", code, signal)),
+        stdioDrainMs,
+      );
     });
     child.once("close", (code, signal) => {
-      clearTimeout(timer);
-      if (code === 0 && signal === null) resolvePromise();
-      else
-        reject(
-          new Error(
-            `execution request parser test failed (code=${String(code)}, signal=${String(signal)}): ${Buffer.concat(chunks).toString("utf8")}`,
-          ),
-        );
+      if (code === 0 && signal === null) settle();
+      else settle(failure("", code, signal));
     });
   });
 }
