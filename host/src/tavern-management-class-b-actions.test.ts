@@ -359,18 +359,26 @@ test.after(() => {
 });
 
 test("ADR-0010 Class B: no Host module re-wires a turn-state reader into a Class B path", async () => {
-  const here = dirname(fileURLToPath(import.meta.url));
   // The behavioural run above cannot see a composition that arms the refusal but
   // is not mounted by the gate. This is that seam: the removed guard was armed by
   // a `readTurnState` reader wired in from the composition, so both the service
   // and its composition must stay turn-blind.
-  const connectionService = await readFile(join(here, "tavern", "connection-service.ts"), "utf8");
+  //
+  // These two reads are of SOURCES, and the compiled tree carries only emitted JS -
+  // reading them relative to this test's own location failed with ENOENT the first
+  // time this gate ever executed. `REPO` is the repository root in both layouts
+  // (compiled: host/dist-test/.. = host, ../.. = root; source: host/src/.. = host,
+  // ../.. = root), so both forms read the same file.
+  const connectionService = await readFile(join(REPO, "host", "src", "tavern", "connection-service.ts"), "utf8");
   assert.ok(!/turnActive/u.test(connectionService), "the connection service must not read turn state");
   assert.ok(
     !/TavernDialogueBusyError/u.test(connectionService),
     "a turn-busy refusal on a Class B path must not come back",
   );
-  const composition = await readFile(join(here, "composition", "desktop-presentation-admission-owner.ts"), "utf8");
+  const composition = await readFile(
+    join(REPO, "host", "src", "composition", "desktop-presentation-admission-owner.ts"),
+    "utf8",
+  );
   assert.ok(
     !/readTurnState/u.test(composition),
     "the composition must not wire a turn-state reader into the connection service",
@@ -557,6 +565,16 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
       },
       async update(request) {
         return { revision: request.expectedRevision + 1, variants: request.variants };
+      },
+    }),
+    // This profile declares `companion.worldbook.read` (it advertises the whole
+    // optional set), and the handler fails closed when a declared route has no bound
+    // service - so the gate must bind one. The Class B rule does not read the book:
+    // the stub answers the honest empty shape, which is what the durable read returns
+    // for a companion with no book of its own.
+    companionWorldBookService: Object.freeze({
+      async read() {
+        return { apiVersion: 1 as const, present: false, entries: [] };
       },
     }),
     profile: composeTavernProfile({
