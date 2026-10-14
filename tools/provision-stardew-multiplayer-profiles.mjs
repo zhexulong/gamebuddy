@@ -62,6 +62,8 @@ const ARGUMENTS = Object.freeze({
   "--companion-id": "value",
   "--release-dir": "value",
   "--check-only": "flag",
+  "--fixture-scenario": "value",
+  "--trigger-native-save-after-attachment": "flag",
 });
 const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
@@ -89,18 +91,23 @@ export function parseProvisionArgs(argv = []) {
   const releaseDir = values.get("--release-dir") ?? DEFAULT_RELEASE_DIR;
   if (!isAbsolute(releaseDir)) throw new Error("release_dir_must_be_absolute");
   const sessionDirectory = values.get("--session-directory") ?? join(profileRoot, "multiplayer-session");
+  const fixtureScenario = values.get("--fixture-scenario") ?? "";
+  if (fixtureScenario.length > 0 && !/^native_[a-z0-9_]+_v\d*$/u.test(fixtureScenario))
+    throw new Error(`invalid_fixture_scenario:${fixtureScenario}`);
   if (!isAbsolute(sessionDirectory)) throw new Error("session_directory_must_be_absolute");
   return Object.freeze({
     profileRoot,
     sessionDirectory,
     companionId,
     releaseDir,
+    fixtureScenario,
+    triggerNativeSaveAfterAttachment: values.get("--trigger-native-save-after-attachment") === true,
     checkOnly: values.get("--check-only") === true,
   });
 }
 
 /** The host profile's formal config, field for field. */
-export function hostProfileConfig({ sessionDirectory, sessionToken, companionId }) {
+export function hostProfileConfig({ sessionDirectory, sessionToken, companionId, fixtureScenario = "", triggerNativeSaveAfterAttachment = false }) {
   return {
     EnableLocalBridge: true,
     PipeName: "gamebuddy-stardew-host",
@@ -117,11 +124,11 @@ export function hostProfileConfig({ sessionDirectory, sessionToken, companionId 
     SleepLifecycle: null,
     HostAutomation: {
       Enable: true,
-      FixtureScenario: "",
+      FixtureScenario: fixtureScenario,
       SaveName: "",
       TimeoutSeconds: 300,
       RequireFixtureLiveLocale: "",
-      TriggerNativeSaveAfterAttachment: false,
+      TriggerNativeSaveAfterAttachment: triggerNativeSaveAfterAttachment,
       TriggerNativeSaveAfterClientExit: false,
     },
     // The formal Host half: it owns the session directory and publishes the advertisement the AI client verifies.
@@ -274,7 +281,14 @@ async function main(argv) {
     profiles: PROFILE_NAMES,
     companionId: request.companionId,
     // Named so the operator knows what this does NOT provide.
-    stillRequired: "a save whose Farm carries a Cabin bound to the farmhand; nothing in this repo creates one",
+    // Named so the operator knows the two steps this tool does NOT perform.
+    stillRequired: [
+      "a save NAMED GameBuddyFixture_<id> on disk: the formal Host loads it by name, and HostAutomationConfig.IsValid",
+      "requires SaveName.StartsWith(\"GameBuddyFixture_\") for any armed scenario",
+      "a Cabin building inside that save:",
+      "  the fixture scenario native_build_farmhand_cabin_v1 builds exactly one through the game's own",
+      "  BuildStartingCabins shape (GameLocation.cs:17574-17580) and the driver's post-attachment save persists it",
+    ].join(" "),
   };
 }
 
