@@ -1429,8 +1429,14 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
     );
     const parent = new AbortController();
     const running = worker.run("same admission", parent.signal);
-    while (calls.execute.length < 2) await new Promise((resolve) => setTimeout(resolve, 1));
-    parent.abort();
+    try {
+      await until(
+        () => calls.execute.length >= 2,
+        "fresh_admission_second_dispatch_not_dispatched",
+      );
+    } finally {
+      parent.abort();
+    }
     const result = await running;
     assert.equal(result.state, "cancelled");
     assert.deepEqual(calls.cancel, []);
