@@ -1244,7 +1244,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
    					run: async (origin, client) => {
 						// Real turns first, in fixture order, so the probe is asked at the declared distance
 						// rather than immediately after the seed.
-						for (const filler of scenario.fillers) await runChatTurn(origin, client, filler);
+		    for (const filler of scenario.fillers ?? []) await runChatTurn(origin, client, filler);
 						return runChatTurn(origin, client, scenario.question);
 					},
       });
