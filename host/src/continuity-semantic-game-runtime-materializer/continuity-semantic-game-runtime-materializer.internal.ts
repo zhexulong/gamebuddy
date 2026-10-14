@@ -292,17 +292,26 @@ async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promise<void>
       errors.push(error);
     }
   };
+  // Revoke new fixed-tool admissions (and drain any in-flight body-program
+  // request) BEFORE the host, subagent or session is torn down. The revocation
+  // closes the fixed-tool consumer synchronously, so a body-program request
+  // that starts after `close()` is refused with
+  // `action_program_runtime_unavailable` instead of being admitted into a
+  // runtime that is already going away; the drain keeps the runtime alive until
+  // the request already admitted has completed, so the transport it still needs
+  // is not closed underneath it (attested fixed closure drains the held request
+  // before revocation).
+   try {
+     await runtime.closeFixedTools?.();
+   } catch (error) {
+     errors.push(error);
+   }
   attempt(() => runtime.connected?.host.close());
   attempt(() => runtime.gameplaySubagent?.dispose());
   attempt(() => runtime.operationalGateEvidence?.close());
    attempt(() => runtime.clearGameOperationalGateMarker?.());
    try {
      await runtime.clearAuthoredContext?.();
-   } catch (error) {
-     errors.push(error);
-   }
-   try {
-     await runtime.closeFixedTools?.();
    } catch (error) {
      errors.push(error);
    }
