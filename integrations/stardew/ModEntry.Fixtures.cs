@@ -4157,7 +4157,17 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         HostAutomationConfig? automation = this.config.HostAutomation;
         if (this.hostAutomationFixtureInitialized || this.hostAutomationTerminal || automation is not { Enable: true } || automation.FixtureScenario is not ("native_farmhand_chat_v1" or "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1" or "native_ship_item_v1" or "native_chest_retrieve_v1" or "native_pet_animal_v1"))
             return;
-        if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.server is not null || this.hostFarmhandProvisioner?.IsAwaitingSave == true)
+        // The chat scenario's whole Given is "a lobby exists", and it mutates nothing, so the
+        // "before a LAN server exists" ordering this guard enforces for the world-mutating fixtures
+        // does not apply to it. Enforcing it anyway made the scenario unarmable in the formal
+        // topology: the Mod enables the native LAN host option at session start ("companion session
+        // will host the engine's native LAN server"), so the engine starts its own server as soon as
+        // the world is live, and `TryStartHostAutomation` waits for the fixture to arm before it
+        // emits the readiness marker the shared-world driver waits for. Observed live: the world was
+        // loaded and the Cabin already built, and the marker never appeared until the driver timed
+        // out.
+        bool lobbyOnlyScenario = automation.FixtureScenario == "native_farmhand_chat_v1";
+        if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || (!lobbyOnlyScenario && Game1.server is not null) || this.hostFarmhandProvisioner?.IsAwaitingSave == true)
             return;
 
         try

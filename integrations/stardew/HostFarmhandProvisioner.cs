@@ -573,6 +573,9 @@ internal sealed class HostFarmhandProvisioner
             {
                 if (createdFarmhand)
                     this.RollbackCreatedFarmhand(cabin, farmhand);
+                this.monitor.Log(
+                    $"GameBuddy refused a first binding: the created Farmhand was not initialized (customized={farmhand.isCustomized.Value}, id={farmhand.UniqueMultiplayerID}, name='{farmhand.Name}'); the request expected an empty id ({request.ExpectedFarmhandId.Length}).",
+                    LogLevel.Error);
                 return new("rejected", "farmhand_not_initialized");
             }
 
@@ -583,6 +586,9 @@ internal sealed class HostFarmhandProvisioner
         {
             if (createdFarmhand)
                 this.RollbackCreatedFarmhand(cabin, farmhand);
+            this.monitor.Log(
+                $"GameBuddy refused a first binding: id={farmhand.UniqueMultiplayerID}, customized={farmhand.isCustomized.Value}, name='{farmhand.Name}', displayName='{farmhand.displayName}', expected='{expectedName}'.",
+                LogLevel.Error);
             return new("rejected", "farmhand_not_initialized");
         }
         if (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != farmhand.UniqueMultiplayerID.ToString())

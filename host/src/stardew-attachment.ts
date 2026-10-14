@@ -122,7 +122,13 @@ export class StardewAttachmentFlow {
     ) {
       throw new Error("invalid_stardew_attachment_options");
     }
-    if (options.expectedFarmhandId !== undefined && !isNativeId(options.expectedFarmhandId))
+    // The EMPTY expected id is a MEANINGFUL value on this flow, not a missing one: it is how a request
+    // addresses an ownerless cabin (the advertisement writes "" for a Cabin whose owner has no farmhand,
+    // HostFarmhandProvisioner.cs:405) and it is the ONLY value a first binding accepts
+    // (HostFarmhandProvisioner.cs:535 `new_binding_requires_empty_expected_id`). The request path already
+    // treats it that way (`expectedFarmhandId !== ""` below); the constructor refused it, so the one mode
+    // that creates a binding could not be expressed through this class at all.
+    if (options.expectedFarmhandId !== undefined && options.expectedFarmhandId !== "" && !isNativeId(options.expectedFarmhandId))
       throw new Error("invalid_expected_farmhand_id");
     this.#options = options;
   }

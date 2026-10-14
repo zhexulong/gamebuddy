@@ -32,7 +32,9 @@ param(
     [Parameter(Mandatory = $true)][string]$ReleaseDir,
     [Parameter(Mandatory = $true)][string]$SessionDirectory,
     [Parameter(Mandatory = $true)][string]$SaveName,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9]{6,20}$')][string]$ExpectedFarmhandId,
+    # Empty ONLY for -ProvisionNewBinding: a new binding requires an empty expected id, and the empty id is
+    # how the advertisement addresses an ownerless cabin.
+    [ValidatePattern('^([0-9]{6,20})?$')][string]$ExpectedFarmhandId = "",
     [string]$Action = "",
     [string]$ResultFile = "",
     [string]$ScenarioIdentity = "",
@@ -41,6 +43,11 @@ param(
     [string]$ReachLocation = "",
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 180,
     [switch]$AttachOnly,
+    # One-time binding provision: attach into the world's EMPTY cabin, let the Host persist the binding through
+    # its own native save, and stop at the manifest that save produced. The AI client is not started: nothing
+    # consumes the bridge, and the identity is created by the Host's own provisioning authority. Every later run
+    # passes the id this run reports.
+    [switch]$ProvisionNewBinding,
     [string]$SmokeScript = "",
     # Cross-day lifecycle only: where the AI client writes its lifecycle evidence,
     # and how many frames it waits for the other player to reach the native ready
@@ -178,7 +185,13 @@ try {
     if (-not [System.IO.Path]::IsPathFullyQualified($ProbeRoot)) { throw "ProbeRoot must be absolute: $ProbeRoot" }
     if (-not [System.IO.Path]::IsPathFullyQualified($SessionDirectory)) { throw "SessionDirectory must be absolute: $SessionDirectory" }
     if ($SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9_-]{1,96}$') { throw "SaveName must be a disposable GameBuddyFixture slot: $SaveName" }
-    if (-not $AttachOnly -and -not $DumpSpatial -and [string]::IsNullOrWhiteSpace($Action) -and [string]::IsNullOrWhiteSpace($SmokeScript)) { throw "Action or -SmokeScript is required unless -AttachOnly or -DumpSpatial is set." }
+    if (-not $AttachOnly -and -not $ProvisionNewBinding -and -not $DumpSpatial -and [string]::IsNullOrWhiteSpace($Action) -and [string]::IsNullOrWhiteSpace($SmokeScript)) { throw "Action or -SmokeScript is required unless -AttachOnly or -DumpSpatial is set." }
+    if (-not $ProvisionNewBinding -and [string]::IsNullOrEmpty($ExpectedFarmhandId)) {
+        throw "ExpectedFarmhandId is required unless -ProvisionNewBinding is set: only a first provision may omit it, because a NEW binding requires an empty expected id (HostFarmhandProvisioner.cs:535)."
+    }
+    if ($ProvisionNewBinding -and -not [string]::IsNullOrEmpty($ExpectedFarmhandId)) {
+        throw "ProvisionNewBinding requires an EMPTY -ExpectedFarmhandId: a non-empty one addresses an EXISTING farmhand (HostFarmhandProvisioner.cs:588)."
+    }
     Assert-NoStardewProcesses "materialization"
 
     $script:phase = "materialize_profiles"
@@ -336,10 +349,39 @@ try {
     $attachmentOutput = & node (Join-Path $PSScriptRoot "stardew-shared-world-attachment-request.mjs") `
         --session-directory $SessionDirectory `
         --host-config $hostConfigPath `
-        --expected-farmhand-id $ExpectedFarmhandId `
+        --expected-farmhand-id "$ExpectedFarmhandId" `
         --timeout-ms ($TimeoutSeconds * 1000) 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Shared-world attachment request failed: $($attachmentOutput -join ' ')" }
     $attachment = ($attachmentOutput -join "`n") | ConvertFrom-Json
+
+    if ($ProvisionNewBinding) {
+        # The Host's own provisioning authority created the Farmhand inside the empty cabin and asked for a native
+        # save; the manifest is issued only after that save read back a valid binding
+        # (HostFarmhandProvisioner.cs:260-262), so this marker IS the durable proof.
+        $script:phase = "binding_save"
+        $manifestMarker = "GameBuddy issued a signed Farmhand join manifest for companion profile '$($attachment.companionId)'."
+        if (-not (Wait-LogMarker $hostLog $manifestMarker $TimeoutSeconds)) {
+            $tail = if (Test-Path -LiteralPath $hostLog -PathType Leaf) { (Get-Content -Raw -LiteralPath $hostLog) } else { "host_log_missing" }
+            throw "The Host did not persist and publish the new farmhand binding. Log tail: $($tail.Substring([Math]::Max(0, $tail.Length - 1500)))"
+        }
+
+        $provisioned = [ordered]@{
+            state        = "binding_provisioned"
+            topology     = "shared_world_farmhand"
+            saveName     = $SaveName
+            farmhandId   = [string]$attachment.farmhandId
+            companionId  = [string]$attachment.companionId
+            cabinId      = [string]$attachment.cabinId
+            requestId    = [string]$attachment.requestId
+            evidence     = "the Host's own provisioning authority created the Farmhand in the empty cabin, the native save persisted the binding, and the signed manifest was issued only after that readback"
+            nextStep     = "every later gate passes -ExpectedFarmhandId $([string]$attachment.farmhandId)"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ResultFile)) {
+            Write-Json $ResultFile $provisioned
+        }
+        $provisioned | ConvertTo-Json -Depth 6
+        return
+    }
 
     $script:phase = "ai_client_launch"
     $aiGeneration = [guid]::NewGuid().ToString("N")
