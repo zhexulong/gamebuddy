@@ -54,6 +54,11 @@ jobs:
       # run, so the debt stays visible while a violation in the change under test still fails.
       - run: pnpm format:check
       - run: pnpm test:format-ratchet
+      # The lint step is a ratchet too: it fails only on a file that newly joins the recorded red set
+      # (70 files / 88 errors at 1ea90abe) or whose error count grows, and prints the live
+      # error/warning totals on every run, so the debt stays visible while a new violation still
+      # fails. It was added in b9650bd9 behind a formatter step that was repo-wide red until
+      # e90da3b2, so its first real execution (run 38582152926) is where the 87 errors were seen.
       - run: pnpm lint
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
