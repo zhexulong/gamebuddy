@@ -192,20 +192,32 @@ const chatProbe = {
     );
   },
   /**
-   * The computed reading treatment of a narration beat, next to the value the
-   * token it must resolve to actually has. A class name in the markup proves
-   * nothing: this proves the style applied.
+   * The computed reading treatment of a narration beat, next to the value each of
+   * the two tokens it could be confused with actually has. A class name in the
+   * markup proves nothing: this proves the style applied, that it is the
+   * narration tone, and - in the spec - that it is not the disabled grey a form
+   * field's own text is drawn in.
    */
-  narrationStyle(handle: string): { color: string; expectedColor: string; fontStyle: string } | null {
+  narrationStyle(
+    handle: string,
+  ): { color: string; expectedColor: string; disabledColor: string; fontStyle: string } | null {
     const em = document.querySelector(`li[data-handle="${handle}"] em.message-action`);
     if (em === null) return null;
-    const probe = document.createElement("span");
-    probe.style.color = "var(--palette-gray-400)";
-    document.body.appendChild(probe);
-    const expectedColor = getComputedStyle(probe).color;
-    probe.remove();
+    const read = (token: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
     const style = getComputedStyle(em);
-    return { color: style.color, expectedColor, fontStyle: style.fontStyle };
+    return {
+      color: style.color,
+      expectedColor: read("--text-secondary"),
+      disabledColor: read("--text-disabled"),
+      fontStyle: style.fontStyle,
+    };
   },
   /**
    * The computed busy treatment of a bubble. The `data-pending` attribute is

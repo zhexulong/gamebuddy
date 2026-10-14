@@ -17,9 +17,10 @@ import { expect, test, type Page } from "@playwright/test";
  * 2b. `renders a narration beat with the reading treatment` - the class being
  *    mounted is not the treatment: with no rule for `.message-action` a stage
  *    direction is drawn in the browser's default italic *and* in the same
- *    colour as speech. This resolves the computed colour against the token, so
- *    a missing or drifted rule fails here instead of looking acceptable in a
- *    screenshot.
+ *    colour as speech. This resolves the computed colour against the narration
+ *    token and against the *disabled* token, so a missing rule, a drifted one or
+ *    a beat painted in the grey a disabled control is drawn in all fail here
+ *    instead of looking acceptable in a screenshot.
  * 3. `renders the model-written class inert` - an explicit allowlist with no
  *    attributes must strip a `class=`/`data-` the model wrote, so model text
  *    can never fabricate the narration class or any other surface hook.
@@ -55,7 +56,9 @@ type ChatProbe = {
   setTranscript(texts: readonly string[]): void;
   setPreview(text: string | null): void;
   bubbleHtml(handle: string): string | null;
-  narrationStyle(handle: string): { color: string; expectedColor: string; fontStyle: string } | null;
+  narrationStyle(
+    handle: string,
+  ): { color: string; expectedColor: string; disabledColor: string; fontStyle: string } | null;
   composerValue(): string | null;
   sends(): readonly string[];
   resetSends(): void;
@@ -131,6 +134,10 @@ test("renders a narration beat with the reading treatment", async ({ page }) => 
   // speech beside it - the de-emphasis is rendered, not merely named.
   expect(style?.color).toBe(style?.expectedColor);
   expect(style?.fontStyle).toBe("italic");
+  // A stage direction is a quieter voice, not an unavailable control: the grey a
+  // disabled control's own text is drawn in is on the player's burgundy bubble
+  // under the 4.5:1 floor, so the beat must not resolve to it.
+  expect(style?.color).not.toBe(style?.disabledColor);
   const speech = await page.evaluate(
     () => getComputedStyle(document.querySelector("li[data-handle='h0'] p") as Element).color,
   );
