@@ -151,7 +151,7 @@ const en: CharacterLabels = Object.freeze({
   importBusy: "Importing…",
   importCreated: "Imported {{name}}.",
   importCreatedDetail:
-    "She joins your library; the companion in play is fixed at start-up, so she becomes the one in play only when GameBuddy later starts with her.",
+    "She is archived safely in your local companion library; the companion in play is chosen by the start-up configuration, so she becomes the one in play only when GameBuddy later starts with her.",
   importKept: "Kept {{count}} card fields.",
   importLorebookCount: "Carries {{count}} lorebook entries.",
   importPreserved: "Kept {{count}} fields unchanged.",
@@ -180,7 +180,7 @@ const en: CharacterLabels = Object.freeze({
   companionsEmpty: "No companions yet.",
   companionCurrent: "current",
   companionInPlay:
-    "The companion in play is fixed when GameBuddy starts — a companion imported or created here joins your library, and becomes the one in play only when GameBuddy later starts with her.",
+    "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.",
   newCompanionTitle: "New companion",
   newCompanionHint: "A display name only; GameBuddy mints every identity.",
   newCompanionCreate: "Create companion",
@@ -262,7 +262,7 @@ const zh: CharacterLabels = Object.freeze({
   importBusy: "正在导入…",
   importCreated: "已导入 {{name}}。",
   importCreatedDetail:
-    "她已加入伙伴库；在玩的伙伴在启动时确定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
+    "她已安全归档到本地伙伴库；在玩的伙伴由启动配置选定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
   importKept: "已保留 {{count}} 个卡片字段。",
   importLorebookCount: "包含 {{count}} 条世界书词条。",
   importPreserved: "有 {{count}} 个字段原样保留。",
@@ -290,7 +290,7 @@ const zh: CharacterLabels = Object.freeze({
   companionsEmpty: "还没有伙伴。",
   companionCurrent: "当前",
   companionInPlay:
-    "在玩的伙伴在 GameBuddy 启动时就已确定——你在这里导入或创建的伙伴会加入伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
+    "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
   newCompanionTitle: "新建伙伴",
   newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
   newCompanionCreate: "创建伙伴",
