@@ -35,6 +35,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
+      # Knip reachability runs ahead of format:check and lint, so the formatter that held the
+      # job for eight weeks never masked it: it ran green in every run that reached format:check
+      # and went red only at 76cb49da (2026-10-14), when `lint` stopped being `biome lint ...`
+      # and became a ratchet that spawns the biome binary by path. The one dependency knip could
+      # no longer see that way is named, with its reason, in knip.json rather than ignored wholesale.
       - name: Check Knip reachability
         run: pnpm check:knip
       # Orphan-script and complexity-ratchet gates (Phase 4 of the workspace

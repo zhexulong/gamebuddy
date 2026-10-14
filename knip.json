@@ -15,6 +15,17 @@
       ],
       "project": [
         "tools/**/*.mjs"
+      ],
+      "ignoreDependencies": [
+        // @biomejs/biome is used, but through a path knip cannot follow. knip resolves a
+        // dependency from a package.json script's binary token (`lint: "biome lint ..."`,
+        // `format:check: "biome format ..."`) or from the import graph. Both formatter and
+        // linter now go through tools/scripts/check-{format,lint}-ratchet.mjs, which spawn
+        // node_modules/@biomejs/biome/bin/biome by absolute path; 76cb49da (2026-10-14)
+        // turned the last of those two script tokens into a ratchet call, so the only
+        // signal knip had disappeared while the dependency stayed load-bearing. Dropping
+        // it would break both ratchets; this names the one dependency and why.
+        "@biomejs/biome"
       ]
     },
     "packages/game-action-program": {
