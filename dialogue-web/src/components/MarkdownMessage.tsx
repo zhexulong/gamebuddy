@@ -64,6 +64,39 @@ export function renderCompanionMarkdown(text: string): string {
   return DOMPurify.sanitize(html, SANITIZE_CONFIG);
 }
 
+/** A block that only holds other blocks: the caret descends through it to the
+ * text-bearing block that ends the reply. */
+const BLOCK_CONTAINERS = new Set(["UL", "OL", "LI", "BLOCKQUOTE"]);
+
+/**
+ * Inserts the trusted trailing fragment inside the last block of the sanitised
+ * Markdown, so an inline caret trails the reply's last character. Appending it
+ * as a sibling instead - the failure this replaces - made it a flex row of its
+ * own below the paragraph (the bubble is a column flex container), which reads as
+ * a cursor on a blank line rather than at the end of the text.
+ *
+ * The fragment is a static, trusted constant: it is inserted after sanitisation,
+ * never through it, and never by rewriting raw Markdown. A reply that ends in a
+ * horizontal rule has no text block to descend into, so it keeps the old
+ * below-the-rule placement rather than nesting a caret inside a void element.
+ */
+function withTrailingHtml(html: string, trailingHtml: string): string {
+  if (trailingHtml === "") return html;
+  const host = document.createElement("div");
+  host.innerHTML = html;
+  const blocks = [...host.children];
+  const last = blocks[blocks.length - 1];
+  if (last === undefined || last.tagName === "HR") return `${html}${trailingHtml}`;
+  let target = last;
+  for (;;) {
+    const next = target.lastElementChild;
+    if (next === null || !BLOCK_CONTAINERS.has(target.tagName)) break;
+    target = next;
+  }
+  target.insertAdjacentHTML("beforeend", trailingHtml);
+  return host.innerHTML;
+}
+
 export function MarkdownMessage({
   text,
   className,
@@ -72,16 +105,19 @@ export function MarkdownMessage({
   text: string;
   className?: string;
   /**
-   * A static, trusted fragment appended after the sanitised Markdown - the
-   * streaming caret, and nothing else. It is not model output, and appending it
-   * here rather than rendering it as a React child is what puts it inside the
-   * bubble's own content flow (`children` and `dangerouslySetInnerHTML` cannot
-   * coexist).
+   * A static, trusted fragment inserted inside the sanitised Markdown's last
+   * block - the streaming caret, and nothing else. It is not model output, and
+   * placing it there rather than rendering it as a React child is what makes it
+   * trail the reply's last character (`children` and `dangerouslySetInnerHTML`
+   * cannot coexist, and a sibling would be its own flex row).
    */
   trailingHtml?: string;
 }) {
   // The parse is memoised per text so a streaming preview delta elsewhere in the
   // surface never re-parses (or re-sanitises) a settled message.
-  const html = useMemo(() => renderCompanionMarkdown(text), [text]);
-  return <div className={className} dangerouslySetInnerHTML={{ __html: `${html}${trailingHtml}` }} />;
+  const html = useMemo(
+    () => withTrailingHtml(renderCompanionMarkdown(text), trailingHtml),
+    [text, trailingHtml],
+  );
+  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }

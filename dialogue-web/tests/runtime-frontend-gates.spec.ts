@@ -1014,6 +1014,7 @@ declare global {
       caretGeometry(handle: string): {
         caret: { top: number; right: number; bottom: number; left: number; width: number; height: number };
         bubble: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+        lastBlock: { top: number; right: number; bottom: number; left: number; width: number; height: number } | null;
       } | null;
     };
   }
@@ -1037,10 +1038,10 @@ test("gate 10: the streaming caret is painted inside its bubble", async ({ page 
 
   const box = await page.evaluate(() => window.chatProbe.caretGeometry("T_preview"));
   expect(box, "the streaming preview must carry a caret").not.toBeNull();
-  const { caret, bubble } = box!;
+  const { caret, bubble, lastBlock } = box!;
   record(
     "gate-10",
-    `caret ${caret.left.toFixed(1)},${caret.top.toFixed(1)} ${caret.width}x${caret.height}; bubble ${bubble.left.toFixed(1)},${bubble.top.toFixed(1)} ${bubble.width}x${bubble.height}`,
+    `caret ${caret.left.toFixed(1)},${caret.top.toFixed(1)} ${caret.width}x${caret.height}; bubble ${bubble.left.toFixed(1)},${bubble.top.toFixed(1)} ${bubble.width}x${bubble.height}; last block ${lastBlock === null ? "none" : `${lastBlock.top.toFixed(1)}-${lastBlock.bottom.toFixed(1)}`}`,
   );
 
   const tolerance = 1;
@@ -1052,7 +1053,17 @@ test("gate 10: the streaming caret is painted inside its bubble", async ({ page 
   if (caret.left < bubble.left - tolerance) failures.push(`the caret starts ${(bubble.left - caret.left).toFixed(1)}px left of the bubble`);
   if (caret.right > bubble.right + tolerance)
     failures.push(`the caret ends ${(caret.right - bubble.right).toFixed(1)}px right of the bubble`);
-  expect(failures, "the caret's box sits inside the bubble's box").toEqual([]);
+  // Containment is not enough: a caret laid out as its own flex row inside the
+  // bubble is still "inside" the box while it paints on a line of its own below
+  // the reply. The caret must share the last block's own line box.
+  if (lastBlock === null) {
+    failures.push("the streaming bubble has no block for the caret to trail");
+  } else if (caret.top >= lastBlock.bottom || caret.bottom <= lastBlock.top) {
+    failures.push(
+      `the caret sits on a line of its own: caret ${caret.top.toFixed(1)}-${caret.bottom.toFixed(1)}, last block ${lastBlock.top.toFixed(1)}-${lastBlock.bottom.toFixed(1)}`,
+    );
+  }
+  expect(failures, "the caret's box sits on the bubble's last line").toEqual([]);
 });
 
 /**

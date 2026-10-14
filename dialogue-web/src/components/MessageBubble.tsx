@@ -4,12 +4,12 @@ import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 /**
- * The live-streaming caret, as the companion bubble's own trailing child. The
+ * The live-streaming caret, inserted into the companion bubble's last block. The
  * bubble is Markdown rendered through `dangerouslySetInnerHTML`, so the caret is
- * appended to that sanitised HTML instead of being passed as a React child; and
- * it is appended on every render, not only while streaming, so the preview's and
- * the committed message's bytes stay identical. Only `[data-streaming]` styles
- * it, so an idle bubble carries an inert, zero-size span.
+ * placed into that sanitised HTML rather than passed as a React child; and it is
+ * placed on every render, not only while streaming, so the preview's and the
+ * committed message's bytes stay identical. Only `[data-streaming]` styles it, so
+ * an idle bubble carries an inert, zero-size span.
  */
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
 
@@ -50,9 +50,9 @@ export const MessageBubble = memo(function MessageBubble({
   pending?: "swipe" | "regenerate" | "opening" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
-   * reading caret. The caret is the bubble's own last child on every render -
-   * only `[data-streaming]` styles it - so it never hangs outside the bubble's
-   * box and the preview's and the committed message's bytes stay identical.
+   * reading caret. The caret is inserted into the bubble's last block on every
+   * render - only `[data-streaming]` styles it - so it trails the reply's last
+   * character and the preview's and the committed message's bytes stay identical.
    */
   streaming?: boolean;
   labels: Readonly<{

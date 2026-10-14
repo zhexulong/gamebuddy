@@ -3281,14 +3281,15 @@ body {
 }
 
 /* The live turn's caret: streaming is shown by a moving cursor at the end of the
-   reply, not only by a disabled control. It is the bubble's own last child, so it
-   sits inside the bubble's box and its flow - not a sibling hanging below the
-   bubble's edge. */
+   reply, not only by a disabled control. It is inserted inside the bubble's last
+   block (`MarkdownMessage`), so it trails the last character on that block's own
+   line instead of becoming its own flex row below it. */
 .message[data-streaming] .message-caret {
   display: inline-block;
   width: 2px;
   height: 1em;
-  margin-top: calc(var(--space-1) + 2px);
+  margin-left: 1px;
+  vertical-align: -0.15em;
   background-color: var(--text-secondary);
   animation: message-caret-blink 1s steps(2, start) infinite;
 }

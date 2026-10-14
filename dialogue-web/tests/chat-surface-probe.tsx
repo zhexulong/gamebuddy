@@ -237,14 +237,16 @@ const chatProbe = {
     };
   },
   /**
-   * The live caret's box against the bubble's own box. Where the caret sits in
-   * the markup proves nothing about where it is painted - a sibling of the bubble
-   * can still be laid out inside it - so this reads both rects and lets the spec
-   * assert containment.
+   * The live caret's box against the bubble's own box, and against the last
+   * block element inside the bubble. Where the caret sits in the markup proves
+   * nothing about where it is painted, so this reads the rects and lets the spec
+   * assert both containment *and* that the caret trails the last text block's own
+   * line box instead of sitting on a flex row of its own below it.
    */
   caretGeometry(handle: string): {
     caret: { top: number; right: number; bottom: number; left: number; width: number; height: number };
     bubble: { top: number; right: number; bottom: number; left: number; width: number; height: number };
+    lastBlock: { top: number; right: number; bottom: number; left: number; width: number; height: number } | null;
   } | null {
     const row = document.querySelector(`li[data-handle="${handle}"]`);
     const bubble = row?.querySelector(".message-bubble") ?? null;
@@ -254,7 +256,16 @@ const chatProbe = {
       const { top, right, bottom, left, width, height } = element.getBoundingClientRect();
       return { top, right, bottom, left, width, height };
     };
-    return { caret: box(caret), bubble: box(bubble) };
+    // The block that ends the reply: the bubble's last child that is not the
+    // caret itself. When the caret trails the last character it lives *inside*
+    // that block; the defect leaves it as a sibling flex item after it.
+    const blocks = [...bubble.children].filter((child) => child !== caret);
+    const lastBlock = blocks[blocks.length - 1] ?? null;
+    return {
+      caret: box(caret),
+      bubble: box(bubble),
+      lastBlock: lastBlock === null ? null : box(lastBlock),
+    };
   },
   /** The composer field's live value, so a newline can be told from a send. */
   composerValue(): string | null {
