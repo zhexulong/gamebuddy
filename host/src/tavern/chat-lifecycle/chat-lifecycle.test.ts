@@ -13,10 +13,32 @@ import {
   createInternalChatLifecycleService,
 } from "./chat-lifecycle-service.js";
 
+const continuityKey = "a".repeat(64);
+const openStores: Array<ReturnType<typeof createChatThreadStore>> = [];
+
+/** Opens a store on `root` and remembers it, so this file always closes what it opened. */
+function openStore(root: string, now?: () => number): ReturnType<typeof createChatThreadStore> {
+  const store =
+    now === undefined ? createChatThreadStore(root, continuityKey) : createChatThreadStore(root, continuityKey, now);
+  openStores.push(store);
+  return store;
+}
+
+/**
+ * Closes every store this file opened before its root is removed. An open store
+ * holds the continuity SQLite file (`tavern.sqlite`, its `-wal` and `-shm`)
+ * against deletion, and on Windows `fs.rm` on that root neither fails nor
+ * resolves: the test then hangs forever in its own `finally`.
+ */
+async function removeTestRoot(root: string): Promise<void> {
+  for (const store of openStores.splice(0)) store.close?.();
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+}
+
 async function fixture() {
   const root = await canonicalTestRoot("gamebuddy-chat-lifecycle-");
   let time = 10;
-  const store = createChatThreadStore(root, "a".repeat(64), () => time++);
+  const store = openStore(root, () => time++);
   const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
   const create = async (id: string, title?: string) => {
     await creation.createExplicit({
@@ -38,7 +60,7 @@ async function fixture() {
     store,
     create,
     root,
-    dispose: () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }),
+    dispose: () => removeTestRoot(root),
   };
 }
 const passGuard: ChatLifecycleAtomicGuard = {
@@ -195,8 +217,8 @@ test("separate lifecycle services serialize concurrent archive and produce one C
   const f = await fixture();
   try {
     await f.create("thread_01");
-    const firstStore = createChatThreadStore(f.root, "a".repeat(64));
-    const secondStore = createChatThreadStore(f.root, "a".repeat(64));
+    const firstStore = openStore(f.root);
+    const secondStore = openStore(f.root);
     const requests = {
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "thread_01_surface",
