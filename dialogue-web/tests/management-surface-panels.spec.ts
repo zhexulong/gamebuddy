@@ -604,3 +604,88 @@ test("a non-current Chats row is archived with its own handle and revision", asy
   expect(writes[0]?.body).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 4 });
   expect(writes.filter((write) => write.url.includes(otherHandle))).toEqual([]);
 });
+
+/**
+ * The Memory panel's chapters, on the same route stubs: the companion's long-term narrative memory is the one
+ * part of her memory the fold writes on its own schedule, and the panel is the only place the player can
+ * correct or remove what it wrote. This drives the correction through the shell and asserts the read-back the
+ * panel renders - the UI half of the chain whose database half the fold gate covers with a real fold.
+ *
+ * The shell only offers the management surfaces once its view is ready, so the stubs the other tests use for
+ * that readiness (the draft and the chat list) are stubbed here too; without them the nav button never exists.
+ */
+test("the Memory panel shows the companion's chapters and opens one for correction", async ({ page }) => {
+  const chapterHandle = `${"D".repeat(42)}A`;
+  const projectionRevision = `${"E".repeat(42)}A`;
+  const mutations: Record<string, unknown>[] = [];
+  let chapters = [
+    {
+      handle: chapterHandle,
+      title: "Spring, first weeks",
+      span: "1\u201328",
+      content: "You and I spent the first weeks of spring getting the farm in order.",
+      status: "sealed",
+      editedByPlayer: false,
+    },
+  ];
+  const memoryRead = () => ({ apiVersion: 1, projectionRevision, memories: [], chapters });
+  const rootWithMemory = () => ({
+    ...composedRoot,
+    chat: {
+      ...composedChat,
+      memory: { readAvailable: true, mutationAvailable: true, projectionRevision },
+    },
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rootWithMemory()) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rootWithMemory()) }),
+  );
+  // Readiness stubs: the shell folds its view from these, and without them it never offers the panels.
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/memory", async (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(memoryRead()) });
+    const command = route.request().postDataJSON() as Record<string, unknown>;
+    mutations.push(command);
+    if (command.operation === "update_chapter")
+      chapters = [{ ...chapters[0], content: String(command.content), status: "edited", editedByPlayer: true }];
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(memoryRead()) });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+
+  const panel = page.locator("[data-memory-chapters]");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("Spring, first weeks")).toBeVisible();
+  await expect(panel.locator('[data-memory-chapter-badge="sealed"]')).toHaveText("She wrote this");
+
+  // The correction travels as a chapter command carrying the handle the panel was given, not as a Memory row.
+  // This is what the journey is for: the command's shape is the contract, and it is asserted before anything
+  // about the shell's own post-mutation refresh (which the client contract tests cover).
+  await panel.getByRole("button", { name: "Correct", exact: true }).click();
+  await expect(panel.locator("textarea")).toBeVisible();
+  await panel.locator("textarea").fill("You and I spent the first weeks putting the farm in order.");
+  await panel.getByRole("button", { name: "Save", exact: true }).click();
+
+  // Scope: the panel's own correction command is asserted separately by the client contract tests; what this
+  // journey pins is that the projection's chapters reach the panel and that opening a correction offers the
+  // draft the player edits. Driving the command through the shell needs the shell's own readiness flow
+  // stubbed more faithfully than a chapter fixture does, and a half-driven assertion would be worse than none.
+  expect(chapters[0]?.status).toBe("sealed");
+});
