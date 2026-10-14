@@ -1,0 +1,3 @@
+#!/bin/sh
+# Format what is being committed. Escape hatch: git commit --no-verify.
+exec node "tools/scripts/pre-commit.mjs"
