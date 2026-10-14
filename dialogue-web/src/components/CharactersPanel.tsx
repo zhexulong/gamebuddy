@@ -364,6 +364,13 @@ export function CharactersPanel({
                 ))}
               </ul>
             )}
+            {/* The companion in play is a deployment fact of the run GameBuddy
+                started with, and the Host serves no activation operation, so the
+                surface states the condition rather than offering a control it
+                cannot honour. */}
+            <p className="management-settings-hint" data-companion-in-play>
+              {labels.companionInPlay}
+            </p>
             <p className="management-settings-hint">{labels.newCompanionHint}</p>
             <div className="composer-actions">
               <input
