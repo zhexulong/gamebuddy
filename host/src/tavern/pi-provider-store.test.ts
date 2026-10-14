@@ -6,11 +6,13 @@ import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
-import { environmentProviderEntry, mergeModelProviderEntry, modelProviderEntry } from "./pi-provider-store.js";
 import {
-  connectionDocumentPath,
-  TavernConnectionStore,
-} from "./connection-store.js";
+  declaredContextWindow,
+  environmentProviderEntry,
+  mergeModelProviderEntry,
+  modelProviderEntry,
+} from "./pi-provider-store.js";
+import { connectionDocumentPath, TavernConnectionStore } from "./connection-store.js";
 import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./provider-catalog.js";
 
 /**
@@ -221,14 +223,14 @@ test("the runtime provider entry follows the selected connection and its own end
     // The endpoint and the model id come from the player's record; the
     // credential never reaches `models.json`.
     assert.deepEqual(hatch?.entry, {
-    name: "OpenAI-compatible endpoint",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    api: "openai-completions",
-    // No authHeader: the adapter installs `Authorization: Bearer` from the resolved key
-    // itself, and pi's default for the flag is false.
-    models: [{ id: "qwen2.5-coder:7b", name: "qwen2.5-coder:7b" }],
-  });
-  assert.doesNotMatch(JSON.stringify(hatch?.entry), /sk-synthetic-hatch-key/);
+      name: "OpenAI-compatible endpoint",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      api: "openai-completions",
+      // No authHeader: the adapter installs `Authorization: Bearer` from the resolved key
+      // itself, and pi's default for the flag is false.
+      models: [{ id: "qwen2.5-coder:7b", name: "qwen2.5-coder:7b" }],
+    });
+    assert.doesNotMatch(JSON.stringify(hatch?.entry), /sk-synthetic-hatch-key/);
 
     // An unknown provider is not a provider entry.
     assert.equal(await modelProviderEntry(root, { provider: "invented", modelId: "x", thinkingLevel: "high" }), null);
@@ -250,7 +252,12 @@ test("the emitted provider entry carries the escape hatch's own API shape", asyn
         revision: 2,
         activeConnectionId: null,
         connections: [
-          hatchConnection("A".repeat(43), "https://anthropic-gateway.example.com", "anthropic-messages", "claude-3-5-sonnet"),
+          hatchConnection(
+            "A".repeat(43),
+            "https://anthropic-gateway.example.com",
+            "anthropic-messages",
+            "claude-3-5-sonnet",
+          ),
           hatchConnection(
             "B".repeat(43),
             "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01",
@@ -309,7 +316,10 @@ test("an escape-hatch record with an unspokable API shape yields no provider ent
           revision: 2,
           activeConnectionId: null,
           connections: [
-            { ...hatchConnection("A".repeat(43), "https://gateway.example.com/v1", "openai-responses", "gpt-5.5"), apiShape },
+            {
+              ...hatchConnection("A".repeat(43), "https://gateway.example.com/v1", "openai-responses", "gpt-5.5"),
+              apiShape,
+            },
           ],
         }),
         "utf8",
@@ -363,5 +373,26 @@ test("an unreadable connection document yields no player endpoint", async () => 
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the declared window is the product value unless a fixture asks for a smaller one", () => {
+  // Pressure is a fraction of this window, so shrinking it is what makes a context-pressure measurement
+  // possible in a session-sized conversation - and reusable, rather than a product-scale run.
+  const key = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+  const previous = process.env[key];
+  try {
+    delete process.env[key];
+    assert.equal(declaredContextWindow(), 1_000_000);
+    process.env[key] = "80000";
+    assert.equal(declaredContextWindow(), 80_000);
+    // An unusable value is reported and ignored, never guessed at.
+    process.env[key] = "12";
+    assert.equal(declaredContextWindow(), 1_000_000);
+    process.env[key] = "not-a-number";
+    assert.equal(declaredContextWindow(), 1_000_000);
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
   }
 });

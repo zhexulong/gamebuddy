@@ -47,6 +47,31 @@ export type PiProviderEntry = Readonly<Record<string, unknown>>;
  * still gets a reasoning mapping instead of silently losing one (design/28
  * §2.3.1).
  */
+/**
+ * The context window this runtime declares for its provider entry.
+ *
+ * A fixture-only channel, under the same rules as the runtime's other test levers: opt-in by environment, one
+ * line on stderr when it is used, and an invalid value reported rather than guessed at. It exists because every
+ * context-pressure path - the historian's fold, and the cleanup lanes that protect tool results - is a fraction
+ * of this window, so a session-sized conversation can only reach them when the window is small. That is what
+ * makes a pressure measurement reusable rather than a product-scale run.
+ */
+export const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+
+export function declaredContextWindow(): number {
+  const raw = process.env[FIXTURE_MODEL_WINDOW_ENV];
+  if (raw === undefined || raw.trim() === "") return 1_000_000;
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(value) || value < 4_000) {
+    process.stderr.write(
+      `[provider] ignoring ${FIXTURE_MODEL_WINDOW_ENV}=${JSON.stringify(raw)}: not an integer of at least 4000\n`,
+    );
+    return 1_000_000;
+  }
+  process.stderr.write(`[provider] fixture model window: ${value} tokens\n`);
+  return value;
+}
+
 function environmentReasoningDialect(modelId: string): TavernModelReasoningDialect {
   const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
   return provider === null ? "native" : (catalogModel(provider, modelId)?.reasoningDialect ?? "native");
@@ -73,28 +98,31 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
         reasoning: true,
         // The configured CPA route is used with ordinary native `tools`; Pi
         // does not emit forced OpenAI `tool_choice` for this surface.
-        thinkingLevelMap: reasoningDialect === "deepseek"
-          ? {
-              off: "none",
-              minimal: "low",
-              low: "low",
-              medium: "high",
-              high: "high",
-              xhigh: "high",
-              max: "max",
-            }
-          : {
-              off: "none",
-              minimal: "low",
-              low: "low",
-              medium: "medium",
-              high: "high",
-              xhigh: "xhigh",
-              max: "max",
-            },
+        thinkingLevelMap:
+          reasoningDialect === "deepseek"
+            ? {
+                off: "none",
+                minimal: "low",
+                low: "low",
+                medium: "high",
+                high: "high",
+                xhigh: "high",
+                max: "max",
+              }
+            : {
+                off: "none",
+                minimal: "low",
+                low: "low",
+                medium: "medium",
+                high: "high",
+                xhigh: "xhigh",
+                max: "max",
+              },
         input: ["text"],
-        contextWindow: 1_000_000,
-        maxTokens: 384_000,
+        contextWindow: declaredContextWindow(),
+        // The output cap has to travel with the window, or a shrunk window asks the provider for more output than
+        // it has room for. 0.384 keeps the production window's own ratio, so the default is unchanged.
+        maxTokens: Math.min(384_000, Math.floor(declaredContextWindow() * 0.384)),
         cost: {
           input: 0.14,
           output: 0.28,
@@ -130,7 +158,10 @@ export async function modelProviderEntry(
   config: CompanionModelConfig,
 ): Promise<ModelProviderEntry | null> {
   if (config.provider === TAVERN_ENVIRONMENT_PROVIDER_ID)
-    return Object.freeze({ providerId: TAVERN_ENVIRONMENT_PROVIDER_ID, entry: environmentProviderEntry(config.modelId) });
+    return Object.freeze({
+      providerId: TAVERN_ENVIRONMENT_PROVIDER_ID,
+      entry: environmentProviderEntry(config.modelId),
+    });
   const provider = catalogProvider(config.provider);
   if (provider === null) return null;
   const selection =
