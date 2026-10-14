@@ -82,17 +82,64 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
   assert.deepEqual(chunkTestFiles(paths, 3), [["a.test.js", "b.test.js", "c.test.js"], ["d.test.js", "e.test.js"]]);
 });
 
-test("uses a bounded 25-minute shared deadline when no suite timeout is supplied", async () => {
-  const calls = [];
-  await runTestBatches(["a.test.js"], {
-    suite: "fixture",
-    now: () => 0,
-    run: async (batch, options) => {
-      calls.push({ batch, timeoutMs: options.timeoutMs });
-    },
+  test("uses a bounded 25-minute shared deadline when no suite timeout is supplied", async () => {
+    const calls = [];
+    await runTestBatches(["a.test.js"], {
+      suite: "fixture",
+      now: () => 0,
+      run: async (batch, options) => {
+        calls.push({ batch, timeoutMs: options.timeoutMs });
+      },
+    });
+    // The suite deadline still bounds the run, but a file no longer receives it: a single
+    // file gets its own (smaller) budget, because a file that never resolves must be named
+    // and bounded instead of consuming the suite's remaining minutes in silence.
+    assert.deepEqual(calls, [{ batch: ["a.test.js"], timeoutMs: 180_000 }]);
   });
-  assert.deepEqual(calls, [{ batch: ["a.test.js"], timeoutMs: 25 * 60_000 }]);
-});
+
+  test("names the file whose own budget expired, and keeps the suite deadline as its bound", async () => {
+    const seen = [];
+    await assert.rejects(
+      runTestBatches(["slow.test.js"], {
+        suite: "fixture",
+        timeoutMs: 900_000,
+        perFileMs: 5_000,
+        now: () => 0,
+        run: async (batch, options) => {
+          seen.push({ batch, timeoutMs: options.timeoutMs });
+          throw new Error("child was killed");
+        },
+      }),
+      /test_file_timeout:slow\.test\.js:budget_ms=5000/,
+    );
+    assert.deepEqual(seen, [{ batch: ["slow.test.js"], timeoutMs: 5_000 }]);
+
+    // When the suite deadline is nearer than a file's own budget, the suite keeps owning the
+    // failure - the per-file bound must not mask a suite that ran out of time.
+    const nearDeadline = [];
+    let clockMs = 0;
+    await assert.rejects(
+      runTestBatches(["first.test.js", "second.test.js"], {
+        suite: "fixture",
+        batchSize: 1,
+        timeoutMs: 500,
+        perFileMs: 900_000,
+        now: () => clockMs,
+        run: async (batch, options) => {
+          nearDeadline.push({ batch, timeoutMs: options.timeoutMs });
+          clockMs = 600;
+        },
+      }),
+      /test_suite_timeout:fixture/,
+    );
+    assert.deepEqual(nearDeadline, [{ batch: ["first.test.js"], timeoutMs: 500 }]);
+  });
+
+  test("uses only a positive integer compiled per-file budget override", async () => {
+    await assert.rejects(runCompiledTests({ perFileMs: 0 }), /invalid_test_file_timeout/);
+    await assert.rejects(runCompiledTests({ perFileMs: 1.5 }), /invalid_test_file_timeout/);
+    await assert.rejects(runTestBatches(["a.test.js"], { suite: "fixture", perFileMs: 99 }), /invalid_test_file_timeout/);
+  });
 
 test("uses only a positive decimal compiled batch size override", async () => {
   await assert.rejects(runCompiledTests({ batchSize: 0 }), /invalid_test_batch_size/);

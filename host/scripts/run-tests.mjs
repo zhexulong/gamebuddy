@@ -14,6 +14,13 @@ const DEFAULT_TEST_BATCH_SIZE = 10;
 // leaked handle ever sharing a process. Four stays within a 4-vCPU Windows CI
 // runner and the compiled batch size, so a batch's tail stays short.
 const DEFAULT_TEST_CONCURRENCY = 4;
+/**
+ * Per-file budget. Far above the slowest legitimate file (tens of seconds) and far below
+ * the suite deadline, so a file that never resolves is named and bounded instead of
+ * consuming the run. Raise it with `GAMEBUDDY_HOST_TEST_COMPILED_FILE_TIMEOUT_MS` when a
+ * deliberately long fixture is being run on purpose.
+ */
+const DEFAULT_TEST_FILE_TIMEOUT_MS = 180_000;
 // Windows release CI runs each compiled file in an isolated Node coordinator.
 // The whole suite remains bounded, but 15 minutes cannot accommodate its
 // measured serialized Windows baseline and can shrink a final child below its
@@ -136,7 +143,7 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * child is awaited before this returns, so a batch cannot report success (or a
  * failure) while one of its children is still running.
  */
-async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, run, now, suite }) {
+async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite }) {
   const failures = new Array(batch.length);
   let nextIndex = 0;
   let stopped = false;
@@ -151,10 +158,25 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, run, 
         stopped = true;
         return;
       }
+      // A file gets its own budget, not the suite's remaining deadline. A test that
+      // never resolves is not a slow test - it is a run that never reports anything,
+      // and with only a suite-wide deadline one such file consumes every remaining
+      // minute and the suite disappears without a result. This bound is the difference
+      // between "this file hung" (named, bounded, the suite continues) and silence; it
+      // is deliberately far above the slowest legitimate test (tens of seconds).
+      const budgetMs = Math.min(fileRemainingMs, perFileMs);
       try {
-        await run([path], { timeoutMs: fileRemainingMs, onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`) });
+        await run([path], {
+          timeoutMs: budgetMs,
+          onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`),
+        });
       } catch (error) {
-        failures[index] = { error };
+        failures[index] = {
+          error:
+            budgetMs === perFileMs
+              ? runnerError("test_file_timeout", `${relative(hostRoot, path).replaceAll("\\\\", "/")}:budget_ms=${perFileMs}`)
+              : error,
+        };
         stopped = true;
         return;
       }
@@ -180,18 +202,25 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, run, 
  * Batches stay sequential - that barrier is the isolation property - but the
  * files inside one batch are separate children, so up to `concurrency` Node
  * startups overlap instead of paying the whole serialized cost.
+ *
+ * Each file also gets its own budget (`perFileMs`). The suite deadline still bounds the
+ * whole run; the per-file budget exists because a file that never resolves is a distinct
+ * failure from a slow suite - without it, one hung test file consumes every remaining
+ * minute, the run ends with no result at all, and the file that hung is never named.
  */
 export async function runTestBatches(paths, {
   suite,
   batchSize = DEFAULT_TEST_BATCH_SIZE,
   concurrency = DEFAULT_TEST_CONCURRENCY,
   timeoutMs = DEFAULT_TEST_SUITE_TIMEOUT_MS,
+  perFileMs = DEFAULT_TEST_FILE_TIMEOUT_MS,
   run = runDiscoveredTests,
   now = Date.now,
 } = {}) {
   if (typeof suite !== "string" || suite.length === 0) throw runnerError("invalid_test_suite", String(suite));
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100) throw runnerError("invalid_test_suite_timeout", String(timeoutMs));
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw runnerError("invalid_test_concurrency", String(concurrency));
+  if (!Number.isSafeInteger(perFileMs) || perFileMs < 100) throw runnerError("invalid_test_file_timeout", String(perFileMs));
   const batches = chunkTestFiles(paths, batchSize);
   const deadlineMs = now() + timeoutMs;
   for (const [index, batch] of batches.entries()) {
@@ -199,18 +228,32 @@ export async function runTestBatches(paths, {
     if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, run, now, suite });
+    await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite });
   }
 }
 
 export async function runCompiledTests({
   batchSize = configuredBatchSize(process.env.GAMEBUDDY_HOST_TEST_COMPILED_BATCH_SIZE),
   concurrency = configuredConcurrency(process.env.GAMEBUDDY_HOST_TEST_COMPILED_CONCURRENCY),
+  perFileMs = configuredCount(
+    process.env.GAMEBUDDY_HOST_TEST_COMPILED_FILE_TIMEOUT_MS,
+    DEFAULT_TEST_FILE_TIMEOUT_MS,
+    "invalid_test_file_timeout",
+  ),
 } = {}) {
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw runnerError("invalid_test_batch_size", String(batchSize));
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw runnerError("invalid_test_concurrency", String(concurrency));
+  // Validated here, beside the other two knobs, so a bad value fails before this function
+  // touches the artifact manifest or discovers files - a knob that is off must not cost a build.
+  if (!Number.isSafeInteger(perFileMs) || perFileMs < 100)
+    throw runnerError("invalid_test_file_timeout", String(perFileMs));
   await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
-  return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), { suite: "compiled", batchSize, concurrency });
+  return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), {
+    suite: "compiled",
+    batchSize,
+    concurrency,
+    perFileMs,
+  });
 }
 
 export async function runScriptTests() {
