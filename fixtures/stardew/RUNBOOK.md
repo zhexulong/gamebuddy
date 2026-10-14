@@ -2871,6 +2871,11 @@ node tools/run-stardew-multiplayer-live-loop.mjs \
   --duration-seconds 900
 ```
 
+A step is not one of three canned verbs. `kind: "action"` names **any action the live publication advertises**, with
+its typed args (`harvest_crop`, `chest_store`, `npc_relationship`, `refill_watering_can`, `equip_tool`, ...); `say` and
+`move` are sugar for `send_multiplayer_chat` and `move_to_tile`. The pilot cannot expand the surface: a name the world
+did not advertise is refused **by name** into `plan.jsonl` (`reason: "not_advertised"`) instead of looking like a native
+failure. So "assign freely" and "grant nothing" hold at the same time.
 `--plan` is optional: **an absent plan means observe-only**, which is the default posture. An empty run is a
 legitimate run — it measures the world and the companion without the pilot steering anything.
 
@@ -2923,6 +2928,13 @@ the owner.
 | `proactive_authenticity` | **Unjudged** | named, not approximated |
 | `character_card_conformance` | **Unjudged** | named, not approximated |
 
+**The rubric is itself reviewable.** Every loop's reviewer is expected to challenge it, not only apply it: which
+obligations are missing, which are misclassified, and whether recall is adequate for the behaviour it claims to
+cover. The delegated detectors are high-precision and LOW-RECALL and say so themselves
+(`companion-interaction-gate.mjs:27-32`), so "no KNOWN-class breach" is the strongest thing a green run means. A
+reviewer that finds a real breach the vocabulary missed must widen an obligation (or add one) as part of its
+findings, and the obligation table above is where the change lands -- the same live-run → audit → fix loop the rest
+of the project runs.
 Read the verdict as **two lists** (`broken`, `unmeasured`). A run with no spoken turn reports every obligation
 `unmeasured` and does **not** pass: absence of evidence is never a green. A run that spoke nothing cannot claim the
 companion stayed in character, and the card-conformance obligation is listed so that claim cannot be made at all.
