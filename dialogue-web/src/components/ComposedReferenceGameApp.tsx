@@ -630,6 +630,12 @@ export function ComposedReferenceGameApp() {
    * root and its revision must still reconcile with that root's Chat
    * projection: a revision that moved under a Chat mutation is a real conflict
    * and fails closed.
+   *
+   * The read also applies the settle rule the event stream and the fallback poll
+   * apply: a snapshot whose turn is terminal spends the pending record. This is
+   * the one read Stop performs, and when the stream is down (or silent) it is the
+   * only thing that can hand the composer back - so the rule belongs here, where
+   * every reread caller gets it, not in each handler.
    */
   const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
@@ -640,7 +646,13 @@ export function ComposedReferenceGameApp() {
       throw new ReferencePipelineSessionError("state_reconciliation_required");
     }
     setPreview(null);
-    commit({ ...current, root, session: current.session.applySnapshot(root.chat), draft });
+    const session = current.session.applySnapshot(root.chat);
+    commit({
+      ...current,
+      root,
+      session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
+      draft,
+    });
   };
 
   /**

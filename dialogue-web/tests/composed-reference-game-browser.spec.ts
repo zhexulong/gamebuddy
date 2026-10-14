@@ -4987,6 +4987,167 @@ test("the mounted conversation stops an armed reply, keeps the stop durable acro
 });
 
 /**
+ * Stop's own reread is the composer's only release when the event stream is up
+ * but silent.
+ *
+ * The failure this catches: the terminal-settle rule - an authoritative read that
+ * sees a terminal turn spends the content-free pending record - applied at every
+ * place the turn is read *except* `rereadChat`, which is exactly the read Stop
+ * performs. The event stream is open (a live stream is what keeps the fallback
+ * poll from hopping) but never delivers the terminal frame, so Stop's reread is
+ * the one read that can hand the field back. A `rereadChat` that preserved
+ * `pending` left the composer disabled forever behind a cancelled turn.
+ */
+test("Stop hands the composer back when the stream stays silent and the reread is the only settle", async ({ page }) => {
+  test.setTimeout(90_000);
+  const streamEpoch = `${'E'.repeat(42)}A`;
+  const streamCursor = `${'F'.repeat(42)}A`;
+  const turnHandle = `${'T'.repeat(42)}A`;
+  const playerHandle = `${'P'.repeat(42)}A`;
+  const runningTurn = { handle: turnHandle, state: "running", projectionRevision: 2, canCancel: true };
+  const stoppedTurn = { handle: turnHandle, state: "cancelled", projectionRevision: 3, canCancel: false };
+  const playerMessage = {
+    handle: playerHandle,
+    role: "player",
+    text: "Wait for me here",
+    locale: "und",
+    order: 1,
+    revision: 1,
+  };
+  // `idle` -> the player sends; `running` -> the Host admits the turn; `stopped`
+  // -> the cancel is durable. The stream never delivers the terminal turn, so
+  // only an authoritative read can move the composer out of `running`.
+  let phase: "idle" | "running" | "stopped" = "idle";
+  let sends = 0;
+  let cancels = 0;
+
+  const projection = () => ({
+    ...root,
+    chat: {
+      ...chat,
+      eventStream: { epoch: streamEpoch, cursor: streamCursor },
+      operations: [
+        { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+        ...(phase !== "idle"
+          ? [{ operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" }]
+          : []),
+      ],
+      chat: {
+        ...chat.chat,
+        transcript: phase === "idle" ? chat.chat.transcript : [...chat.chat.transcript, playerMessage],
+        turn: phase === "running" ? runningTurn : phase === "stopped" ? stoppedTurn : null,
+      },
+    },
+  });
+
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      __streams: Array<{ url: string; closed: boolean }>;
+      __streamHandlers: Array<Map<string, Array<(raw: unknown) => void>>>;
+      __emit: (index: number, type: string, data: string, id: string) => void;
+    };
+    state.__streams = [];
+    state.__streamHandlers = [];
+    class SyntheticEventSource {
+      onerror: ((event: unknown) => void) | null = null;
+      __index = -1;
+      constructor(url: string | URL) {
+        this.__index = state.__streams.length;
+        state.__streams.push({ url: String(url), closed: false });
+        state.__streamHandlers.push(new Map());
+      }
+      addEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, [...(entry.get(type) ?? []), handler]);
+      }
+      removeEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, (entry.get(type) ?? []).filter((candidate) => candidate !== handler));
+      }
+      close(): void {
+        state.__streams[this.__index]!.closed = true;
+      }
+    }
+    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+    state.__emit = (index, type, data, id) => {
+      const handlers = state.__streamHandlers[index]?.get(type) ?? [];
+      for (const handler of handlers) handler({ data, lastEventId: id, type });
+    };
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sends += 1;
+    phase = "running";
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, disposition: "accepted", message: playerMessage, turn: runningTurn }),
+    });
+  });
+  await page.route("**/api/tavern/v1/turns/*/cancel", async (route) => {
+    cancels += 1;
+    phase = "stopped";
+    await route.fulfill(jsonOk({ apiVersion: 1, disposition: "cancelled", turn: stoppedTurn }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  const composer = surface.locator(".composer-textarea");
+  const stop = surface.getByRole("button", { name: "Stop", exact: true });
+  // The stream is open before the send: a live, silent stream is what keeps the
+  // fallback poll from hopping, so Stop's reread stays the only settle.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __streams: unknown[] }).__streams.length))
+    .toBe(1);
+
+  await composer.fill("Wait for me here");
+  await surface.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => sends).toBe(1);
+  // The send published the pending record: the field is held until a settle.
+  await expect(composer).toBeDisabled();
+
+  // The Host admits the turn. The frame carries it, and the authoritative read
+  // behind the frame publishes the `chat.cancel` offer.
+  await page.evaluate(
+    (input: { epoch: string; turn: unknown; id: string }) => {
+      (window as unknown as { __emit: (i: number, t: string, d: string, e: string) => void }).__emit(
+        0,
+        "turn.state_changed",
+        JSON.stringify({
+          apiVersion: 1,
+          epoch: input.epoch,
+          sequence: 1,
+          selectionGeneration: 1,
+          eventType: "turn.state_changed",
+          payload: input.turn,
+        }),
+        input.id,
+      );
+    },
+    { epoch: streamEpoch, turn: runningTurn, id: `${'H'.repeat(42)}A` },
+  );
+
+  await expect(stop).toBeEnabled();
+  await expect(composer).toBeDisabled();
+
+  await stop.click();
+  await expect.poll(() => cancels).toBe(1);
+
+  // The cancelled turn is the authoritative fact, and Stop's own reread is what
+  // carries it into the shell: no stream frame ever did. The composer must be
+  // usable again, not left disabled behind a spent pending record.
+  await expect(surface).toContainText("Reply stopped. You can send another message.");
+  await expect(composer).toBeEnabled();
+});
+
+/**
  * The composed conversation's live event stream, at the client contract.
  *
  * The Host publishes the composed Chat projection with a non-null `eventStream`
