@@ -203,9 +203,13 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
       // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
       // bound was the smaller of the two).
       const message = error instanceof Error ? error.message : String(error);
+      // Relabelling must not discard what the killed child had produced: the supervisor's own
+      // message carries its bounded output after the first newline, and without it a budget
+      // expiry is a name and a number with no clue what the file was doing when it was killed.
+      const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
       failures[index] = {
         error: message.startsWith("test_supervisor_timeout:")
-          ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}`)
+          ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
           : error,
       };
       stopped = true;
