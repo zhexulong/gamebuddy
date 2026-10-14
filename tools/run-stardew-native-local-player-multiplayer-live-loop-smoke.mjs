@@ -51,7 +51,20 @@ const MOVE_ACTION = "move_to_tile";
 const CHAT_MIN_INTERVAL_MS = 2_100;
 const DEFAULT_SAMPLE_MS = 2_000;
 
-/** Read the plan, or an empty one: an absent plan means "observe only". */
+/**
+ * Read the plan, or an empty one: an absent plan means "observe only".
+ *
+ * A step is a FREE allocation, not a rehearsal of three canned verbs:
+ *
+ *   * `action` -- any published action id with its typed args (`harvest_crop`, `chest_store`, `npc_relationship`,
+ *     `refill_watering_can`, `equip_tool`, ...). That is the general form, and it is what the Agent's real action
+ *     set means in practice: the pilot names one and the loop dispatches it.
+ *   * `say` / `move` / `observe` -- sugar kept because a plan reads better and because these are the two things a
+ *     watching human notices (`send_multiplayer_chat` through the native pipe, `move_to_tile`).
+ *
+ * The loop grants no capability: a name the live publication did not advertise is refused BY NAME at dispatch
+ * time into `plan.jsonl`, never silently dropped and never disguised as a native failure.
+ */
 export function readLoopPlan(planPath) {
   if (typeof planPath !== "string" || planPath.length === 0)
     return Object.freeze({ durationSeconds: 0, steps: Object.freeze([]) });
@@ -61,12 +74,20 @@ export function readLoopPlan(planPath) {
   const steps = Array.isArray(raw?.steps) ? raw.steps : [];
   for (const step of steps) {
     if (!step || typeof step !== "object") throw new Error("loop_plan_step_invalid");
-    if (!["say", "move", "observe"].includes(step.kind)) throw new Error(`loop_plan_step_kind_invalid:${step.kind}`);
+    if (!["say", "move", "observe", "action"].includes(step.kind)) throw new Error(`loop_plan_step_kind_invalid:${step.kind}`);
     if (typeof step.atSeconds !== "number" || step.atSeconds < 0) throw new Error("loop_plan_step_at_seconds_invalid");
     if (step.kind === "say" && (typeof step.text !== "string" || step.text.trim().length === 0))
       throw new Error("loop_plan_say_text_invalid");
     if (step.kind === "move" && (!Number.isSafeInteger(step.tile?.x) || !Number.isSafeInteger(step.tile?.y)))
       throw new Error("loop_plan_move_tile_invalid");
+    if (step.kind === "action") {
+      // The Mod's own action ids are lower snake_case; validating the shape here makes a typo fail at READ time
+      // instead of becoming an unknown-action round trip in the middle of a live session.
+      if (typeof step.action !== "string" || !/^[a-z][a-z0-9_]{0,63}$/u.test(step.action))
+        throw new Error("loop_plan_action_id_invalid");
+      if (step.args !== undefined && (typeof step.args !== "object" || step.args === null || Array.isArray(step.args)))
+        throw new Error("loop_plan_action_args_invalid");
+    }
   }
   return Object.freeze({
     durationSeconds,
@@ -220,6 +241,33 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
         }
         if (snapshot === null) {
           planLog({ atMs: now() - startedAtMs, kind: step.kind, executed: false, reason: "no_snapshot" });
+          continue;
+        }
+        if (step.kind === "action") {
+          // Any advertised action, with its typed args. The pilot cannot expand the surface: a name the live
+          // publication did not grant is refused BY NAME into plan.jsonl here, so a plan can never ask for
+          // capability the world did not give, and the refusal cannot be mistaken for a native failure.
+          const advertised = Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [];
+          if (!advertised.includes(step.action)) {
+            planLog({
+              atMs: now() - startedAtMs,
+              kind: "action",
+              action: step.action,
+              executed: false,
+              reason: "not_advertised",
+            });
+            continue;
+          }
+          const result = await dispatch(client, receipts, { action: step.action, args: step.args ?? {}, snapshot });
+          dispatched.push(result);
+          planLog({
+            atMs: now() - startedAtMs,
+            kind: "action",
+            action: step.action,
+            executed: true,
+            state: result.state,
+            reason: result.reason,
+          });
           continue;
         }
         if (step.kind === "say") {

@@ -45,6 +45,49 @@ test("plan steps are validated and executed in time order", () => {
   }
 });
 
+test("a free allocation may name ANY advertised action with its typed args", () => {
+  const dir = scratch();
+  try {
+    const path = join(dir, "plan.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        durationSeconds: 600,
+        steps: [
+          { atSeconds: 5, kind: "action", action: "harvest_crop", args: { targetRef: "sr1_AAAAAAAAAAAAAAAA" } },
+          { atSeconds: 20, kind: "action", action: "refill_watering_can", args: {} },
+          { atSeconds: 40, kind: "say", text: "水装满了，我回去继续浇。" },
+        ],
+      }),
+    );
+    const plan = readLoopPlan(path);
+    assert.deepEqual(
+      plan.steps.map((step) => step.kind),
+      ["action", "action", "say"],
+    );
+    assert.equal(plan.steps[0].action, "harvest_crop");
+    assert.deepEqual(plan.steps[0].args, { targetRef: "sr1_AAAAAAAAAAAAAAAA" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an action step is shape-checked at read time, so a typo fails before a live session starts", () => {
+  const dir = scratch();
+  try {
+    const write = (value) => {
+      const path = join(dir, "plan.json");
+      writeFileSync(path, JSON.stringify(value));
+      return path;
+    };
+    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "Harvest Crop" }] })), /loop_plan_action_id_invalid/u);
+    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "" }] })), /loop_plan_action_id_invalid/u);
+    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "harvest_crop", args: [1] }] })), /loop_plan_action_args_invalid/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a malformed plan fails closed instead of silently doing nothing", () => {
   const dir = scratch();
   try {
