@@ -123,10 +123,12 @@ export function ComposedReferenceGameApp() {
    * settled turn leaves no ghost and the pair collapses to the one authoritative message.
    */
   const [optimistic, setOptimistic] = useState<Readonly<{ idempotencyKey: string; text: string }> | null>(null);
-  // The durable revision the editor was last seeded from: what lets a later
-  // authoritative revision replace the editor without ever discarding text the
-  // player has typed past the last seed.
-  const seededDraftRef = useRef<Readonly<{ revision: number; text: string }> | null>(null);
+  // The durable revision the editor was last seeded from, and the chat that seed
+  // belongs to: the revision lets a later authoritative read replace the editor
+  // without discarding text the player typed past the seed, and the chat identity
+  // is what makes a *switch* reseed from the target chat's own draft instead of
+  // keeping the previous chat's text.
+  const seededDraftRef = useRef<Readonly<{ chat: string | null; revision: number; text: string }> | null>(null);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
   const pollActiveRef = useRef(false);
@@ -601,7 +603,11 @@ export function ComposedReferenceGameApp() {
     // Sending clears the field, and the empty field is the new seed: the
     // durable draft that arrives next is a new delegation and prefills again,
     // while the text just sent is not re-offered as a draft.
-    seededDraftRef.current = Object.freeze({ revision: current.draft.revision, text: "" });
+    seededDraftRef.current = Object.freeze({
+      chat: current.session.snapshot.selection?.chatHandle ?? null,
+      revision: current.draft.revision,
+      text: "",
+    });
     setPreview(null);
     try {
       await tavernApiRef.current.submit(
@@ -656,29 +662,39 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The composer's field follows the durable draft: the first authoritative
-   * revision seeds it, and a later revision the player has not typed past
-   * replaces it. An unsaved local value - whether the player is writing the
-   * draft or a different message - is never silently discarded by a background
-   * reread; the mutation that owns it resolves it.
+   * The composer's field follows the mounted conversation's durable draft: its
+   * first authoritative revision seeds the field, and a later revision the player
+   * has not typed past replaces it. An unsaved local value - whether the player is
+   * writing the draft or a different message - is never silently discarded by a
+   * background reread of the *same* chat; the mutation that owns it resolves it.
+   *
+   * A different chat is not that case. The field belongs to the mounted
+   * conversation, so a switch takes the target chat's own durable draft as the
+   * field's truth whatever the previous chat held - a dirty flag from the chat the
+   * player just left must never keep its text standing in the new chat's box.
    */
   useEffect(() => {
     if (view.kind !== "ready") return;
-    const seeded = seededDraftRef.current;
-    if (seeded !== null && seeded.revision === view.draft.revision) return;
+    const chat = view.session.snapshot.selection?.chatHandle ?? null;
     const durable = view.draft.text ?? "";
-    if (seeded !== null && inputTextRef.current !== seeded.text) {
-      seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: inputTextRef.current });
-      return;
+    const seeded = seededDraftRef.current;
+    if (seeded !== null && seeded.chat === chat) {
+      if (seeded.revision === view.draft.revision) return;
+      if (inputTextRef.current !== seeded.text) {
+        seededDraftRef.current = Object.freeze({ chat, revision: view.draft.revision, text: inputTextRef.current });
+        return;
+      }
     }
-    seededDraftRef.current = Object.freeze({ revision: view.draft.revision, text: durable });
+    seededDraftRef.current = Object.freeze({ chat, revision: view.draft.revision, text: durable });
     writeInput(durable);
   }, [view]);
 
   /** Takes a validated durable draft read-back as the composer field's new truth. */
   const seedDraft = (draft: BrowserDraftV1): void => {
+    const current = viewRef.current;
+    const chat = current.kind === "ready" ? current.session.snapshot.selection?.chatHandle ?? null : null;
     const text = draft.text ?? "";
-    seededDraftRef.current = Object.freeze({ revision: draft.revision, text });
+    seededDraftRef.current = Object.freeze({ chat, revision: draft.revision, text });
     writeInput(text);
   };
 

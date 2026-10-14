@@ -4375,6 +4375,123 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
 });
 
 /**
+ * A Chat switch reseeds the composer from the target chat's own durable draft.
+ *
+ * The failure this catches: the field-seeding rule keyed only on the durable
+ * revision and a local dirty flag, both of which are chat-local. Text typed in
+ * one chat (or a revision that happens to match the other chat's) survived the
+ * switch and sat in the new chat's box as a message the player never wrote
+ * there. The field belongs to the mounted conversation, so a switch takes the
+ * target's own draft as its truth - never a dirty flag from the chat just left.
+ */
+test("switching chats reseeds the composer from the target chat's own durable draft", async ({ page }) => {
+  const secondHandle = `${'C'.repeat(42)}A`;
+  const secondDraft = { apiVersion: 1, revision: 7, text: "The second chat's own draft." };
+  let mountedHandle = handle;
+  let selectRequests = 0;
+  let sentText = "";
+
+  const firstChat = {
+    ...chat,
+    operations: [
+      { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+    ],
+  };
+  const secondChat = {
+    ...firstChat,
+    selection: { chatHandle: secondHandle, generation: 2, stateRevision: secondHandle },
+    chat: {
+      ...firstChat.chat,
+      title: "Second conversation",
+      transcript: [
+        {
+          handle: `${'E'.repeat(42)}A`,
+          role: "companion",
+          text: "This is the second conversation.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+      ],
+      draft: { revision: secondDraft.revision, present: true },
+    },
+  };
+  const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? firstChat : secondChat });
+  const mountedDraft = () => (mountedHandle === handle ? draft : secondDraft);
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(mountedDraft())));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [
+          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+          {
+            handle: secondHandle,
+            title: "Second conversation",
+            status: "active",
+            managementRevision: 1,
+            isSelected: mountedHandle === secondHandle,
+          },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/select", async (route) => {
+    selectRequests += 1;
+    const body = route.request().postDataJSON() as { chatHandle: string };
+    mountedHandle = body.chatHandle;
+    await route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sentText = (route.request().postDataJSON() as { text: string }).text;
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: { handle: `${'P'.repeat(42)}A`, role: "player", text: sentText, locale: "und", order: 1, revision: 1 },
+        turn: { handle: `${'T'.repeat(42)}A`, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  const composer = surface.locator(".composer-textarea");
+  // The first chat seeds its own durable draft.
+  await expect(composer).toHaveValue("A durable delegated draft.");
+
+  // The player types something the Host has not been told about.
+  await composer.fill("Unsaved line typed in the first chat");
+
+  // Switch to the second conversation.
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chats = page.getByTestId("chats-surface");
+  await expect(chats.getByTestId("chat-item")).toHaveCount(2);
+  await chats.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(1);
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
+
+  // The box shows the target chat's own draft, not the text typed in the chat
+  // the player just left.
+  await expect(composer).toHaveValue("The second chat's own draft.");
+  await expect(composer).not.toHaveValue("Unsaved line typed in the first chat");
+
+  // And what is sent is that draft, not the leaked text.
+  await surface.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => sentText).toBe("The second chat's own draft.");
+});
+
+/**
  * The unified action rule (ADR-0010), Class A: selecting another Chat is a focus transfer, and a
  * focus transfer is never withheld. While a turn is generating the rows stay ENABLED, the click
  * reaches the selection route, the Host aborts the running turn through the same cancel path an
