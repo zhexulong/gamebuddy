@@ -21,7 +21,15 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
   assert.doesNotMatch(launcher, /Copy-Item.*model-profiles|Write-PrivateJson.*model-profiles/);
   assert.doesNotMatch(launcher, /\$PipeName|\$BridgeToken|\$ManifestPath|\$SessionToken/);
   assert.match(launcher, /windows_only/);
-  assert.match(launcher, /\[ValidateSet\("zh-CN", "en-US"\)\] \[string\]\$PresentationLocale = "zh-CN"/);
+  // The launcher validates its presentation locale as BCP-47 and defaults to zh-CN. A two-value ValidateSet
+  // cannot express the locales the game accepts, so that set was replaced by this pattern; the PIN follows the
+  // declaration that actually exists and keeps its intent: the parameter is present, constrained, and defaulted.
+  assert.ok(
+    launcher.includes(
+      `[ValidatePattern('^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,16}){0,3}$')] [string]$PresentationLocale = "zh-CN"`,
+    ),
+    "the launcher must declare its presentation locale with the BCP-47 pattern and the zh-CN default",
+  );
   assert.match(launcher, /Assert-PresentationStartupPreference/);
   assert.match(launcher, /live_locale_required/);
   assert.match(
