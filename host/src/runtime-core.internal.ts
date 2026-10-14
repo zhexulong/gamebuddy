@@ -60,7 +60,7 @@ import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/co
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
-import { GAMEBUDDY_PROTECTED_TOOLS } from "./magic-context-protected-tools.js";
+import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 
 import {
   identityKey,
@@ -101,6 +101,8 @@ export const MAGIC_CONTEXT_MEMORY_DOMAIN = "ongoing-interaction" as const;
 type InternalHistorianTestChannel = {
   executeThresholdTokens?: number;
   protectedTokens?: number;
+  /** `off` from the fixture environment: write the protection table with every entry zeroed. */
+  protectGameTools?: boolean;
 };
 
 function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
@@ -119,15 +121,27 @@ function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
   };
   const executeThresholdTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS");
   const protectedTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS");
-  if (executeThresholdTokens !== undefined || protectedTokens !== undefined)
+  // The paired live measurement needs a control arm, and no product surface switches the policy off. Only the
+  // exact word `off` is honoured; anything else is reported rather than guessed at.
+  const protectToolsRaw = process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOOLS;
+  let protectGameTools: boolean | undefined;
+  if (protectToolsRaw !== undefined && protectToolsRaw.trim() !== "") {
+    if (protectToolsRaw.trim() === "off") protectGameTools = false;
+    else
+      process.stderr.write(
+        `[historian] ignoring GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOOLS=${JSON.stringify(protectToolsRaw)}: only "off" is recognised\n`,
+      );
+  }
+  if (executeThresholdTokens !== undefined || protectedTokens !== undefined || protectGameTools !== undefined)
     process.stderr.write(
-      `[historian] fixture fold channel: execute_threshold_tokens=${executeThresholdTokens ?? "(default)"} protected_tokens=${protectedTokens ?? "(default)"}\n`,
+      `[historian] fixture fold channel: execute_threshold_tokens=${executeThresholdTokens ?? "(default)"} protected_tokens=${protectedTokens ?? "(default)"} protected_tools=${protectGameTools === false ? "off" : "(default)"}\n`,
     );
   // Spread conditionally: this project compiles with `exactOptionalPropertyTypes`, so an explicit
   // `undefined` is not the same as an absent key.
   return {
     ...(executeThresholdTokens === undefined ? {} : { executeThresholdTokens }),
     ...(protectedTokens === undefined ? {} : { protectedTokens }),
+    ...(protectGameTools === undefined ? {} : { protectGameTools }),
   };
 }
 
@@ -783,6 +797,8 @@ export async function createRuntimeWithFixedToolsCore(
   const magicContextHistorianEnabled =
     internalMagicContextFeatureTestOverride?.historianEnabled ??
     MAGIC_CONTEXT_HISTORIAN_ENABLED;
+  // Read once: the channel writes a diagnostic line when it is used, so calling it per key would repeat it.
+  const protectedToolsChannel = readInternalHistorianTestChannel();
   if (loadMagicContextExtension)
     await writeFile(
       join(paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
@@ -878,9 +894,9 @@ export async function createRuntimeWithFixedToolsCore(
           smart_drops: false,
           // Upstream's smart drops cannot be turned off, so this Host states which tool results they
           // must leave alone (see magic-context-protected-tools.ts for the policy and its test for the
-          // registry check). The key is rejected by the current fork's `.strict()` schema and takes
-          // effect with the v0.48.0 merge this change ships with.
-          protected_tools: GAMEBUDDY_PROTECTED_TOOLS,
+          // registry check). A fixture-only environment channel can zero the table for the control arm of
+          // the paired live measurement that policy owes - see protectedToolsForRun.
+          protected_tools: protectedToolsForRun(protectedToolsChannel.protectGameTools === false),
           temporal_awareness: false,
         },
         null,

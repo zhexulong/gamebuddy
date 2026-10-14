@@ -31,3 +31,17 @@ export const GAMEBUDDY_PROTECTED_TOOLS: Readonly<Record<string, number>> = Objec
   todowrite: 0,
   ctx_reduce: 0,
 });
+
+/**
+ * The table as one run should use it.
+ *
+ * `disabled` exists for the paired live measurement the owner ruling owes: the effect of this policy can only be
+ * seen by comparing a session that reaches reclaim pressure with the policy against one without it, and there is
+ * no product-level way to switch it off - the Host always writes the key. Zeroing every entry protects nothing
+ * while keeping the key's shape, so the control arm differs in exactly one thing. It is a fixture channel, opt-in
+ * by environment, and it says on stderr when it is used.
+ */
+export function protectedToolsForRun(disabled: boolean): Readonly<Record<string, number>> {
+  if (!disabled) return GAMEBUDDY_PROTECTED_TOOLS;
+  return Object.freeze(Object.fromEntries(Object.keys(GAMEBUDDY_PROTECTED_TOOLS).map((name) => [name, 0])));
+}

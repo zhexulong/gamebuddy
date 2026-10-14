@@ -6,7 +6,7 @@ import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import { createStardewKnowledgeTools } from "./knowledge.js";
-import { GAMEBUDDY_PROTECTED_TOOLS } from "./magic-context-protected-tools.js";
+import { GAMEBUDDY_PROTECTED_TOOLS, protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { createCompanionStatusTool } from "./runtime-core.internal.js";
 import { createWorldBookTools, validateWorldBook, worldBookMetadata } from "./worldbook.js";
 
@@ -140,6 +140,23 @@ test("the runtime writes the policy into the config Magic Context reads", () => 
   // reclaim that honours it, so this pins the one seam between them - if a future edit stops passing the table
   // to the config writer, nothing else would notice.
   const source = readFileSync(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8");
-  assert.match(source, /protected_tools: GAMEBUDDY_PROTECTED_TOOLS,/u);
+  assert.match(source, /protected_tools: protectedToolsForRun\(/u);
   assert.match(source, /from "\.\/magic-context-protected-tools\.js"/u);
+});
+
+test("the control arm protects nothing while keeping the key's shape", () => {
+  // The paired live measurement the policy owes compares a pressure session with the policy against one
+  // without it, and no product surface switches it off - the Host always writes the key. Zeroing every entry
+  // protects nothing while keeping the key present, so the control arm differs in exactly one thing.
+  const control = protectedToolsForRun(true);
+  assert.deepEqual(
+    Object.keys(control).sort(),
+    Object.keys(GAMEBUDDY_PROTECTED_TOOLS).sort(),
+    "the control arm must name the same tools",
+  );
+  assert.ok(
+    Object.values(control).every((count) => count === 0),
+    "the control arm must protect nothing",
+  );
+  assert.equal(protectedToolsForRun(false), GAMEBUDDY_PROTECTED_TOOLS);
 });
