@@ -404,6 +404,10 @@ async function main(argv) {
     if (run.timedOut === true) outcome = { state: "blocked", reasonCode: "multiplayer_gate_topology_timeout" };
     else outcome = classifyMultiplayerGateOutcome({ exitCode: run.exitCode, result: driverResult });
     outcome = { ...outcome, driverExitCode: run.exitCode, driverResult, driverStderrPresent: run.stderr.length > 0 };
+    // When the DRIVER itself dies without emitting its record, its stderr is the only thing that says why - and a bare
+    // `driverStderrPresent: true` (which is what this used to report) sends the operator to read the driver's source.
+    // Bounded to the tail, because a driver error is a Windows/PowerShell diagnostic and the useful part is the end.
+    if (run.stderr.length > 0) outcome = { ...outcome, driverStderrTail: run.stderr.slice(-1500) };
   } finally {
     if (!request.keepRunRoot) await rm(runRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -419,7 +423,8 @@ async function main(argv) {
     hostScopePresent: armed?.hostScope ?? null,
     driverExitCode: outcome.driverExitCode ?? null,
     driverResult: outcome.driverResult ?? null,
-    driverStderrPresent: outcome.driverStderrPresent ?? null,
+      driverStderrPresent: outcome.driverStderrPresent ?? null,
+    driverStderrTail: outcome.driverStderrTail ?? null,
   };
 }
 

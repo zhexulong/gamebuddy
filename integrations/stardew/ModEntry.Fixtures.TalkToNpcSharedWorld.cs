@@ -29,36 +29,67 @@ public sealed partial class ModEntry
     /// </summary>
     private const string SharedWorldTalkToNpcFixtureVillager = "Gus";
 
+    /// <summary>
+    /// The hour the shared-world Given is armed at: 13:00.
+    ///
+    /// WHY THE CLOCK IS PART OF THE GIVEN
+    /// ----------------------------------
+    /// The Saloon is not open around the clock. Its entrance is a <c>LockedDoorWarp</c>
+    /// whose own gate is the one <c>EnterExitDoorGateTests</c> pins on the game assembly
+    /// (<c>Game1.timeOfDay &gt;= openTime &amp;&amp; Game1.timeOfDay &lt; closeTime</c>), and the
+    /// navigation graph keeps an edge only toward a location the game itself currently
+    /// calls accessible: <c>game1navigationworldsource.cs:135</c> filters every warp leg by
+    /// <c>IsLocationAccessible</c>, which is <c>Game1.isLocationAccessible</c> wrapped
+    /// fail-closed (<c>:266-276</c>) — the same authority the outcome decider reads at
+    /// <c>navigationoutcomedecider.cs:137</c>. So a destination the game reports as not
+    /// accessible has NO incoming edge at all, and the route search answers
+    /// <c>Terminal("destination_unreachable")</c> (<c>navigationrouteplanner.cs:207</c>),
+    /// which surfaces as <c>blocked / destination_unreachable</c>
+    /// (<c>acceptednavigationexecution.cs:158-160</c>).
+    ///
+    /// That is exactly what the first live shared-world attempt measured: the actor walked
+    /// itself out of its Cabin to the Farm, and from there the product determined the Saloon
+    /// unreachable — a save template loads at 06:00, hours before the Saloon opens, so the
+    /// Given was armed at a time the declared destination is shut. 13:00 is inside the
+    /// Saloon's trading window, so the same clock satisfies both halves of this fixture: the
+    /// destination's door is open, and the hour is one at which its keeper is on duty (the
+    /// placement is pinned anyway — see the villager block below).
+    ///
+    /// This is the same lever, for the same reason, as the shop-purchase fixture
+    /// (<c>ModEntry.Fixtures.ShopPurchase.cs:41-46</c>): the fixture moves the clock rather
+    /// than guessing what the content's hour gate says, and asserts the effect through the
+    /// game's own value instead of trusting the write.
+    /// </summary>
+    private const int SharedWorldTalkToNpcFixtureTimeOfDay = 1300;
+
     /// <summary>Once-only latch for the post-join Given verification.</summary>
     private bool sharedWorldTalkToNpcJoinVerified;
 
     /// <summary>
-    /// <c>native_farmhand_talk_to_npc_v1</c> pre-attachment Given, on the HOST side
-    /// of the formal LAN topology: the BOUND FARMHAND stands one Chebyshev step from
-    /// a named ordinary villager that has a dialogue for the actor's OWN location
-    /// and a friendship record.
+    /// <c>native_farmhand_talk_to_npc_v1</c> HOST-side Given of the formal LAN
+    /// topology: one named ordinary villager stands in the Saloon on a tile whose
+    /// Chebyshev-1 neighbour is a tile the actor can stand on, and that villager has a
+    /// dialogue for the SALOON key, which is the only key the native talk branch can
+    /// reach (it builds its keys from <c>Game1.currentLocation.name.Value</c>).
     ///
-    /// WHY THE ACTOR IS MOVED AT ALL
-    /// -----------------------------
-    /// The attached Farmhand lands on the Farm (<c>ResolveHostAutomationFarmArrival</c>,
-    /// which the passing shared-world <c>native_pet_animal_v1</c> fixture also treats
-    /// as "the arrival the attached Farmhand lands on"), and no shipped villager
-    /// dialogue table has a Farm-reachable key. The native-local lane solves the same
-    /// problem by warping its actor to the Saloon; a shared-world actor cannot be
-    /// warped the same way — every <c>warpFarmer</c> in this partial class targets
-    /// <c>Game1.player</c> (the local Host player), and this fixture arms BEFORE the
-    /// LAN server exists, so there is no connected Farmhand to warp at that point.
+    /// WHAT THE HOST OWNS, AND WHAT IT DOES NOT
+    /// ---------------------------------------
+    /// The Host owns the VILLAGER's placement, and nothing about the actor's location.
+    /// The bound actor's location is the AI client's own Given: in that process the
+    /// Farmhand IS the local player, so its own <c>warpFarmer</c> is what moves it — the
+    /// same call the native-local lane uses — and a host can neither move nor observe a
+    /// remote farmer's location.
     ///
-    /// So the actor is placed through the SAME pre-attachment mutation of the OFFLINE
-    /// bound Farmhand that the other HostAutomation fixtures already perform on that
-    /// exact object (<c>addItemToInventory</c>, <c>Items[slot] = null</c>,
-    /// <c>increaseBackpackSize</c>): its saved location and tile are written, and
-    /// <c>lastSleepLocation</c> is set to the new location so the join path's own
-    /// <c>NetWorldState.ResetFarmhandState</c> guard (NetWorldState.cs:756-767, which
-    /// resets a Farmhand to its Cabin bed only when <c>lastSleepLocation</c> is null
-    /// or its home) does not undo it. That premise is UNVERIFIED offline, so
-    /// <see cref="VerifySharedWorldTalkToNpcJoin"/> re-reads the joined actor on the
-    /// first tick it is online and fails BY NAME if the premise did not hold.
+    /// Writing the OFFLINE actor's saved location from here was tried and did NOT move
+    /// the joined Farmhand: the join's own <c>NetWorldState.ResetFarmhandState</c>
+    /// returns it to its Cabin bed, and the live run's first client snapshot reported
+    /// the cabin interior while the Saloon is the only location whose villager dialogue
+    /// tables carry a plain location key. That write is gone rather than kept as a
+    /// second writer of a fact this process cannot establish.
+    ///
+    /// <see cref="VerifySharedWorldTalkToNpcJoin"/> therefore re-reads only the
+    /// villager, on the first tick the bound Farmhand is online, and fails BY NAME if
+    /// the placement did not survive the join.
     ///
     /// This fixture emits no receipt and invokes no action: production alone calls
     /// <c>NPC.checkAction</c> and emits <c>talk_to_npc_talked</c>.
@@ -66,6 +97,21 @@ public sealed partial class ModEntry
     private void InstallSharedWorldTalkToNpcFixture(Farm farm)
     {
         Farmer farmhand = this.ResolveHostAutomationFarmhand(farm);
+
+        // Trading hours, first, so every check below is evaluated at the hour the Given
+        // claims: the clock is the Host's (this process is the LAN master), and a joining
+        // client inherits it through the join, which is the process whose navigation reads it.
+        // The write is not trusted on its own — the game's own <c>Game1.timeOfDay</c> is read
+        // back, and so is the game's own accessibility verdict for the destination, which is
+        // the very predicate the navigation graph filters its edges with.
+        Game1.timeOfDay = SharedWorldTalkToNpcFixtureTimeOfDay;
+        if (Game1.timeOfDay != SharedWorldTalkToNpcFixtureTimeOfDay)
+            throw new InvalidOperationException(
+                $"fixture_shared_world_talk_to_npc_clock_not_set:time_of_day={Game1.timeOfDay};expected={SharedWorldTalkToNpcFixtureTimeOfDay}");
+        if (!Game1.isLocationAccessible(SharedWorldTalkToNpcFixtureLocation))
+            throw new InvalidOperationException(
+                $"fixture_shared_world_talk_to_npc_location_not_accessible:location={SharedWorldTalkToNpcFixtureLocation};time_of_day={Game1.timeOfDay}");
+
         if (Game1.getLocationFromName(SharedWorldTalkToNpcFixtureLocation) is not GameLocation saloon)
             throw new InvalidOperationException(
                 $"fixture_shared_world_talk_to_npc_location_missing:{SharedWorldTalkToNpcFixtureLocation}");
@@ -90,8 +136,9 @@ public sealed partial class ModEntry
                 $"fixture_shared_world_talk_to_npc_hands_not_empty:item={farmhand.ActiveObject?.QualifiedItemId ?? farmhand.CurrentItem?.QualifiedItemId ?? "unknown"}");
 
         // The same declared pair the local lane uses: the scan applies the product's
-        // own walkability predicate to both tiles, so the returned pair is walkable
-        // by construction, and the chosen pair is asserted before any mutation.
+        // own walkability predicate to both tiles, so the returned pair is walkable by
+        // construction, and the chosen pair is asserted before the villager is placed.
+        // `standingTile` is the tile the AI client's own warp must land on.
         if (!TryFindNativeLocalTalkToNpcTiles(saloon, farmhand, out Vector2 standingTile, out Vector2 villagerTile))
             throw new InvalidOperationException(
                 $"fixture_shared_world_talk_to_npc_tiles_missing:location={saloon.NameOrUniqueName};villager={villager.Name}");
@@ -99,14 +146,9 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_shared_world_talk_to_npc_tiles_not_adjacent:standing={(int)standingTile.X},{(int)standingTile.Y};villager={(int)villagerTile.X},{(int)villagerTile.Y}");
 
-        // The Route-A lever: the offline actor's saved location, tile and
-        // last-sleep marker, asserted on this process's own copy immediately.
-        farmhand.currentLocation = saloon;
-        farmhand.Position = new Vector2(standingTile.X * 64f, standingTile.Y * 64f);
-        farmhand.lastSleepLocation.Value = saloon.NameOrUniqueName;
-        if (!ReferenceEquals(farmhand.currentLocation, saloon) || farmhand.Tile != standingTile)
-            throw new InvalidOperationException(
-                $"fixture_shared_world_talk_to_npc_actor_placement_failed:location={farmhand.currentLocation?.NameOrUniqueName ?? "none"};tile={(int)farmhand.Tile.X},{(int)farmhand.Tile.Y};expected={(int)standingTile.X},{(int)standingTile.Y}");
+        // No actor mutation: the AI client warps its own Farmhand onto `standingTile`
+        // and the runner reads back where it landed. The pair named below is the
+        // contract between the two processes, not something this one can establish.
 
         // The villager is placed AFTER the walkability test (a standing villager
         // counts as a collision), exactly as the local fixture does.
@@ -114,7 +156,9 @@ public sealed partial class ModEntry
         if (!saloon.characters.Contains(villager))
             saloon.characters.Add(villager);
         // Pin the placed tile for the run: a scheduled villager would otherwise
-        // walk away within the first in-game minutes.
+        // walk away within the first in-game minutes. This is also what keeps the placement
+        // consistent with the hour set above rather than at the mercy of it: a pinned villager
+        // ignores the schedule, so 13:00 cannot move him off the armed tile.
         villager.followSchedule = false;
         villager.ignoreScheduleToday = true;
         if (!saloon.characters.Contains(villager)
@@ -140,8 +184,9 @@ public sealed partial class ModEntry
 
         // The runner never picks the villager: it takes the first PUBLISHED target
         // inside Chebyshev-1 of the actor (the same discovery predicate the Mod
-        // publishes with), so another recorded villager in reach would silently
-        // replace the person this fixture armed.
+        // publishes with), so another recorded villager in reach of the standing tile
+        // the client's actor lands on would silently replace the person this fixture
+        // armed.
         NPC? other = saloon.characters.FirstOrDefault(candidate => !ReferenceEquals(candidate, villager)
             && candidate.IsVillager
             && !string.IsNullOrWhiteSpace(candidate.Name)
@@ -162,22 +207,30 @@ public sealed partial class ModEntry
         this.hostAutomationFixtureInitialized = true;
         this.Monitor.Log(
             "GameBuddy HostAutomation initialized native shared-world talk-to-npc Given before attachment: "
-                + $"actor={farmhand.UniqueMultiplayerID};actor_saved_location={saloon.NameOrUniqueName};"
+                + $"actor={farmhand.UniqueMultiplayerID};villager_location={saloon.NameOrUniqueName};"
                 + $"standing_tile={(int)standingTile.X},{(int)standingTile.Y};villager={villager.Name};"
                 + $"villager_tile={(int)villagerTile.X},{(int)villagerTile.Y};hands_empty=true;friendship_points=0;"
                 + $"talked_to_today=false;dialogue_key={saloon.Name};villager_schedule_pinned=true;"
-                + "the Host self-verifies the joined actor's location and fails by name otherwise;"
+                + $"time_of_day={Game1.timeOfDay};destination_accessible=true;"
+                + "the clock is set so the destination's own hour gate is open and the AI client inherits it through the join;"
+                + "the AI client warps its own Farmhand onto the standing tile and observes it there;"
+                + "the Host verifies only this process's villager placement;"
                 + "production alone calls NPC.checkAction and emits the receipt.",
             LogLevel.Info);
     }
 
     /// <summary>
-    /// <c>native_farmhand_talk_to_npc_v1</c> post-join Given verification: on the
-    /// first tick the bound Farmhand is online, re-read the actor the Host actually
-    /// has and prove the pre-attachment placement survived the join. The premise
-    /// (writing the offline actor's saved location instead of warping a connected
-    /// one) is unverified outside a live run, so it is checked here and reported by
-    /// name rather than left to surface as a native refusal in a later run.
+    /// <c>native_farmhand_talk_to_npc_v1</c> post-join Given verification for the one
+    /// fact this process owns: on the first tick the bound Farmhand is online, re-read
+    /// the Host's own world copy and prove the villager is still placed in the Saloon
+    /// with its schedule pinned.
+    ///
+    /// The bound Farmhand is read ONLY as the signal that the client has arrived; its
+    /// location is deliberately not read or judged here. A host cannot observe a remote
+    /// farmer's location, and in this topology that location is established and read on
+    /// the client (see the class notes above), so a host-side claim about it could only
+    /// be wrong in one direction: reporting a Given failure the Host has no standing to
+    /// see.
     ///
     /// The check is the fixture's own declared Given, not a success claim: the
     /// product's location-scoped target identity and the dialogue itself are what
@@ -192,38 +245,37 @@ public sealed partial class ModEntry
             || !Game1.IsMasterGame
             || !long.TryParse(this.config.PlayerId, out long farmhandId))
             return;
-        Farmer? joined = Game1.GetPlayer(farmhandId, onlyOnline: true);
-        if (joined?.currentLocation is null)
+        if (Game1.GetPlayer(farmhandId, onlyOnline: true) is null)
             return;
         this.sharedWorldTalkToNpcJoinVerified = true;
 
         GameLocation? saloon = Game1.getLocationFromName(SharedWorldTalkToNpcFixtureLocation);
-        bool atFixtureLocation = saloon is not null && ReferenceEquals(joined.currentLocation, saloon);
-        NPC? villager = joined.currentLocation.characters
-            .OfType<NPC>()
-            .FirstOrDefault(candidate => candidate.IsVillager
-                && string.Equals(candidate.Name, SharedWorldTalkToNpcFixtureVillager, StringComparison.Ordinal));
-        bool villagerInReach = atFixtureLocation
-            && villager is not null
-            && ChebyshevTileDistance(joined.Tile, villager.Tile) <= 1f;
-        if (atFixtureLocation && villagerInReach)
+        NPC? villager = saloon is null
+            ? null
+            : saloon.characters
+                .OfType<NPC>()
+                .FirstOrDefault(candidate => candidate.IsVillager
+                    && string.Equals(candidate.Name, SharedWorldTalkToNpcFixtureVillager, StringComparison.Ordinal));
+        bool placementHeld = villager is not null && !villager.followSchedule && villager.ignoreScheduleToday;
+        if (placementHeld)
         {
             this.Monitor.Log(
-                "GameBuddy shared-world talk-to-npc Given survived the join: "
-                    + $"actor={farmhandId};actor_location={joined.currentLocation.NameOrUniqueName};"
-                    + $"actor_tile={(int)joined.Tile.X},{(int)joined.Tile.Y};villager={villager!.Name};"
-                    + $"villager_tile={(int)villager.Tile.X},{(int)villager.Tile.Y};production alone performs the talk.",
+                "GameBuddy shared-world talk-to-npc villager Given survived the join: "
+                    + $"actor_online={farmhandId};villager={villager!.Name};"
+                    + $"villager_location={saloon!.NameOrUniqueName};villager_tile={(int)villager.Tile.X},{(int)villager.Tile.Y};"
+                    + "villager_schedule_pinned=true;the bound actor's own location is the AI client's Given and is read there;"
+                    + "production alone performs the talk.",
                 LogLevel.Info);
             return;
         }
         this.Monitor.Log(
-            "GameBuddy shared-world talk-to-npc Given NOT established after join: "
-                + "reason=fixture_shared_world_talk_to_npc_join_location_lost;"
-                + $"actor={farmhandId};actor_location={joined.currentLocation.NameOrUniqueName};"
-                + $"actor_tile={(int)joined.Tile.X},{(int)joined.Tile.Y};"
+            "GameBuddy shared-world talk-to-npc villager Given NOT established after join: "
+                + "reason=fixture_shared_world_talk_to_npc_villager_placement_lost;"
+                + $"actor_online={farmhandId};"
                 + $"fixture_location={saloon?.NameOrUniqueName ?? "none"};"
-                + $"villager_present={((villager is null) ? "false" : "true")};villager_in_reach={villagerInReach.ToString().ToLowerInvariant()};"
-                + "the run cannot select the native talk branch from here, so a refusal downstream is this Given's failure and not a product defect.",
+                + $"villager_present={((villager is null) ? "false" : "true")};"
+                + $"villager_schedule_pinned={((villager is null) ? "false" : (!villager.followSchedule && villager.ignoreScheduleToday).ToString().ToLowerInvariant())};"
+                + "a talk in the Saloon cannot select the native branch without this villager, so a refusal downstream is this Given's failure and not a product defect.",
             LogLevel.Error);
     }
 }
