@@ -53,9 +53,11 @@ const DEFAULT_SAMPLE_MS = 2_000;
 
 /** Read the plan, or an empty one: an absent plan means "observe only". */
 export function readLoopPlan(planPath) {
-  if (typeof planPath !== "string" || planPath.length === 0) return Object.freeze({ durationSeconds: 0, steps: Object.freeze([]) });
+  if (typeof planPath !== "string" || planPath.length === 0)
+    return Object.freeze({ durationSeconds: 0, steps: Object.freeze([]) });
   const raw = JSON.parse(readFileSync(planPath, "utf8").replace(/^\uFEFF/u, ""));
-  const durationSeconds = Number.isSafeInteger(raw?.durationSeconds) && raw.durationSeconds > 0 ? raw.durationSeconds : 0;
+  const durationSeconds =
+    Number.isSafeInteger(raw?.durationSeconds) && raw.durationSeconds > 0 ? raw.durationSeconds : 0;
   const steps = Array.isArray(raw?.steps) ? raw.steps : [];
   for (const step of steps) {
     if (!step || typeof step !== "object") throw new Error("loop_plan_step_invalid");
@@ -66,7 +68,10 @@ export function readLoopPlan(planPath) {
     if (step.kind === "move" && (!Number.isSafeInteger(step.tile?.x) || !Number.isSafeInteger(step.tile?.y)))
       throw new Error("loop_plan_move_tile_invalid");
   }
-  return Object.freeze({ durationSeconds, steps: Object.freeze([...steps].sort((left, right) => left.atSeconds - right.atSeconds)) });
+  return Object.freeze({
+    durationSeconds,
+    steps: Object.freeze([...steps].sort((left, right) => left.atSeconds - right.atSeconds)),
+  });
 }
 
 /** Append-only writer for one JSONL record. */
@@ -89,7 +94,10 @@ export function readHostPositionFromLog(logPath) {
   }
   const lines = text.split(/\r?\n/u);
   for (let index = lines.length - 1; index >= 0; index--) {
-    const match = /GameBuddy farmer: role=host, player_id=[^,]*, name=[^,]*, location=([^,]*), tile=([0-9]+),([0-9]+)/u.exec(lines[index]);
+    const match =
+      /GameBuddy farmer: role=host, player_id=[^,]*, name=[^,]*, location=([^,]*), tile=([0-9]+),([0-9]+)/u.exec(
+        lines[index],
+      );
     if (match !== null) return { tile: { x: Number(match[2]), y: Number(match[3]) }, location: match[1], reason: null };
   }
   return { tile: null, reason: "host_position_not_emitted" };
@@ -102,7 +110,10 @@ export function readHostPositionFromLog(logPath) {
 export function archiveGameLogs({ hostLogPath, aiLogPath, targetDir }) {
   mkdirSync(targetDir, { recursive: true });
   const archived = [];
-  for (const [label, source] of [["host", hostLogPath], ["ai-client", aiLogPath]]) {
+  for (const [label, source] of [
+    ["host", hostLogPath],
+    ["ai-client", aiLogPath],
+  ]) {
     try {
       const text = readFileSync(source, "utf8");
       const destination = join(targetDir, `${label}.log`);
@@ -123,7 +134,16 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   const topology = classifyTopology(config);
   if (topology !== "shared_world_farmhand")
     throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
-  const { plan, traceDir, durationSeconds, sampleMs = DEFAULT_SAMPLE_MS, stopFile = null, now = () => Date.now(), hostLogPath = null, aiLogPath = null } = options;
+  const {
+    plan,
+    traceDir,
+    durationSeconds,
+    sampleMs = DEFAULT_SAMPLE_MS,
+    stopFile = null,
+    now = () => Date.now(),
+    hostLogPath = null,
+    aiLogPath = null,
+  } = options;
   mkdirSync(traceDir, { recursive: true });
   const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"));
   const positions = jsonlWriter(join(traceDir, "positions.jsonl"));
@@ -138,8 +158,17 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   // reviewer can see what the companion was reacting to, not only what it did.
   const unsubscribe = client.onFact((fact) => {
     factsByType.set(fact.type, (factsByType.get(fact.type) ?? 0) + 1);
-    timeline({ atMs: now() - startedAtMs, type: fact.type, revision: client.state?.snapshot?.revision ?? null, payload: fact.payload });
-    if (fact.type === "semantic_event" && fact.payload?.playerControl?.kind === "player_input" && typeof fact.payload.playerControl.text === "string")
+    timeline({
+      atMs: now() - startedAtMs,
+      type: fact.type,
+      revision: client.state?.snapshot?.revision ?? null,
+      payload: fact.payload,
+    });
+    if (
+      fact.type === "semantic_event" &&
+      fact.payload?.playerControl?.kind === "player_input" &&
+      typeof fact.payload.playerControl.text === "string"
+    )
       planLog({ atMs: now() - startedAtMs, kind: "player_input", text: fact.payload.playerControl.text });
   });
 
@@ -163,7 +192,11 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           actionable: snapshot.actionable ?? null,
         });
       } catch (error) {
-        timeline({ atMs: now() - startedAtMs, type: "loop_observation_failed", detail: String(error?.message ?? error) });
+        timeline({
+          atMs: now() - startedAtMs,
+          type: "loop_observation_failed",
+          detail: String(error?.message ?? error),
+        });
       }
       // The host's tile has no bridge field; it is read from the Mod's own line when the world printed one, and
       // otherwise recorded as absent WITH the reason. The farmhand's tile is never substituted for it.
@@ -196,12 +229,30 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           lastChatAtMs = now();
           dispatched.push(result);
           spoken.push({ turnId: `say_${dispatched.length}`, text: step.text, observedEvents: [] });
-          planLog({ atMs: now() - startedAtMs, kind: "say", executed: true, text: step.text, state: result.state, reason: result.reason });
+          planLog({
+            atMs: now() - startedAtMs,
+            kind: "say",
+            executed: true,
+            text: step.text,
+            state: result.state,
+            reason: result.reason,
+          });
           continue;
         }
-        const result = await dispatch(client, receipts, { action: MOVE_ACTION, args: { x: step.tile.x, y: step.tile.y }, snapshot });
+        const result = await dispatch(client, receipts, {
+          action: MOVE_ACTION,
+          args: { x: step.tile.x, y: step.tile.y },
+          snapshot,
+        });
         dispatched.push(result);
-        planLog({ atMs: now() - startedAtMs, kind: "move", executed: true, tile: step.tile, state: result.state, reason: result.reason });
+        planLog({
+          atMs: now() - startedAtMs,
+          kind: "move",
+          executed: true,
+          tile: step.tile,
+          state: result.state,
+          reason: result.reason,
+        });
       }
 
       await delay(sampleMs);
@@ -212,9 +263,10 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
 
   const rubric = assessCompanionBehaviourRubric({ turns: spoken });
   // Archived here, before the driver's `finally` stops both games: SMAPI re-creates these files on every launch.
-  const archivedLogs = hostLogPath !== null || aiLogPath !== null
-    ? archiveGameLogs({ hostLogPath, aiLogPath, targetDir: join(traceDir, "smapi") })
-    : [];
+  const archivedLogs =
+    hostLogPath !== null || aiLogPath !== null
+      ? archiveGameLogs({ hostLogPath, aiLogPath, targetDir: join(traceDir, "smapi") })
+      : [];
   return Object.freeze({
     durationSeconds: (now() - startedAtMs) / 1_000,
     steps: plan.steps.length,
@@ -229,7 +281,8 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
 async function dispatch(client, receipts, { action, args, snapshot }) {
   try {
     const accepted = await executeFreshAfterReobserve(client, { action, args, snapshot });
-    if (accepted?.state !== "accepted") return { action, state: accepted?.state ?? "unknown", reason: accepted?.reasonCode ?? "not_accepted" };
+    if (accepted?.state !== "accepted")
+      return { action, state: accepted?.state ?? "unknown", reason: accepted?.reasonCode ?? "not_accepted" };
     const terminal = await waitForTerminal(receipts, accepted, 15_000);
     return { action, state: terminal?.state ?? "unknown", reason: terminal?.receipt?.reasonCode ?? null };
   } catch (error) {
@@ -262,7 +315,9 @@ if (import.meta.main) {
       aiLogPath: process.env.GAMEBUDDY_LOOP_AI_LOG ?? null,
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(result, null, 2));
-    console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...result, dispatched: result.dispatched.length, spoken: result.spoken.length })}`);
+    console.log(
+      `LOOP_RESULT ${JSON.stringify({ state: "passed", ...result, dispatched: result.dispatched.length, spoken: result.spoken.length })}`,
+    );
     process.exitCode = 0;
   } finally {
     await session.close();

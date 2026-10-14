@@ -65,11 +65,13 @@ export function parseLoopArgs(argv = process.argv.slice(2)) {
       throw new Error(`invalid_multiplayer_loop_argument:${key}`);
     if (values.has(key)) throw new Error(`invalid_multiplayer_loop_argument:${key}`);
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) throw new Error(`missing_multiplayer_loop_value:${key.slice(2)}`);
+    if (value === undefined || value.startsWith("--"))
+      throw new Error(`missing_multiplayer_loop_value:${key.slice(2)}`);
     values.set(key, value);
     index++;
   }
-  for (const key of REQUIRED_ARGUMENTS) if (!values.has(key)) throw new Error(`missing_multiplayer_loop_argument:${key.slice(2)}`);
+  for (const key of REQUIRED_ARGUMENTS)
+    if (!values.has(key)) throw new Error(`missing_multiplayer_loop_argument:${key.slice(2)}`);
 
   const gamePath = values.get("--game-path");
   const expectedFarmhandId = values.get("--expected-farmhand-id");
@@ -137,10 +139,13 @@ function runDriver({ powerShell, args, timeoutSeconds, cwd, env }) {
       clearTimeout(timer);
       resolvePromise({ exitCode, timedOut, stdout: stdout.join(""), stderr: stderr.join("") });
     };
-    const timer = setTimeout(() => {
-      killTree(child.pid);
-      finish(null, true);
-    }, (timeoutSeconds + 60) * 1_000);
+    const timer = setTimeout(
+      () => {
+        killTree(child.pid);
+        finish(null, true);
+      },
+      (timeoutSeconds + 60) * 1_000,
+    );
     child.stdout.on("data", (chunk) => stdout.push(String(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
     child.on("error", () => finish(null, false));
@@ -153,7 +158,8 @@ export async function main(argv) {
   if (process.platform !== "win32") throw new Error("multiplayer_loop_windows_only");
   if (!existsSync(DRIVER)) throw new Error("multiplayer_loop_driver_missing");
   if (!existsSync(join(request.gamePath, "StardewModdingAPI.exe"))) throw new Error("multiplayer_loop_smapi_missing");
-  if (!existsSync(join(request.releaseDir, "GameBuddy.Stardew.dll"))) throw new Error("multiplayer_loop_release_missing");
+  if (!existsSync(join(request.releaseDir, "GameBuddy.Stardew.dll")))
+    throw new Error("multiplayer_loop_release_missing");
 
   const fixtureRoots = resolveStardewFixtureRoots({ profileRoot: request.profileRoot ?? undefined });
   const runRoot = request.runRoot ?? join(fixtureRoots.profileRoot, `multiplayer-loop-${randomUUID()}`);
@@ -181,44 +187,81 @@ export async function main(argv) {
   if (request.plan !== null) childEnv.GAMEBUDDY_LOOP_PLAN = request.plan;
 
   const driverArgs = [
-    "-GamePath", request.gamePath,
-    "-HostProfileRoot", armed.hostRoot,
-    "-AiProfileRoot", armed.aiRoot,
-    "-ProbeRoot", probeRoot,
-    "-ReleaseDir", request.releaseDir,
-    "-SessionDirectory", sessionDirectory,
-    "-SaveName", request.saveName,
-    "-ExpectedFarmhandId", request.expectedFarmhandId,
+    "-GamePath",
+    request.gamePath,
+    "-HostProfileRoot",
+    armed.hostRoot,
+    "-AiProfileRoot",
+    armed.aiRoot,
+    "-ProbeRoot",
+    probeRoot,
+    "-ReleaseDir",
+    request.releaseDir,
+    "-SessionDirectory",
+    sessionDirectory,
+    "-SaveName",
+    request.saveName,
+    "-ExpectedFarmhandId",
+    request.expectedFarmhandId,
     // `-SmokeScript` WITHOUT `-Action`: the armed Host scenario is the precondition,
     // and `-Action` would look the action up in the driver's own three-entry table.
-    "-SmokeScript", request.runner,
-    "-TimeoutSeconds", String(request.timeoutSeconds),
-    "-ResultFile", resultFile,
+    "-SmokeScript",
+    request.runner,
+    "-TimeoutSeconds",
+    String(request.timeoutSeconds),
+    "-ResultFile",
+    resultFile,
   ];
 
-  const run = await runDriver({ powerShell: resolvePowerShell(), args: driverArgs, timeoutSeconds: request.timeoutSeconds, cwd: REPOSITORY_ROOT, env: childEnv });
+  const run = await runDriver({
+    powerShell: resolvePowerShell(),
+    args: driverArgs,
+    timeoutSeconds: request.timeoutSeconds,
+    cwd: REPOSITORY_ROOT,
+    env: childEnv,
+  });
   const driverResult = parseDriverResult(run.stdout);
   const loopResult = parseLoopResult(run.stdout);
-  const state = run.timedOut === true ? "blocked" : driverResult?.state === "action_passed" && run.exitCode === 0 ? "passed" : "failed";
+  const state =
+    run.timedOut === true
+      ? "blocked"
+      : driverResult?.state === "action_passed" && run.exitCode === 0
+        ? "passed"
+        : "failed";
 
   const report = {
     schemaVersion: 1,
     state,
-    reasonCode: run.timedOut === true ? "multiplayer_loop_timeout" : state === "passed" ? "multiplayer_loop_completed" : `multiplayer_loop_failed:${driverResult?.state ?? "no_driver_result"}`,
+    reasonCode:
+      run.timedOut === true
+        ? "multiplayer_loop_timeout"
+        : state === "passed"
+          ? "multiplayer_loop_completed"
+          : `multiplayer_loop_failed:${driverResult?.state ?? "no_driver_result"}`,
     scenario: request.scenario,
     runner: request.runner,
     saveName: request.saveName,
     durationSeconds: request.durationSeconds,
     runRoot,
     traceRoot,
-    traceFiles: ["timeline.jsonl", "positions.jsonl", "plan.jsonl", "loop-report.json", "smapi/host.log", "smapi/ai-client.log"],
+    traceFiles: [
+      "timeline.jsonl",
+      "positions.jsonl",
+      "plan.jsonl",
+      "loop-report.json",
+      "smapi/host.log",
+      "smapi/ai-client.log",
+    ],
     driverExitCode: run.exitCode,
     driverState: driverResult?.state ?? null,
     loop: loopResult,
     // The audit段 is filled by the reviewing action, not by this tool: a loop run is
     // not finished until a fresh-context auditing-runs reviewer has read the trace
     // (design §5, and handbook/live-run-patterns.md:12-28).
-    audit: { requirement: "auditing-runs reviewer must read traceRoot before this run counts as finished", status: "pending" },
+    audit: {
+      requirement: "auditing-runs reviewer must read traceRoot before this run counts as finished",
+      status: "pending",
+    },
   };
   writeFileSync(join(runRoot, "loop-entry-report.json"), `${JSON.stringify(report, null, 2)}\n`);
   writeFileSync(join(traceRoot, "entry-report.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -234,7 +277,8 @@ export function parseLoopResult(stdout) {
     if (at < 0) continue;
     try {
       const value = JSON.parse(line.slice(at));
-      if (value !== null && typeof value === "object" && typeof value.state === "string" && "rubric" in value) return value;
+      if (value !== null && typeof value === "object" && typeof value.state === "string" && "rubric" in value)
+        return value;
     } catch {
       // Not the loop's record; keep looking.
     }

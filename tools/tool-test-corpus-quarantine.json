@@ -1,11 +1,5 @@
 {
   "schema": "gamebuddy-tool-test-corpus-quarantine/v1",
   "note": "Suites in the tools/ corpus that are red for a reason this step did not fix. Each entry must name a corpus file, an owner and the concrete reason; the runner fails if a listed suite stops failing, so an entry cannot outlive its defect. Remove your entry when the defect is fixed.",
-  "exclusions": [
-    {
-      "file": "tools/stardew-action-gate-descriptors.test.mjs",
-      "owner": "stardew action surface lane (uncommitted)",
-      "reason": "At HEAD the fixture-backed descriptor coverage table is missing accept_special_order, claim_museum_reward and redeem_prize_ticket; the live lane's uncommitted copy of this same file adds them. Recheck once that lane commits."
-    }
-  ]
+  "exclusions": []
 }

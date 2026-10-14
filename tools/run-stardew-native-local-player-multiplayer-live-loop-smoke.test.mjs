@@ -36,7 +36,10 @@ test("plan steps are validated and executed in time order", () => {
     );
     const plan = readLoopPlan(path);
     assert.equal(plan.durationSeconds, 300);
-    assert.deepEqual(plan.steps.map((step) => step.atSeconds), [10, 30, 90]);
+    assert.deepEqual(
+      plan.steps.map((step) => step.atSeconds),
+      [10, 30, 90],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -50,10 +53,22 @@ test("a malformed plan fails closed instead of silently doing nothing", () => {
       writeFileSync(path, JSON.stringify(value));
       return path;
     };
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "teleport" }] })), /loop_plan_step_kind_invalid/u);
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "say", text: "   " }] })), /loop_plan_say_text_invalid/u);
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "move", tile: { x: 1.5, y: 2 } }] })), /loop_plan_move_tile_invalid/u);
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: -1, kind: "observe" }] })), /loop_plan_step_at_seconds_invalid/u);
+    assert.throws(
+      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "teleport" }] })),
+      /loop_plan_step_kind_invalid/u,
+    );
+    assert.throws(
+      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "say", text: "   " }] })),
+      /loop_plan_say_text_invalid/u,
+    );
+    assert.throws(
+      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "move", tile: { x: 1.5, y: 2 } }] })),
+      /loop_plan_move_tile_invalid/u,
+    );
+    assert.throws(
+      () => readLoopPlan(write({ steps: [{ atSeconds: -1, kind: "observe" }] })),
+      /loop_plan_step_at_seconds_invalid/u,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -99,7 +114,11 @@ test("both game logs are archived, and an unreadable one is named rather than th
   try {
     const hostLog = join(dir, "SMAPI-latest.txt");
     writeFileSync(hostLog, "host narration\n");
-    const archived = archiveGameLogs({ hostLogPath: hostLog, aiLogPath: join(dir, "absent.txt"), targetDir: join(dir, "smapi") });
+    const archived = archiveGameLogs({
+      hostLogPath: hostLog,
+      aiLogPath: join(dir, "absent.txt"),
+      targetDir: join(dir, "smapi"),
+    });
     assert.equal(archived.length, 2);
     assert.equal(archived[0].bytes, "host narration\n".length);
     assert.equal(readFileSync(archived[0].destination, "utf8"), "host narration\n");
@@ -112,7 +131,13 @@ test("both game logs are archived, and an unreadable one is named rather than th
 
 test("the loop refuses a topology that has no shared world to observe", async () => {
   await assert.rejects(
-    () => runMultiplayerLiveLoop({}, [], { NativeLocalPlayerFixture: { Enable: true } }, { plan: readLoopPlan(null), traceDir: tmpdir(), durationSeconds: 0 }),
+    () =>
+      runMultiplayerLiveLoop(
+        {},
+        [],
+        { NativeLocalPlayerFixture: { Enable: true } },
+        { plan: readLoopPlan(null), traceDir: tmpdir(), durationSeconds: 0 },
+      ),
     /multiplayer_live_loop_requires_farmhand_topology/u,
   );
 });
