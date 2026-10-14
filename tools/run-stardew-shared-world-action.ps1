@@ -379,7 +379,7 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($ResultFile)) {
             Write-Json $ResultFile $provisioned
         }
-        $provisioned | ConvertTo-Json -Depth 6
+        $provisioned | ConvertTo-Json -Depth 6 -Compress
         return
     }
 
@@ -438,7 +438,7 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($ResultFile)) {
         Write-Json ([System.IO.Path]::GetFullPath($ResultFile)) $result
     }
-    $result | ConvertTo-Json -Depth 8
+    $result | ConvertTo-Json -Depth 8 -Compress
     if ($result.state -eq "action_failed") { exit 2 }
 }
 catch {
@@ -447,7 +447,7 @@ catch {
         state    = "blocked"
         phase    = $script:phase
         reason   = [string]$failure.Exception.Message
-    } | ConvertTo-Json -Depth 4
+    } | ConvertTo-Json -Depth 4 -Compress
     throw
 }
 finally {

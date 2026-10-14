@@ -9,6 +9,9 @@ using StardewValley.Network;
 
 namespace GameBuddy.Stardew;
 
+/// <summary>The live scope the Host authenticated for this session, once the native client verified it.</summary>
+internal readonly record struct FarmhandVerifiedScope(string SaveId, string WorldId, string PlayerId);
+
 /// <summary>
 /// AI-client-side native Farmhand attachment. It consumes one signed,
 /// user-confirmed manifest and never accepts endpoint, ID, scope, or action
@@ -41,6 +44,19 @@ internal sealed class FarmhandProvisioner
     internal FarmhandProvisioningResult Result => this.result;
     internal FarmhandJoinManifest Manifest => this.manifest;
     internal string? FailureReason => this.result.IsReady ? null : this.result.ReasonCode;
+
+    /// <summary>
+    /// Invoked ONCE with the live scope after the native client verified the manifest's scope and identity.
+    ///
+    /// WHY THE OWNER NEEDS THIS: a bridge client must declare the scope it is connecting to
+    /// (`createNativeScope` reads `SaveId`/`WorldId`/`PlayerId` from the profile config), and the only place
+    /// that wrote the LIVE values into a config was the NATIVE-LOCAL bootstrap
+    /// (`ModEntry.Fixtures.cs:194-206`). In the shared-world topology nothing did, so a runner kept declaring
+    /// whatever the profile happened to contain and the Mod correctly refused it with
+    /// `scope_mismatch:saveId` - observed live. The three values are read from the SAME expressions
+    /// `ScopeMatchesWorld` just verified, so what gets persisted is the authenticated scope, not a guess.
+    /// </summary>
+    internal Action<FarmhandVerifiedScope>? OnScopeVerified { get; set; }
 
     internal static FarmhandProvisioner? TryStart(IMonitor monitor, FarmhandProvisionerConfig? config)
     {
@@ -147,6 +163,13 @@ internal sealed class FarmhandProvisioner
                     return this.Fail("ready_scope_mismatch");
                 this.result = new("ready", "native_ready_identity_scope_match", this.ManifestFarmhandId);
                 this.monitor.Log("GameBuddy FarmhandProvisioner reached readyToPlay with the expected native Farmhand identity and save/world scope.", LogLevel.Info);
+                // Hand the authenticated scope to the owner so it can persist it; the manifest already proved these
+                // are the live values, and a bridge client that declares anything else would be refused.
+                this.OnScopeVerified?.Invoke(
+                    new FarmhandVerifiedScope(
+                        Game1.uniqueIDForThisGame.ToString(CultureInfo.InvariantCulture),
+                        Game1.MasterPlayer.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture),
+                        Game1.player.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture)));
                 this.finished = true;
                 return true;
             }

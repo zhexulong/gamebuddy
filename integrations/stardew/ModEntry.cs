@@ -925,6 +925,46 @@ public sealed partial class ModEntry : Mod
             return;
         this.nextFarmhandProvisionerAttemptAtMs = now + 1_000;
         this.farmhandProvisioner = FarmhandProvisioner.TryStart(this.Monitor, this.config.FarmhandProvisioner);
+        if (this.farmhandProvisioner is not null)
+            this.farmhandProvisioner.OnScopeVerified = this.PersistVerifiedFarmhandScope;
+    }
+
+    /// <summary>
+    /// Persist the scope the AI client just authenticated, so a bridge client can declare the live values.
+    ///
+    /// This mirrors `TryCompleteNativeLocalPlayerFixtureBootstrap` (`ModEntry.Fixtures.cs:194-215`), which is the
+    /// only other place that writes live scope ids into a config - and it preserves every other field, because
+    /// rebuilding the config from scratch would silently drop the armed policy and the companion language.
+    /// </summary>
+    private void PersistVerifiedFarmhandScope(FarmhandVerifiedScope scope)
+    {
+        this.config = new ModConfig
+        {
+            EnableLocalBridge = this.config.EnableLocalBridge,
+            PipeName = this.config.PipeName,
+            BridgeToken = this.config.BridgeToken,
+            SaveId = scope.SaveId,
+            WorldId = scope.WorldId,
+            PlayerId = scope.PlayerId,
+            CompanionId = this.config.CompanionId,
+            NativeLocalPlayerFixture = this.config.NativeLocalPlayerFixture,
+            PresentationLocale = this.config.PresentationLocale,
+            WindowMode = this.config.WindowMode,
+            FarmhandProvisioningProbe = this.config.FarmhandProvisioningProbe,
+            SleepModalProbe = this.config.SleepModalProbe,
+            SleepLifecycle = this.config.SleepLifecycle,
+            HostAutomation = this.config.HostAutomation,
+            HostFarmhandProvisioning = this.config.HostFarmhandProvisioning,
+            FarmhandProvisioner = this.config.FarmhandProvisioner,
+            WorldCreation = this.config.WorldCreation,
+            DeniedActions = new List<string>(this.config.DeniedActions),
+            DeniedActionFamilies = new List<string>(this.config.DeniedActionFamilies),
+            ExperimentalActions = new List<string>(this.config.ExperimentalActions),
+        };
+        this.Helper.WriteConfig(this.config);
+        this.Monitor.Log(
+            $"GameBuddy recorded the verified shared-world scope (save={scope.SaveId}, world={scope.WorldId}, player={scope.PlayerId}) so a bridge client can declare it.",
+            LogLevel.Info);
     }
 
     private void TryInitializeEmbodiment()
