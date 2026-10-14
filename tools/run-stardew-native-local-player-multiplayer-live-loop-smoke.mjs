@@ -123,7 +123,7 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   const topology = classifyTopology(config);
   if (topology !== "shared_world_farmhand")
     throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
-  const { plan, traceDir, durationSeconds, sampleMs = DEFAULT_SAMPLE_MS, stopFile = null, now = () => Date.now() } = options;
+  const { plan, traceDir, durationSeconds, sampleMs = DEFAULT_SAMPLE_MS, stopFile = null, now = () => Date.now(), hostLogPath = null, aiLogPath = null } = options;
   mkdirSync(traceDir, { recursive: true });
   const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"));
   const positions = jsonlWriter(join(traceDir, "positions.jsonl"));
@@ -162,9 +162,21 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           tile: snapshot.tile ?? null,
           actionable: snapshot.actionable ?? null,
         });
-        positions({ atMs: now() - startedAtMs, revision: snapshot.revision ?? null, actor: "host", tile: null, reason: "host_position_not_emitted" });
       } catch (error) {
         timeline({ atMs: now() - startedAtMs, type: "loop_observation_failed", detail: String(error?.message ?? error) });
+      }
+      // The host's tile has no bridge field; it is read from the Mod's own line when the world printed one, and
+      // otherwise recorded as absent WITH the reason. The farmhand's tile is never substituted for it.
+      if (hostLogPath !== null) {
+        const host = readHostPositionFromLog(hostLogPath);
+        positions({
+          atMs: now() - startedAtMs,
+          revision: snapshot?.revision ?? null,
+          actor: "host",
+          location: host.location ?? null,
+          tile: host.tile,
+          reason: host.reason,
+        });
       }
 
       while (nextStep < plan.steps.length && plan.steps[nextStep].atSeconds <= elapsedSeconds) {
@@ -199,12 +211,17 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   }
 
   const rubric = assessCompanionBehaviourRubric({ turns: spoken });
+  // Archived here, before the driver's `finally` stops both games: SMAPI re-creates these files on every launch.
+  const archivedLogs = hostLogPath !== null || aiLogPath !== null
+    ? archiveGameLogs({ hostLogPath, aiLogPath, targetDir: join(traceDir, "smapi") })
+    : [];
   return Object.freeze({
     durationSeconds: (now() - startedAtMs) / 1_000,
     steps: plan.steps.length,
     dispatched: Object.freeze([...dispatched]),
     factsByType: Object.freeze(Object.fromEntries(factsByType)),
     spoken: Object.freeze([...spoken]),
+    archivedLogs: Object.freeze([...archivedLogs]),
     rubric,
   });
 }
@@ -241,6 +258,8 @@ if (import.meta.main) {
       traceDir,
       durationSeconds: Number(process.env.GAMEBUDDY_LOOP_DURATION_SECONDS ?? plan.durationSeconds ?? 0),
       stopFile: process.env.GAMEBUDDY_LOOP_STOP_FILE ?? null,
+      hostLogPath: process.env.GAMEBUDDY_LOOP_HOST_LOG ?? null,
+      aiLogPath: process.env.GAMEBUDDY_LOOP_AI_LOG ?? null,
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(result, null, 2));
     console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...result, dispatched: result.dispatched.length, spoken: result.spoken.length })}`);
