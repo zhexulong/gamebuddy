@@ -309,6 +309,11 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "build_farm_building",
       "name_entity",
       "accept_daily_quest",
+      "accept_special_order",
+      "claim_museum_reward",
+      "redeem_prize_ticket",
+      "tailor_clothing",
+      "dye_clothing_with_item",
     ],
   );
   assert.deepEqual(

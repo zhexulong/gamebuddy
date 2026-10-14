@@ -65,6 +65,11 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.worldobjectactions.cs"] = 3,
         ["farmhandexecutioncontroller.buildfarmbuildingactions.cs"] = 1,
         ["farmhandexecutioncontroller.nameentityactions.cs"] = 1,
+        // The four handlers a killed lane left behind; each calls the shared admission, so the table must name it.
+        ["farmhandexecutioncontroller.specialorders.cs"] = 1,
+        ["farmhandexecutioncontroller.museumrewards.cs"] = 1,
+        ["farmhandexecutioncontroller.prizeticketactions.cs"] = 1,
+        ["farmhandexecutioncontroller.tailoringactions.cs"] = 2,
     };
 
     private static string RepositoryRoot()

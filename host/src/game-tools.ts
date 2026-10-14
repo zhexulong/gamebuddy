@@ -579,8 +579,18 @@ export function buildCandidateToolSchema(
   if (declaredNames === undefined)
     throw new Error(`Unsupported candidate action: ${actionId}`);
   const properties: Record<string, TSchema> = {};
-  for (const name of declaredNames) properties[name] = candidateArgumentSchema(name);
+  for (const name of declaredNames) properties[name] = candidateArgumentSchema(name, declaredArgumentType(descriptor, name));
   return Type.Object(properties, { additionalProperties: false });
+}
+
+/** The argument's declared type from EITHER descriptor shape: the Mod's own declaration, not a name convention. */
+function declaredArgumentType(descriptor: ActionRegistrationDescriptor, name: string): string | undefined {
+  if (Array.isArray(descriptor.arguments)) {
+    const argument = descriptor.arguments.find((entry) => entry?.name === name);
+    return typeof argument?.type === "string" ? argument.type : undefined;
+  }
+  const declared = descriptor.argumentSchema?.[name];
+  return declared !== undefined && typeof declared.type === "string" ? declared.type : undefined;
 }
 
 /** The argument names a descriptor declares, in either shape the wire and the surface artifact use. */
@@ -616,11 +626,18 @@ function declaredArguments(
  * names follow. Advisory: the Mod re-validates every argument on the game thread, so a wrong guess here
  * cannot widen what an action accepts - it can only make the Host's description of the argument less exact.
  */
-function candidateArgumentSchema(name: string): TSchema {
+function candidateArgumentSchema(name: string, declaredType?: string): TSchema {
+  // The Mod's own declaration wins: a name-convention guess can contradict the wire validator, which is how a
+  // mounted tool came to describe integers as strings. `expectedTargetId` keeps its tighter string bound, and the
+  // name refinements below only apply where the declared type is absent.
+  if (declaredType === "integer" || declaredType === "number")
+    return Type.Integer({ minimum: name === "quantity" ? 1 : 0, maximum: 100000 });
+  if (declaredType === "string" && name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
   if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
   if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
   if (name === "quantity") return Type.Integer({ minimum: 1, maximum: 9999 });
   if (name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
+  if (declaredType === "boolean") return Type.Boolean();
   return Type.String({ minLength: 1, maxLength: 256 });
 }
 

@@ -69,7 +69,7 @@ public sealed class ClaimMuseumRewardActionTests
     {
         FarmhandActionRegistration registration = FindRegistration("claim_museum_reward");
         registration.FamilyId.Should().Be("quests_journal");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified); // promoted after its native-local gate passed with real world evidence (30 rewards collected, mail flags 1->45)
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.WorldLifecycle);
         registration.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal("expectedTargetId");
         registration.Descriptor.Effect.Should().Be("write");

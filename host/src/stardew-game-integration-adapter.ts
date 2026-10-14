@@ -549,10 +549,18 @@ export function hasStardewCompletionEvidence(
               outputAfter !== null &&
               delivered !== null &&
               dropped !== null &&
-              delivered >= 1 &&
               dropped >= 0 &&
+              // The garment must exist SOMEWHERE (backpack or ground), and the backpack must have grown by
+              // exactly what the receipt says it delivered.
+              delivered + dropped >= 1 &&
               outputAfter === outputBefore + delivered &&
-              delivered + dropped >= 1
+              // ...and the receipt's own disposition must agree with its split. This is what makes a fully
+              // dropped garment acceptable (an honest outcome `delivered >= 1` used to refuse) while still
+              // failing a receipt that contradicts itself.
+              integerEvidenceValue(e.dropped_debris) === dropped &&
+              ((e.disposition === "inventory" && dropped === 0 && delivered >= 1) ||
+                (e.disposition === "dropped_on_ground" && delivered === 0 && dropped >= 1) ||
+                (e.disposition === "partially_dropped" && delivered >= 1 && dropped >= 1))
             );
           },
         )
@@ -637,7 +645,7 @@ export function hasStardewCompletionEvidence(
             const seed = integerEvidenceValue(e.generation_seed);
             return (
               hasOpaqueIdEvidenceValue(e.special_order_id) &&
-              hasBoundedNonemptyEvidenceValue(e.board_type) &&
+              ((e.board_type === "none" || e.board_type === "") ? true : hasBoundedNonemptyEvidenceValue(e.board_type)) &&
               hasBoundedNonemptyEvidenceValue(e.quest_key) &&
               seed !== null &&
               e.board_marker_before === "false" &&
@@ -1579,6 +1587,8 @@ export function hasStardewCompletionEvidence(
             "letter_opened",
             "letter_closed",
             "collection_overflow_pending",
+            "mail_salvage_inventory_units",
+            "mail_salvage_debris_units",
             "inventory_slots_before",
             "inventory_slots_after",
             "inventory_units_before",

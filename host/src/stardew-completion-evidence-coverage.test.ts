@@ -304,6 +304,10 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["letter_opened", "true"],
       ["letter_closed", "true"],
       ["collection_overflow_pending", "false"],
+      // The two salvage counters the handler emits after the overflow cleanup was made to salvage rather than
+      // discard: this fixture is the Mod's own success shape, so it must carry every field the rule expects.
+      ["mail_salvage_inventory_units", "0"],
+      ["mail_salvage_debris_units", "0"],
       ["inventory_slots_before", "0"],
       ["inventory_slots_after", "0"],
       ["inventory_units_before", "0"],

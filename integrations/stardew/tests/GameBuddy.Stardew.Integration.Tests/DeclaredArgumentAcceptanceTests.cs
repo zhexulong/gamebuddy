@@ -135,6 +135,8 @@ public sealed class DeclaredArgumentAcceptanceTests
         float? y = null;
         int? slot = null;
         int? quantity = null;
+        int? leftSlot = null;
+        int? rightSlot = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
         string? tool = null;
@@ -153,6 +155,8 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "x": x = int.Parse(effective); break;
                 case "y": y = int.Parse(effective); break;
                 case "slot": slot = int.Parse(effective); break;
+                case "leftSlot": leftSlot = int.Parse(effective); break;
+                case "rightSlot": rightSlot = int.Parse(effective); break;
                 case "quantity": quantity = int.Parse(effective); break;
                 case "expectedQualifiedItemId": expectedQualifiedItemId = effective; break;
                 case "expectedTargetId": expectedTargetId = effective; break;
@@ -183,6 +187,8 @@ public sealed class DeclaredArgumentAcceptanceTests
             X = x,
             Y = y,
             Slot = slot,
+            LeftSlot = leftSlot,
+            RightSlot = rightSlot,
             Quantity = quantity,
             ExpectedQualifiedItemId = expectedQualifiedItemId,
             ExpectedTargetId = expectedTargetId,

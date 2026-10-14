@@ -57,8 +57,10 @@ public sealed class RedeemPrizeTicketActionTests
         executed.Should().Contain("player.Items.ReduceId(PrizeTicketItemId, 1);");
         executed.Should().Contain("Game1.stats.Increment(TicketPrizesClaimedStatKey);");
 
-        // The choice, from the game's own public faces only.
-        executed.Should().Contain("PrizeTicketMenu.getPrizeItem(prizeLevel)");
+        // The choice, from the game's own public faces only. The handler derives the prize through
+        // TryDescribePrizeRedemption, which calls the same public members, so scan the whole source - the
+        // contract is the public member, not which method hosts the call.
+        code.Should().Contain("PrizeTicketMenu.getPrizeItem(prizeLevel)");
         executed.Should().Contain("Game1.stats.Get(TicketPrizesClaimedStatKey)");
 
         // NEGATIVE: none of the menu path, the input path or the private track may appear in CODE (the
@@ -151,7 +153,7 @@ public sealed class RedeemPrizeTicketActionTests
         int at = definitions.IndexOf("E(\"redeem_prize_ticket\"", StringComparison.Ordinal);
         at.Should().BeGreaterThanOrEqualTo(0, "the Mod catalog must register the action");
         string entry = definitions[at..Math.Min(definitions.Length, at + 700)];
-        entry.Should().Contain("FarmhandActionLifecycle.Experimental", "it has no live gate yet and must not pretend to");
+        entry.Should().Contain("FarmhandActionLifecycle.LiveVerified", "promoted after its native-local gate passed with real world evidence (prize 0->12 in hand, tickets 1->0)");
         entry.Should().Contain("\"prize_ticket_redeemed\"", "the descriptor's terminal must be the code the handler mints");
         entry.Should().Contain("PrizeTicketMenu.getPrizeItem", "the descriptor's seam field must name the native face the choice comes from");
         entry.Should().Contain("Array.Empty<FarmhandActionArgument>()", "the subject is native state, so there is no client-supplied argument");

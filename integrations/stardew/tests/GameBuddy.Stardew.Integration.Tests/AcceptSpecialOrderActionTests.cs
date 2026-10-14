@@ -70,7 +70,7 @@ public sealed class AcceptSpecialOrderActionTests
     {
         FarmhandActionRegistration registration = FindRegistration("accept_special_order");
         registration.FamilyId.Should().Be("quests_journal");
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified); // promoted after its native-local gate passed with real world evidence (orders +1, board marker turned true)
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.WorldLifecycle);
         registration.Descriptor!.Arguments.Select(argument => argument.Name).Should().Equal("expectedTargetId");
         registration.Descriptor.Effect.Should().Be("write");

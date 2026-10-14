@@ -116,8 +116,8 @@ public static class FarmhandExecutionAcceptance
         // constant (the one the handler enforces), so the two cannot disagree about what a chat line is.
         "buildingType" => args.BuildingType is { Length: > 0 } buildingTypeId
             && buildingTypeId.Length <= 128, // mirrors the Host wire validator (>128 is rejected the same way)
-        "leftSlot" => args.LeftSlot is int leftSlotValue && leftSlotValue >= 0 && leftSlotValue < 24,
-        "rightSlot" => args.RightSlot is int rightSlotValue && rightSlotValue >= 0 && rightSlotValue < 24,
+        "leftSlot" => args.LeftSlot is int leftSlotValue && leftSlotValue >= 0 && leftSlotValue <= facts.MaximumInventorySlot,
+        "rightSlot" => args.RightSlot is int rightSlotValue && rightSlotValue >= 0 && rightSlotValue <= facts.MaximumInventorySlot,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum
