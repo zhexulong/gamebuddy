@@ -101,6 +101,12 @@ export const MAGIC_CONTEXT_MEMORY_DOMAIN = "ongoing-interaction" as const;
 type InternalHistorianTestChannel = {
   executeThresholdTokens?: number;
   protectedTokens?: number;
+  /**
+   * Percent of the model's usable window at which the fold fires. The fold's own trigger is a percentage
+   * (65 by default), which is why lowering the token form alone did not make it fire: the token key states a
+   * floor, not the trigger. A percentage of 1 makes a real session fold at the scale it actually reaches.
+   */
+  executeThresholdPercentage?: number;
   /** `off` from the fixture environment: write the protection table with every entry zeroed. */
   protectGameTools?: boolean;
 };
@@ -121,6 +127,7 @@ function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
   };
   const executeThresholdTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS");
   const protectedTokens = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOKENS");
+  const executeThresholdPercentage = parse("GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_PERCENTAGE");
   // The paired live measurement needs a control arm, and no product surface switches the policy off. Only the
   // exact word `off` is honoured; anything else is reported rather than guessed at.
   const protectToolsRaw = process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOOLS;
@@ -132,15 +139,21 @@ function readInternalHistorianTestChannel(): InternalHistorianTestChannel {
         `[historian] ignoring GAMEBUDDY_MAGIC_CONTEXT_TEST_PROTECTED_TOOLS=${JSON.stringify(protectToolsRaw)}: only "off" is recognised\n`,
       );
   }
-  if (executeThresholdTokens !== undefined || protectedTokens !== undefined || protectGameTools !== undefined)
+  if (
+    executeThresholdTokens !== undefined ||
+    protectedTokens !== undefined ||
+    protectGameTools !== undefined ||
+    executeThresholdPercentage !== undefined
+  )
     process.stderr.write(
-      `[historian] fixture fold channel: execute_threshold_tokens=${executeThresholdTokens ?? "(default)"} protected_tokens=${protectedTokens ?? "(default)"} protected_tools=${protectGameTools === false ? "off" : "(default)"}\n`,
+      `[historian] fixture fold channel: execute_threshold_tokens=${executeThresholdTokens ?? "(default)"} protected_tokens=${protectedTokens ?? "(default)"} execute_threshold_percentage=${executeThresholdPercentage ?? "(default)"} protected_tools=${protectGameTools === false ? "off" : "(default)"}\n`,
     );
   // Spread conditionally: this project compiles with `exactOptionalPropertyTypes`, so an explicit
   // `undefined` is not the same as an absent key.
   return {
     ...(executeThresholdTokens === undefined ? {} : { executeThresholdTokens }),
     ...(protectedTokens === undefined ? {} : { protectedTokens }),
+    ...(executeThresholdPercentage === undefined ? {} : { executeThresholdPercentage }),
     ...(protectGameTools === undefined ? {} : { protectGameTools }),
   };
 }
@@ -950,6 +963,14 @@ export async function createRuntimeWithFixedToolsCore(
                 protected_tokens:
                   internalMagicContextFeatureTestOverride?.historianProtectedTokens ??
                   readInternalHistorianTestChannel().protectedTokens,
+              }),
+          // The fold's real trigger is the percentage; the token key only states a floor. A fixture that wants
+          // a fold inside a session-sized conversation has to move this one.
+          ...(readInternalHistorianTestChannel().executeThresholdPercentage === undefined
+            ? {}
+            : {
+                execute_threshold_percentage:
+                  readInternalHistorianTestChannel().executeThresholdPercentage,
               }),
 				},
 				null,
