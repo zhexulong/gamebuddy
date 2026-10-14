@@ -43,14 +43,19 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 /**
- * Both sides author beats, and CJK input arrives in full-width forms. A
- * full-width `＊…＊` (or one wrapped in full-width parentheses) is the same beat
- * as the ASCII form, so the delimiters are normalised before the parse: without
- * it the identical beat renders as a stage direction on one side and as bare
- * text on the other.
+ * Both sides author beats, and CJK input arrives in a full-width form. A
+ * full-width `＊…＊` is the same beat as the ASCII `*…*`, so the asterisks are
+ * normalised before the parse: without it the identical beat renders as a stage
+ * direction on one side and as bare text on the other.
+ *
+ * Rewriting CJK *punctuation* was never part of that. `（…）` is not an emphasis
+ * delimiter - Markdown does not read a parenthetical as `<em>`, and the beat this
+ * product authors is `*动作*` - so replacing the full-width parens with ASCII
+ * only changed how the sentence reads: `她(轻轻点头)道`, where a CJK reader
+ * expects `她（轻轻点头）道`. That rewrite is gone; the asterisk half stays.
  */
 function normalizeBeatDelimiters(text: string): string {
-  return text.replace(/＊/gu, "*").replace(/（/gu, "(").replace(/）/gu, ")");
+  return text.replace(/＊/gu, "*");
 }
 
 /** Parses untrusted message Markdown to inert, sanitised HTML. */
