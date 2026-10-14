@@ -56,7 +56,7 @@ export type PiProviderEntry = Readonly<Record<string, unknown>>;
  * of this window, so a session-sized conversation can only reach them when the window is small. That is what
  * makes a pressure measurement reusable rather than a product-scale run.
  */
-export const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
 
 export function declaredContextWindow(): number {
   const raw = process.env[FIXTURE_MODEL_WINDOW_ENV];
