@@ -119,3 +119,142 @@ test("fails closed before starting a batch after the shared suite deadline", asy
   assert.deepEqual(calls, [["a.test.js"]]);
   assert.throws(() => chunkTestFiles(["a.test.js"], 0), /invalid_test_batch_size/);
 });
+
+
+test("uses only a positive integer compiled concurrency override", async () => {
+  await assert.rejects(runCompiledTests({ concurrency: 0 }), /invalid_test_concurrency/);
+  await assert.rejects(runCompiledTests({ concurrency: 1.5 }), /invalid_test_concurrency/);
+  await assert.rejects(runCompiledTests({ concurrency: Number.MAX_SAFE_INTEGER + 1 }), /invalid_test_concurrency/);
+  await assert.rejects(runTestBatches(["a.test.js"], { suite: "fixture", concurrency: 0 }), /invalid_test_concurrency/);
+});
+
+test("keeps the batch-start line and per-file heartbeat CI parses", async () => {
+  const hostRoot = resolve(import.meta.dirname, "..");
+  const lines = [];
+  const originalError = console.error;
+  console.error = (line) => lines.push(line);
+  try {
+    await runTestBatches([join(hostRoot, "a.test.js")], {
+      suite: "fixture",
+      timeoutMs: 1_000,
+      now: () => 0,
+      run: async (batch, options) => {
+        options.onHeartbeat({ pid: 42, elapsedMs: 7 });
+      },
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(lines, [
+    "host_test_suite_batch_start:suite=fixture:batch=1/1:files=1:paths=a.test.js:remaining_ms=1000",
+    "host_test_suite_heartbeat:suite=fixture:batch=1/1:file=a.test.js:pid=42:elapsed_ms=7",
+  ]);
+});
+
+async function nextTurn() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("bounds a batch's concurrent file children and still runs every file", async () => {
+  const paths = ["a", "b", "c", "d", "e", "f"].map((name) => `${name}.test.js`);
+  const releases = [];
+  const started = [];
+  let inFlight = 0;
+  let peak = 0;
+  const suite = runTestBatches(paths, {
+    suite: "fixture",
+    batchSize: 6,
+    concurrency: 2,
+    timeoutMs: 60_000,
+    run: async (batch) => {
+      started.push(batch[0]);
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => releases.push(resolve));
+      inFlight -= 1;
+    },
+  });
+  await nextTurn();
+  assert.deepEqual(started, ["a.test.js", "b.test.js"]);
+  assert.equal(peak, 2);
+  while (releases.length > 0) {
+    releases.shift()();
+    await nextTurn();
+  }
+  await suite;
+  assert.equal(peak, 2);
+  assert.deepEqual(started, paths);
+});
+
+test("defaults to four concurrent file children within a batch", async () => {
+  const paths = ["a", "b", "c", "d", "e"].map((name) => `${name}.test.js`);
+  const releases = [];
+  let inFlight = 0;
+  let peak = 0;
+  const suite = runTestBatches(paths, {
+    suite: "fixture",
+    batchSize: 5,
+    timeoutMs: 60_000,
+    run: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => releases.push(resolve));
+      inFlight -= 1;
+    },
+  });
+  await nextTurn();
+  assert.equal(peak, 4);
+  while (releases.length > 0) {
+    releases.shift()();
+    await nextTurn();
+  }
+  await suite;
+  assert.equal(peak, 4);
+});
+
+test("a failed file fails the run and still awaits its in-flight siblings", async () => {
+  const paths = ["a", "b", "c", "d"].map((name) => `${name}.test.js`);
+  const finished = [];
+  let releaseSibling;
+  const suite = runTestBatches(paths, {
+    suite: "fixture",
+    batchSize: 4,
+    concurrency: 2,
+    timeoutMs: 60_000,
+    run: async (batch) => {
+      if (batch[0] === "a.test.js") throw new Error("fixture_child_failed");
+      if (batch[0] === "b.test.js") await new Promise((resolve) => { releaseSibling = resolve; });
+      finished.push(batch[0]);
+    },
+  });
+  await nextTurn();
+  assert.equal(typeof releaseSibling, "function");
+  releaseSibling();
+  await assert.rejects(suite, /fixture_child_failed/);
+  // "b" was already running when "a" failed, so it is awaited; "c" and "d"
+  // never started, and nothing reported success while a child was alive.
+  assert.deepEqual(finished, ["b.test.js"]);
+});
+
+test("fails closed at the shared suite deadline with concurrent file children", async () => {
+  let clock = 0;
+  const calls = [];
+  await assert.rejects(
+    runTestBatches(["a.test.js", "b.test.js", "c.test.js", "d.test.js"], {
+      suite: "fixture",
+      batchSize: 4,
+      concurrency: 3,
+      timeoutMs: 200,
+      now: () => clock,
+      run: async (batch, options) => {
+        calls.push({ file: batch[0], timeoutMs: options.timeoutMs });
+        clock += 100;
+      },
+    }),
+    /test_suite_timeout:fixture/,
+  );
+  assert.deepEqual(calls, [
+    { file: "a.test.js", timeoutMs: 200 },
+    { file: "b.test.js", timeoutMs: 100 },
+  ]);
+});
