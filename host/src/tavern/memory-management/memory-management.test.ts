@@ -138,7 +138,7 @@ test("memory service source keeps the store, lease and coordinator authority pri
 });
 
 const mountedPreamble = `
-  const [coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath] = process.argv.slice(1);
+  const [coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath] = process.argv.slice(2);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", coordinatorUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", coordinatorUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -179,18 +179,15 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       authorityGeneration: 1,
     }),
   );
+  // The child runs from a real file rather than `--eval`. A child launched with `--input-type=module`
+  // carries that flag in its CLI options, Node's Worker inherits the parent's CLI options, and the
+  // vendor migration worker loads a file - so it would start as `node --input-type=module <file>` and
+  // refuse to load. A script file leaves the child's CLI options empty and every worker starts normally.
+  const childPath = join(root, "mounted-child.mjs");
+  await writeFile(childPath, mountedPreamble + body);
   const child = spawn(
     process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      mountedPreamble + body,
-      coordinatorUrl,
-      deploymentUrl,
-      serviceUrl,
-      contractUrl,
-      manifestPath,
-    ],
+    [childPath, coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const output: Buffer[] = [];
