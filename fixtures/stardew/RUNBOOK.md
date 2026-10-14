@@ -2725,3 +2725,99 @@ decompiled source, and it rejected my first one: the real declaration nests the 
 list was EMPTY — measured 16 pass / 1 fail at HEAD by running the suite against `git show HEAD:` of the artifact. The
 replacement asserts the invariant that actually holds, derived from the register: an acknowledged action may not be
 `live_verified` or `published`, because there the shared-world run IS the evidence.
+
+## 42. Multiplayer live-run loop: the SOP, the rubric, and the mandatory review (2026-10-14)
+
+Design: `design/architecture/stardew-multiplayer-live-run-loop.md`. Harness:
+`tools/run-stardew-multiplayer-live-loop.mjs` (entry) +
+`tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs` (the in-session loop).
+
+### What it is, and what it is not
+
+The two-process shared world (`native_ai_farmhand_multiplayer`) measured **over time** instead of reduced to one
+verdict. The Host process is the human's own game; the AI-client process is the farmhand, and the loop is that
+farmhand's bridge consumer. It is a long-lived `-SmokeScript` for `run-stardew-shared-world-action.ps1`, so the
+topology order stays single-sourced with the multiplayer gate.
+
+Measured constraints, each with file:line in the design doc: only the AI client exposes a bridge; that bridge takes
+ONE consumer; and **no program can drive the Host player**. So the loop is not "two bots": it is the farmhand's
+driver plus a human (or nobody) on the host side.
+
+### Running one
+
+```sh
+# prerequisite: a provisioned farmhand binding for the save (see the driver's -ProvisionNewBinding).
+node tools/run-stardew-multiplayer-live-loop.mjs \
+  --game-path "D:\Steam\steamapps\common\Stardew Valley" \
+  --expected-farmhand-id <numeric farmhand UniqueMultiplayerID> \
+  --save-name GameBuddyFixtureRebuild_451055244 \
+  --plan <plan.json> \
+  --duration-seconds 900
+```
+
+`--plan` is optional: **an absent plan means observe-only**, which is the default posture. An empty run is a
+legitimate run — it measures the world and the companion without the pilot steering anything.
+
+```json
+{ "durationSeconds": 900,
+  "steps": [
+    { "atSeconds": 30,  "kind": "say",  "text": "我先去把东边那块地收拾一下。" },
+    { "atSeconds": 90,  "kind": "move", "tile": { "x": 39, "y": 57 } },
+    { "atSeconds": 600, "kind": "observe" } ] }
+```
+
+`say` is one `send_multiplayer_chat` (the native Stardew pipe, visible to the host player; the Mod enforces a
+2000 ms minimum interval and the loop spaces for it). `move` is one published `move_to_tile`. Neither is
+hardcoded: the plan is the task allocation, and it may be handed over mid-run by appending to the plan file, or
+written by an `auditing-runs` subagent from the previous run's trace.
+
+### What the run leaves behind
+
+Everything under `--trace-root` (default `<runRoot>/trace`): `timeline.jsonl` (every bridge fact with a wall
+clock), `positions.jsonl` (both farmers), `plan.jsonl` (the allocation plus anything the host player said in game),
+`loop-report.json` (fact counts + the rubric), `entry-report.json`, and `smapi/host.log` / `smapi/ai-client.log`
+archived **before** teardown — both SMAPI logs are re-created on every launch, so an unarchived one is lost. The
+agent's own transcript and the runtime root are captured by the caller, as in every other live run
+(`tools/live-run/README.md:19-27`).
+
+**Named gap, not a defect:** the bridge carries only the bound farmhand
+(`integrations/stardew/src/Core/Models/BridgeProtocolModels.cs:396-397`). The host player's tile exists only in the
+Mod's own `GameBuddy farmer: role=host, ... tile=x,y` line (`ModEntry.cs:641-647`), so `positions.jsonl` reads that
+line when the world printed one and otherwise writes `reason: "host_position_not_emitted"`. The farmhand's tile is
+never substituted. Closing the gap is a product change (a periodic host position, or a snapshot field) and needs
+the owner.
+
+### The rubric (obligations, not a score)
+
+`tools/lib/companion-behaviour-rubric.mjs`, in the `historian-prompt-rubric.md` shape: each obligation is
+**Invariant**, **Preference**, or **Unjudged**, and it DELEGATES to the existing detectors instead of copying them
+(`companion-interaction-gate.mjs`, `stardew-companion-presence-projection.mjs`).
+
+| obligation | class | decided by |
+| --- | --- | --- |
+| `no_machine_token_leak` | Invariant | interaction gate |
+| `no_step_recital` | Invariant | interaction gate |
+| `no_unobserved_world_reaction` | Invariant | interaction gate |
+| `spoken_within_ceiling` | Invariant | interaction gate |
+| `no_internal_self_reference` | Invariant | this rubric (`identity-profile.ts:290`) |
+| `no_ooc_meta_reference` | Invariant | this rubric (`:288`, `:289`) |
+| `claim_fulfillable` | Invariant | presence projection |
+| `addresses_the_player` | Preference | interaction gate |
+| `native_stage_direction` | Preference | this rubric (`:388`) |
+| `proactive_authenticity` | **Unjudged** | named, not approximated |
+| `character_card_conformance` | **Unjudged** | named, not approximated |
+
+Read the verdict as **two lists** (`broken`, `unmeasured`). A run with no spoken turn reports every obligation
+`unmeasured` and does **not** pass: absence of evidence is never a green. A run that spoke nothing cannot claim the
+companion stayed in character, and the card-conformance obligation is listed so that claim cannot be made at all.
+
+### Mandatory: a fresh-context `auditing-runs` reviewer reads every loop trace
+
+> A live run's product is a **trace**, not a verdict (`design/handbook/live-run-patterns.md:12-28`). Before this run
+> counts as finished, an `auditing-runs` reviewer must read the trace and report the falsifier test, the component
+> attribution (observation / contract / native-state / orchestration / delivery) and the systemic defects worth
+> fixing. A single green run is **not** closure: closure is a defect located at an authoritative seam, fixed behind
+> a deterministic gate, and proven by a before/after `compare`.
+
+The entry writes `audit.status = "pending"` into `loop-entry-report.json` for exactly this reason: the run is
+unfinished until the review lands and its findings are written into the design doc's evidence table.
