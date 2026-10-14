@@ -14,10 +14,14 @@ import { fileURLToPath } from "node:url";
  * start. Each cost a full live cycle (game launch, fixture prepare, session) to discover.
  *
  * The rule is deliberately coarse — newest compiled input vs newest emitted output — because that is what makes
- * it cheap enough to run before every live cycle, and because a full `tsc` run rewrites every emitted file, so a
+ * it cheap enough to run before every live cycle, and because a full rebuild rewrites every emitted file, so a
  * current artifact is always newer than its inputs.
+ *
+ * The rebuild it names is the locked public entry (`pnpm build:test`). A bare `tsc` reads as a shorter command,
+ * but it bypasses the artifact lock and the test-only overlay, and `--noEmitOnError false` emits a PARTIAL tree
+ * by construction — which then surfaces as unrelated module-not-found failures, not as a build error.
  */
-export const REBUILD_COMMAND = "cd host && node node_modules/typescript/bin/tsc --project tsconfig.test.json --noEmitOnError false";
+export const REBUILD_COMMAND = "cd host && pnpm build:test";
 
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "dist-test", "coverage"]);
 

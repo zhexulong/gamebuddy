@@ -78,7 +78,10 @@ test("an artifact with no emitted modules is stale, never silently fresh", async
   }
 });
 
-test("the message a run sees names the rebuild command", () => {
-  // A run that fails without saying how to fix it wastes the same cycle it just spent.
-  assert.equal(REBUILD_COMMAND, "cd host && node node_modules/typescript/bin/tsc --project tsconfig.test.json --noEmitOnError false");
+test("the message a run sees names the locked rebuild entry, never a bare tsc", () => {
+  // A run that fails without saying how to fix it wastes the same cycle it just spent. The command
+  // must be the lock-holding public entry: a bare `tsc` bypasses the artifact lock and the test-only
+  // overlay, and `--noEmitOnError false` emits a partial tree that reads as unrelated failures.
+  assert.match(REBUILD_COMMAND, /build:test/u);
+  assert.doesNotMatch(REBUILD_COMMAND, /\btsc\b/u);
 });
