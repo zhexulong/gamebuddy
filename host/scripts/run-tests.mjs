@@ -197,9 +197,16 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
         onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relativePath(path)}`),
       });
     } catch (error) {
+      // Only a child the supervisor had to KILL is a budget expiry. Anything else - a non-zero
+      // exit, a spawn error - is the child's own failure and must keep its own message, output
+      // and code: reporting a real failure as "the budget expired" hides the reason it failed,
+      // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
+      // bound was the smaller of the two).
+      const message = error instanceof Error ? error.message : String(error);
       failures[index] = {
-        error:
-          budgetMs === perFileMs ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${perFileMs}`) : error,
+        error: message.startsWith("test_supervisor_timeout:")
+          ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}`)
+          : error,
       };
       stopped = true;
     }

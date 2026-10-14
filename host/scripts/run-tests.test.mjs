@@ -107,7 +107,7 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
         now: () => 0,
         run: async (batch, options) => {
           seen.push({ batch, timeoutMs: options.timeoutMs });
-          throw new Error("child was killed");
+          throw new Error("test_supervisor_timeout:pid=1:timeout_ms=5000");
         },
       }),
       /test_file_timeout:slow\.test\.js:budget_ms=5000/,
@@ -139,6 +139,41 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     await assert.rejects(runCompiledTests({ perFileMs: 0 }), /invalid_test_file_timeout/);
     await assert.rejects(runCompiledTests({ perFileMs: 1.5 }), /invalid_test_file_timeout/);
     await assert.rejects(runTestBatches(["a.test.js"], { suite: "fixture", perFileMs: 99 }), /invalid_test_file_timeout/);
+  });
+
+  test("reports a killed child as a budget expiry and lets a real failure keep its own reason", async () => {
+    // A child the supervisor killed is a budget expiry; a child that exited non-zero is its own
+    // failure and must keep its message and output. Getting this backwards reports real failures
+    // as timeouts and hides why they failed.
+    await assert.rejects(
+      runTestBatches(["slow.test.js"], {
+        suite: "fixture",
+        perFileMs: 5_000,
+        now: () => 0,
+        run: async () => {
+          throw new Error("test_supervisor_timeout:pid=1:timeout_ms=5000\npartial output");
+        },
+      }),
+      /test_file_timeout:slow\.test\.js:budget_ms=5000/,
+    );
+
+    await assert.rejects(
+      runTestBatches(["broken.test.js"], {
+        suite: "fixture",
+        perFileMs: 900_000,
+        timeoutMs: 900_000,
+        now: () => 0,
+        run: async () => {
+          throw new Error("test_runner_failed:code=1:signal=none\n✖ a test failed\nAssertionError: nope");
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /test_runner_failed:code=1:signal=none/);
+        assert.match(error.message, /AssertionError: nope/, "the child's own output must survive");
+        assert.doesNotMatch(error.message, /test_file_timeout/);
+        return true;
+      },
+    );
   });
 
   test("keeps the files that contend on one machine-global build out of concurrent execution", async () => {
