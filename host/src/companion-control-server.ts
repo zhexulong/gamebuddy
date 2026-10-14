@@ -9,6 +9,7 @@ import {
   type ControlRequest,
   ControlRequestFramer,
 } from "./companion-control-protocol.js";
+import type { CompanionTurnOutcome } from "./event-pump.js";
 import { resolveWindowsPowerShell } from "./windows-powershell-executable.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -26,7 +27,7 @@ export type ProductControlTarget = Readonly<{
    * report no outcome and are therefore treated as accepted.
    */
   acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<
-    Readonly<{ accepted: boolean; reasonCode?: string; turnOutcome?: "completed" | "aborted" | "error" | "unobserved" }> | void
+    Readonly<{ accepted: boolean; reasonCode?: string; turnOutcome?: CompanionTurnOutcome }> | void
   >;
   stopAll(input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>): Readonly<{
     admission: Readonly<{ accepted: boolean }>;

@@ -8,6 +8,7 @@ import {
 } from "./native-companion-content.js";
 import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
 import { chunkCompanionSpeech } from "./companion-speech-chunker.js";
+import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 
 export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
@@ -143,6 +144,15 @@ export class CompanionLoop {
     // Pi's own final-message classification, which used to be thrown away here (`onRejected: () =>
     // undefined`). It is the only thing that can tell a caller the turn FAILED rather than answered.
     let turnOutcome: CompanionTurnOutcome | undefined;
+    /**
+     * Records how this turn ended. `refused` outranks every other ending: Magic Context never sent the
+     * pass, so whatever Pi reports afterwards (the abort it caused, or a content rejection) is that
+     * refusal's own consequence. Otherwise the first classification of the turn wins.
+     */
+    const recordOutcome = (outcome: CompanionTurnOutcome): void => {
+      if (turnOutcome === "refused") return;
+      if (outcome === "refused" || turnOutcome === undefined) turnOutcome = outcome;
+    };
     let beganPresentation = false;
     let beganVoice = false;
     let voiceBegin: Promise<void> | undefined;
@@ -269,7 +279,7 @@ export class CompanionLoop {
                   // `aborted`/`error` are the transport-level endings; the remaining reasons are
                   // content rejections (empty, tool-only, identity mismatch) that all mean the turn
                   // produced nothing presentable — recorded as a failure, never as a quiet success.
-                  turnOutcome = reason === "aborted" || reason === "error" ? reason : "error";
+                  recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
                 },
               }, { stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION, scaffolding: NATIVE_BUBBLE_SCAFFOLDING });
               nativeContentObserver.open();
@@ -286,14 +296,21 @@ export class CompanionLoop {
           resolveStarted();
           return;
         }
+        // Magic Context refused this turn rather than sending a degraded pass. Upstream appends a
+        // display-only refusal entry and then aborts the run (see companion-turn-refusal.ts), so the
+        // abort is the refusal's own consequence and must not be reported as the player's STOP.
+        if (isRefusedTurnEvent(event)) {
+          recordOutcome("refused");
+          return;
+        }
         if (event.type === "agent_settled" && accepted && !settled) {
           settled = true;
           // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
           // that never produced a final message left no recorded outcome, and the tail of this method
           // returned `completed` for a run the player had cancelled. The content observer's own
           // classification stays authoritative when it exists; this only fills the case where nothing
-          // classified the run (`turnOutcome ?? "completed"` below).
-          if (event.aborted && turnOutcome === undefined) turnOutcome = "aborted";
+          // classified the run.
+          if (event.aborted) recordOutcome("aborted");
           if (sourceEventId !== undefined && batchId !== undefined)
             this.#emitLiveEvidence((sink) => sink.piTurnSettled({ batchId, sourceEventId, disposition }));
           resolveCompleted();

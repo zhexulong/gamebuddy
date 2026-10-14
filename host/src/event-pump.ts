@@ -40,6 +40,10 @@ export type DeliveryDisposition = "steer" | "follow_up" | "hold";
  * `completed` — Pi settled the turn without reporting a failure.
  * `aborted` / `error` — Pi's own final-message classification said so (see
  *   `native-companion-content.ts:252-258`, which already distinguishes them).
+ * `refused` — Magic Context declined to prepare the pass and aborted the run rather than sending it
+ *   unmanaged (see `companion-turn-refusal.ts`). It is its own ending: the abort is the refusal's
+ *   consequence, not the player's STOP, and a refused turn must never read as `completed` or as
+ *   `unobserved`.
  * `unobserved` — the adapter cannot say (no Pi event stream, or the turn never ran).
  *
  * This vocabulary exists because the classification WAS being discarded: the Game loop passed
@@ -47,7 +51,7 @@ export type DeliveryDisposition = "steer" | "follow_up" | "hold";
  * accepted message. A caller must be able to tell "the companion answered" from "the turn died", and
  * "nobody looked" must not be spelled the same way as "it worked".
  */
-export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "unobserved";
+export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "refused" | "unobserved";
 export type PendingBatch = Readonly<{
   batchId: string;
   disposition: Exclude<DeliveryDisposition, "hold">;

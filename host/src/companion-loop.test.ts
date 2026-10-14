@@ -1,25 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
+import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
+
+type SessionEvent = {
+  type: string;
+  messages?: readonly unknown[];
+  message?: unknown;
+  assistantMessageEvent?: unknown;
+  aborted?: boolean;
+  entry?: unknown;
+};
 
 function settledSession(
   handler: (text: string, options?: { deliverAs?: string }) => Promise<void> | void = async () => {},
   settled: { aborted?: boolean } = {},
+  eventsBeforeSettle: readonly SessionEvent[] = [],
 ) {
-  const listeners = new Set<(event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => void>();
-  const emit = (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown; aborted?: boolean }) => {
+  const listeners = new Set<(event: SessionEvent) => void>();
+  const emit = (event: SessionEvent) => {
     for (const listener of [...listeners]) listener(event);
   };
   return {
     async sendUserMessage(text: string, options?: { deliverAs?: string }) {
       emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
       await handler(text, options);
+      // Events a turn produces between its own consumption and its settlement (a refusal entry, below).
+      for (const event of eventsBeforeSettle) emit(event);
       emit({ type: "agent_settled", aborted: settled.aborted === true });
     },
     async abort() {},
     clearQueue() {},
     async waitForIdle() {},
-    subscribe(next: (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => void) {
+    subscribe(next: (event: SessionEvent) => void) {
       listeners.add(next);
       return () => {
         listeners.delete(next);
@@ -957,6 +970,66 @@ test("CompanionLoop reports an aborted settlement as aborted, not completed", as
   });
   assert.equal(await loop.flush(), "aborted");
 });
+
+test("CompanionLoop records a Magic Context refusal as refused, not as the abort the refusal caused", async () => {
+  // Upstream v0.48.0 refuses a turn rather than sending it unmanaged: the guard appends a display-only
+  // `magic-context-turn-refused` entry and then calls `ctx.abort()`, so Pi settles the run as aborted.
+  // Reading that abort as the ending reports a refusal as the player's own STOP.
+  const loop = new CompanionLoop(
+    settledSession(async () => {}, { aborted: true }, [refusalEvent()]) as never,
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_01",
+    eventId: "source_01",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  assert.equal(await loop.flush(), "refused");
+});
+
+test("CompanionLoop never reports a refused turn as completed", async () => {
+  const loop = new CompanionLoop(settledSession(async () => {}, {}, [refusalEvent()]) as never);
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_01",
+    eventId: "source_01",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  assert.equal(await loop.flush(), "refused");
+});
+
+test("CompanionLoop does not read another extension's appended entry as a refusal", async () => {
+  const loop = new CompanionLoop(
+    settledSession(async () => {}, { aborted: true }, [
+      { type: "entry_appended", entry: { type: "custom", customType: "codemode-store", data: {} } },
+    ]) as never,
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_01",
+    eventId: "source_01",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  assert.equal(await loop.flush(), "aborted");
+});
+
+/** Pi's own `entry_appended` shape for Magic Context's refusal (upstream v0.48.0). */
+function refusalEvent(): SessionEvent {
+  return {
+    type: "entry_appended",
+    entry: {
+      type: "custom",
+      customType: MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE,
+      data: { message: "Magic Context could not safely prepare this turn; send your message again." },
+    },
+  };
+}
 
 test("CompanionLoop binds acceptance and settlement to one Pi-runtime settled batch", async () => {
   const evidence: Array<unknown> = [];
