@@ -165,9 +165,15 @@ process.stdout.write(
 );
 if (failures.length > 0) {
   for (const failure of failures) process.stderr.write(`[memory-fold-gate] ${failure}\n`);
-  if (compileOutput.trim().length > 0 && runExit !== 0)
+  // Always show the fixture's own tail on a failed run. The fixture is what knows why it failed, and a gate
+  // that reports "failed" without that output turns every diagnosis into a fresh reproduction.
+  if (runExit !== 0)
     process.stderr.write(
-      `[memory-fold-gate] fixture output tail:\n${runOutput.trim().split("\n").slice(-12).join("\n")}\n`,
+      `[memory-fold-gate] fixture output tail:\n${runOutput.trim().split("\n").slice(-20).join("\n")}\n`,
+    );
+  if (compileOutput.trim().length > 0)
+    process.stderr.write(
+      `[memory-fold-gate] compile output tail:\n${compileOutput.trim().split("\n").slice(-10).join("\n")}\n`,
     );
   process.exit(2);
 }
