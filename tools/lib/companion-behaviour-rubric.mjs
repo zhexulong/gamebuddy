@@ -77,7 +77,8 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   Object.freeze({
     id: "no_machine_token_leak",
     class: "Invariant",
-    statement: "Spoken text never reads machine identifiers aloud (wire action ids, reason codes, evidence keys, enum values).",
+    statement:
+      "Spoken text never reads machine identifiers aloud (wire action ids, reason codes, evidence keys, enum values).",
     provenance: "identity-profile.ts:387 (Game conduct: never in the game's internal language)",
     source: "companion-interaction-gate.mjs:machine_token_leak",
   }),
@@ -119,7 +120,8 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   Object.freeze({
     id: "claim_fulfillable",
     class: "Invariant",
-    statement: "Every first-person action commitment resolves inside the visible capability face and is receipted in the same turn.",
+    statement:
+      "Every first-person action commitment resolves inside the visible capability face and is receipted in the same turn.",
     provenance: "stardew-companion-presence-audit-dimensions.md:39-43 (§3 承诺可兑现性)",
     source: "stardew-companion-presence-projection.mjs:buildPresenceProjection",
   }),
@@ -133,21 +135,24 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   Object.freeze({
     id: "native_stage_direction",
     class: "Preference",
-    statement: "A gesture goes through the native action channel where one exists, not a parenthesised stage direction.",
+    statement:
+      "A gesture goes through the native action channel where one exists, not a parenthesised stage direction.",
     provenance: "identity-profile.ts:388 (body language goes through stardew_express_emote / stardew_face_direction)",
     source: "companion-behaviour-rubric.mjs:text_stage_direction",
   }),
   Object.freeze({
     id: "proactive_authenticity",
     class: "Unjudged",
-    statement: "Whether a self-initiated turn reads as the companion's own impulse rather than an instruction to greet.",
+    statement:
+      "Whether a self-initiated turn reads as the companion's own impulse rather than an instruction to greet.",
     provenance: "stardew-companion-presence-audit-dimensions.md:189-198 (§7 主动交流真实性: 被逼 vs 自主 未定义)",
     source: null,
   }),
   Object.freeze({
     id: "character_card_conformance",
     class: "Unjudged",
-    statement: "Whether the voice matches the character card (persona.core / interactionStyle / expressionStyle, examples).",
+    statement:
+      "Whether the voice matches the character card (persona.core / interactionStyle / expressionStyle, examples).",
     provenance: "host/src/identity-profile.ts:29-62 (IdentityProfile), :146-172 (renderIdentityProfile)",
     source: null,
   }),
@@ -260,7 +265,10 @@ export function assessCompanionBehaviourRubric({ turns, presence = null } = {}) 
     if (!turn || typeof turn !== "object" || Array.isArray(turn)) fail("companion_behaviour_turn_invalid");
     if (typeof turn.turnId !== "string" || !IDENTIFIER.test(turn.turnId)) fail("companion_behaviour_turn_id_invalid");
     if (typeof turn.text !== "string") fail("companion_behaviour_turn_text_invalid");
-    utterances.push({ turnId: turn.turnId, ...assessCompanionUtterance(turn.text, { observedEvents: turn.observedEvents ?? [] }) });
+    utterances.push({
+      turnId: turn.turnId,
+      ...assessCompanionUtterance(turn.text, { observedEvents: turn.observedEvents ?? [] }),
+    });
   }
 
   const findings = [];
@@ -270,14 +278,26 @@ export function assessCompanionBehaviourRubric({ turns, presence = null } = {}) 
       findings.push({ turnId: utterance.turnId, obligation: reasonToObligation(reason), detail: reason });
     }
     if (utterance.internalSelfReference.length > 0)
-      findings.push({ turnId: utterance.turnId, obligation: "no_internal_self_reference", detail: utterance.internalSelfReference.join(",") });
+      findings.push({
+        turnId: utterance.turnId,
+        obligation: "no_internal_self_reference",
+        detail: utterance.internalSelfReference.join(","),
+      });
     if (utterance.oocMetaReference.length > 0)
-      findings.push({ turnId: utterance.turnId, obligation: "no_ooc_meta_reference", detail: utterance.oocMetaReference.join(",") });
+      findings.push({
+        turnId: utterance.turnId,
+        obligation: "no_ooc_meta_reference",
+        detail: utterance.oocMetaReference.join(","),
+      });
     // A parenthesised gesture is a finding, and it is collected HERE so the
     // obligation verdict below counts it: an earlier version appended it after the
     // counts were taken, and the Preference read green on a turn that broke it.
     if (utterance.textStageDirection.length > 0)
-      findings.push({ turnId: utterance.turnId, obligation: "native_stage_direction", detail: utterance.textStageDirection.join(",") });
+      findings.push({
+        turnId: utterance.turnId,
+        obligation: "native_stage_direction",
+        detail: utterance.textStageDirection.join(","),
+      });
   }
 
   // The presence projection owns its own findings; they are copied in with their
@@ -307,18 +327,28 @@ export function assessCompanionBehaviourRubric({ turns, presence = null } = {}) 
     const measured = obligation.id === "claim_fulfillable" ? presence !== null : spokenTurns.length > 0;
     if (!measured) return Object.freeze({ ...obligation, verdict: "unmeasured", detail: "no_recorded_turn" });
     if (obligation.id === "native_stage_direction")
-      return Object.freeze({ ...obligation, verdict: brokenFor(obligation.id) > 0 ? "broken" : "green", detail: `${stageDirections.length}/${spokenTurns.length} carry a parenthesised gesture` });
+      return Object.freeze({
+        ...obligation,
+        verdict: brokenFor(obligation.id) > 0 ? "broken" : "green",
+        detail: `${stageDirections.length}/${spokenTurns.length} carry a parenthesised gesture`,
+      });
     // The Preference is a preference about the RUN, not a per-utterance pattern, so
     // it breaks when NO recorded turn addresses the player; a single finding cannot
     // express that, which is why this one is decided from the count.
     if (obligation.id === "addresses_the_player")
-      return Object.freeze({ ...obligation, verdict: addressed === 0 ? "broken" : "green", detail: `${addressed}/${spokenTurns.length} address the player` });
+      return Object.freeze({
+        ...obligation,
+        verdict: addressed === 0 ? "broken" : "green",
+        detail: `${addressed}/${spokenTurns.length} address the player`,
+      });
     const broken = brokenFor(obligation.id);
     return Object.freeze({ ...obligation, verdict: broken > 0 ? "broken" : "green", detail: `${broken} finding(s)` });
   });
 
   const broken = obligations.filter((obligation) => obligation.verdict === "broken").map((obligation) => obligation.id);
-  const unmeasured = obligations.filter((obligation) => obligation.verdict === "unmeasured").map((obligation) => obligation.id);
+  const unmeasured = obligations
+    .filter((obligation) => obligation.verdict === "unmeasured")
+    .map((obligation) => obligation.id);
   return Object.freeze({
     turnsChecked: turns.length,
     spokenTurns: spokenTurns.length,

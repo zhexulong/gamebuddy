@@ -72,9 +72,13 @@ test("breaking the fiction breaks the out-of-character obligation", () => {
 });
 
 test("a parenthesised gesture is a Preference finding, a tone tag is not", () => {
-  const gesture = assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1", text: "（点头）那我去把鸡舍收拾一下。" }] });
+  const gesture = assessCompanionBehaviourRubric({
+    turns: [{ turnId: "turn_1", text: "（点头）那我去把鸡舍收拾一下。" }],
+  });
   assert.ok(gesture.verdict.broken.includes("native_stage_direction"));
-  const tone = assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1", text: "（轻声）我先去把鸡舍收拾一下。" }] });
+  const tone = assessCompanionBehaviourRubric({
+    turns: [{ turnId: "turn_1", text: "（轻声）我先去把鸡舍收拾一下。" }],
+  });
   assert.equal(obligation(tone, "native_stage_direction").verdict, "green");
 });
 
@@ -103,12 +107,18 @@ test("the presence projection's own findings are carried under this rubric's id"
     turns: [{ turnId: "turn_1", text: "我这就去浇水。" }],
     presence: { turns: [], findings: [{ turnId: "turn_1", finding: "claim_unreceipted" }] },
   });
-  assert.ok(rubric.findings.some((finding) => finding.obligation === "claim_fulfillable" && finding.detail === "claim_unreceipted"));
+  assert.ok(
+    rubric.findings.some(
+      (finding) => finding.obligation === "claim_fulfillable" && finding.detail === "claim_unreceipted",
+    ),
+  );
 });
 
 test("every undecidable obligation is reported unmeasured rather than approximated", () => {
   const rubric = assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1", text: CLEAN }] });
-  const unjudged = COMPANION_BEHAVIOUR_OBLIGATIONS.filter((entry) => entry.class === "Unjudged").map((entry) => entry.id);
+  const unjudged = COMPANION_BEHAVIOUR_OBLIGATIONS.filter((entry) => entry.class === "Unjudged").map(
+    (entry) => entry.id,
+  );
   assert.ok(unjudged.length > 0);
   for (const id of unjudged) {
     assert.equal(obligation(rubric, id).verdict, "unmeasured");
@@ -133,9 +143,15 @@ test("an utterance result exposes which detector produced which signal", () => {
 
 test("malformed input fails closed instead of matching nothing", () => {
   assert.throws(() => assessCompanionBehaviourRubric({ turns: "not-an-array" }), CompanionBehaviourRubricError);
-  assert.throws(() => assessCompanionBehaviourRubric({ turns: [{ turnId: "bad id!", text: "x" }] }), CompanionBehaviourRubricError);
+  assert.throws(
+    () => assessCompanionBehaviourRubric({ turns: [{ turnId: "bad id!", text: "x" }] }),
+    CompanionBehaviourRubricError,
+  );
   assert.throws(() => assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1" }] }), CompanionBehaviourRubricError);
   assert.throws(() => assessCompanionBehaviourRubric({ turns: [], presence: [] }), CompanionBehaviourRubricError);
-  assert.throws(() => assessCompanionBehaviourRubric({ turns: [], presence: { findings: [{}] } }), CompanionBehaviourRubricError);
+  assert.throws(
+    () => assessCompanionBehaviourRubric({ turns: [], presence: { findings: [{}] } }),
+    CompanionBehaviourRubricError,
+  );
   assert.throws(() => assessCompanionUtterance("x", { observedEvents: "npc_dialogue" }), CompanionBehaviourRubricError);
 });
