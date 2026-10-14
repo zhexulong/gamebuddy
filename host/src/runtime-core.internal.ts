@@ -60,6 +60,7 @@ import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/co
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
+import { GAMEBUDDY_PROTECTED_TOOLS } from "./magic-context-protected-tools.js";
 
 import {
   identityKey,
@@ -874,6 +875,11 @@ export async function createRuntimeWithFixedToolsCore(
           },
           todowrite: { enabled: true, overlay: false },
           smart_drops: false,
+          // Upstream's smart drops cannot be turned off, so this Host states which tool results they
+          // must leave alone (see magic-context-protected-tools.ts for the policy and its test for the
+          // registry check). The key is rejected by the current fork's `.strict()` schema and takes
+          // effect with the v0.48.0 merge this change ships with.
+          protected_tools: GAMEBUDDY_PROTECTED_TOOLS,
           temporal_awareness: false,
         },
         null,
