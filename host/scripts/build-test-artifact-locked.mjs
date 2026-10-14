@@ -3,10 +3,42 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
+import { readTestArtifactLock } from "./test-artifact-lock.mjs";
 import { writeHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(hostRoot, "dist-test");
+
+/**
+ * This module deletes and rewrites `dist-test`. It is the INTERNAL half of the build: it
+ * assumes the caller already holds the test-artifact lock, because the public entry
+ * (`pnpm build:test` -> `build-test-artifact.mjs`) is what acquires it, and the suite runner
+ * holds it around its own build+tests.
+ *
+ * That assumption was only a convention, and it was broken repeatedly: a direct
+ * `node scripts/build-test-artifact-locked.mjs` (which several pairs of hands, mine included,
+ * ran while a suite was live) wipes the artifact out from under every running child, and the
+ * symptom is not "a build error" - it is a handful of unrelated tests failing with
+ * `materialized_runtime_test_observation_unavailable` (the overlay is gone) or with a budget
+ * that expired while a rebuild happened. So the module now refuses to run unless the lock
+ * belongs to this process.
+ */
+async function assertArtifactLockHeldByThisProcess() {
+  let record;
+  try {
+    record = await readTestArtifactLock();
+  } catch {
+    throw new Error("host_test_artifact_lock_required:use `pnpm build:test` (it acquires the lock) instead of invoking this module directly");
+  }
+  if (record === undefined)
+    throw new Error(
+      "host_test_artifact_lock_required:no lock is held:use `pnpm build:test` (it acquires the lock) instead of invoking this module directly",
+    );
+  if (record.pid !== process.pid)
+    throw new Error(
+      `host_test_artifact_lock_required:held_by_pid=${record.pid}:use \`pnpm build:test\` (it waits for the lock) instead of invoking this module directly`,
+    );
+}
 
 /**
  * Test-artifact-only overlay. The production source has no test-support edge;
@@ -32,6 +64,7 @@ async function applyGameRuntimeMaterializerTestOverlay() {
   await writeFile(target, overlaid);
 }
 
+await assertArtifactLockHeldByThisProcess();
 await rm(outputRoot, { recursive: true, force: true });
 await runBoundedChild({
   ...(await resolveTypeScriptInvocation({ project: "tsconfig.test.json" })),
