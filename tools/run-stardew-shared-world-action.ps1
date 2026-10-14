@@ -74,8 +74,20 @@ $previousLaunchGenerationPresent = Test-Path Env:GAMEBUDDY_STARDEW_LAUNCH_GENERA
 $previousLaunchGeneration = if ($previousLaunchGenerationPresent) { $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION } else { $null }
 
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
-$hostLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.txt"
-$aiLog = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.player-2.txt"
+# Readiness is judged from THIS run's own log streams first, never only from the machine-global SMAPI files.
+#
+# Those globals (`SMAPI-latest.txt` and its `player-2` sibling) are shared by every Stardew process on the machine,
+# and this driver used to delete them at launch. So two concurrent shared-world runs destroyed each other's
+# readiness evidence: the later launch erased the earlier one's marker, its Wait-LogMarker never saw it, and the
+# run died at its timeout while the log showed the OTHER lane's save (measured 2026-10-14). Console output is now
+# redirected per run, the waits take a list, and nothing deletes a file another run may be writing.
+$LogRoot = Join-Path $ProbeRoot 'logs'
+$hostLog = Join-Path $LogRoot 'host.stdout.log'
+$hostErrorLog = Join-Path $LogRoot 'host.stderr.log'
+$aiLog = Join-Path $LogRoot 'ai-client.stdout.log'
+$aiErrorLog = Join-Path $LogRoot 'ai-client.stderr.log'
+$sharedHostLog = Join-Path $env:APPDATA 'StardewValley\ErrorLogs\SMAPI-latest.txt'
+$sharedAiLog = Join-Path $env:APPDATA 'StardewValley\ErrorLogs\SMAPI-latest.player-2.txt'
 
 # The Host-side fixture scenario each wired action's precondition lives in, and
 # the policy opt-in the AI client needs to have that action published.
@@ -121,12 +133,18 @@ function Assert-NoStardewProcesses([string]$Phase) {
     }
 }
 
-function Wait-LogMarker([string]$Path, [string]$Marker, [int]$Seconds = $TimeoutSeconds) {
+function Wait-LogMarker([string[]]$Paths, [string]$Marker, [int]$Seconds = $TimeoutSeconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     do {
         Start-Sleep -Milliseconds 250
-        $content = if (Test-Path -LiteralPath $Path -PathType Leaf) { [string](Get-Content -Raw -LiteralPath $Path -ErrorAction SilentlyContinue) } else { "" }
-        if (-not [string]::IsNullOrEmpty($content) -and $content.Contains($Marker)) { return $true }
+        # Every candidate is polled: the per-run stream first (this launcher's own output), then the shared file as a
+        # fallback for a SMAPI that writes only there. A marker is looked for in each, so a run cannot be fooled by
+        # another run's content unless that content carries the same marker text.
+        foreach ($candidate in $Paths) {
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            $content = [string](Get-Content -Raw -LiteralPath $candidate -ErrorAction SilentlyContinue)
+            if (-not [string]::IsNullOrEmpty($content) -and $content.Contains($Marker)) { return $true }
+        }
     } while ([DateTime]::UtcNow -lt $deadline)
     return $false
 }
@@ -163,9 +181,22 @@ function Deploy-ReleaseBundle([string]$ModRoot) {
     }
 }
 
-function Start-Smapi([string]$ModsPath, [string]$LaunchGeneration) {
+function Start-Smapi([string]$ModsPath, [string]$LaunchGeneration, [string]$StdOut, [string]$StdErr) {
     $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $LaunchGeneration
-    return Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -PassThru
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StdOut) | Out-Null
+    if (Test-Path -LiteralPath $StdOut) { Remove-Item -LiteralPath $StdOut -Force }
+    if (Test-Path -LiteralPath $StdErr) { Remove-Item -LiteralPath $StdErr -Force }
+    return Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -PassThru -RedirectStandardOutput $StdOut -RedirectStandardError $StdErr
+}
+
+function Get-DriverLogTail([string[]]$Paths, [string]$MissingLabel) {
+    foreach ($candidate in $Paths) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $content = Get-Content -Raw -LiteralPath $candidate
+            if (-not [string]::IsNullOrWhiteSpace($content)) { return $content }
+        }
+    }
+    return $MissingLabel
 }
 
 function Stop-Smapi($Process) {
@@ -331,17 +362,16 @@ try {
     Write-Json $aiSidecarPath $aiConfig
 
     $script:phase = "host_launch"
-    Remove-Item -LiteralPath $hostLog -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $aiLog -Force -ErrorAction SilentlyContinue
+    # No shared file is deleted here: another run may be writing it, and the per-run files above are this run's own.
     # Host and AI must attest as distinct launch generations, exactly as the
     # production launcher does; the Host role fails closed without one.
     $hostGeneration = [guid]::NewGuid().ToString("N")
-    $script:hostProcess = Start-Smapi $hostModsRoot $hostGeneration
+    $script:hostProcess = Start-Smapi $hostModsRoot $hostGeneration $hostLog $hostErrorLog
 
     $script:phase = "host_fixture_readiness"
     $marker = "HostAutomation native world ready for save '$SaveName'; native LAN server started."
-    if (-not (Wait-LogMarker $hostLog $marker $TimeoutSeconds)) {
-        $tail = if (Test-Path -LiteralPath $hostLog -PathType Leaf) { (Get-Content -Raw -LiteralPath $hostLog) } else { "host_log_missing" }
+    if (-not (Wait-LogMarker @($hostLog, $sharedHostLog) $marker $TimeoutSeconds)) {
+        $tail = Get-DriverLogTail @($hostLog, $sharedHostLog) 'host_log_missing'
         throw "Host did not become native-LAN ready for '$SaveName'. Log tail: $($tail.Substring([Math]::Max(0, $tail.Length - 1500)))"
     }
 
@@ -385,10 +415,10 @@ try {
 
     $script:phase = "ai_client_launch"
     $aiGeneration = [guid]::NewGuid().ToString("N")
-    $script:aiProcess = Start-Smapi $aiModsRoot $aiGeneration
-    $clientAttached = Wait-LogMarker $aiLog "FarmhandProvisioner reached readyToPlay with the expected native Farmhand identity and save/world scope." $TimeoutSeconds
+    $script:aiProcess = Start-Smapi $aiModsRoot $aiGeneration $aiLog $aiErrorLog
+    $clientAttached = Wait-LogMarker @($aiLog, $sharedAiLog) "FarmhandProvisioner reached readyToPlay with the expected native Farmhand identity and save/world scope." $TimeoutSeconds
     if (-not $clientAttached) {
-        $tail = if (Test-Path -LiteralPath $aiLog -PathType Leaf) { (Get-Content -Raw -LiteralPath $aiLog) } else { "ai_log_missing" }
+        $tail = Get-DriverLogTail @($aiLog, $sharedAiLog) 'ai_log_missing'
         throw "AI Farmhand did not reach readyToPlay. Log tail: $($tail.Substring([Math]::Max(0, $tail.Length - 1500)))"
     }
 
