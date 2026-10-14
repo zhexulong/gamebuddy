@@ -160,9 +160,18 @@ export function SurfaceModelSettings({
             type="button"
             className="surface-model-chip"
             disabled={saving}
+            // Two providers can publish the same model id, and the chip used to
+            // print the id alone - two suggestions reading one identical word,
+            // with nothing to say which endpoint each one came from. The chip
+            // names the provider's own label (`providerLabel`), because that is
+            // the word the player sees in the connection settings; the raw
+            // `providerId` stays in the suggestion list above, which already
+            // keys on the pair. Neither entry is dropped: they are different
+            // models that happen to share an id.
+            title={`${entry.providerLabel} (${entry.providerId})`}
             onClick={() => setModelId(entry.modelId)}
           >
-            {entry.modelId}
+            {`${entry.modelId} · ${entry.providerLabel}`}
           </button>
         ))}
       </div>
