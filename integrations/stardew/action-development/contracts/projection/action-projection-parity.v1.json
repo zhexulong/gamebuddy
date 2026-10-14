@@ -2486,7 +2486,7 @@
       {
         "actionId": "send_multiplayer_chat",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "text": {
@@ -2867,6 +2867,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "advance_day",
+      "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",
       "build_farm_building",
@@ -2884,8 +2885,7 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "talk_to_npc",
-      "send_multiplayer_chat"
+      "talk_to_npc"
     ]
   },
   "protocol": {
@@ -2985,6 +2985,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "advance_day",
+      "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",
       "build_farm_building",

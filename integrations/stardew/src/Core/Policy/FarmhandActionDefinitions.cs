@@ -278,7 +278,7 @@ public static class FarmhandActionCatalog
         // The one SOCIAL act that is not about an NPC in front of the actor: say a line to the whole lobby
         // through the game's own chat egress (`Multiplayer.sendChatMessage`, Multiplayer.cs:1127). No body, no
         // geometry, no target, no world write - it takes exactly one string and its terminal proves the SEND.
-        E("send_multiplayer_chat", "npc_social", FarmhandActionHandlerGroup.Expression, A(null, null, "chat_message_sent", ("text", "string")), FarmhandActionLifecycle.Experimental),
+        E("send_multiplayer_chat", "npc_social", FarmhandActionHandlerGroup.Expression, A(null, null, "chat_message_sent", ("text", "string")), FarmhandActionLifecycle.LiveVerified),
         // Empties a built fish pond through `FishPond.ClearPond()` (Buildings/FishPond.cs:840) -
         // public, no arguments, and reached in-game only through the pond menu's two-click
         // confirmation, which is UI-only state with no game-logic fork. The body DROPS the fish as

@@ -298,6 +298,8 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("load_building_chest", 1, "run-stardew-native-local-player-load-building-chest-smoke.mjs", "building_chest_loaded", "native_building_chest_v1"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate("collect_building_chest_output", 1, "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs", "building_chest_output_collected", "native_building_chest_v1"),
+  // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
+  gate("send_multiplayer_chat", 1, "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs", "chat_message_sent", "native_farmhand_chat_v1"),
 ]);
 
 /**
@@ -339,7 +341,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // Body-ownership live gate: observes the in-flight owner facts on a real snapshot and proves the supersede
   // the remedy guidance promises. Not a new action; it grants no capability.
   body_owner_hold: "run-stardew-native-local-player-body-owner-hold-smoke.mjs",
-  send_multiplayer_chat: "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
+
   // Lane G resource-depletion recovery-chain harness: drives breakpoint
   // rejected/watering_can_empty -> refill_watering_can recovery -> water_crop
   // retry succeeded on the same target within one native-local session over the
