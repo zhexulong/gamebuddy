@@ -119,6 +119,10 @@
         "src/**/*.mjs",
         "tests/**/*.mjs",
         "scenarios/**/*.mjs"
+      ],
+      "ignoreDependencies": [
+        "@vscode/tree-sitter-wasm",
+        "web-tree-sitter"
       ]
     }
   },

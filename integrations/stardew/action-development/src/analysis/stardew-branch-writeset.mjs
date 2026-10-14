@@ -3,7 +3,11 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const { Language, Parser } = require("web-tree-sitter");
+// A static import, not `require`: the CommonJS form was correct at runtime but invisible to the reachability
+// gate, which then reported the package as an unused dependency.
+import treeSitter from "web-tree-sitter";
+const { Language, Parser } = treeSitter;
+// The grammar is a .wasm FILE, not an importable module, so it has to be resolved as a path.
 const GRAMMAR_WASM = require.resolve("@vscode/tree-sitter-wasm/wasm/tree-sitter-c-sharp.wasm");
 
 /**
