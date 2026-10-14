@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
 import { readTestArtifactLock } from "./test-artifact-lock.mjs";
+import { writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
 import { writeHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,4 +89,7 @@ for (const source of [
   await cp(resolve(hostRoot, source), destination, { force: true, verbatimSymlinks: true });
 }
 await cp(resolve(hostRoot, "resources/windows-named-mutex-broker.ps1"), resolve(outputRoot, "windows-named-mutex-broker.ps1"), { force: true, verbatimSymlinks: true });
+// The inventory must land before the verification manifest: the latter digests the
+// whole output tree, so it has to be written last to see the final artifact.
+await writeTestArtifactInventory({ outputRoot });
 await writeHostVerificationArtifactManifest({ root: hostRoot, outputRoot });

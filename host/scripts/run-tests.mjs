@@ -3,6 +3,7 @@ import { availableParallelism, cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runBoundedChild } from "./child-process-tool.mjs";
+import { assertTestArtifactInventory } from "./test-artifact-inventory.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -306,6 +307,22 @@ export async function runTestBatches(paths, {
   }
 }
 
+/**
+ * Fail fast unless `dist-test` is the complete artifact the builder published.
+ *
+ * The inventory check runs first on purpose: a half-written tree otherwise reports
+ * as unrelated `ERR_MODULE_NOT_FOUND` failures that finish in tens of milliseconds,
+ * which is the failure that was twice misread as a product defect. It is deliberately
+ * light (counts and paths, no digests) and honest about absence: an artifact built
+ * before the inventory existed warns once and still runs.
+ */
+export async function preflightTestArtifact() {
+  const inventory = await assertTestArtifactInventory({ outputRoot: defaultTestRoot });
+  if (inventory.status === "absent")
+    console.error("host_test_artifact_inventory_absent:no test-artifact inventory was recorded; run `pnpm build:test` to record one");
+  await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
+}
+
 export async function runCompiledTests({
   batchSize = configuredBatchSize(process.env.GAMEBUDDY_HOST_TEST_COMPILED_BATCH_SIZE),
   concurrency = configuredConcurrency(process.env.GAMEBUDDY_HOST_TEST_COMPILED_CONCURRENCY),
@@ -321,7 +338,7 @@ export async function runCompiledTests({
   // touches the artifact manifest or discovers files - a knob that is off must not cost a build.
   if (!Number.isSafeInteger(perFileMs) || perFileMs < 100)
     throw runnerError("invalid_test_file_timeout", String(perFileMs));
-  await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
+  await preflightTestArtifact();
   const files = await discoverTestFiles(defaultTestRoot, ".test.js");
   for (const group of EXCLUSIVE_FILE_GROUPS) {
     const matched = files.filter((file) => group.pattern.test(relative(hostRoot, file).replaceAll("\\\\", "/")));

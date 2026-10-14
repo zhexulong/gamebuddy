@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import { assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -401,3 +402,36 @@ test("fails closed at the shared suite deadline with concurrent file children", 
     { file: "b.test.js", timeoutMs: 100 },
   ]);
 });
+
+test("records and verifies the artifact's own test-file inventory", async () => withFixture(async (root) => {
+  await mkdir(join(root, "tavern"), { recursive: true });
+  await writeFile(join(root, "runtime.test.js"), "");
+  await writeFile(join(root, "tavern", "chat.test.js"), "");
+  await writeFile(join(root, "runtime.js"), "");
+
+  const inventory = await writeTestArtifactInventory({ outputRoot: root });
+  assert.deepEqual(inventory, {
+    schema: "gamebuddy-host-test-artifact-inventory/v1",
+    testFileCount: 2,
+    testFiles: ["runtime.test.js", "tavern/chat.test.js"],
+  });
+  assert.deepEqual(await assertTestArtifactInventory({ outputRoot: root }), { status: "complete", present: 2, expected: 2 });
+
+  // An extra test file is not an incomplete artifact.
+  await writeFile(join(root, "extra.test.js"), "");
+  assert.equal((await assertTestArtifactInventory({ outputRoot: root })).status, "complete");
+}));
+
+test("names a shortfall as test_artifact_incomplete instead of running a partial tree", async () => withFixture(async (root) => {
+  await writeFile(join(root, "first.test.js"), "");
+  await writeFile(join(root, "second.test.js"), "");
+  await writeTestArtifactInventory({ outputRoot: root });
+  await rm(join(root, "second.test.js"));
+
+  await assert.rejects(assertTestArtifactInventory({ outputRoot: root }), /test_artifact_incomplete:present=1:expected=2:missing=second\.test\.js/);
+}));
+
+test("degrades honestly when an artifact predates the inventory", async () => withFixture(async (root) => {
+  await writeFile(join(root, "runtime.test.js"), "");
+  assert.deepEqual(await assertTestArtifactInventory({ outputRoot: root }), { status: "absent" });
+}));
