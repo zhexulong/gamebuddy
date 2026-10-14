@@ -124,6 +124,11 @@ public sealed class WorldCreationBootstrapTests
         WithNoLoadedWorld(() =>
         {
             WorldCreationBootstrap bootstrap = CreateBootstrap();
+            // The create path records `nativeEntryRequested` - which marks any
+            // native entry (create or enter) in flight - before it drives
+            // `createdNewCharacter`, so this is the state the live game is in
+            // while the one creation it asked for is loading.
+            SetPrivateField(bootstrap, "nativeEntryRequested", true);
             SetPrivateField(bootstrap, "creationRequested", true);
 
             Game1.hasLoadedGame = true;
@@ -181,13 +186,10 @@ public sealed class WorldCreationBootstrapTests
     [InlineData("''..''")]
     public void ObservedSlotFilter_IsTheSameFilterTheGameUsesForSaveFolders(string logicalName)
     {
-        // WorldCreationBootstrap keeps its own copy of the native filter; the join
-        // manifest composes the slot from SaveGame.FilterFileName (SaveGame.cs:448
-        // is the game's own save-folder naming). They must stay byte-identical.
-        typeof(WorldCreationBootstrap)
-            .GetMethod("FilterSaveName", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object[] { logicalName })
-            .Should().Be(SaveGame.FilterFileName(logicalName));
+        // WorldCreationDecision owns the Mod's slot rule; the join manifest composes
+        // the slot from SaveGame.FilterFileName (SaveGame.cs:448 is the game's own
+        // save-folder naming). They must stay byte-identical.
+        WorldCreationDecision.FilterSaveName(logicalName).Should().Be(SaveGame.FilterFileName(logicalName));
     }
 
     [Fact]

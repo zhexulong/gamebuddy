@@ -10,6 +10,7 @@
 // world it created, and the advertisement the engine's server makes possible) stay
 // unverified by this file.
 using System;
+using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew;
 using StardewValley;
@@ -167,11 +168,8 @@ public sealed class CompanionSessionHostingTests
         // The engine starts its own server from these two facts and only these two
         // (Multiplayer.cs:1777-1811), so the session has to present them, and it has
         // to hand the player's own values back once it is over.
-        Options options = new() { enableServer = false };
-        byte modeBefore = Game1.multiplayerMode;
-        try
+        RunWithEngineState(EngineOptions(enableServer: false), options =>
         {
-            Game1.options = options;
             Game1.multiplayerMode = 0;
             CompanionSessionHosting hosting = new(new DummyMonitor());
 
@@ -182,21 +180,14 @@ public sealed class CompanionSessionHostingTests
             hosting.End();
             options.enableServer.Should().BeFalse();
             Game1.multiplayerMode.Should().Be(0);
-        }
-        finally
-        {
-            Game1.multiplayerMode = modeBefore;
-        }
+        });
     }
 
     [Fact]
     public void HostingIsIdempotentAndRestoresExactlyOnce()
     {
-        Options options = new() { enableServer = false };
-        byte modeBefore = Game1.multiplayerMode;
-        try
+        RunWithEngineState(EngineOptions(enableServer: false), options =>
         {
-            Game1.options = options;
             Game1.multiplayerMode = 0;
             CompanionSessionHosting hosting = new(new DummyMonitor());
 
@@ -209,11 +200,7 @@ public sealed class CompanionSessionHostingTests
             hosting.End();
             options.enableServer.Should().BeFalse();
             Game1.multiplayerMode.Should().Be(0);
-        }
-        finally
-        {
-            Game1.multiplayerMode = modeBefore;
-        }
+        });
     }
 
     [Fact]
@@ -221,11 +208,8 @@ public sealed class CompanionSessionHostingTests
     {
         // The Mod must not fight the player: once they turn the LAN option off
         // themselves during a session, that value is theirs and stays.
-        Options options = new() { enableServer = false };
-        byte modeBefore = Game1.multiplayerMode;
-        try
+        RunWithEngineState(EngineOptions(enableServer: false), options =>
         {
-            Game1.options = options;
             Game1.multiplayerMode = 0;
             CompanionSessionHosting hosting = new(new DummyMonitor());
 
@@ -237,30 +221,57 @@ public sealed class CompanionSessionHostingTests
 
             hosting.End();
             options.enableServer.Should().BeFalse();
-        }
-        finally
-        {
-            Game1.multiplayerMode = modeBefore;
-        }
+        });
     }
 
     [Fact]
     public void ASessionThatNeverHostedWritesNothingAtTheEnd()
     {
-        Options options = new() { enableServer = true };
-        byte modeBefore = Game1.multiplayerMode;
-        try
+        RunWithEngineState(EngineOptions(enableServer: true), options =>
         {
-            Game1.options = options;
             Game1.multiplayerMode = 7;
             CompanionSessionHosting hosting = new(new DummyMonitor());
 
             hosting.End();
             options.enableServer.Should().BeTrue();
             Game1.multiplayerMode.Should().Be(7);
+        });
+    }
+
+    /// <summary>
+    /// The engine's own <see cref="Options"/> cannot be constructed in a unit test:
+    /// its constructor runs <c>setToDefaults()</c> (Options.cs:594), which reads
+    /// <c>Game1.options</c>, and that static getter dereferences the live
+    /// <c>Game1.game1</c> (Game1.cs:1532) - null here because there is no game.
+    /// The hosting module only ever touches <c>enableServer</c> on that object, so
+    /// the harness supplies one without running that constructor.
+    /// </summary>
+    private static Options EngineOptions(bool enableServer)
+    {
+        var options = (Options)FormatterServices.GetUninitializedObject(typeof(Options));
+        options.enableServer = enableServer;
+        return options;
+    }
+
+    /// <summary>
+    /// Present <paramref name="options"/> as the engine's own options, reached
+    /// through a non-null <c>Game1.game1</c>, so the same <c>Game1.options</c>
+    /// read/write path the live game uses runs unchanged. The owner and the
+    /// multiplayer mode are put back exactly afterward.
+    /// </summary>
+    private static void RunWithEngineState(Options options, Action<Options> body)
+    {
+        Game1? gameBefore = Game1.game1;
+        byte modeBefore = Game1.multiplayerMode;
+        try
+        {
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            Game1.options = options;
+            body(options);
         }
         finally
         {
+            Game1.game1 = gameBefore!;
             Game1.multiplayerMode = modeBefore;
         }
     }
