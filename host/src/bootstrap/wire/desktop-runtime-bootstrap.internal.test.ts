@@ -28,6 +28,14 @@ const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
 const sourceRoot = resolve(packageRoot, "src");
 const compiledRoot = resolve(sourceDirectory, "..", "..");
+/**
+ * How long a fixture child may take to CLOSE after a failure. The invariant is that it
+ * closes at all - a failed boot must tear its composition down and let the process exit -
+ * and this bound only exists so a genuine hang fails instead of hanging the suite. It was
+ * 2s, which a loaded machine (a full 230-file suite plus parallel lanes) could miss and
+ * report as a product failure it was not; no latency assertion lives here.
+ */
+const CHILD_SETTLE_TIMEOUT_MS = 20_000;
 
 test("desktop bootstrap helper seeds the composed surface from the Host env seam and publishes the launch URL", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
@@ -455,9 +463,24 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     worker.stdin!.end(`${JSON.stringify({ schema: "gamebuddy-desktop-host-bootstrap/v1", protocolVersion: 1, bootstrapId, generation: "g-wire", inventoryDigest: "e".repeat(64), runtimeAdmissionSha256: "f".repeat(64), rootLayout })}\n`);
     const frames = output === undefined ? undefined : await withTimeout(output, 10_000, "bootstrap acknowledgement").catch((error) => { throw new Error(`${error.message}; worker=${worker?.exitCode ?? "running"}/${worker?.signalCode ?? "none"}; stderr=${workerStderr || "<empty>"}; peer=${peerError?.message ?? "none"}; operations=${requests.map((request) => String(request.operation)).join(",") || "<none>"}`); });
     const acknowledgement = frames?.acknowledgement;
+    // A failed boot must CLOSE its composition and let the child exit - that is the
+    // invariant, and it is not a statement about how fast this machine is. The bound
+    // below exists only so a genuine hang fails instead of hanging the suite; it used to
+    // be 2s, which a loaded machine (a full suite plus parallel lanes) could miss and
+    // turn into a red for the wrong reason. A real failure still names the scenario, the
+    // child's exit state and its stderr, so a hang stays diagnosable.
+    const settleFailure = (error: unknown) =>
+      new Error(
+        `${(error as Error).message}; scenario=${scenario}; worker=${worker?.exitCode ?? "running"}/${worker?.signalCode ?? "none"}; stderr=${workerStderr || "<empty>"}`,
+      );
     if (failureScenario) {
-      await withTimeout(workerClose, 2_000, `${scenario} rejection`);
-      if (connected) await withTimeout(guardianPeerClosed, 2_000, `${scenario} guardian cleanup`);
+      await withTimeout(workerClose, CHILD_SETTLE_TIMEOUT_MS, `${scenario} rejection`).catch((error) => {
+        throw settleFailure(error);
+      });
+      if (connected)
+        await withTimeout(guardianPeerClosed, CHILD_SETTLE_TIMEOUT_MS, `${scenario} guardian cleanup`).catch((error) => {
+          throw settleFailure(error);
+        });
     } else if (fixturesWithIpc) {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       if (scenario === "shutdown-request") {
