@@ -2814,6 +2814,9 @@ that says whether the action really happened (for `send_multiplayer_chat`: `succ
   than weakening the guard.
 - **The shell is PowerShell, not bash** (`/dev/null` does not exist, `2>$null` not `2>/dev/null`, `$env:VAR` not
   `VAR=value`). Multi-step or quoted work belongs in a `.ps1`/`.mjs` file rather than an inline one-liner.
+- **A failed multiplayer attempt LEAVES THE GAME RUNNING**, and the driver then refuses to materialize with
+  `requires no pre-existing Stardew/SMAPI process before materialization (PIDs: …)`. Kill `Stardew Valley` and
+  `StardewModdingAPI` before every attempt.
 - **`pnpm` is broken on this machine** by a lockfile supply-chain policy check, and it fails in a way that READS like a
   passing gate (no output, no error). Call `node`/`bun`/`tsc` directly; the host guards are `bun test`.
 - **The driver must emit COMPACT JSON.** The gate entry parses the driver's stdout line by line and `ConvertTo-Json`
@@ -2841,6 +2844,40 @@ that says whether the action really happened (for `send_multiplayer_chat`: `succ
 6. And one of mine was simply WRONG: I began writing a `HostAutomation` fixture scenario to build the Cabin, which
    duplicated a live-proven product capability with a hardcoded tile. It was reverted before it reached a commit. Check
    what the existing code already does.
+
+### Four more, found by driving the gate to its ACTION (2026-10-14, later)
+
+7. **A scenario name lives in FOUR places, and three of four is silently unarmable.** The Host rejected the whole fixture
+   configuration (`rejected the HostAutomation fixture configuration; no UI or fallback loader was started`) because
+   `HostAutomationConfig.IsValid`'s inline chain (`ModConfig.cs:353`) did not list the scenario, although
+   `KnownFixtureScenarios`, the dispatcher guard and the dispatch branch all did.
+8. **A scenario cannot arm after the engine's LAN server is up.** The readiness block returns until the fixture has
+   armed (`ModEntry.Fixtures.cs:4070-4071`) while the arm guard refuses while a server exists (`:4160`) - and the Mod
+   enables the native LAN host option at session start, so the engine starts serving as soon as the world is live. Any
+   scenario that must arm in this topology needs an exemption, **and the exemption needs its own reason per scenario**
+   (the chat scenario mutates nothing; the talk scenario establishes WORLD state, which a running server does not
+   invalidate).
+9. **Never read actor identity from `config.PlayerId`.** `ResolveHostAutomationFarmhand` did, and only the NATIVE-LOCAL
+   bootstrap ever writes a live value there - so in the shared-world topology it parsed the profile placeholder and failed
+   closed with `fixture_farmhand_id_invalid` before any scenario could run. Read the product's own record instead (the
+   persisted attachment binding), with `config.PlayerId` as the native-local fallback. This is the THIRD instance of one
+   class - a consumer reading identity or scope from a field only one topology writes (the AI client's scope, the
+   scenario chain, this) - and the fix is always the same: point the consumer at an authority that exists in both. Mind
+   the two id FORMS: the binding's `FarmhandId` is a number while `config.PlayerId` is a string.
+10. **A missing build artifact is invisible to the freshness guard.** `host/dist-test/stardew-attachment.js` was absent,
+    so the attachment request died with `ERR_MODULE_NOT_FOUND` deep inside a live run. The guard compares TIMESTAMPS, not
+    completeness, and `scratch/rebuild-dist-test4.cjs` only asserts a few required entries - so a dist-test that is
+    newer than the source yet missing a module passes both. Assert that every module a gate needs exists.
+
+### The content fact that decides where a talk can happen
+
+Decoding all 52 shipped villager dialogue tables with MonoGame's own reader - validated by reproducing the documented
+`Gus:Saloon` - shows **zero** location keys for `Farm`, `Cabin`, `FarmHouse`, `Cellar`, `Greenhouse` and a dozen other
+non-town locations. The talk branch is selected only off a location-keyed line (`NPC.cs:2748` ->
+`checkForNewCurrentDialogue` at `:3908-3956`), and the attached Farmhand spawns in its cabin. So **a talk performed where
+the actor spawns can only ever produce `not_handled`/`no_dialogue`**, and the actor must MOVE to content (the Saloon,
+Beach, Town, Mountain or IslandSouth). Do not author a dialogue line to make it reachable - that would make the branch
+reachable under a world production cannot produce.
 
 ## 42. Multiplayer live-run loop: the SOP, the rubric, and the mandatory review (2026-10-14)
 
