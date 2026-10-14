@@ -181,14 +181,26 @@ test("player turn opaque admission is one-shot, rejects reentry and close drains
       receipt: { messageId: string; idempotencyKey: string };
       afterClose: boolean;
       events: string[];
-      state: { messages: unknown[]; turnLedger: { messageId: string } | null; idempotency: { key: string }[] };
+      state: {
+        messages: { kind: string; role: string; messageId: string }[];
+        turnLedger: { messageId: string } | null;
+        idempotency: { key: string }[];
+      };
     };
     assert.equal(result.firstReceipt.turnId, "ignored");
     assert.equal(result.afterFirst, true);
     assert.equal(result.afterOuter, true);
     assert.equal(result.closePendingBeforeMutation, true);
     assert.equal(result.afterClose, true);
-    assert.equal(result.state.messages.length, 1);
+    // The fresh root's initial Chat opens on the companion's own seeded greeting
+    // (359389da seeds the reviewed preset; 2a0fe8db draws the opening from that
+    // greeting record), so the transcript is that opening plus exactly the one
+    // message the accepted store transaction wrote.
+    assert.deepEqual(
+      result.state.messages.map(({ kind, role }) => `${kind}:${role}`),
+      ["opening:companion", "player:player"],
+    );
+    assert.equal(result.state.messages[1]?.messageId, result.receipt.messageId);
     assert.equal(result.state.turnLedger?.messageId, result.receipt.messageId);
     assert.deepEqual(
       result.state.idempotency.map(({ key }) => key),
@@ -241,7 +253,12 @@ test("facade genuine mount binds root and principal before durable writes, repla
       const store = createChatThreadStore(root, identityKey(principal));
       const readState = () => store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
        const initialCommand = { text: "Hello", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0, authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 } };
-      const pristine = (state) => state.messages.length === 0 && state.draft.revision === 0 && state.draft.text === null && state.turnLedger === null && state.idempotency.length === 0;
+      // The fresh root's initial Chat already carries the companion's own seeded
+      // opening (359389da + 2a0fe8db), so "pristine" is now this exact mounted
+      // shape and a rejected admission must leave it byte-identical.
+      const mounted = await readState();
+      const mountedShape = mounted.messages.length === 1 && mounted.messages[0].kind === "opening" && mounted.messages[0].role === "companion" && mounted.draft.revision === 0 && mounted.draft.text === null && mounted.turnLedger === null && mounted.idempotency.length === 0;
+      const unchanged = (state) => JSON.stringify(state) === JSON.stringify(mounted);
       const wrong = [
         { ...loaded, runtimeRoot: root + "/other-root" },
         { ...loaded, principal: { ...principal, playerId: "player_02" } },
@@ -250,14 +267,14 @@ test("facade genuine mount binds root and principal before durable writes, repla
       ];
       const rejected = [];
       const callbackInvocations = [];
-      const pristineAfterRejected = [];
+      const unchangedAfterRejected = [];
       // The production internal runner must reject every mismatched binding
       // before entering its callback (and therefore before any raw ingress).
       for (const bad of wrong) {
         let callbacks = 0;
         try { await acceptMountedDurableTurn(bad, lease, async () => { callbacks += 1; throw new Error("callback_must_not_run"); }); rejected.push(false); } catch (error) { rejected.push(/semantic_chat_runtime_p4_admission_rejected/.test(String(error))); }
         callbackInvocations.push(callbacks);
-        pristineAfterRejected.push(pristine(await readState()));
+        unchangedAfterRejected.push(unchanged(await readState()));
       }
       const command = initialCommand;
       const accepted = await facade.accept(command);
@@ -267,7 +284,7 @@ test("facade genuine mount binds root and principal before durable writes, repla
       const state = await readState();
       await lease.close();
       let closed = false; try { await facade.accept({ text: "Again", locale: "en-US", idempotencyKey: "bcdefghijklmnopqrstuvw", expectedDraftRevision: 1 }); } catch (error) { closed = /p4_durable_turn_acceptance_unavailable/.test(String(error)); }
-      process.stdout.write(JSON.stringify({ accepted, replay, changedPayload, busy, rejected, callbackInvocations, pristineAfterRejected, state, closed })); await authority.close();
+      process.stdout.write(JSON.stringify({ accepted, replay, changedPayload, busy, rejected, callbackInvocations, mountedShape, unchangedAfterRejected, state, closed })); await authority.close();
     `;
     const child = spawn(
       process.execPath,
@@ -287,9 +304,10 @@ test("facade genuine mount binds root and principal before durable writes, repla
       busy: boolean;
       rejected: boolean[];
       callbackInvocations: number[];
-      pristineAfterRejected: boolean[];
+      mountedShape: boolean;
+      unchangedAfterRejected: boolean[];
       state: {
-        messages: unknown[];
+        messages: { kind: string; role: string; messageId: string }[];
         draft: { revision: number; text: string | null };
         turnLedger: unknown;
         idempotency: unknown[];
@@ -300,10 +318,15 @@ test("facade genuine mount binds root and principal before durable writes, repla
     assert.deepEqual(result.replay, result.accepted);
     assert.equal(result.changedPayload, true);
     assert.equal(result.busy, true);
+    assert.equal(result.mountedShape, true);
     assert.deepEqual(result.rejected, [true, true, true, true]);
     assert.deepEqual(result.callbackInvocations, [0, 0, 0, 0]);
-    assert.deepEqual(result.pristineAfterRejected, [true, true, true, true]);
-    assert.equal(result.state.messages.length, 1);
+    assert.deepEqual(result.unchangedAfterRejected, [true, true, true, true]);
+    assert.deepEqual(
+      result.state.messages.map(({ kind, role }) => `${kind}:${role}`),
+      ["opening:companion", "player:player"],
+    );
+    assert.equal(result.state.messages[1]?.messageId, result.accepted.messageId);
     assert.deepEqual(result.state.draft, { revision: 1, text: null });
     assert.notEqual(result.state.turnLedger, null);
     assert.equal(result.state.idempotency.length, 1);
