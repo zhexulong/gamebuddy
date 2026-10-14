@@ -157,6 +157,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # The Stardew projects and their tests target net6.0, and the hosted runner no longer carries a 6.0
+      # runtime, so the test host refuses to start: "Framework: 'Microsoft.NETCore.App', version '6.0.0'"
+      # with only 8.x/9.x/10.x present. global.json still selects the 8.0 SDK for the build itself.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
       - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests --no-restore
