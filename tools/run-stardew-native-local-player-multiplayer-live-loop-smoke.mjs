@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -14,56 +14,45 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
 
 /**
- * The multiplayer live-run loop: one long-lived session in the two-process shared
- * world, driven by a FREE plan and recorded so a reviewer can reconstruct it.
+ * The multiplayer live-run loop: one long-lived session in the two-process shared world, driven by an allocation and
+ * RECORDED so a reviewer can reconstruct it.
  *
- * WHY IT IS A SMOKE RUNNER
- * ------------------------
- * `tools/run-stardew-shared-world-action.ps1` already owns the topology order
- * (host launch -> signed attachment -> AI-client launch -> bridge readiness) and
- * tears both games down in its `finally`. So the loop is not a new driver: it is a
- * long-lived `-SmokeScript`, which is exactly how `send_multiplayer_chat` is gated
- * on the same world. What is new is that the session is measured over TIME rather
- * than reduced to one bit.
+ * THE PLAN NAMES THE AGENT'S ACTIONS. THERE IS NO PILOT VOCABULARY.
+ * ----------------------------------------------------------------
+ * The farmhand's action surface is the Mod's published set -- dozens of actions (`harvest_crop`, `chest_store`,
+ * `chest_retrieve`, `chop_stump`, `plant_sapling`, `cut_weeds`, `scythe_crop`, `npc_relationship`, `use_item`,
+ * `equip_tool`, `move_to_tile`, `send_multiplayer_chat`, ...). A step names ONE of them with its typed args and is
+ * dispatched over the same bridge protocol the Agent itself uses:
  *
- * THE FOUR CONTRACTS THIS FILE HONOURS (design/architecture/stardew-multiplayer-live-run-loop.md)
- * ----------------------------------------------------------------------------------------------
- *  1. **Nothing is hardcoded.** The plan may be empty, in which case the pilot only
- *     observes and records. `say` and `move` use already-published actions
- *     (`send_multiplayer_chat`, `move_to_tile`) and grant no capability.
- *  2. **All runtime information is captured.** Every bridge fact lands in
- *     `timeline.jsonl` with a wall-clock stamp; both farmers' positions land in
- *     `positions.jsonl`; the agent's own transcript is copied by the caller's
- *     capture, and the two SMAPI logs are archived by `archiveGameLogs` BEFORE the
- *     driver tears the processes down (they are overwritten on the next launch).
- *  3. **The Host position is a NAMED GAP, never faked.** The bridge carries only the
- *     bound farmhand (`BridgeProtocolModels.cs:396-397`); the host's tile exists
- *     only in the Mod's `farmhands` command line (`ModEntry.cs:641-647`). When that
- *     line is absent the record says so, and the farmhand's tile is never used as a
- *     stand-in.
- *  4. **A run that spoke nothing cannot pass the rubric vacuously.** The rubric
- *     reports `unmeasured` for every obligation it could not judge.
+ *     { "atSeconds": 90, "action": "harvest_crop", "args": { "targetRef": "sr1_..." } }
+ *
+ * An earlier version offered `say` / `move` / `observe` instead. Those were hand-picked aliases for two of the
+ * dozens (`send_multiplayer_chat`, `move_to_tile`) plus a read that is not an action at all, so they made the plan
+ * look like a three-verb script when the real subject is the whole action surface. They are gone; the loop observes
+ * continuously by construction, so it needs no `observe` step.
+ *
+ * The pilot cannot expand the surface: a name the live publication did not advertise is refused BY NAME into
+ * `plan.jsonl` (`reason: "not_advertised"`), never silently dropped and never disguised as a native failure.
+ *
+ * WHAT IT RECORDS (all of it before teardown, because the driver stops both games)
+ * -------------------------------------------------------------------------------
+ * `timeline.jsonl` (every bridge fact with a wall clock, so a reviewer can see what the companion reacted to),
+ * `positions.jsonl` (both farmers), `plan.jsonl` (the allocation, its dispatches, and anything the host player said
+ * in game), `smapi/host.log` + `smapi/ai-client.log` (both processes' full output; SMAPI re-creates them on every
+ * launch), and the rubric verdict.
+ *
+ * The host's tile is a NAMED GAP, never faked: the bridge carries only the bound farmhand
+ * (`BridgeProtocolModels.cs:396-397`), and the host's tile exists only in the Mod's own `farmhands` line
+ * (`ModEntry.cs:641-647`). When that line is absent the record says `host_position_not_emitted`; the farmhand's tile
+ * is never substituted for it.
  */
 
-const CHAT_ACTION = "send_multiplayer_chat";
-const MOVE_ACTION = "move_to_tile";
-/** The Mod refuses a second chat inside 2000 ms and answers `chat_rate_limited` with `retry_after_ms`. */
-const CHAT_MIN_INTERVAL_MS = 2_100;
-const DEFAULT_SAMPLE_MS = 2_000;
-
 /**
- * Read the plan, or an empty one: an absent plan means "observe only".
+ * Read the allocation. An absent file means "observe only", which is the default posture.
  *
- * A step is a FREE allocation, not a rehearsal of three canned verbs:
- *
- *   * `action` -- any published action id with its typed args (`harvest_crop`, `chest_store`, `npc_relationship`,
- *     `refill_watering_can`, `equip_tool`, ...). That is the general form, and it is what the Agent's real action
- *     set means in practice: the pilot names one and the loop dispatches it.
- *   * `say` / `move` / `observe` -- sugar kept because a plan reads better and because these are the two things a
- *     watching human notices (`send_multiplayer_chat` through the native pipe, `move_to_tile`).
- *
- * The loop grants no capability: a name the live publication did not advertise is refused BY NAME at dispatch
- * time into `plan.jsonl`, never silently dropped and never disguised as a native failure.
+ * Every step is `{ atSeconds, action, args? }`; the action id is shape-checked HERE so a typo fails before a game
+ * launch instead of becoming an unknown-action round trip in the middle of a session. Whether the name is actually
+ * advertised is decided at dispatch time against the live snapshot -- that answer only exists in a running world.
  */
 export function readLoopPlan(planPath) {
   if (typeof planPath !== "string" || planPath.length === 0)
@@ -73,21 +62,13 @@ export function readLoopPlan(planPath) {
     Number.isSafeInteger(raw?.durationSeconds) && raw.durationSeconds > 0 ? raw.durationSeconds : 0;
   const steps = Array.isArray(raw?.steps) ? raw.steps : [];
   for (const step of steps) {
-    if (!step || typeof step !== "object") throw new Error("loop_plan_step_invalid");
-    if (!["say", "move", "observe", "action"].includes(step.kind)) throw new Error(`loop_plan_step_kind_invalid:${step.kind}`);
-    if (typeof step.atSeconds !== "number" || step.atSeconds < 0) throw new Error("loop_plan_step_at_seconds_invalid");
-    if (step.kind === "say" && (typeof step.text !== "string" || step.text.trim().length === 0))
-      throw new Error("loop_plan_say_text_invalid");
-    if (step.kind === "move" && (!Number.isSafeInteger(step.tile?.x) || !Number.isSafeInteger(step.tile?.y)))
-      throw new Error("loop_plan_move_tile_invalid");
-    if (step.kind === "action") {
-      // The Mod's own action ids are lower snake_case; validating the shape here makes a typo fail at READ time
-      // instead of becoming an unknown-action round trip in the middle of a live session.
-      if (typeof step.action !== "string" || !/^[a-z][a-z0-9_]{0,63}$/u.test(step.action))
-        throw new Error("loop_plan_action_id_invalid");
-      if (step.args !== undefined && (typeof step.args !== "object" || step.args === null || Array.isArray(step.args)))
-        throw new Error("loop_plan_action_args_invalid");
-    }
+    if (!step || typeof step !== "object" || Array.isArray(step)) throw new Error("loop_plan_step_invalid");
+    if (typeof step.action !== "string" || !/^[a-z][a-z0-9_]{0,63}$/u.test(step.action))
+      throw new Error("loop_plan_action_id_invalid");
+    if (step.args !== undefined && (typeof step.args !== "object" || step.args === null || Array.isArray(step.args)))
+      throw new Error("loop_plan_action_args_invalid");
+    if (!Number.isSafeInteger(step.atSeconds) || step.atSeconds < 0)
+      throw new Error("loop_plan_step_at_seconds_invalid");
   }
   return Object.freeze({
     durationSeconds,
@@ -103,8 +84,8 @@ function jsonlWriter(path) {
 /**
  * The host player's tile, if the world ever reported it.
  *
- * The ONLY source is the Mod's own `farmhands` line; there is no bridge field for
- * another player. Returns `null` with a reason instead of guessing.
+ * The ONLY source is the Mod's own `farmhands` line; there is no bridge field for another player. Returns `null`
+ * with a reason instead of guessing.
  */
 export function readHostPositionFromLog(logPath) {
   let text;
@@ -125,8 +106,8 @@ export function readHostPositionFromLog(logPath) {
 }
 
 /**
- * Archives both SMAPI logs. They are re-created on every launch (`run-stardew-shared-world-action.ps1:334-335`),
- * so a loop that does not copy them before teardown loses the Mod's narration entirely.
+ * Archives both SMAPI logs. They are re-created on every launch, so a loop that does not copy them before teardown
+ * loses the Mod's narration entirely.
  */
 export function archiveGameLogs({ hostLogPath, aiLogPath, targetDir }) {
   mkdirSync(targetDir, { recursive: true });
@@ -148,22 +129,57 @@ export function archiveGameLogs({ hostLogPath, aiLogPath, targetDir }) {
 }
 
 /**
- * The loop body, against an already-connected session. Exported so it can be
- * contract-tested without a game.
+ * The companion's own spoken turns, read from the Agent runtime's session transcript.
+ *
+ * This is the only source of companion speech this harness accepts: what the AGENT said, never what the plan asked
+ * for. Absent or unreadable transcript yields an empty list, and the rubric then reports `unmeasured` for every
+ * obligation rather than passing vacuously.
  */
+export function readAgentTurnsFromSession(sessionPath) {
+  if (typeof sessionPath !== "string" || sessionPath.length === 0) return [];
+  let text;
+  try {
+    text = readFileSync(sessionPath, "utf8");
+  } catch {
+    return [];
+  }
+  const turns = [];
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.trim().length === 0) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (record?.type !== "message" || record?.role !== "assistant") continue;
+    const parts = Array.isArray(record.content) ? record.content : [];
+    const spoken = parts
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text.trim())
+      .filter((part) => part.length > 0)
+      .join(" ");
+    if (spoken.length === 0) continue;
+    const raw = `agent_${record.id ?? turns.length + 1}`;
+    turns.push({ turnId: raw.replace(/[^A-Za-z0-9._-]/gu, "_").slice(0, 120), text: spoken });
+  }
+  return turns;
+}
+
+/** The loop body, against an already-connected session. Exported so it can be contract-tested without a game. */
 export async function runMultiplayerLiveLoop(client, receipts, config, options) {
   const topology = classifyTopology(config);
-  if (topology !== "shared_world_farmhand")
-    throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
+  if (topology !== "shared_world_farmhand") throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
   const {
     plan,
     traceDir,
     durationSeconds,
-    sampleMs = DEFAULT_SAMPLE_MS,
+    sampleMs = 2_000,
     stopFile = null,
     now = () => Date.now(),
     hostLogPath = null,
     aiLogPath = null,
+    agentSessionJsonl = null,
   } = options;
   mkdirSync(traceDir, { recursive: true });
   const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"));
@@ -171,12 +187,11 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   const planLog = jsonlWriter(join(traceDir, "plan.jsonl"));
 
   const startedAtMs = now();
-  const spoken = [];
-  const dispatched = [];
   const factsByType = new Map();
+  const dispatches = [];
 
-  // Every fact the Mod emits, not only receipts: the point of the trace is that a
-  // reviewer can see what the companion was reacting to, not only what it did.
+  // Every fact the Mod emits, not only receipts: the point of the trace is that a reviewer can see what the
+  // companion was reacting to, not only what it did.
   const unsubscribe = client.onFact((fact) => {
     factsByType.set(fact.type, (factsByType.get(fact.type) ?? 0) + 1);
     timeline({
@@ -194,7 +209,6 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   });
 
   let nextStep = 0;
-  let lastChatAtMs = Number.NEGATIVE_INFINITY;
   try {
     while (true) {
       const elapsedSeconds = (now() - startedAtMs) / 1_000;
@@ -213,11 +227,7 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           actionable: snapshot.actionable ?? null,
         });
       } catch (error) {
-        timeline({
-          atMs: now() - startedAtMs,
-          type: "loop_observation_failed",
-          detail: String(error?.message ?? error),
-        });
+        timeline({ atMs: now() - startedAtMs, type: "loop_observation_failed", detail: String(error?.message ?? error) });
       }
       // The host's tile has no bridge field; it is read from the Mod's own line when the world printed one, and
       // otherwise recorded as absent WITH the reason. The farmhand's tile is never substituted for it.
@@ -235,69 +245,24 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
 
       while (nextStep < plan.steps.length && plan.steps[nextStep].atSeconds <= elapsedSeconds) {
         const step = plan.steps[nextStep++];
-        if (step.kind === "observe") {
-          planLog({ atMs: now() - startedAtMs, kind: "observe", executed: true, reason: "observed_this_cycle" });
-          continue;
-        }
         if (snapshot === null) {
-          planLog({ atMs: now() - startedAtMs, kind: step.kind, executed: false, reason: "no_snapshot" });
+          planLog({ atMs: now() - startedAtMs, kind: "action", action: step.action, executed: false, reason: "no_snapshot" });
           continue;
         }
-        if (step.kind === "action") {
-          // Any advertised action, with its typed args. The pilot cannot expand the surface: a name the live
-          // publication did not grant is refused BY NAME into plan.jsonl here, so a plan can never ask for
-          // capability the world did not give, and the refusal cannot be mistaken for a native failure.
-          const advertised = Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [];
-          if (!advertised.includes(step.action)) {
-            planLog({
-              atMs: now() - startedAtMs,
-              kind: "action",
-              action: step.action,
-              executed: false,
-              reason: "not_advertised",
-            });
-            continue;
-          }
-          const result = await dispatch(client, receipts, { action: step.action, args: step.args ?? {}, snapshot });
-          dispatched.push(result);
-          planLog({
-            atMs: now() - startedAtMs,
-            kind: "action",
-            action: step.action,
-            executed: true,
-            state: result.state,
-            reason: result.reason,
-          });
+        // The pilot cannot expand the surface: the live publication's own capability list decides, and an
+        // unadvertised name is refused BY NAME here rather than looking like a native failure.
+        const advertised = Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [];
+        if (!advertised.includes(step.action)) {
+          planLog({ atMs: now() - startedAtMs, kind: "action", action: step.action, executed: false, reason: "not_advertised" });
           continue;
         }
-        if (step.kind === "say") {
-          const since = now() - lastChatAtMs;
-          if (since < CHAT_MIN_INTERVAL_MS) await delay(CHAT_MIN_INTERVAL_MS - since);
-          const result = await dispatch(client, receipts, { action: CHAT_ACTION, args: { text: step.text }, snapshot });
-          lastChatAtMs = now();
-          dispatched.push(result);
-          spoken.push({ turnId: `say_${dispatched.length}`, text: step.text, observedEvents: [] });
-          planLog({
-            atMs: now() - startedAtMs,
-            kind: "say",
-            executed: true,
-            text: step.text,
-            state: result.state,
-            reason: result.reason,
-          });
-          continue;
-        }
-        const result = await dispatch(client, receipts, {
-          action: MOVE_ACTION,
-          args: { x: step.tile.x, y: step.tile.y },
-          snapshot,
-        });
-        dispatched.push(result);
+        const result = await dispatch(client, receipts, { action: step.action, args: step.args ?? {}, snapshot });
+        dispatches.push(result);
         planLog({
           atMs: now() - startedAtMs,
-          kind: "move",
+          kind: "action",
+          action: step.action,
           executed: true,
-          tile: step.tile,
           state: result.state,
           reason: result.reason,
         });
@@ -309,7 +274,8 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
     unsubscribe();
   }
 
-  const rubric = assessCompanionBehaviourRubric({ turns: spoken });
+  const agentTurns = readAgentTurnsFromSession(agentSessionJsonl);
+  const rubric = assessCompanionBehaviourRubric({ turns: agentTurns });
   // Archived here, before the driver's `finally` stops both games: SMAPI re-creates these files on every launch.
   const archivedLogs =
     hostLogPath !== null || aiLogPath !== null
@@ -318,9 +284,9 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   return Object.freeze({
     durationSeconds: (now() - startedAtMs) / 1_000,
     steps: plan.steps.length,
-    dispatched: Object.freeze([...dispatched]),
+    dispatched: Object.freeze([...dispatches]),
+    agentTurns: agentTurns.length,
     factsByType: Object.freeze(Object.fromEntries(factsByType)),
-    spoken: Object.freeze([...spoken]),
     archivedLogs: Object.freeze([...archivedLogs]),
     rubric,
   });
@@ -361,11 +327,10 @@ if (import.meta.main) {
       stopFile: process.env.GAMEBUDDY_LOOP_STOP_FILE ?? null,
       hostLogPath: process.env.GAMEBUDDY_LOOP_HOST_LOG ?? null,
       aiLogPath: process.env.GAMEBUDDY_LOOP_AI_LOG ?? null,
+      agentSessionJsonl: process.env.GAMEBUDDY_LOOP_AGENT_SESSION ?? null,
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(result, null, 2));
-    console.log(
-      `LOOP_RESULT ${JSON.stringify({ state: "passed", ...result, dispatched: result.dispatched.length, spoken: result.spoken.length })}`,
-    );
+    console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...result })}`);
     process.exitCode = 0;
   } finally {
     await session.close();

@@ -6,12 +6,18 @@ import { join } from "node:path";
 
 import {
   archiveGameLogs,
+  readAgentTurnsFromSession,
   readHostPositionFromLog,
   readLoopPlan,
   runMultiplayerLiveLoop,
 } from "./run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "gb-loop-"));
+const writePlan = (dir, value) => {
+  const path = join(dir, "plan.json");
+  writeFileSync(path, JSON.stringify(value));
+  return path;
+};
 
 test("an absent plan means observe only — the pilot does nothing by default", () => {
   const plan = readLoopPlan(null);
@@ -19,99 +25,62 @@ test("an absent plan means observe only — the pilot does nothing by default", 
   assert.equal(plan.durationSeconds, 0);
 });
 
-test("plan steps are validated and executed in time order", () => {
+test("a step names ANY action from the farmhand's surface, with its typed args", () => {
   const dir = scratch();
   try {
-    const path = join(dir, "plan.json");
-    writeFileSync(
-      path,
-      JSON.stringify({
-        durationSeconds: 300,
-        steps: [
-          { atSeconds: 90, kind: "move", tile: { x: 39, y: 57 } },
-          { atSeconds: 10, kind: "say", text: "我先去看看东边那块地。" },
-          { atSeconds: 30, kind: "observe" },
-        ],
-      }),
-    );
+    // One step per action FAMILY, because the point is that the plan speaks the whole published surface rather
+    // than a hand-picked few.
+    const path = writePlan(dir, {
+      durationSeconds: 600,
+      steps: [
+        { atSeconds: 5, action: "harvest_crop", args: { targetRef: "sr1_AAAAAAAAAAAAAAAA" } },
+        { atSeconds: 20, action: "chest_retrieve", args: { targetRef: "sr1_BBBBBBBBBBBBBBBB", expectedQualifiedItemId: "(O)24" } },
+        { atSeconds: 40, action: "chop_stump", args: {} },
+        { atSeconds: 60, action: "plant_sapling", args: { targetRef: "sr1_CCCCCCCCCCCCCCCC" } },
+        { atSeconds: 90, action: "cut_weeds", args: {} },
+        { atSeconds: 120, action: "scythe_crop", args: {} },
+        { atSeconds: 150, action: "npc_relationship", args: {} },
+        { atSeconds: 180, action: "send_multiplayer_chat", args: { text: "我把东边那块地收了。" } },
+        { atSeconds: 210, action: "move_to_tile", args: { x: 39, y: 57 } },
+      ],
+    });
     const plan = readLoopPlan(path);
-    assert.equal(plan.durationSeconds, 300);
+    assert.equal(plan.steps.length, 9);
     assert.deepEqual(
-      plan.steps.map((step) => step.atSeconds),
-      [10, 30, 90],
+      plan.steps.map((step) => step.action),
+      ["harvest_crop", "chest_retrieve", "chop_stump", "plant_sapling", "cut_weeds", "scythe_crop", "npc_relationship", "send_multiplayer_chat", "move_to_tile"],
     );
+    assert.deepEqual(plan.steps[1].args, { targetRef: "sr1_BBBBBBBBBBBBBBBB", expectedQualifiedItemId: "(O)24" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("a free allocation may name ANY advertised action with its typed args", () => {
+test("steps run in time order regardless of how they were written", () => {
   const dir = scratch();
   try {
-    const path = join(dir, "plan.json");
-    writeFileSync(
-      path,
-      JSON.stringify({
-        durationSeconds: 600,
-        steps: [
-          { atSeconds: 5, kind: "action", action: "harvest_crop", args: { targetRef: "sr1_AAAAAAAAAAAAAAAA" } },
-          { atSeconds: 20, kind: "action", action: "refill_watering_can", args: {} },
-          { atSeconds: 40, kind: "say", text: "水装满了，我回去继续浇。" },
-        ],
-      }),
-    );
-    const plan = readLoopPlan(path);
-    assert.deepEqual(
-      plan.steps.map((step) => step.kind),
-      ["action", "action", "say"],
-    );
-    assert.equal(plan.steps[0].action, "harvest_crop");
-    assert.deepEqual(plan.steps[0].args, { targetRef: "sr1_AAAAAAAAAAAAAAAA" });
+    const path = writePlan(dir, {
+      durationSeconds: 300,
+      steps: [
+        { atSeconds: 90, action: "cut_weeds" },
+        { atSeconds: 10, action: "move_to_tile", args: { x: 1, y: 2 } },
+        { atSeconds: 30, action: "harvest_crop" },
+      ],
+    });
+    assert.deepEqual(readLoopPlan(path).steps.map((step) => step.atSeconds), [10, 30, 90]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("an action step is shape-checked at read time, so a typo fails before a live session starts", () => {
+test("a malformed step fails closed at READ time, before any game launch", () => {
   const dir = scratch();
   try {
-    const write = (value) => {
-      const path = join(dir, "plan.json");
-      writeFileSync(path, JSON.stringify(value));
-      return path;
-    };
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "Harvest Crop" }] })), /loop_plan_action_id_invalid/u);
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "" }] })), /loop_plan_action_id_invalid/u);
-    assert.throws(() => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "action", action: "harvest_crop", args: [1] }] })), /loop_plan_action_args_invalid/u);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("a malformed plan fails closed instead of silently doing nothing", () => {
-  const dir = scratch();
-  try {
-    const write = (value) => {
-      const path = join(dir, "plan.json");
-      writeFileSync(path, JSON.stringify(value));
-      return path;
-    };
-    assert.throws(
-      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "teleport" }] })),
-      /loop_plan_step_kind_invalid/u,
-    );
-    assert.throws(
-      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "say", text: "   " }] })),
-      /loop_plan_say_text_invalid/u,
-    );
-    assert.throws(
-      () => readLoopPlan(write({ steps: [{ atSeconds: 1, kind: "move", tile: { x: 1.5, y: 2 } }] })),
-      /loop_plan_move_tile_invalid/u,
-    );
-    assert.throws(
-      () => readLoopPlan(write({ steps: [{ atSeconds: -1, kind: "observe" }] })),
-      /loop_plan_step_at_seconds_invalid/u,
-    );
+    assert.throws(() => readLoopPlan(writePlan(dir, { steps: [{ atSeconds: 1 }] })), /loop_plan_action_id_invalid/u);
+    assert.throws(() => readLoopPlan(writePlan(dir, { steps: [{ atSeconds: 1, action: "Harvest Crop" }] })), /loop_plan_action_id_invalid/u);
+    assert.throws(() => readLoopPlan(writePlan(dir, { steps: [{ atSeconds: 1, action: "harvest_crop", args: [1] }] })), /loop_plan_action_args_invalid/u);
+    assert.throws(() => readLoopPlan(writePlan(dir, { steps: [{ atSeconds: -1, action: "harvest_crop" }] })), /loop_plan_step_at_seconds_invalid/u);
+    assert.throws(() => readLoopPlan(writePlan(dir, { steps: ["harvest_crop"] })), /loop_plan_step_invalid/u);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -120,8 +89,7 @@ test("a malformed plan fails closed instead of silently doing nothing", () => {
 test("the host position is read from the world's own line, or named as absent", () => {
   const dir = scratch();
   try {
-    const missing = join(dir, "absent.log");
-    assert.equal(readHostPositionFromLog(missing).reason, "host_log_unreadable");
+    assert.equal(readHostPositionFromLog(join(dir, "absent.log")).reason, "host_log_unreadable");
 
     const empty = join(dir, "empty.log");
     writeFileSync(empty, "[TRACE GameBuddy] nothing about farmers here\n");
@@ -157,11 +125,7 @@ test("both game logs are archived, and an unreadable one is named rather than th
   try {
     const hostLog = join(dir, "SMAPI-latest.txt");
     writeFileSync(hostLog, "host narration\n");
-    const archived = archiveGameLogs({
-      hostLogPath: hostLog,
-      aiLogPath: join(dir, "absent.txt"),
-      targetDir: join(dir, "smapi"),
-    });
+    const archived = archiveGameLogs({ hostLogPath: hostLog, aiLogPath: join(dir, "absent.txt"), targetDir: join(dir, "smapi") });
     assert.equal(archived.length, 2);
     assert.equal(archived[0].bytes, "host narration\n".length);
     assert.equal(readFileSync(archived[0].destination, "utf8"), "host narration\n");
@@ -172,15 +136,36 @@ test("both game logs are archived, and an unreadable one is named rather than th
   }
 });
 
+test("the rubric grades the AGENT's turns, and an absent transcript measures nothing", () => {
+  const dir = scratch();
+  try {
+    // No transcript: the rubric must report unmeasured rather than pass vacuously.
+    assert.deepEqual(readAgentTurnsFromSession(null), []);
+    assert.deepEqual(readAgentTurnsFromSession(join(dir, "missing.jsonl")), []);
+
+    const session = join(dir, "session.jsonl");
+    writeFileSync(
+      session,
+      [
+        JSON.stringify({ type: "message", role: "user", content: [{ type: "text", text: "今天想做点什么？" }] }),
+        JSON.stringify({ type: "message", role: "assistant", content: [{ type: "text", text: "我先去看看东边那块地。" }, { type: "tool_use", name: "stardew_observe" }] }),
+        JSON.stringify({ type: "message", id: "msg_2", role: "assistant", content: [{ type: "text", text: "收完了，要不要一起去河边？" }] }),
+      ].join("\n"),
+    );
+    const turns = readAgentTurnsFromSession(session);
+    // Only the assistant's TEXT is speech: the player's line and the tool_use part are not.
+    assert.equal(turns.length, 2);
+    assert.equal(turns[0].text, "我先去看看东边那块地。");
+    assert.equal(turns[1].text, "收完了，要不要一起去河边？");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the loop refuses a topology that has no shared world to observe", async () => {
   await assert.rejects(
     () =>
-      runMultiplayerLiveLoop(
-        {},
-        [],
-        { NativeLocalPlayerFixture: { Enable: true } },
-        { plan: readLoopPlan(null), traceDir: tmpdir(), durationSeconds: 0 },
-      ),
+      runMultiplayerLiveLoop({}, [], { NativeLocalPlayerFixture: { Enable: true } }, { plan: readLoopPlan(null), traceDir: tmpdir(), durationSeconds: 0 }),
     /multiplayer_live_loop_requires_farmhand_topology/u,
   );
 });
