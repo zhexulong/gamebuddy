@@ -174,7 +174,12 @@ jobs:
       - name: Stardew integration tests (game path configured)
         if: env.GAMEBUDDY_STARDEW_GAME_PATH != ''
         run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --no-restore
-      - run: pnpm --dir integrations/stardew/action-development test
+      # Its runner builds GameBuddy.Stardew.csproj, so the mod build package runs and needs a licensed
+      # game folder; measured locally as `stardew_action_test_launcher_failed` after a dotnet build of the
+      # mod project. Same gate as the integration suite above.
+      - name: Stardew action-development tests (game path configured)
+        if: env.GAMEBUDDY_STARDEW_GAME_PATH != ''
+        run: pnpm --dir integrations/stardew/action-development test
       # Runner contract gates. A native-local runner is one action's live gate
       # entry point, and it can be structurally incapable of passing while its
       # own unit test stays green (the test builds a config in the same shape the

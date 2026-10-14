@@ -134,7 +134,8 @@
     "integrations/stardew/action-development/src/devkit-local/**",
     "tools/lib/voice-final-gate-server.mjs",
     "tools/fixtures/chat-run-audit/memory-probes/**",
-    "tools/.tmp-*"
+    "tools/.tmp-*",
+    "vendor/**"
   ],
   "ignoreBinaries": [
     "playwright",
