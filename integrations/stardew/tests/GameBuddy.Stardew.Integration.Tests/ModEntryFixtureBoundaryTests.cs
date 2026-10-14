@@ -61,6 +61,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativePickupItemFixture", "ResolveHostAutomationFarmhand", "ResolveHostAutomationFarmArrival",
         "InitializeNativeShipItemFixture", "InitializeNativeChestRetrieveFixture",
         "InitializeNativePetFixture", "IsFixtureAdjacentToFarmer", "IsFixtureAdjacentToPlayer",
+        "InstallSharedWorldTalkToNpcFixture", "VerifySharedWorldTalkToNpcJoin",
         "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
         "FindNativeMineEntranceFixtureTarget", "FindNativeRaftFixtureWaterEdge",

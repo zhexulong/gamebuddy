@@ -25,7 +25,13 @@ const ALLOWED_FIXTURE_SCENARIOS = Object.freeze([
   "native_pickup_item_v1",
   "native_use_item_v1",
   "native_harvest_crop_v1",
-"native_farmhand_chat_v1",
+  "native_farmhand_chat_v1",
+  // The shared-world talk gate's Given: the bound Farmhand is placed in the Saloon,
+  // one Chebyshev step from Gus. The location is CONTENT-constrained - the native
+  // talk branch's own dialogue lookup builds its keys from
+  // `Game1.currentLocation.name.Value`, and no shipped villager dialogue table has a
+  // key reachable from the Farm, the Cabin or the FarmHouse.
+  "native_farmhand_talk_to_npc_v1",
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
 const CONFIG_TARGETS = Object.freeze([

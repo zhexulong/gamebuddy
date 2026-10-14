@@ -1315,6 +1315,7 @@ public sealed partial class ModEntry : Mod
         this.hostFarmhandProvisioner?.Update();
         this.TryObserveNativeAutomationClientExit();
         this.TryTriggerNativeAutomationSave();
+        this.VerifySharedWorldTalkToNpcJoin();
         this.TryInitializeNativeFixtureScenario();
         // A co-op night has one lifecycle per farmer: the Host process arms one
         // for the host player and the AI-client process arms one for the Farmhand.

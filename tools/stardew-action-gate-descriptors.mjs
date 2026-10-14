@@ -381,6 +381,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // Second gate for an already-live-verified action: the LADDER path into a shaft, which the
   // published enter_mine gate (the Mine entrance map) does not cover.
   enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
+  // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
+  // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
+  // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under
+  // `Game1.IsMultiplayer`. `STARDEW_SHARED_WORLD_ACTION_SCENARIOS` below names the HostAutomation
+  // Given that run is armed from; this map stays the native-local runner resolution.
   talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
 
   // Reads what the Mod REPORTS about the conversation (the enquiry-and-hold chain stays with talk_to_npc).
@@ -430,6 +435,27 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
 
+});
+
+/**
+ * The HostAutomation fixture scenario each SHARED-WORLD gate must arm, keyed by action.
+ *
+ * `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` maps an experimental action to its native-local
+ * shared-harness runner; it cannot carry this second fact, because a runner is
+ * topology-neutral while the Host fixture scenario is not. This map is the one authored
+ * record the multiplayer gate entry resolves its plan from, so the scenario is never
+ * spelled twice inside `tools/run-stardew-multiplayer-gate.mjs`.
+ *
+ * `send_multiplayer_chat` is PUBLISHED and its descriptor in
+ * `STARDEW_PUBLISHED_ACTION_GATES` already names the same scenario; that gate list is frozen
+ * by `stardew-action-gate-descriptors.test.mjs`, so this map is the resolution input for the
+ * multiplayer entry rather than a second authority over the published descriptor.
+ *
+ * It grants no capability, changes no lifecycle, and publishes no decision.
+ */
+export const STARDEW_SHARED_WORLD_ACTION_SCENARIOS = Object.freeze({
+  send_multiplayer_chat: "native_farmhand_chat_v1",
+  talk_to_npc: "native_farmhand_talk_to_npc_v1",
 });
 
 function gate(actionId, identityVersion, runner, terminalReasonCode, fixtureScenario = null) {

@@ -7,11 +7,27 @@ const ACTION = "talk_to_npc";
 const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
 const VILLAGER = { targetId: "npc_relationship_abcdef0123456789", npcName: "Abigail", x: 31, y: 20 };
 
+/**
+ * The two topologies the SAME runner contract must serve. The native-local fixture
+ * publishes exactly the surface the runner requires; the shared world publishes the
+ * whole consented surface, so its capability check is required-subset and its observe
+ * must tolerate the bridge's deliberate refusal to re-admit a revision it already
+ * admitted.
+ */
+const NATIVE_LOCAL_CONFIG = Object.freeze({
+  NativeLocalPlayerFixture: { Enable: true },
+  FarmhandProvisioner: { Enable: false },
+});
+const SHARED_WORLD_CONFIG = Object.freeze({
+  NativeLocalPlayerFixture: null,
+  FarmhandProvisioner: { Enable: true },
+});
+
 /** A snapshot the runner can act on: one adjacent villager and a free actor. */
-function snapshotWith({ revision, actionable = true, activeExecution = null, targets = [VILLAGER] }) {
+function snapshotWith({ revision, actionable = true, activeExecution = null, targets = [VILLAGER], location = "Town" }) {
   return {
     revision,
-    location: "Town",
+    location,
     tile: { x: 30, y: 21 },
     actionable,
     activeExecution,
@@ -33,11 +49,21 @@ const TALK_EVIDENCE = (target, { dialogueUp = "true", boxUp = "true", handled = 
  * only succeeds when the actor is free and the request named a published villager, and it
  * leaves the actor inside the native DialogueBox — which is exactly the rule under test.
  */
-function makeClient({ holdingItem = false, targets = [VILLAGER] } = {}) {
+function makeClient({ holdingItem = false, targets = [VILLAGER], location = "Town", notAdmittedOnce = false } = {}) {
   const receipts = [];
+  let pendingNotAdmitted = notAdmittedOnce;
   const client = {
-    state: { snapshot: snapshotWith({ revision: 1, targets }) },
-    observe: async () => client.state.snapshot,
+    state: { snapshot: snapshotWith({ revision: 1, targets, location }) },
+    observe: async () => {
+      // The shared-world bridge refuses to re-admit a revision it already admitted;
+      // that refusal is a `observe_snapshot_not_admitted` error, and the harness's
+      // topology-aware observe falls back to the already-admitted projection.
+      if (pendingNotAdmitted) {
+        pendingNotAdmitted = false;
+        throw new Error("observe_snapshot_not_admitted");
+      }
+      return client.state.snapshot;
+    },
     execute: async (request) => {
       const live = client.state.snapshot;
       const base = { requestId: request.requestId, revision: live.revision + 1 };
@@ -89,6 +115,7 @@ function makeClient({ holdingItem = false, targets = [VILLAGER] } = {}) {
         revision: receipt.revision,
         actionable: false,
         targets,
+        location,
       });
       receipts.push(receipt);
       return receipt;
@@ -97,11 +124,11 @@ function makeClient({ holdingItem = false, targets = [VILLAGER] } = {}) {
   return { client, receipts };
 }
 
-const run = (options) => {
+const run = (options, config = NATIVE_LOCAL_CONFIG) => {
   const session = makeClient(options);
   return {
     ...session,
-    result: () => runTalkToNpcSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000 }),
+    result: () => runTalkToNpcSmoke(session.client, session.receipts, config, { terminalTimeoutMs: 1_000 }),
   };
 };
 
@@ -230,4 +257,33 @@ test("talk_to_npc: no adjacent advertised villager means the run cannot start", 
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.equal(result.reasonCode, "talk_to_npc_no_adjacent_villager:tile=30,21;location=Town;actionable=true;targets=Abigail@40,40");
+});
+
+test("talk_to_npc: the shared-world lane reads through the topology-aware observe and reports its topology", async () => {
+  // The two-process farmhand lane refuses to re-admit a revision it already admitted.
+  // A runner that read it with the strict single-player observe would block for a
+  // reason the action cannot fix, so the shared-world case is exercised here as the
+  // client really behaves: one refused read, then the already-admitted projection.
+  const session = run({ location: "Saloon", notAdmittedOnce: true }, SHARED_WORLD_CONFIG);
+  const result = await session.result();
+  assert.equal(result.state, "passed");
+  assert.equal(result.topology, "shared_world_farmhand");
+  assert.equal(result.reasonCode, "talk_to_npc_talked");
+});
+
+test("talk_to_npc: a shared-world actor the Given never placed fails by name, before any talk", async () => {
+  // The Host's pre-attachment placement did not survive the join: the actor is back
+  // where it lands. That is the fixture's Given failing, not a product verdict, so it
+  // must be named as such and must not be reported through a native refusal.
+  const session = run({ location: "Farm" }, SHARED_WORLD_CONFIG);
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "talk_to_npc_shared_world_actor_location_mismatch:Farm:expected=Saloon");
+});
+
+test("talk_to_npc: a shared-world actor at the declared location with no advertised villager fails by name", async () => {
+  const session = run({ location: "Saloon", targets: [] }, SHARED_WORLD_CONFIG);
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reasonCode, "talk_to_npc_shared_world_given_not_established:location=Saloon;tile=30,21;targets=0");
 });

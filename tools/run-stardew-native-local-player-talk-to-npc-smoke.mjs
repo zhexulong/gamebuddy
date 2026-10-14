@@ -1,8 +1,9 @@
 import {
   assertRequiredCapabilities,
+  classifyTopology,
   connectNativeLocalClient,
   executeFresh,
-  observeFresh,
+  observeTopologySnapshot,
   readNativeClientConfig,
   summarizeReceipt,
   waitForActionable,
@@ -16,6 +17,18 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
 
 /** A well-formed opaque id that was never published for any villager. */
 const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
+
+/**
+ * The location the SHARED-WORLD Given declares, checked against the actor's own
+ * client. `native_farmhand_talk_to_npc_v1` places the bound Farmhand in the
+ * Saloon, one Chebyshev step from Gus: the native talk branch builds its dialogue
+ * keys from `Game1.currentLocation.name.Value`, and no shipped villager dialogue
+ * table has a key reachable from the Farm or the Cabin, so the Saloon is the only
+ * place this run can prove the branch. If the Host's pre-attachment placement does
+ * not survive the join, this is what says so - by name, before any talk, instead of
+ * letting a later native refusal read as a product defect.
+ */
+const SHARED_WORLD_DECLARED_LOCATION = "Saloon";
 
 /**
  * talk_to_npc live contract.
@@ -42,11 +55,16 @@ const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
  * discovery projection the Mod publishes (the same list npc_relationship and
  * interact_npc_with_item read), and the Mod re-resolves the person on the game thread.
  */
-export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
+export async function runTalkToNpcSmoke(client, receipts, config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
+  const topology = classifyTopology(config);
   try {
-    const snapshot = await waitForActionable(client, await observeFresh(client), 30_000).catch(() => observeFresh(client, { actionable: true }));
+    const opening = await observeTopologySnapshot(client, topology);
+    const snapshot = await waitForActionable(client, opening, 30_000).catch(() =>
+      observeTopologySnapshot(client, topology, { actionable: true }),
+    );
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
+    assertSharedWorldDeclaredLocation(topology, snapshot);
     const target = chooseAdjacentVillager(snapshot);
 
     // Negative 1. An id nobody published must be refused by the Mod's own target
@@ -69,7 +87,7 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
     });
     if (unknownTerminal.state !== "rejected" || unknownTerminal.reasonCode !== "talk_to_npc_target_not_found")
       throw new Error(`talk_to_npc_unknown_target_not_refused:${unknownTerminal.state}/${unknownTerminal.reasonCode}`);
-    const afterUnknown = await observeFresh(client, { actionable: true });
+    const afterUnknown = await observeTopologySnapshot(client, topology, { actionable: true });
     villagerAt(afterUnknown, target.targetId);
 
     // Positive. The published target, from the same discovery projection.
@@ -109,7 +127,7 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
 
     // The world change, re-read after the terminal: the native dialog is really up, so the
     // Mod's own actionability projection says the actor is no longer free.
-    const after = await observeFresh(client);
+    const after = await observeTopologySnapshot(client, topology);
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     // Loose comparison on purpose: the wire OMITS a null member, so "no active execution" is
     // `undefined` here, and `undefined !== null` would fail a correct run.
@@ -149,12 +167,12 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
     if (!isAdmissionHold(repeatTerminal.reasonCode))
       throw new Error(`talk_to_npc_repeat_not_refused:${repeatTerminal.reasonCode}`);
 
-    const final = await observeFresh(client);
+    const final = await observeTopologySnapshot(client, topology);
     if (final.actionable !== false) throw new Error(`talk_to_npc_repeat_moved_world:${final.actionable}`);
 
     return {
       state: "passed",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: "talk_to_npc_talked",
       target: target.targetId,
       npc: target.npcName,
@@ -174,12 +192,30 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
   } catch (error) {
     return {
       state: "blocked",
-      topology: "native_local_player_fixture",
+      topology,
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
       latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
     };
   }
+}
+
+/**
+ * The shared-world Given's declared location, checked on the ACTOR's own client
+ * before anything is asked of the product. Only the shared-world topology declares
+ * one: the native-local lane's actor is warped to the same Saloon by its own fixture,
+ * but its contract does not depend on that name.
+ */
+function assertSharedWorldDeclaredLocation(topology, snapshot) {
+  if (topology !== "shared_world_farmhand") return;
+  if (snapshot.location !== SHARED_WORLD_DECLARED_LOCATION)
+    throw new Error(
+      `talk_to_npc_shared_world_actor_location_mismatch:${snapshot.location ?? "unknown"}:expected=${SHARED_WORLD_DECLARED_LOCATION}`,
+    );
+  if ((snapshot.npcRelationshipTargets ?? []).length === 0)
+    throw new Error(
+      `talk_to_npc_shared_world_given_not_established:location=${snapshot.location};tile=${snapshot.tile?.x},${snapshot.tile?.y};targets=0`,
+    );
 }
 
 /** The villager the fixture arms: an advertised family target already in native reach. */

@@ -2726,6 +2726,122 @@ list was EMPTY — measured 16 pass / 1 fail at HEAD by running the suite agains
 replacement asserts the invariant that actually holds, derived from the register: an acknowledged action may not be
 `live_verified` or `published`, because there the shared-world run IS the evidence.
 
+---
+
+## 41. Shared-world (multiplayer) live gate: the whole recipe, and the six defects it took to reach it (2026-10-14)
+
+Every multiplayer run before this one depended on two things that existed only by luck: a profile root under
+`%LOCALAPPDATA%\GameBuddy` holding the formal `A-host`/`A-ai-client` profiles, and a save whose farm carried a Cabin
+bound to a farmhand. Both were gone (the default root was reset on 2026-10-13, taking the profiles with it), and **nothing
+in the repo could recreate either** — the launcher had no caller, `prepare-stardew-fixture-profile.mjs` cannot emit the
+formal profile shape, and no tool created a Cabin. The recipe below is the result of rebuilding all of it, written as
+commands because each step was paid for.
+
+### The five steps
+
+**1. Provision both formal profiles.**
+
+```
+node tools/provision-stardew-multiplayer-profiles.mjs \
+  --profile-root <ROOT> --fixture-scenario <native_..._v1> --trigger-native-save-after-attachment
+```
+
+Three traps, each of which fails in a way that does not name its cause:
+`--profile-root` is the **ROOT**, not the `stardew-profiles` directory (that is derived from it). The **AI** profile must
+carry `HostFarmhandProvisioning` **present but `Enable: false`** — the driver writes its `SessionToken`
+(`run-stardew-shared-world-action.ps1:309`, and PowerShell cannot set a property on a null), while `ModEntry.cs:333` reads
+`Enable == true` as "I am the Host role" and `:347-351` refuses a profile that enables both roles at once. And the driver
+requires `-ReleaseDir` **and** `-SessionDirectory` to be absolute paths (`:107`).
+
+**2. Put a correctly-named save on disk.** The formal Host loads it **by name**, and `HostAutomationConfig.IsValid`
+(`ModConfig.cs:352`) requires `SaveName.StartsWith("GameBuddyFixture_")` — the **underscore** form:
+
+```
+pwsh -File tools/prepare-stardew-action-fixture.ps1 -FixtureRoot <fixtures> -InitializeFromSaveName <existing-save> \
+  -TemplateName GameBuddyFixture_<id> -SaveName GameBuddyFixture_<id>      # read-only copy + primary-file rename
+pwsh -File tools/prepare-stardew-action-fixture.ps1 -FixtureRoot <fixtures> \
+  -TemplateName GameBuddyFixture_<id> -SaveName GameBuddyFixture_<id>      # restore it into the save root
+```
+
+**3. Do NOT build a Cabin.** The product does it. `ModEntry.OnSaveLoaded` calls `EnsureCompanionCabin()` first
+(`ModEntry.cs:662`) → `CompanionCabinProvisioning.EnsureCompanionCabin` (`:194`): an empty Cabin is used as-is, a Cabin
+holding an **unclaimed** stub gets its slot released through the engine's own `Cabin.DeleteFarmhand()`, otherwise a Cabin
+is built through the game's own construction path on the **farm's own cabin pad** (never a hardcoded tile). The log lines
+to look for:
+
+```
+GameBuddy gave the companion world a native Cabin through the engine's own construction path: tile=…,14; skin=Log Cabin;
+  size=5x3; construction_days=0; interiors=…; unclaimed_slot_released=True; cabins_now=1
+GameBuddy companion cabin provisioning outcome: BuiltCabin.
+```
+
+**4. Create the FIRST binding, once.** No existing entry could do it, because a new binding requires an **empty** expected
+id (`HostFarmhandProvisioner.cs:535` `new_binding_requires_empty_expected_id`, then `cabin.CreateFarmhand()`) while every
+entry demanded a numeric one. `-ProvisionNewBinding` is that mode — and the ONLY mode where the id may be empty:
+
+```
+pwsh -File tools/run-stardew-shared-world-action.ps1 -GamePath "<game>" \
+  -HostProfileRoot <ROOT>/stardew-profiles/A-host -AiProfileRoot <ROOT>/stardew-profiles/A-ai-client \
+  -ProbeRoot <ROOT>/probe -ReleaseDir <abs>/integrations/stardew/bin/Release/net6.0 \
+  -SessionDirectory <ROOT>/mp-session -SaveName GameBuddyFixture_<id> -ProvisionNewBinding \
+  -TimeoutSeconds 180 -ResultFile <ROOT>/provision-result.json
+```
+
+It stops at the Host's manifest marker — which is issued only after the native save read back a valid binding
+(`HostFarmhandProvisioner.cs:260-262`) — and prints `farmhandId`. **That id is what every later gate passes.**
+
+**5. Run the gate.**
+
+```
+node tools/run-stardew-multiplayer-gate.mjs --game-path "<game>" --expected-farmhand-id <id> \
+  --save-name GameBuddyFixture_<id> --profile-root <ROOT> --action <action-id> \
+  --timeout-seconds 300 --result-file <ROOT>/gate.json
+```
+
+Then **read the result JSON, not the exit code** — its `actionResult` carries the runner's own record, which is the part
+that says whether the action really happened (for `send_multiplayer_chat`: `succeeded / chat_message_sent` with
+`recipient=all_players, length=31, role=client, sent=true`, a second send refused `chat_rate_limited` with
+`retry_after_ms…`, and a third send succeeding after the interval).
+
+### Environment facts that each cost at least one run
+
+- **The fixture root must be a LANE root.** Set `GAMEBUDDY_STARDEW_PROFILE_ROOT` to a directory you own; the default root
+  lives inside the product's own state directory and a reset there takes the profiles, the fixtures and the templates with
+  it. `tools/README.md:271-273` and `RUNBOOK.md:31` already say a lane root is seeded FROM the default root — which is
+  exactly why a lane root alone cannot run a multiplayer gate until step 1 has been done in it.
+- **The freshness guard compares the newest input anywhere under `host/src`**, so a co-writer editing any other area
+  stales `dist-test` for EVERY gate. Rebuild and run inside the SAME task, and retry on `live_run_artifact_stale` rather
+  than weakening the guard.
+- **The shell is PowerShell, not bash** (`/dev/null` does not exist, `2>$null` not `2>/dev/null`, `$env:VAR` not
+  `VAR=value`). Multi-step or quoted work belongs in a `.ps1`/`.mjs` file rather than an inline one-liner.
+- **`pnpm` is broken on this machine** by a lockfile supply-chain policy check, and it fails in a way that READS like a
+  passing gate (no output, no error). Call `node`/`bun`/`tsc` directly; the host guards are `bun test`.
+- **The driver must emit COMPACT JSON.** The gate entry parses the driver's stdout line by line and `ConvertTo-Json`
+  pretty-prints by default, so an action that PASSED inside the driver was reported as
+  `multiplayer_gate_driver_output_missing` one run apart from the fix.
+
+### The six defects, each found by running rather than by reading
+
+1. `HostAutomationConfig.IsValid`'s inline scenario chain (`ModConfig.cs:353`) was missing `native_farmhand_chat_v1`
+   although the dispatcher guard, the dispatch branch and `KnownFixtureScenarios` all had it — arming the scenario was
+   rejected outright. That chain is a fourth place a scenario name must appear.
+2. The chat fixture could never ARM in this topology: its guard refuses while a LAN server exists
+   (`ModEntry.Fixtures.cs:4160`) while the readiness marker requires it to have armed (`:4070-4071`) — and the engine
+   starts its own server as soon as the world is live, because the Mod enables the native LAN host option. A scenario that
+   mutates nothing is now exempt from that one clause.
+3. `StardewAttachmentFlow`'s constructor refused an EMPTY `expectedFarmhandId` (`host/src/stardew-attachment.ts:125`)
+   while the same class's request path treats `""` as meaningful (`:207`) — which is how a request addresses an ownerless
+   cabin (the advertisement writes `""` for it, `HostFarmhandProvisioner.cs:405`). The one mode that creates a binding
+   could not be expressed at all.
+4. Nothing persisted the **verified** scope into the AI client's config. A bridge client declares the scope it connects to
+   (`createNativeScope` reads `SaveId`/`WorldId`/`PlayerId`), and the only writer was the NATIVE-LOCAL bootstrap
+   (`ModEntry.Fixtures.cs:194`) — so every shared-world runner declared a stale value and was refused with
+   `scope_mismatch:saveId`. `FarmhandProvisioner.OnScopeVerified` + `ModEntry.PersistVerifiedFarmhandScope` closed it.
+5. The driver's pretty-printed JSON (see above).
+6. And one of mine was simply WRONG: I began writing a `HostAutomation` fixture scenario to build the Cabin, which
+   duplicated a live-proven product capability with a hardcoded tile. It was reverted before it reached a commit. Check
+   what the existing code already does.
+
 ## 42. Multiplayer live-run loop: the SOP, the rubric, and the mandatory review (2026-10-14)
 
 Design: `design/architecture/stardew-multiplayer-live-run-loop.md`. Harness:
