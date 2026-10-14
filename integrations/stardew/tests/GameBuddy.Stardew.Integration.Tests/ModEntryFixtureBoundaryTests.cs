@@ -40,6 +40,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalEnterExitWarpActionFixture",
         "InstallNativeLocalEnterMineLadderFixture",
         "InstallNativeLocalTailoringFixture",
+        "InitializeNativeLocalColorPlacedObjectFixture",
         "InstallNativeLocalTalkToNpcFixture",
         "TryFindNativeLocalTalkToNpcTiles",
         "PlaceNativeLocalToggleAnimalDoorFixtureBuilding",

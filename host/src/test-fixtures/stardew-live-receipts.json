@@ -2,6 +2,7 @@
   "note": "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.",
   "receipts": [
     {
+      "fromRun": "accept_daily_quest",
       "actionId": "accept_daily_quest",
       "state": "succeeded",
       "reasonCode": "daily_quest_accepted",
@@ -23,6 +24,7 @@
       }
     },
     {
+      "fromRun": "accept_special_order",
       "actionId": "accept_special_order",
       "state": "succeeded",
       "reasonCode": "special_order_accepted",
@@ -40,6 +42,7 @@
       }
     },
     {
+      "fromRun": "build_farm_building",
       "actionId": "build_farm_building",
       "state": "succeeded",
       "reasonCode": "farm_building_built",
@@ -63,6 +66,55 @@
       }
     },
     {
+      "fromRun": "chest_retrieve",
+      "actionId": "chest_retrieve",
+      "state": "succeeded",
+      "reasonCode": "chest_retrieved",
+      "evidence": {
+        "location": "Farm",
+        "target": "chest_69f6538f7646e4bf",
+        "tile": "2,9",
+        "container": "chest",
+        "item": "(O)24",
+        "chest_stack_before": "1",
+        "chest_stack_after": "0",
+        "inventory_before": "0",
+        "inventory_after": "1",
+        "leftover_returned": "false",
+        "native_menu_opened": "false"
+      }
+    },
+    {
+      "fromRun": "claim_mail_attachment",
+      "actionId": "claim_mail_attachment",
+      "state": "succeeded",
+      "reasonCode": "mail_claimed",
+      "evidence": {
+        "target": "mailbox_0dc4038a775fda43",
+        "tile": "68,16",
+        "location": "Farm",
+        "mail_id": "Robin",
+        "mail_content_known": "true",
+        "mail_has_attachment": "true",
+        "mail_attachment_commands": "1",
+        "mail_recorded_natively": "true",
+        "pending_before": "1",
+        "pending_after": "0",
+        "mail_removed": "true",
+        "mail_recorded": "true",
+        "letter_opened": "true",
+        "letter_closed": "true",
+        "collection_overflow_pending": "false",
+        "mail_salvage_inventory_units": "0",
+        "mail_salvage_debris_units": "0",
+        "inventory_slots_before": "5",
+        "inventory_slots_after": "6",
+        "inventory_units_before": "5",
+        "inventory_units_after": "55"
+      }
+    },
+    {
+      "fromRun": "claim_museum_reward",
       "actionId": "claim_museum_reward",
       "state": "succeeded",
       "reasonCode": "museum_rewards_collected",
@@ -82,6 +134,7 @@
       }
     },
     {
+      "fromRun": "clear_fish_pond",
       "actionId": "clear_fish_pond",
       "state": "succeeded",
       "reasonCode": "fish_pond_cleared",
@@ -105,6 +158,32 @@
       }
     },
     {
+      "fromRun": "dye_clothing_with_item",
+      "actionId": "dye_clothing_with_item",
+      "state": "succeeded",
+      "reasonCode": "clothing_dyed",
+      "evidence": {
+        "target": "tailoring_dye_2b4fb0f70fc91a51",
+        "garment_slot": "7",
+        "dye_slot": "5",
+        "location": "FarmHouse",
+        "garment": "(S)1123",
+        "dye": "(O)428",
+        "colour_before": "255,0,0",
+        "colour_expected": "255,255,255",
+        "colour_after": "255,63,63",
+        "strength": "0.25",
+        "strength_source": "context_tag_default",
+        "colour_changed": "true",
+        "prismatic_after": "false",
+        "dye_before": "3",
+        "dye_after": "2",
+        "dye_spent": "true",
+        "colour_route": "TailoringMenu.GetDyeColor"
+      }
+    },
+    {
+      "fromRun": "name_entity",
       "actionId": "name_entity",
       "state": "succeeded",
       "reasonCode": "entity_named",
@@ -124,6 +203,7 @@
       }
     },
     {
+      "fromRun": "redeem_prize_ticket",
       "actionId": "redeem_prize_ticket",
       "state": "succeeded",
       "reasonCode": "prize_ticket_redeemed",
@@ -139,6 +219,54 @@
         "prizes_claimed_before": "0",
         "prizes_claimed_after": "1",
         "prize_delivered": "true"
+      }
+    },
+    {
+      "fromRun": "tailor_clothing",
+      "actionId": "tailor_clothing",
+      "state": "succeeded",
+      "reasonCode": "clothing_tailored",
+      "evidence": {
+        "target": "tailoring_recipe_1c4b721c08131e32",
+        "left_slot": "5",
+        "right_slot": "6",
+        "location": "FarmHouse",
+        "left": "(O)428",
+        "right": "(O)10",
+        "output": "(S)1029",
+        "left_before": "3",
+        "left_after": "2",
+        "right_before": "3",
+        "right_after": "2",
+        "right_spent": "true",
+        "output_before": "0",
+        "output_after": "1",
+        "delivered": "1",
+        "dropped": "0",
+        "disposition": "inventory",
+        "dropped_debris": "0"
+      }
+    },
+    {
+      "fromRun": "talk_to_npc",
+      "actionId": "talk_to_npc",
+      "state": "succeeded",
+      "reasonCode": "talk_to_npc_talked",
+      "evidence": {
+        "location": "Saloon",
+        "target": "npc_relationship_44785264d8765c3b",
+        "npc": "Gus",
+        "tile": "0,15",
+        "native_handled": "true",
+        "dialogue_up_before": "false",
+        "dialogue_up_after": "true",
+        "dialogue_box_after": "true",
+        "menu_open_after": "DialogueBox",
+        "talked_to_today_before": "false",
+        "talked_to_today_after": "true",
+        "points_before": "0",
+        "points_after": "20",
+        "player_can_move_after": "false"
       }
     }
   ]

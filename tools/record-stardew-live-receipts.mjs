@@ -24,10 +24,12 @@ if (!existsSync(RUNS)) {
 }
 
 const entries = [];
+let lastDir = "";
 for (const dir of readdirSync(RUNS)) {
   const file = join(RUNS, dir, "live.out.txt");
   if (!existsSync(file)) continue;
   const text = readFileSync(file, "utf8");
+  lastDir = dir;
 
   for (const line of text.split("\n")) {
     if (!line.startsWith('{"state":"passed"')) continue;
@@ -38,13 +40,20 @@ for (const dir of readdirSync(RUNS)) {
       continue;
     }
     const trace = Array.isArray(parsed.trace) ? parsed.trace : [];
-    // The terminal receipt is the one a step recorded with a state and reason; the evidence rides on the observation
-    // step that followed it.
-    const action = trace.map((s) => s.action).find((a) => typeof a === "string");
-    const receipt = trace.map((s) => s.receipt).find((r) => r && r.state === "succeeded");
-    const evidence = trace.map((s) => s.evidence).find((e) => e && typeof e === "object" && !Array.isArray(e));
+    // The terminal receipt is the one a step recorded with a state and reason; the action that produced it is the
+    // SAME step's action (the wia_* chains run several actions, so the first action string is not the one this
+    // terminal belongs to). The evidence rides on the observation step that followed, OR on the result's top-level
+    // `evidence` when no trace step carries it.
+    const step = trace.find((s) => s.receipt && s.receipt.state === "succeeded");
+    if (step === undefined) continue;
+    const action = typeof step.action === "string" ? step.action : undefined;
+    const receipt = step.receipt && step.receipt.state === "succeeded" ? step.receipt : undefined;
+    const evidence =
+      trace.map((s) => s.evidence).find((e) => e && typeof e === "object" && !Array.isArray(e)) ??
+      (parsed.evidence && typeof parsed.evidence === "object" && !Array.isArray(parsed.evidence) ? parsed.evidence : undefined);
     if (typeof action !== "string" || receipt === undefined || evidence === undefined) continue;
     entries.push({
+      fromRun: lastDir,
       actionId: action,
       state: receipt.state,
       reasonCode: receipt.reasonCode,

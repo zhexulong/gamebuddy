@@ -627,6 +627,9 @@ activeExecution?: ActiveExecution | null;
    * item ids they hold, the kind of act (`recipe` or `dye`), the qualified id the act produces, and -
    * for a dye target - the garment's CURRENT colour and name. `garmentColour` is the fact
    * `dye_clothing_with_item` changes, and this projection is the only read of it. */
+  /** One placed chest the actor can repaint right now, with the colour it already carries. Published only
+   * while `color_placed_object` is advertised. */
+  colorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; color: string }>[];
   tailoringTargets?: readonly Readonly<{ targetId: string; kind: string; leftSlot: number; rightSlot: number; leftQualifiedItemId: string; rightQualifiedItemId: string; outputQualifiedItemId: string; garmentColour: string | null; garmentName: string | null }>[];
   /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
    * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
@@ -677,6 +680,7 @@ export type ExecutionRequest = Readonly<{
     | "redeem_prize_ticket"
     | "tailor_clothing"
     | "dye_clothing_with_item"
+    | "color_placed_object"
     | "send_multiplayer_chat"
     | "name_entity"
     | "use_warp_item"
@@ -1297,6 +1301,7 @@ const SNAPSHOT_KEYS = [
   "specialOrderTargets",
   "activeSpecialOrderKeys",
   "museumRewardTargets",
+  "colorTargets",
   "tailoringTargets",
   "acceptedDailyQuest",
   "wearableTargets",
@@ -1320,6 +1325,7 @@ const SNAPSHOT_KEYS = [
     "specialOrderTargets",
     "activeSpecialOrderKeys",
     "museumRewardTargets",
+    "colorTargets",
     "tailoringTargets",
     "acceptedDailyQuest",
   "wearableTargets",
@@ -1850,6 +1856,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
      value.action !== "redeem_prize_ticket" &&
      value.action !== "tailor_clothing" &&
      value.action !== "dye_clothing_with_item" &&
+     value.action !== "color_placed_object" &&
      value.action !== "build_farm_building" &&
      value.action !== "send_multiplayer_chat" &&
      value.action !== "name_entity" &&
@@ -2014,6 +2021,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   ) {
     // The shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
+  } else if (value.action === "color_placed_object") {
+    // The chest tile, the opaque target id, and the palette index the repaint asks for. The palette's own
+    // SIZE belongs to the game (`DiscreteColorPicker.totalColors`), so the wire only refuses a negative
+    // index; the Mod names `invalid_color_selection` for one past the palette.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId", "colorSelection"])) return "invalid_execution_request";
+    if (!Number.isSafeInteger(value.args.colorSelection) || (value.args.colorSelection as number) < 0)
+      return "invalid_color_selection";
   } else if (value.action === "accept_daily_quest") {
     // The quest identity ALONE. `dailyQuestTargets` publishes no tile, and the Mod's own wire parser
     // pins exactly { expectedTargetId } (BridgeProtocol.ExecutionArgumentProperties, asserted by
@@ -2587,6 +2601,8 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     return "invalid_snapshot:museumRewardTargets";
   const tailoringVerdict = tailoringTargetsVerdict(value);
   if (tailoringVerdict !== null) return tailoringVerdict;
+  const colorVerdict = colorTargetsVerdict(value);
+  if (colorVerdict !== null) return colorVerdict;
   if (
     value.wearableTargets !== undefined &&
     (!Array.isArray(value.wearableTargets) ||
@@ -3352,6 +3368,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
        value.action === "redeem_prize_ticket" ||
        value.action === "tailor_clothing" ||
        value.action === "dye_clothing_with_item" ||
+       value.action === "color_placed_object" ||
       value.action === "place_owned_object" ||
       value.action === "remove_placed_item" ||
       value.action === "break_container_source" ||
@@ -5002,6 +5019,8 @@ function dailyQuestError(value: Record<string, unknown>): string | null {
     return "invalid_snapshot:museumRewardTargets";
   const tailoringVerdict = tailoringTargetsVerdict(value);
   if (tailoringVerdict !== null) return tailoringVerdict;
+  const colorVerdict = colorTargetsVerdict(value);
+  if (colorVerdict !== null) return colorVerdict;
   return null;
 }
 
@@ -5066,6 +5085,41 @@ function tailoringTargetsVerdict(value: Record<string, unknown>): string | null 
     return `invalid_snapshot:tailoringTargets:entry${index}:keys=${keys}`;
   }
   return null;
+}
+
+/** Why the chest-colour projection was refused, naming the offending entry and its keys, or null when acceptable. */
+function colorTargetsVerdict(value: Record<string, unknown>): string | null {
+  const targets = value.colorTargets;
+  if (targets === undefined) return null;
+  if (!Array.isArray(targets)) return "invalid_snapshot:colorTargets:not_an_array";
+  if (targets.length > 32) return `invalid_snapshot:colorTargets:count=${targets.length}`;
+  for (let index = 0; index < targets.length; index += 1) {
+    if (isColorTargetFact(targets[index])) continue;
+    const entry = targets[index];
+    const keys = isRecord(entry) ? Object.keys(entry).join("|") : typeof entry;
+    return `invalid_snapshot:colorTargets:entry${index}:keys=${keys}`;
+  }
+  return null;
+}
+
+/** One placed chest the actor can repaint: the opaque id discovery published, its location and tile, and
+ * the colour it currently carries (the field the write changes, so the caller can see whether a repaint
+ * would move anything). */
+function isColorTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "color"]) &&
+    typeof value.targetId === "string" &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    typeof value.x === "number" &&
+    Number.isSafeInteger(value.x) &&
+    typeof value.y === "number" &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.color === "string" &&
+    value.color.length > 0
+  );
 }
 
 function isTailoringTargetFact(value: unknown): boolean {

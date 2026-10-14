@@ -54,6 +54,9 @@ export async function runChestRetrieveSmoke(
     const evidence = parseStrictEvidence(terminal.evidence);
     const after = await observeTopologySnapshot(client, topology, { actionable: true, minRevision: terminal.revision });
     assertRequiredCapabilities(after, EXPECTED_CAPABILITIES);
+    // The recorded evidence rides on its own observation step, so tools/record-stardew-live-receipts.mjs can
+    // extract the Mod's terminal field set from this run's artifact the way it does for clear_fish_pond.
+    trace.push({ step: "observed", target: target.targetId, revision: after.revision, evidence });
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&

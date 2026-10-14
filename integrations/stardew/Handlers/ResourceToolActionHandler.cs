@@ -94,6 +94,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "remove_placed_item" => this.executions.RequestLocalRemovePlacedItem(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "place_owned_object" => this.executions.RequestLocalPlaceOwnedObject(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "color_placed_object" => this.executions.RequestLocalColorPlacedObject(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.Args.ColorSelection ?? 0, request.DeadlineMs),
             "pan_ore" => this.executions.RequestLocalPanOre(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.DeadlineMs),
             "claim_mail_attachment" => this.executions.RequestLocalClaimMailAttachment(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "load_building_chest" => this.executions.RequestLocalLoadBuildingChest(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.Slot ?? 0, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),

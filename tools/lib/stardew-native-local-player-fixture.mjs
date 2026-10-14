@@ -568,6 +568,7 @@ export function fixtureActions(action) {
   if (action === "build_farm_building") return ["build_farm_building"];
   if (action === "name_entity") return ["name_entity"];
   if (action === "accept_daily_quest") return ["accept_daily_quest"];
+  if (action === "color_placed_object") return ["color_placed_object"];
   if (action === "accept_special_order") return ["accept_special_order"];
   if (action === "claim_museum_reward") return ["claim_museum_reward"];
   if (action === "redeem_prize_ticket") return ["redeem_prize_ticket"];
@@ -795,6 +796,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("build_farm_building")) return "native_build_farm_building_v1";
   if (actions.includes("name_entity")) return "native_name_entity_v1";
   if (actions.includes("accept_daily_quest")) return "native_accept_daily_quest_v1";
+  if (actions.includes("color_placed_object")) return "native_color_placed_object_v1";
   if (actions.includes("accept_special_order")) return "native_accept_special_order_v1";
   if (actions.includes("claim_museum_reward")) return "native_claim_museum_reward_v1";
   if (actions.includes("redeem_prize_ticket")) return "native_prize_ticket_v1";

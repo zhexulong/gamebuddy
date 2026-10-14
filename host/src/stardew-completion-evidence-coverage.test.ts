@@ -737,6 +737,18 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["colour_route", "TailoringMenu.GetDyeColor"],
     ],
   },
+  color_placed_object: {
+    reasonCode: "placed_object_recolored",
+    fields: [
+      ["target", "color_0123456789abcdef"],
+      ["tile", "12,9"],
+      ["location", "Farm"],
+      ["color_selection", "2"],
+      ["color_before", "85,85,255"],
+      ["color_after", "119,191,255"],
+      ["color_changed", "true"],
+    ],
+  },
   shop_purchase: {
     reasonCode: "item_purchased",
     fields: [

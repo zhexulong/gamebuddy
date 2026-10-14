@@ -1928,6 +1928,33 @@ export function createStardewActionTools(
 
   { // constant mount; per-action admission at execution
     const registration = modRegistrations.find(
+      (entry) => entry.actionId === "color_placed_object",
+    );
+    if (
+      registration?.descriptor &&
+      isModDescriptorComplete("color_placed_object", registration.descriptor)
+    ) {
+      const schema = buildCandidateToolSchema("color_placed_object", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.color_placed_object,
+          label: "Repaint a placed chest",
+          description:
+            "Repaint one placed chest with one of the game's own 21 palette colours. Read the opaque target id, its tile (`x`, `y`) and the `color` it already carries from the `colorTargets` entries of the most recent observation, then name the palette index (`colorSelection`) it should carry. Only palette colours are writable, so no RGB value is accepted, and a repaint to the colour it already carries is refused by name instead of being reported as a change.",
+          parameters: schema,
+          action: "color_placed_object",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+            colorSelection: params.colorSelection,
+          }),
+        }),
+      );
+    }
+  }
+  { // constant mount; per-action admission at execution
+    const registration = modRegistrations.find(
       (entry) => entry.actionId === "dye_clothing_with_item",
     );
     if (

@@ -2931,6 +2931,42 @@
             "$ref": "#/$defs/tailoringTarget"
           },
           "maxItems": 32
+        },
+        "colorTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/colorTarget"
+          },
+          "maxItems": 32
+        }
+      }
+    },
+    "colorTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "color"],
+      "properties": {
+        "targetId": {
+          "type": "string",
+          "pattern": "^color_[a-f0-9]{16}$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "color": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -6306,7 +6342,8 @@
             "tailor_clothing",
             "dye_clothing_with_item",
             "name_entity",
-            "redeem_prize_ticket"
+            "redeem_prize_ticket",
+            "color_placed_object"
           ]
         },
         "args": {

@@ -92,6 +92,10 @@ export async function runClaimMailAttachmentSmoke(
         );
     }
 
+    // The recorded evidence rides on its own observation step, so tools/record-stardew-live-receipts.mjs can
+    // extract the Mod's terminal field set from this run's artifact the way it does for clear_fish_pond.
+    trace.push({ step: "observed", mailbox: `${mailbox.x},${mailbox.y}`, evidence });
+
     // The world change, re-read after the terminal: the same mailbox now publishes the
     // consumed count, and the identity moved with the state it names.
     const after = await observeFresh(client);

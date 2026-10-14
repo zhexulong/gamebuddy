@@ -565,6 +565,36 @@ export function hasStardewCompletionEvidence(
           },
         )
       );
+    case "color_placed_object":
+      // Evidence literal: farmhandexecutioncontroller.colorobjectactions.cs - the opaque target id, the
+      // tile, the location, the palette index and the colour before/after read off the chest instance.
+      // The game has no callable settlement for this write, so the proof is the OBSERVED change: the
+      // colour must equal the palette colour for the named index AND differ from the recorded before
+      // value. A repaint to the colour it already carried is `color_already_set`, never a success.
+      return (
+        receipt.reasonCode === "placed_object_recolored" &&
+        exactEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "location",
+            "color_selection",
+            "color_before",
+            "color_after",
+            "color_changed",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasBoundedNonemptyEvidenceValue(e.tile) &&
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            integerEvidenceValue(e.color_selection) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.color_before) &&
+            hasBoundedNonemptyEvidenceValue(e.color_after) &&
+            e.color_changed === "true" &&
+            e.color_after !== e.color_before,
+        )
+      );
     case "dye_clothing_with_item":
       // Evidence literal: farmhandexecutioncontroller.tailoringactions.cs - the opaque pair identity, the
       // garment and dye slots, the two item ids, the colour before/expected/after, the strength and its

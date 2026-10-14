@@ -152,6 +152,9 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
       );
     }
     if (evidence === null) throw new Error(`shop_evidence_unparseable:${evidenceProblem}`);
+    // The recorded evidence rides on its own trace step that also names the action, because this runner's other
+    // steps carry only a `phase`. tools/record-stardew-live-receipts.mjs reads exactly this shape for clear_fish_pond.
+    trace.push({ phase: "observed_evidence", action: "shop_purchase", evidence });
     const after = await waitForFreshSnapshot(client, { minRevision: receipt.revision });
 
     const moneyBefore = Number.parseInt(evidence.money_before ?? "", 10);

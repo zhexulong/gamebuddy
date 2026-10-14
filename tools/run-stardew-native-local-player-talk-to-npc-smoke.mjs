@@ -103,6 +103,10 @@ export async function runTalkToNpcSmoke(client, receipts, _config, { terminalTim
     assertEvidence(evidence, "dialogue_box_after", "true");
     assertEvidence(evidence, "player_can_move_after", "false");
 
+    // The recorded evidence rides on its own observation step, so tools/record-stardew-live-receipts.mjs can
+    // extract the Mod's terminal field set from this run's artifact the way it does for clear_fish_pond.
+    trace.push({ step: "observed", target: target.targetId, npc: target.npcName, evidence });
+
     // The world change, re-read after the terminal: the native dialog is really up, so the
     // Mod's own actionability projection says the actor is no longer free.
     const after = await observeFresh(client);

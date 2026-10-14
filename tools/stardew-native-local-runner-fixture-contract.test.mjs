@@ -82,6 +82,7 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-prize-ticket-smoke.mjs": "redeem_prize_ticket",
   "run-stardew-native-local-player-tailor-clothing-smoke.mjs": "tailor_clothing",
   "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs": "dye_clothing_with_item",
+  "run-stardew-native-local-player-color-placed-object-smoke.mjs": "color_placed_object",
   "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
   "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
   // The chat deed is NOT a native-local fixture: it lives on the farmhand lane of the

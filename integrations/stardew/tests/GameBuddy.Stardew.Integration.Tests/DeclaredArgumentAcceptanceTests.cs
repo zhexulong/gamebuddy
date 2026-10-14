@@ -136,6 +136,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         int? slot = null;
         int? quantity = null;
         int? leftSlot = null;
+        int? colorSelection = null;
         int? rightSlot = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
@@ -156,6 +157,7 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "y": y = int.Parse(effective); break;
                 case "slot": slot = int.Parse(effective); break;
                 case "leftSlot": leftSlot = int.Parse(effective); break;
+                case "colorSelection": colorSelection = int.Parse(effective); break;
                 case "rightSlot": rightSlot = int.Parse(effective); break;
                 case "quantity": quantity = int.Parse(effective); break;
                 case "expectedQualifiedItemId": expectedQualifiedItemId = effective; break;
@@ -188,6 +190,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             Y = y,
             Slot = slot,
             LeftSlot = leftSlot,
+            ColorSelection = colorSelection,
             RightSlot = rightSlot,
             Quantity = quantity,
             ExpectedQualifiedItemId = expectedQualifiedItemId,

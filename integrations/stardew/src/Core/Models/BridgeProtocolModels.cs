@@ -520,6 +520,10 @@ public sealed record BridgeSnapshot(
         // reason as its siblings above: the positional list is already closed by the parameters
         // before it.
         IReadOnlyList<BridgeWearableTarget>? WearableTargets = null,
+        // The chests this actor can repaint right now, each carrying the colour it already has. Published
+        // only while its own action is advertised. Defaulted and LAST for the same reason as its siblings
+        // above: the positional list is already closed by the parameters before it.
+        IReadOnlyList<BridgeColorTarget>? ColorTargets = null,
         // The farm-building lane's projection: the commission sites this actor can name right now
         // (`build_site`) and the buildings already standing (`built`), so the caller can see its own
         // commission change the published fact. Defaulted, like every sibling projection.
@@ -636,6 +640,10 @@ public sealed class BridgeExecutionArgs
     public int? LeftSlot { get; init; }
     /// <summary>The SECOND sewing-machine slot (the reagent, or the dye item).</summary>
     public int? RightSlot { get; init; }
+    /// <summary>The palette index a `color_placed_object` repaint asks for. The bound belongs to the
+    /// GAME (`DiscreteColorPicker.totalColors`), so the acceptance layer only refuses negatives and the
+    /// handler names `invalid_color_selection` for anything outside the palette.</summary>
+    public int? ColorSelection { get; init; }
     /// <summary>Semantic tool selector (equip_tool/v2): a canonical category that the
     /// Mod resolves deterministically on the game thread; slot stays Mod-private.</summary>
     public string? Tool { get; init; }
@@ -718,6 +726,11 @@ public sealed record BridgeTailoringTarget(
 /// `slot` argument `load_building_chest` requires) or omits all three when the actor holds
 /// nothing loadable; the Mod's serializer omits null members, so the Host accepts their
 /// absence exactly as it does for `machineTargets`.</summary>
+/// <summary>One placed chest the actor can name for `color_placed_object`, projected read-only
+/// from live state: the opaque id discovery published, its tile and location, and the colour it
+/// currently carries. What the write changes is the colour, so the colour is what the caller reads.</summary>
+public sealed record BridgeColorTarget(string TargetId, string Location, int X, int Y, string Color);
+
 public sealed record BridgeBuildingChestTarget(
     string TargetId,
     string Location,

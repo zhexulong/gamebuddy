@@ -496,6 +496,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["tailoring", "inventory_slot"],
   ),
   actionAdapter(
+    "color_placed_object",
+    "Repaint a placed chest",
+    "Repaint one placed chest with one of the game's own 21 palette colours. Read the opaque target id, its tile and the `color` it already carries from the `colorTargets` entries of the most recent observation, then name the palette index (`colorSelection`) the chest should carry. Only the palette colours are writable, so no RGB value is accepted; a repaint to the colour it already has is refused by name rather than reported as a change.",
+    ["world_object", "container"],
+  ),
+  actionAdapter(
     "dye_clothing_with_item",
     "Dye clothing with one item",
     "Recolour one existing garment from one dye item through the game own `TailoringMenu.DyeItems` route. Read the opaque target id, the garment slot (`leftSlot`), the dye slot (`rightSlot`) and the garment's CURRENT `garmentColour` from the `tailoringTargets` entries of the most recent observation. The receipt proves the dye was spent AND the colour moved (or stayed where it was when the dye carries the same colour), and reports before/expected/after; a colour that did not settle is never reported as success.",
@@ -622,6 +628,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   redeem_prize_ticket: "stardew_redeem_prize_ticket",
   tailor_clothing: "stardew_tailor_clothing",
   dye_clothing_with_item: "stardew_dye_clothing_with_item",
+  color_placed_object: "stardew_color_placed_object",
 } as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
@@ -784,6 +791,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "redeem_prize_ticket",
   "tailor_clothing",
   "dye_clothing_with_item",
+  "color_placed_object",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -1136,6 +1144,13 @@ export function isModDescriptorComplete(
     if (!hasExactPublishedArgumentNames(descriptor, ["leftSlot", "rightSlot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "clothing_tailored") return false;
+    return true;
+  }
+  if (actionId === "color_placed_object") {
+    // The chest drawer's tile, the opaque target id, and the palette index the repaint asks for.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId", "colorSelection"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "placed_object_recolored") return false;
     return true;
   }
   if (actionId === "dye_clothing_with_item") {

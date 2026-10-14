@@ -75,6 +75,7 @@ public static class FarmhandExecutionAcceptance
         bool quantity = args.Quantity.HasValue;
         bool buildingType = args.BuildingType is not null;
         bool leftSlot = args.LeftSlot is not null;
+        bool colorSelection = args.ColorSelection is not null;
         bool rightSlot = args.RightSlot is not null;
         bool text = args.Text is not null;
         return x == HasArgument(descriptor, "x")
@@ -92,7 +93,8 @@ public static class FarmhandExecutionAcceptance
             && text == HasArgument(descriptor, "text")
             && buildingType == HasArgument(descriptor, "buildingType")
             && leftSlot == HasArgument(descriptor, "leftSlot")
-            && rightSlot == HasArgument(descriptor, "rightSlot");
+            && rightSlot == HasArgument(descriptor, "rightSlot")
+            && colorSelection == HasArgument(descriptor, "colorSelection");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -118,6 +120,10 @@ public static class FarmhandExecutionAcceptance
             && buildingTypeId.Length <= 128, // mirrors the Host wire validator (>128 is rejected the same way)
         "leftSlot" => args.LeftSlot is int leftSlotValue && leftSlotValue >= 0 && leftSlotValue <= facts.MaximumInventorySlot,
         "rightSlot" => args.RightSlot is int rightSlotValue && rightSlotValue >= 0 && rightSlotValue <= facts.MaximumInventorySlot,
+        // The palette SIZE is the game's own (`DiscreteColorPicker.totalColors`), which lives in the game
+        // assembly and not in this policy layer, so this arm refuses a negative index only and the handler
+        // names `invalid_color_selection` for anything past the palette.
+        "colorSelection" => args.ColorSelection is int colorSelectionValue && colorSelectionValue >= 0,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum
