@@ -395,7 +395,11 @@ test("reference handler admits a full-size message while bootstrap remains cappe
       headers: { Origin: server.origin, "Content-Type": "application/json" },
       body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(4_096),
     });
-    assert.equal(oversizedBootstrap.status, 400);
+    // `96a8bca5` reclassified an over-ceiling request body from the generic 400
+    // `invalid_request` to the typed 413 `payload_too_large` (with the
+    // connection closed); the bootstrap's 4 KiB ceiling itself is unchanged.
+    assert.equal(oversizedBootstrap.status, 413);
+    assert.equal(((await oversizedBootstrap.json()) as { code: string }).code, "payload_too_large");
 
     const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
       method: "POST",
