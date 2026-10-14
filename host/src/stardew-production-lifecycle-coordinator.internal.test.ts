@@ -118,6 +118,32 @@ function deferredVoid(): Readonly<{ promise: Promise<void>; resolve(): void }> {
   const promise = new Promise<void>((settle) => { resolve = settle; });
   return Object.freeze({ promise, resolve });
 }
+/**
+ * Bounds a test's wait for a parked product hand-off. If a later product change
+ * makes the parked step unreachable, the fixture fails by name instead of
+ * leaving the runner waiting on an event that can never arrive, which Node
+ * reports as `--test-timeout` and then waits on the body for anyway.
+ */
+async function awaitParkedPhase(
+  entered: Readonly<{ promise: Promise<void> }>,
+  phase: string,
+  budgetMs = 20_000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      entered.promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`stardew_create_close_fixture_phase_unreachable:${phase} after ${budgetMs}ms`)),
+          budgetMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 type RecordedGameStop = Readonly<{ stopId: string; sourceEventId: string; reasonCode: string; locale?: string }>;
 function connectedSemanticGameLeaseFixture(input: Readonly<{
   onAttachVoiceStopper?(): void;
@@ -6300,8 +6326,8 @@ function containedGuardianSessionRecorder(sessionCalls: string[]): DesktopGuardi
 test("close after an explicit endgame joins an in-flight create so its durable rows settle before close resolves", async () => {
   await withWindowsPlatform(async () => {
     const fake = fakeGameSessionCreationAuthority();
-    const completionEntered = deferredVoid();
-    const completionGate = deferredVoid();
+    const slotReadEntered = deferredVoid();
+    const slotReadGate = deferredVoid();
     const sessionCalls: string[] = [];
     const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
       createDesktopGuardianGameRuntimePlatform(containedGuardianSessionRecorder(sessionCalls)),
@@ -6311,12 +6337,18 @@ test("close after an explicit endgame joins an in-flight create so its durable r
         runtimeLaunchContained: collaborator,
         gameSessionCreationAuthority: Object.freeze({
           ...fake.authority,
-          completeGameSessionBinding: async (
-            input: Parameters<StardewGameSessionCreationAuthority["completeGameSessionBinding"]>[0],
+          // Parked in the world-slot read: the native world seam has already run
+          // and the session is one step short of registering its binding. This
+          // is the deepest point a post-endgame create can reach -- the endgame
+          // released the registration pointer, so `readWorldBindingHolderHandle`
+          // refuses every later registration under its own bounded code and no
+          // registered binding with resumable metadata can exist on this path.
+          readGameSessionWorldBindingSlotHolder: async (
+            input: Parameters<StardewGameSessionCreationAuthority["readGameSessionWorldBindingSlotHolder"]>[0],
           ) => {
-            completionEntered.resolve();
-            await completionGate.promise;
-            return fake.authority.completeGameSessionBinding(input);
+            slotReadEntered.resolve();
+            await slotReadGate.promise;
+            return fake.authority.readGameSessionWorldBindingSlotHolder(input);
           },
         }),
         createWorldBinding: async () => Object.freeze({ bindingRef: "Farm_389124477" }),
@@ -6332,14 +6364,12 @@ test("close after an explicit endgame joins an in-flight create so its durable r
       let createSettled = false;
       void creating.then(() => { createSettled = true; }, () => { createSettled = true; });
       await publishNextAttachmentAdmission(fixture.runtimeRoot, previousRequestId, availableCabins[0]!);
-      // Parked inside the completion step: the binding is registered and the
-      // session is one step short of `resumable`.
-      await completionEntered.promise;
+      await awaitParkedPhase(slotReadEntered, "world_slot_read");
       const sessionId = fake.sessions()[0]!.gameSessionId;
       assert.equal(fake.readMetadata(sessionId)?.status, "pending");
-      assert.equal(fake.readBinding(sessionId)?.status, "registered");
+      assert.equal(fake.readBinding(sessionId), null);
       const closing = fixture.coordinator.close();
-      completionGate.resolve();
+      slotReadGate.resolve();
       await closing;
       // Nothing was awaited between `close()` and these assertions, so they run
       // at the exact instant close resolved -- that ordering is the point: the
@@ -6348,15 +6378,16 @@ test("close after an explicit endgame joins an in-flight create so its durable r
       // close() joins the in-flight create on EVERY path, so the create's own
       // failure closure has already run here.
       assert.equal(createSettled, true);
-      assert.deepEqual(fake.readBinding(sessionId), {
-        gameSessionId: sessionId, integrationId: "stardew", bindingRef: "Farm_389124477", status: "terminal", revision: 2,
-      });
       assert.deepEqual(fake.readMetadata(sessionId), {
-        gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 3,
+        gameSessionId: sessionId, integrationId: "stardew", continuityIdentityId: null, status: "failed", revision: 2,
       });
+      assert.equal(fake.readBinding(sessionId), null);
       assert.deepEqual(fake.listResumable(), []);
       await assert.rejects(creating, /stardew_lifecycle_closing/);
     } finally {
+      // The parked create has to be released before close can join it, even on a
+      // failure exit; resolving an already-resolved gate is a no-op.
+      slotReadGate.resolve();
       await fixture.coordinator.close();
       await fixture.broker.close();
     }
