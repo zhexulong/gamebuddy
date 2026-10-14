@@ -41,14 +41,15 @@ export function exclusiveGroupsFor(relativePath) {
   return EXCLUSIVE_FILE_GROUPS.filter((group) => group.pattern.test(normalized));
 }
 
-const DEFAULT_TEST_CONCURRENCY = 4;
+const DEFAULT_TEST_CONCURRENCY = 2;
 /**
- * Per-file budget. Far above the slowest legitimate file (tens of seconds) and far below
- * the suite deadline, so a file that never resolves is named and bounded instead of
- * consuming the run. Raise it with `GAMEBUDDY_HOST_TEST_COMPILED_FILE_TIMEOUT_MS` when a
- * deliberately long fixture is being run on purpose.
+ * Per-file budget: a STALL detector, not a speed bound. It exists so a file that never
+ * resolves is named and bounded instead of consuming the run; the suite deadline owns the real
+ * bound. Sized generously because a legitimately slow file under load is otherwise reported as a
+ * hang: measured here, `gameplay-task-subagent.test.js` takes 2s alone and exceeded a 180s budget
+ * inside a 4-way batch on a machine already running ~60 other node processes.
  */
-const DEFAULT_TEST_FILE_TIMEOUT_MS = 180_000;
+const DEFAULT_TEST_FILE_TIMEOUT_MS = 600_000;
 // Windows release CI runs each compiled file in an isolated Node coordinator.
 // The whole suite remains bounded, but 15 minutes cannot accommodate its
 // measured serialized Windows baseline and can shrink a final child below its

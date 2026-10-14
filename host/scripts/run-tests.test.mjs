@@ -92,9 +92,10 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
       },
     });
     // The suite deadline still bounds the run, but a file no longer receives it: a single
-    // file gets its own (smaller) budget, because a file that never resolves must be named
-    // and bounded instead of consuming the suite's remaining minutes in silence.
-    assert.deepEqual(calls, [{ batch: ["a.test.js"], timeoutMs: 180_000 }]);
+    // file gets its own (smaller) stall budget, because a file that never resolves must be named
+    // and bounded instead of consuming the suite's remaining minutes in silence. It is sized for
+    // a loaded machine (600s) - the point is to catch a hang, not to race a slow file.
+    assert.deepEqual(calls, [{ batch: ["a.test.js"], timeoutMs: 600_000 }]);
   });
 
   test("names the file whose own budget expired, and keeps the suite deadline as its bound", async () => {
@@ -317,7 +318,7 @@ test("bounds a batch's concurrent file children and still runs every file", asyn
   assert.deepEqual(started, paths);
 });
 
-test("defaults to four concurrent file children within a batch", async () => {
+  test("defaults to two concurrent file children within a batch", async () => {
   const paths = ["a", "b", "c", "d", "e"].map((name) => `${name}.test.js`);
   const releases = [];
   let inFlight = 0;
@@ -333,17 +334,17 @@ test("defaults to four concurrent file children within a batch", async () => {
       inFlight -= 1;
     },
   });
-  await nextTurn();
-  assert.equal(peak, 4);
-  while (releases.length > 0) {
-    releases.shift()();
     await nextTurn();
-  }
-  await suite;
-  assert.equal(peak, 4);
-});
+    assert.equal(peak, 2);
+    while (releases.length > 0) {
+      releases.shift()();
+      await nextTurn();
+    }
+    await suite;
+    assert.equal(peak, 2);
+  });
 
-test("a failed file fails the run and still awaits its in-flight siblings", async () => {
+  test("a failed file fails the run and still awaits its in-flight siblings", async () => {
   const paths = ["a", "b", "c", "d"].map((name) => `${name}.test.js`);
   const finished = [];
   let releaseSibling;
