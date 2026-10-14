@@ -31,12 +31,23 @@ test("send_multiplayer_chat resolves to its Host fixture scenario and its experi
   assert.equal(plan.runner, "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs");
 });
 
+test("talk_to_npc resolves to the shared-world Given its register demands", () => {
+  const plan = resolveMultiplayerGatePlan({ action: "talk_to_npc" });
+  // The scenario is the Host Given, not a native-local fixture: the action is
+  // mp-semantic, so only a two-process run can clear it. The scenario name comes
+  // from STARDEW_SHARED_WORLD_ACTION_SCENARIOS, never from a literal here.
+  assert.equal(plan.scenario, "native_farmhand_talk_to_npc_v1");
+  assert.equal(plan.experimental, true);
+  assert.equal(plan.runner, "run-stardew-native-local-player-talk-to-npc-smoke.mjs");
+  assert.equal(Object.hasOwn(MULTIPLAYER_GATE_ACTIONS, "talk_to_npc"), true);
+});
+
 test("an unwired gate is refused by name rather than started on a guessed topology", () => {
   assert.throws(
-    () => resolveMultiplayerGatePlan({ action: "talk_to_npc" }),
-    /unknown_multiplayer_gate_action:talk_to_npc/,
+    () => resolveMultiplayerGatePlan({ action: "npc_relationship" }),
+    /unknown_multiplayer_gate_action:npc_relationship/,
   );
-  assert.equal(Object.hasOwn(MULTIPLAYER_GATE_ACTIONS, "talk_to_npc"), false);
+  assert.equal(Object.hasOwn(MULTIPLAYER_GATE_ACTIONS, "npc_relationship"), false);
 });
 
 test("a caller-supplied runner may only replace the runner, never the topology", () => {

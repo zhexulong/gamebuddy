@@ -169,7 +169,8 @@ export function readAgentTurnsFromSession(sessionPath) {
 /** The loop body, against an already-connected session. Exported so it can be contract-tested without a game. */
 export async function runMultiplayerLiveLoop(client, receipts, config, options) {
   const topology = classifyTopology(config);
-  if (topology !== "shared_world_farmhand") throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
+  if (topology !== "shared_world_farmhand")
+    throw new Error(`multiplayer_live_loop_requires_farmhand_topology:${topology}`);
   const {
     plan,
     traceDir,
@@ -227,7 +228,11 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           actionable: snapshot.actionable ?? null,
         });
       } catch (error) {
-        timeline({ atMs: now() - startedAtMs, type: "loop_observation_failed", detail: String(error?.message ?? error) });
+        timeline({
+          atMs: now() - startedAtMs,
+          type: "loop_observation_failed",
+          detail: String(error?.message ?? error),
+        });
       }
       // The host's tile has no bridge field; it is read from the Mod's own line when the world printed one, and
       // otherwise recorded as absent WITH the reason. The farmhand's tile is never substituted for it.
@@ -246,14 +251,26 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
       while (nextStep < plan.steps.length && plan.steps[nextStep].atSeconds <= elapsedSeconds) {
         const step = plan.steps[nextStep++];
         if (snapshot === null) {
-          planLog({ atMs: now() - startedAtMs, kind: "action", action: step.action, executed: false, reason: "no_snapshot" });
+          planLog({
+            atMs: now() - startedAtMs,
+            kind: "action",
+            action: step.action,
+            executed: false,
+            reason: "no_snapshot",
+          });
           continue;
         }
         // The pilot cannot expand the surface: the live publication's own capability list decides, and an
         // unadvertised name is refused BY NAME here rather than looking like a native failure.
         const advertised = Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [];
         if (!advertised.includes(step.action)) {
-          planLog({ atMs: now() - startedAtMs, kind: "action", action: step.action, executed: false, reason: "not_advertised" });
+          planLog({
+            atMs: now() - startedAtMs,
+            kind: "action",
+            action: step.action,
+            executed: false,
+            reason: "not_advertised",
+          });
           continue;
         }
         const result = await dispatch(client, receipts, { action: step.action, args: step.args ?? {}, snapshot });

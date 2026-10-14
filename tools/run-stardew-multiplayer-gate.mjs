@@ -67,6 +67,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { STARDEW_SHARED_WORLD_ACTION_SCENARIOS } from "./stardew-action-gate-descriptors.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DRIVER = join(REPOSITORY_ROOT, "tools", "run-stardew-shared-world-action.ps1");
@@ -82,16 +83,27 @@ const DEFAULT_RELEASE_DIR = join(REPOSITORY_ROOT, "integrations", "stardew", "bi
  * profile must opt into the action under the version-1 default-consent policy.
  * `runner` is the gate runner the driver invokes with `--client-config`.
  *
- * `send_multiplayer_chat` is the only gate wired today. `talk_to_npc` is
- * deliberately NOT listed: it is not a chat/lobby action, and arming it on this
- * lane needs a shared-world villager precondition and an opt-in that nothing has
- * verified yet (see the lane report).
+ * `send_multiplayer_chat` and `talk_to_npc` are the two gates wired today.
+ * `talk_to_npc` is the last action still registered `Experimental`: the multiplayer
+ * sensitivity register derives its native seam as mp-semantic, so a native-local
+ * pass cannot stand in for it, and the shared-world Given it is armed on now exists.
+ *
+ * The scenario for each gate is NOT spelled here: it comes from
+ * `STARDEW_SHARED_WORLD_ACTION_SCENARIOS` in `stardew-action-gate-descriptors.mjs`,
+ * so a scenario is authored once. `talk_to_npc`'s Given places the bound Farmhand in
+ * the Saloon one step from Gus, because the native talk branch builds its dialogue
+ * keys from `Game1.currentLocation.name.Value` and no shipped villager dialogue
+ * table has a key reachable from the Farm or the Cabin (see
+ * `ModEntry.Fixtures.TalkToNpcSharedWorld.cs`).
  */
 export const MULTIPLAYER_GATE_ACTIONS = Object.freeze({
   send_multiplayer_chat: Object.freeze({
-    scenario: "native_farmhand_chat_v1",
     experimental: true,
     runner: "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
+  }),
+  talk_to_npc: Object.freeze({
+    experimental: true,
+    runner: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
   }),
 });
 
@@ -99,9 +111,12 @@ export const MULTIPLAYER_GATE_ACTIONS = Object.freeze({
 export function resolveMultiplayerGatePlan({ action, runner } = {}) {
   const entry = MULTIPLAYER_GATE_ACTIONS[action];
   if (entry === undefined) throw new Error(`unknown_multiplayer_gate_action:${action}`);
+  const scenario = STARDEW_SHARED_WORLD_ACTION_SCENARIOS[action];
+  if (typeof scenario !== "string" || scenario.length === 0)
+    throw new Error(`missing_multiplayer_gate_scenario:${action}`);
   return Object.freeze({
     action,
-    scenario: entry.scenario,
+    scenario,
     experimental: entry.experimental,
     runner: runner ?? entry.runner,
   });
