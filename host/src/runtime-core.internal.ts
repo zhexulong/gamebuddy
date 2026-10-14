@@ -970,6 +970,17 @@ export async function createRuntimeWithFixedToolsCore(
     // Absent a usable snapshot the provider renders nothing; the block is
     // then stripped by the same pass and the companion sees no stale state.
     if (integration !== undefined && identity.continuityId !== undefined) {
+      // The vendored transform owns exactly ONE process-global provider and
+      // throws on a second non-undefined registration. A Host process legally
+      // mounts a fresh Game runtime after a disconnect/resume: the production
+      // lifecycle coordinator closes the previous facade and re-enters
+      // (`consumeOwnedFarmhandBridgeConnection` -> `runEnter`), so the later
+      // mount must replace the previous runtime's provider with its own
+      // authenticated connection instead of failing the boot with
+      // `runtime_environment_facts_provider_already_registered`. `undefined` is
+      // the vendored module's own removal path: the block is stripped until the
+      // replacement provider renders.
+      memoryHooks.setRuntimeEnvironmentFacts(undefined);
       memoryHooks.setRuntimeEnvironmentFacts(() => {
         const connection = integration as import("./game-connection.js").StardewBridgeConnection;
         const snapshot = connection.state?.snapshot;
