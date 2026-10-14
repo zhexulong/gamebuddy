@@ -529,3 +529,78 @@ test("every control on the Chats surface clears the 44px touch floor", async ({ 
     expect(short, `controls under the 44 px floor at ${viewport.width}x${viewport.height}`).toEqual([]);
   }
 });
+
+/**
+ * The destructive actions belong to each row, not only to the mounted one.
+ *
+ * The measured gap: archive and trash rendered only for the selected row, so
+ * cleaning up history meant switching into every Chat first. The assertions, and
+ * the failure each one catches:
+ *  - a non-current row carries its own archive control: catches the actions
+ *    staying selection-bound;
+ *  - arming sends nothing, and the confirm step appears on that row: catches an
+ *    archive that fired on the first click again;
+ *  - arming another row replaces the arm, and the disarmed row sends nothing:
+ *    catches a confirm that fires for a row the player already left armed;
+ *  - the request carries that row's own handle in the route and its own
+ *    managementRevision in the body: catches a confirm that reuses the mounted
+ *    row's identity or revision.
+ */
+test("a non-current Chats row is archived with its own handle and revision", async ({ page }) => {
+  const otherHandle = `${"E".repeat(42)}A`;
+  const writes: Array<{ url: string; body: unknown }> = [];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: "Mounted chat", status: "active", managementRevision: 4, isSelected: true },
+          { handle: otherHandle, title: "Older chat", status: "active", managementRevision: 9, isSelected: false },
+        ],
+      }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/chats/*/archive", async (route) => {
+    writes.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, handle: otherHandle, status: "archived", managementRevision: 10 }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  const older = surface.getByTestId("chat-item").filter({ hasText: "Older chat" });
+  const mounted = surface.getByTestId("chat-item").filter({ hasText: "Mounted chat" });
+
+  // The non-current row is a real row: its own archive control is there, and
+  // nothing was requested just by rendering it.
+  await expect(older.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
+  expect(writes.length).toBe(0);
+
+  await older.getByRole("button", { name: "Archive", exact: true }).click();
+  await expect(older.getByTestId("chat-retention-confirm")).toBeVisible();
+  expect(writes.length, "the destructive action fired before it was confirmed").toBe(0);
+
+  // Arming another row replaces the arm; the row that was disarmed sends nothing.
+  await mounted.getByRole("button", { name: "Archive", exact: true }).click();
+  await expect(mounted.getByTestId("chat-retention-confirm")).toBeVisible();
+  await expect(older.getByTestId("chat-retention-confirm")).toHaveCount(0);
+  expect(writes.length).toBe(0);
+
+  await mounted.getByTestId("chat-retention-confirm-yes").click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]?.url).toContain(`/api/tavern/v1/chats/${chatHandle}/archive`);
+  expect(writes[0]?.body).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 4 });
+  expect(writes.filter((write) => write.url.includes(otherHandle))).toEqual([]);
+});

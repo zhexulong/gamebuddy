@@ -190,7 +190,7 @@ export function ChatsSurfacePanel({
   // this, and the request waits for the confirm button. Same shape as the Game
   // surface's endgame block, so the product has one vocabulary for it.
   const [confirmation, setConfirmation] = useState<
-    Readonly<{ handle: string; operation: "archive" | "trash" }> | null
+    Readonly<{ handle: string; operation: "archive" | "trash"; selectedAtArm: string }> | null
   >(null);
   const { inline, report } = useSurfaceNotice(onNotice);
 
@@ -212,11 +212,17 @@ export function ChatsSurfacePanel({
   // An armed confirmation is armed against one exact row: the same discipline the
   // endgame block uses, so a stale arm cannot fire an action on a row the player
   // is no longer looking at (the list re-reads on every mutation and rejection).
+  // The arm names the mounted selection it was taken under as well as the row, so
+  // moving to another Chat drops it instead of leaving a destructive action primed
+  // behind the player's back.
   useEffect(() => {
     if (confirmation === null) return;
-    if (!chatListRows(list).some((chat) => chat.handle === confirmation.handle && chat.isSelected))
+    if (
+      confirmation.selectedAtArm !== currentChatHandle ||
+      !chatListRows(list).some((chat) => chat.handle === confirmation.handle)
+    )
       setConfirmation(null);
-  }, [confirmation, list]);
+  }, [confirmation, list, currentChatHandle]);
 
   const reread = async (): Promise<void> => {
     try {
@@ -446,14 +452,18 @@ export function ChatsSurfacePanel({
                           <Pencil size={14} aria-hidden="true" />
                         </button>
                       )}
-                      {retentionAvailable !== false && isSelected && (
+                      {/* Every row carries its own archive/trash arm+confirm, so cleaning up history
+                          no longer means switching into each Chat first. */}
+                      {retentionAvailable !== false && (
                         <>
                           <button
                             type="button"
                             className="icon-button-small"
                             title={labels.chatRetentionArchive}
                             aria-label={labels.chatRetentionArchive}
-                            onClick={() => setConfirmation({ handle: chat.handle, operation: "archive" })}
+                            onClick={() =>
+                              setConfirmation({ handle: chat.handle, operation: "archive", selectedAtArm: currentChatHandle })
+                            }
                           >
                             <Archive size={14} aria-hidden="true" />
                           </button>
@@ -462,7 +472,9 @@ export function ChatsSurfacePanel({
                             className="icon-button-small"
                             title={labels.chatRetentionTrash}
                             aria-label={labels.chatRetentionTrash}
-                            onClick={() => setConfirmation({ handle: chat.handle, operation: "trash" })}
+                            onClick={() =>
+                              setConfirmation({ handle: chat.handle, operation: "trash", selectedAtArm: currentChatHandle })
+                            }
                           >
                             <Trash2 size={14} aria-hidden="true" />
                           </button>
