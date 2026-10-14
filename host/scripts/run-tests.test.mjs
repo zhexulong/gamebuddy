@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { chunkTestFiles, discoverTestFiles, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -139,6 +139,55 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     await assert.rejects(runCompiledTests({ perFileMs: 0 }), /invalid_test_file_timeout/);
     await assert.rejects(runCompiledTests({ perFileMs: 1.5 }), /invalid_test_file_timeout/);
     await assert.rejects(runTestBatches(["a.test.js"], { suite: "fixture", perFileMs: 99 }), /invalid_test_file_timeout/);
+  });
+
+  test("keeps the files that contend on one machine-global build out of concurrent execution", async () => {
+    // The four Stardew wire-parity files each spawn a real `dotnet test` against one shared
+    // csproj; four simultaneous cold builds kill three of them. They must never overlap, while
+    // everything else in the same batch still does.
+    const members = [
+      "dist-test/stardew-execution-request-wire-parity.test.js",
+      "dist-test/stardew-snapshot-wire-parity.test.js",
+    ];
+    for (const member of members)
+      assert.equal(exclusiveGroupsFor(member).length, 1, `${member} must be declared exclusive`);
+    assert.equal(exclusiveGroupsFor("dist-test/runtime.test.js").length, 0, "an ordinary file stays concurrent");
+    assert.equal(exclusiveGroupsFor("dist-test/tavern\\chat-lifecycle\\chat-lifecycle.test.js").length, 0);
+
+    let inFlight = 0;
+    let mostConcurrent = 0;
+    const exclusiveOverlap = [];
+    const exclusiveRunning = new Set();
+    await runTestBatches(
+      [
+        "dist-test/ordinary-a.test.js",
+        "dist-test/stardew-execution-request-wire-parity.test.js",
+        "dist-test/ordinary-b.test.js",
+        "dist-test/stardew-snapshot-wire-parity.test.js",
+      ],
+      {
+        suite: "fixture",
+        batchSize: 4,
+        perFileMs: 900_000,
+        timeoutMs: 900_000,
+        run: async ([path]) => {
+          const exclusive = exclusiveGroupsFor(path).length > 0;
+          inFlight += 1;
+          mostConcurrent = Math.max(mostConcurrent, inFlight);
+          if (exclusive) {
+            if (exclusiveRunning.size > 0) exclusiveOverlap.push(path);
+            exclusiveRunning.add(path);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (exclusive) exclusiveRunning.delete(path);
+          inFlight -= 1;
+        },
+      },
+    );
+    assert.deepEqual(exclusiveOverlap, [], "two members of one exclusive group must never overlap");
+    // The two ordinary files still overlapped each other: the exclusion is per file, not a
+    // switch that serializes the whole suite.
+    assert.equal(mostConcurrent, 2, "the ordinary files keep their concurrency");
   });
 
 test("uses only a positive decimal compiled batch size override", async () => {

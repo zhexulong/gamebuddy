@@ -13,6 +13,34 @@ const DEFAULT_TEST_BATCH_SIZE = 10;
 // bound lets one file's startup overlap its neighbours' work without a single
 // leaked handle ever sharing a process. Four stays within a 4-vCPU Windows CI
 // runner and the compiled batch size, so a batch's tail stays short.
+/**
+ * Files that contend on one machine-global resource must not run at the same time, even
+ * though every other file may. This is the runner's job because the runner is the only layer
+ * that can serialize access to a machine-global resource; it is not a per-test concern.
+ *
+ * The case that produced it: four compiled files each spawn a real `dotnet test` against
+ * `integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj`,
+ * whose `obj/`+`bin/` and shared MSBuild/Roslyn servers are machine-global; four simultaneous
+ * cold builds killed three of them with `MSB3491 ... being used by another process` and
+ * `CS2012 ... being used by another process`. Staggered starts never stalled, which is why it
+ * only ever appeared under concurrency.
+ *
+ * `runCompiledTests` refuses to run when a declared group matches no compiled file, so a
+ * declaration cannot outlive the files that justified it.
+ */
+export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
+  Object.freeze({
+    name: "stardew-core-test-project-build",
+    pattern: /stardew-(?:execution-request|snapshot|navigation|execution-receipt)-wire-parity\.test\.js$/u,
+  }),
+]);
+
+/** The declared exclusive groups a path belongs to, identified by its `dist-test`-relative shape. */
+export function exclusiveGroupsFor(relativePath) {
+  const normalized = String(relativePath).replaceAll("\\", "/");
+  return EXCLUSIVE_FILE_GROUPS.filter((group) => group.pattern.test(normalized));
+}
+
 const DEFAULT_TEST_CONCURRENCY = 4;
 /**
  * Per-file budget. Far above the slowest legitimate file (tens of seconds) and far below
@@ -147,44 +175,54 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
   const failures = new Array(batch.length);
   let nextIndex = 0;
   let stopped = false;
+  const relativePath = (path) => relative(hostRoot, path).replaceAll("\\\\", "/");
+  const runOne = async (index) => {
+    const path = batch[index];
+    const fileRemainingMs = deadlineMs - now();
+    if (fileRemainingMs < 100) {
+      failures[index] = { error: runnerError("test_suite_timeout", suite) };
+      stopped = true;
+      return;
+    }
+    // A file gets its own budget, not the suite's remaining deadline. A test that
+    // never resolves is not a slow test - it is a run that never reports anything,
+    // and with only a suite-wide deadline one such file consumes every remaining
+    // minute and the suite disappears without a result. This bound is the difference
+    // between "this file hung" (named, bounded) and silence; it is deliberately far
+    // above the slowest legitimate test (tens of seconds).
+    const budgetMs = Math.min(fileRemainingMs, perFileMs);
+    try {
+      await run([path], {
+        timeoutMs: budgetMs,
+        onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relativePath(path)}`),
+      });
+    } catch (error) {
+      failures[index] = {
+        error:
+          budgetMs === perFileMs ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${perFileMs}`) : error,
+      };
+      stopped = true;
+    }
+  };
+  // Files that contend on one machine-global resource run one at a time and only after the
+  // concurrent pool has drained, so they can never overlap each other while everything else
+  // keeps its parallelism.
+  const exclusiveIndexes = batch.map((path, index) => index).filter((index) => exclusiveGroupsFor(relativePath(batch[index])).length > 0);
+  const ordinaryIndexes = batch.map((path, index) => index).filter((index) => exclusiveGroupsFor(relativePath(batch[index])).length === 0);
   const worker = async () => {
     while (!stopped) {
-      const index = nextIndex++;
-      if (index >= batch.length) return;
-      const path = batch[index];
-      const fileRemainingMs = deadlineMs - now();
-      if (fileRemainingMs < 100) {
-        failures[index] = { error: runnerError("test_suite_timeout", suite) };
-        stopped = true;
-        return;
-      }
-      // A file gets its own budget, not the suite's remaining deadline. A test that
-      // never resolves is not a slow test - it is a run that never reports anything,
-      // and with only a suite-wide deadline one such file consumes every remaining
-      // minute and the suite disappears without a result. This bound is the difference
-      // between "this file hung" (named, bounded, the suite continues) and silence; it
-      // is deliberately far above the slowest legitimate test (tens of seconds).
-      const budgetMs = Math.min(fileRemainingMs, perFileMs);
-      try {
-        await run([path], {
-          timeoutMs: budgetMs,
-          onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relative(hostRoot, path).replaceAll("\\\\", "/")}`),
-        });
-      } catch (error) {
-        failures[index] = {
-          error:
-            budgetMs === perFileMs
-              ? runnerError("test_file_timeout", `${relative(hostRoot, path).replaceAll("\\\\", "/")}:budget_ms=${perFileMs}`)
-              : error,
-        };
-        stopped = true;
-        return;
-      }
+      const index = ordinaryIndexes[nextIndex++];
+      if (index === undefined) return;
+      await runOne(index);
     }
   };
   const workers = [];
-  for (let index = 0; index < Math.min(concurrency, batch.length); index++) workers.push(worker());
+  for (let index = 0; index < Math.min(concurrency, ordinaryIndexes.length); index++) workers.push(worker());
   await Promise.all(workers);
+  for (const index of exclusiveIndexes) {
+    if (stopped) break;
+    await runOne(index);
+  }
   // Report the earliest-launched failure so the batch stays deterministic
   // instead of surfacing whichever child happened to lose the race.
   for (const failure of failures) {
@@ -248,7 +286,14 @@ export async function runCompiledTests({
   if (!Number.isSafeInteger(perFileMs) || perFileMs < 100)
     throw runnerError("invalid_test_file_timeout", String(perFileMs));
   await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
-  return await runTestBatches(await discoverTestFiles(defaultTestRoot, ".test.js"), {
+  const files = await discoverTestFiles(defaultTestRoot, ".test.js");
+  for (const group of EXCLUSIVE_FILE_GROUPS) {
+    const matched = files.filter((file) => group.pattern.test(relative(hostRoot, file).replaceAll("\\\\", "/")));
+    // Self-invalidating: a group whose files are gone (renamed, deleted, folded into one
+    // build-once step) must fail here rather than quietly keep serializing nothing.
+    if (matched.length === 0) throw runnerError("exclusive_group_matches_nothing", group.name);
+  }
+  return await runTestBatches(files, {
     suite: "compiled",
     batchSize,
     concurrency,
