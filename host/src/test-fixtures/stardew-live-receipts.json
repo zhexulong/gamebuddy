@@ -158,6 +158,31 @@
       }
     },
     {
+      "fromRun": "collect_building_chest_output",
+      "actionId": "collect_building_chest_output",
+      "state": "succeeded",
+      "reasonCode": "building_chest_output_collected",
+      "evidence": {
+        "tile": "52,8",
+        "location": "Farm",
+        "target": "building_chest_c2d9bf435686c710",
+        "building_type": "Mill",
+        "building_origin": "49,7",
+        "chest_id": "Output",
+        "branch": "collect",
+        "item": "(O)262",
+        "chest_slots_before": "1",
+        "chest_slots_after": "0",
+        "chest_item_before": "2",
+        "chest_item_after": "0",
+        "moved_count": "2",
+        "carried_before": "2",
+        "carried_after": "4",
+        "native_accepted": "true",
+        "native_menu_opened": "false"
+      }
+    },
+    {
       "fromRun": "color_placed_object",
       "actionId": "color_placed_object",
       "state": "succeeded",
@@ -195,6 +220,36 @@
         "dye_after": "2",
         "dye_spent": "true",
         "colour_route": "TailoringMenu.GetDyeColor"
+      }
+    },
+    {
+      "fromRun": "load_building_chest",
+      "actionId": "load_building_chest",
+      "state": "succeeded",
+      "reasonCode": "building_chest_loaded",
+      "evidence": {
+        "tile": "50,8",
+        "location": "Farm",
+        "target": "building_chest_6fbe1f71e2b66fbf",
+        "building_type": "Mill",
+        "building_origin": "49,7",
+        "chest_id": "Input",
+        "branch": "load",
+        "item": "(O)262",
+        "held_stack_before": "2",
+        "held_stack_after": "0",
+        "chest_item_before": "0",
+        "chest_item_after": "2",
+        "chest_slots_before": "0",
+        "chest_slots_after": "1",
+        "moved_count": "2",
+        "released_count": "2",
+        "required_count": "1",
+        "chest_capacity_before": "35964",
+        "item_accepted": "true",
+        "native_accepted": "true",
+        "native_refusal": "none",
+        "native_menu_opened": "false"
       }
     },
     {

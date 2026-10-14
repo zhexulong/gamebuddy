@@ -74,6 +74,8 @@ test("descriptor runner identity names the native-local shared-harness runner fo
   // actual native-local route (run-stardew-native-local-player-*), which is
   // the shared-harness runner. Any parallel/legacy runner ID is stale.
   const expectedRunners = Object.freeze({
+    "collect_building_chest_output": "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
+    "load_building_chest": "run-stardew-native-local-player-load-building-chest-smoke.mjs",
     "color_placed_object": "run-stardew-native-local-player-color-placed-object-smoke.mjs",
     "dye_clothing_with_item": "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
     "tailor_clothing": "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
@@ -316,6 +318,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "tailor_clothing",
       "dye_clothing_with_item",
       "color_placed_object",
+      "load_building_chest",
+      "collect_building_chest_output",
     ],
   );
   assert.deepEqual(

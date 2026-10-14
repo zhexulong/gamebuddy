@@ -207,7 +207,7 @@ public sealed class BuildingChestActionTests
     }
 
     [Fact]
-    public void Catalog_BuildingChestPair_AreExperimentalBuildingActionsWithTheirOwnShapes()
+    public void Catalog_BuildingChestPair_AreLiveVerifiedBuildingActionsWithTheirOwnShapes()
     {
         FarmhandActionRegistration? load = FarmhandActionCatalog.Registrations
             .FirstOrDefault(entry => entry.ActionId == "load_building_chest");
@@ -219,8 +219,9 @@ public sealed class BuildingChestActionTests
         foreach (FarmhandActionRegistration registration in new[] { load!, collect! })
         {
             registration.FamilyId.Should().Be("buildings_farm_management");
-            // Experimental until each passes its own native-local live gate.
-            registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+            // Live-verified: each passed its own native-local gate (Mill, Load and Collect, both observed
+            // transferring wheat through the building's own chests).
+            registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
             registration.Kind.Should().Be(FarmhandOperationKind.Execution);
             registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
             registration.Descriptor.Should().NotBeNull();

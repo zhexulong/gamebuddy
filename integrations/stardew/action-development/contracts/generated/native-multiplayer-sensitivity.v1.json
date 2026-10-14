@@ -1226,7 +1226,7 @@
     },
     {
       "actionId": "load_building_chest",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",
@@ -1243,7 +1243,7 @@
     },
     {
       "actionId": "collect_building_chest_output",
-      "lifecycle": "experimental",
+      "lifecycle": "live_verified",
       "seams": [
         {
           "kind": "native",

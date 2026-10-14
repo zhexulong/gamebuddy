@@ -198,8 +198,8 @@ public static class FarmhandActionCatalog
         // postcondition from the world afterwards. Experimental: they stay off the default
         // Agent surface until each passes its own native-local live gate, and the promotion
         // to LiveVerified is a separate catalog edit owned by the parent.
-        E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestLoad(), FarmhandActionLifecycle.Experimental),
-        E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestCollect(), FarmhandActionLifecycle.Experimental),
+        E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestLoad(), FarmhandActionLifecycle.LiveVerified),
+        E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestCollect(), FarmhandActionLifecycle.LiveVerified),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified),

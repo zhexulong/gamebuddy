@@ -1955,7 +1955,7 @@
       {
         "actionId": "load_building_chest",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1988,7 +1988,7 @@
       {
         "actionId": "collect_building_chest_output",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -2848,6 +2848,8 @@
       "use_warp_item",
       "pan_ore",
       "claim_mail_attachment",
+      "load_building_chest",
+      "collect_building_chest_output",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",
@@ -2883,8 +2885,6 @@
     ],
     "experimentalActionIds": [
       "talk_to_npc",
-      "load_building_chest",
-      "collect_building_chest_output",
       "send_multiplayer_chat"
     ]
   },
@@ -2966,6 +2966,8 @@
       "use_warp_item",
       "pan_ore",
       "claim_mail_attachment",
+      "load_building_chest",
+      "collect_building_chest_output",
       "scythe_crop",
       "harvest_bush",
       "harvest_fruit_tree",

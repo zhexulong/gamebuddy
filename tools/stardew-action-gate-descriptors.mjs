@@ -294,6 +294,10 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("dye_clothing_with_item", 1, "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs", "clothing_dyed", "native_tailoring_v1"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate("color_placed_object", 1, "run-stardew-native-local-player-color-placed-object-smoke.mjs", "placed_object_recolored", "native_color_placed_object_v1"),
+  // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
+  gate("load_building_chest", 1, "run-stardew-native-local-player-load-building-chest-smoke.mjs", "building_chest_loaded", "native_building_chest_v1"),
+  // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
+  gate("collect_building_chest_output", 1, "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs", "building_chest_output_collected", "native_building_chest_v1"),
 ]);
 
 /**
@@ -379,13 +383,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
 
   // Reads what the Mod REPORTS about the conversation (the enquiry-and-hold chain stays with talk_to_npc).
   dialogue_stream: "run-stardew-native-local-player-dialogue-stream-smoke.mjs",
-  // The actor's own attachment state, Experimental: each ships with its own shared-harness runner
-  // and its own fixture scenario. A runner is neither a capability grant nor a success claim.
-  // The building-chest pair (Data/Buildings BuildingData.Chests): the building's own Load and
-  // Collect chests, which chest_store/chest_retrieve and machine_* cannot reach. Experimental in
-  // the Mod catalog, so they live in this map rather than in the published gate table.
-  load_building_chest: "run-stardew-native-local-player-load-building-chest-smoke.mjs",
-  collect_building_chest_output: "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
+
   // Move-stall probe: drives the SAME published move_to_tile action over a fixture
   // that stands a native blocker (Pet or parked Horse) on the route, measuring
   // whether the native pushing/pass-through mechanisms resolve the block before
