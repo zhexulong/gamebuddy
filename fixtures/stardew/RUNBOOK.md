@@ -2872,10 +2872,8 @@ node tools/run-stardew-multiplayer-live-loop.mjs \
 ```
 
 A step is not one of three canned verbs. `kind: "action"` names **any action the live publication advertises**, with
-its typed args (`harvest_crop`, `chest_retrieve`, `chop_stump`, `plant_sapling`, `cut_weeds`, `scythe_crop`,
-`npc_relationship`, `send_multiplayer_chat`, `move_to_tile`, ...). There are **no aliases**: earlier versions offered
-`say`/`move`/`observe`, which were two hand-picked action names plus a read that is not an action, and they made the
-plan look like a three-verb script when the subject is the whole action surface. The pilot cannot expand the surface: a name the world
+its typed args (`harvest_crop`, `chest_store`, `npc_relationship`, `refill_watering_can`, `equip_tool`, ...); `say` and
+`move` are sugar for `send_multiplayer_chat` and `move_to_tile`. The pilot cannot expand the surface: a name the world
 did not advertise is refused **by name** into `plan.jsonl` (`reason: "not_advertised"`) instead of looking like a native
 failure. So "assign freely" and "grant nothing" hold at the same time.
 `--plan` is optional: **an absent plan means observe-only**, which is the default posture. An empty run is a
@@ -2884,18 +2882,15 @@ legitimate run — it measures the world and the companion without the pilot ste
 ```json
 { "durationSeconds": 900,
   "steps": [
-    { "atSeconds": 30,  "action": "move_to_tile",          "args": { "x": 39, "y": 57 } },
-    { "atSeconds": 90,  "action": "harvest_crop",          "args": { "targetRef": "sr1_..." } },
-    { "atSeconds": 120, "action": "chest_retrieve",        "args": { "targetRef": "sr1_...", "expectedQualifiedItemId": "(O)24" } },
-    { "atSeconds": 600, "action": "send_multiplayer_chat", "args": { "text": "都收好了，你要不要过来看看？" } },
-    { "atSeconds": 660, "action": "cut_weeds",             "args": {} } ] }
+    { "atSeconds": 30,  "kind": "say",  "text": "我先去把东边那块地收拾一下。" },
+    { "atSeconds": 90,  "kind": "move", "tile": { "x": 39, "y": 57 } },
+    { "atSeconds": 600, "kind": "observe" } ] }
 ```
 
-Every step names ONE of the farmhand's published actions and is dispatched over the same bridge protocol the Agent
-itself uses. `send_multiplayer_chat` goes out through the native Stardew pipe where the host player sees it (the Mod
-enforces a 2000 ms minimum chat interval); `move_to_tile` walks; the rest are the world actions. The plan is the task
-allocation and may be handed over mid-run by appending to the plan file, or written by an `auditing-runs` subagent
-from the previous run's trace.
+`say` is one `send_multiplayer_chat` (the native Stardew pipe, visible to the host player; the Mod enforces a
+2000 ms minimum interval and the loop spaces for it). `move` is one published `move_to_tile`. Neither is
+hardcoded: the plan is the task allocation, and it may be handed over mid-run by appending to the plan file, or
+written by an `auditing-runs` subagent from the previous run's trace.
 
 ### What the run leaves behind
 
