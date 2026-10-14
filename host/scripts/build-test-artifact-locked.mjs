@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
@@ -47,9 +47,9 @@ async function assertArtifactLockHeldByThisProcess() {
  * It observes an already-materialized runtime and cannot construct or mint any
  * production binding/capability.
  */
-async function applyGameRuntimeMaterializerTestOverlay() {
+async function applyGameRuntimeMaterializerTestOverlay(stagingRoot) {
   const relativeModule = "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-  const target = resolve(outputRoot, relativeModule);
+  const target = resolve(stagingRoot, relativeModule);
   const source = await readFile(target, "utf8");
   const importMarker = 'import { materializeExactEnter, } from "./continuity-semantic-game-runtime-materializer.internal.js";';
   const runtimeMarker = "                const runtime = constructed.runtime;";
@@ -65,31 +65,73 @@ async function applyGameRuntimeMaterializerTestOverlay() {
   await writeFile(target, overlaid);
 }
 
+/**
+ * Every regular file below `root`, as paths relative to it.
+ */
+async function listFilesUnder(root, directory = root, prefix = "") {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...await listFilesUnder(root, resolve(directory, entry.name), path));
+    else if (entry.isFile()) files.push(path);
+  }
+  return files;
+}
+
+/**
+ * `dist-test` is compiled into a private staging tree and published with one swap at the
+ * end. It used to be deleted first and compiled in place, so a compile error in ANY lane -
+ * a test file mid-edit is enough - left every lane with no artifact, and a killed compile
+ * left a partial one. Nothing now touches the published tree until the staged tree is
+ * complete, so a compile failure leaves the previous artifact exactly as it was.
+ */
 await assertArtifactLockHeldByThisProcess();
-await rm(outputRoot, { recursive: true, force: true });
-await runBoundedChild({
-  ...(await resolveTypeScriptInvocation({ project: "tsconfig.test.json" })),
-  stdio: "inherit",
-});
-await applyGameRuntimeMaterializerTestOverlay();
-for (const entry of ["main.js", "dialogue-web-main.js"]) {
-  try { await access(resolve(outputRoot, entry)); throw new Error(`test_artifact_contains_production_entry:${entry}`); }
-  catch (error) { if (error?.code !== "ENOENT") throw error; }
+
+const stagingRoot = resolve(hostRoot, `.dist-test-staging-${process.pid}-${Date.now()}`);
+try {
+  await rm(stagingRoot, { recursive: true, force: true });
+  await mkdir(stagingRoot, { recursive: true });
+  const typescriptInvocation = await resolveTypeScriptInvocation({ project: "tsconfig.test.json" });
+  await runBoundedChild({
+    ...typescriptInvocation,
+    args: [...typescriptInvocation.args, "--outDir", stagingRoot],
+    stdio: "inherit",
+  });
+  await applyGameRuntimeMaterializerTestOverlay(stagingRoot);
+  for (const entry of ["main.js", "dialogue-web-main.js"]) {
+    try { await access(resolve(stagingRoot, entry)); throw new Error(`test_artifact_contains_production_entry:${entry}`); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+  // TypeScript fixture workers are emitted by the test compiler. Copy only the
+  // PowerShell assets that cannot be emitted, so dist-test never mixes source
+  // .ts files with its compiled test artifact.
+  for (const source of [
+    "src/test-fixtures/windows-named-mutex-abandon-child.ps1",
+    "src/test-fixtures/windows-named-mutex-broker-test-sidecar.ps1",
+    "src/test-fixtures/windows-named-mutex-retained-abandon.ps1",
+  ]) {
+    const destination = resolve(stagingRoot, source.slice("src/".length));
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(resolve(hostRoot, source), destination, { force: true, verbatimSymlinks: true });
+  }
+  await cp(resolve(hostRoot, "resources/windows-named-mutex-broker.ps1"), resolve(stagingRoot, "windows-named-mutex-broker.ps1"), { force: true, verbatimSymlinks: true });
+  // Publish. Windows refuses to rename a directory tree this size (measured: 200 files
+  // across 10 directories comes back EPERM), so the staged tree cannot be swapped in with
+  // one directory rename. Move its files instead: each move is atomic, which keeps the
+  // interval in which a lock-free reader could see a partial tree as short as this
+  // filesystem allows. A compile failure never reaches this code at all.
+  const stagedFiles = await listFilesUnder(stagingRoot);
+  await rm(outputRoot, { recursive: true, force: true });
+  await mkdir(outputRoot, { recursive: true });
+  for (const file of stagedFiles) {
+    const destination = resolve(outputRoot, file);
+    await mkdir(dirname(destination), { recursive: true });
+    await rename(resolve(stagingRoot, file), destination);
+  }
+} finally {
+  await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
 }
-// TypeScript fixture workers are emitted by the test compiler. Copy only the
-// PowerShell assets that cannot be emitted, so dist-test never mixes source
-// .ts files with its compiled test artifact.
-for (const source of [
-  "src/test-fixtures/windows-named-mutex-abandon-child.ps1",
-  "src/test-fixtures/windows-named-mutex-broker-test-sidecar.ps1",
-  "src/test-fixtures/windows-named-mutex-retained-abandon.ps1",
-]) {
-  const destination = resolve(outputRoot, source.slice("src/".length));
-  await mkdir(dirname(destination), { recursive: true });
-  await cp(resolve(hostRoot, source), destination, { force: true, verbatimSymlinks: true });
-}
-await cp(resolve(hostRoot, "resources/windows-named-mutex-broker.ps1"), resolve(outputRoot, "windows-named-mutex-broker.ps1"), { force: true, verbatimSymlinks: true });
-// The inventory must land before the verification manifest: the latter digests the
-// whole output tree, so it has to be written last to see the final artifact.
+// The inventory describes what was published, so it is written once the tree is in place,
+// and the verification manifest follows it: its digest covers the whole published tree.
 await writeTestArtifactInventory({ outputRoot });
 await writeHostVerificationArtifactManifest({ root: hostRoot, outputRoot });
