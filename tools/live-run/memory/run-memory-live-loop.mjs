@@ -1147,12 +1147,62 @@ function verdict_gap(reason) {
  * records it under `observations.reflection`, and a reader must then treat the arm as one whose
  * intervention did not happen rather than as a candidate that showed no effect.
  */
+/**
+ * The project identity this run's Magic Context rows live under, read from whichever store has one.
+ *
+ * Both surfaces share one continuity, so the management phase's store answers this even before the chat
+ * surface has taken its first turn - which is exactly when the reflection runs.
+ */
+function projectIdentityFromRunRoot(root) {
+  const contextsDir = join(root, "contexts");
+  let keys;
+  try {
+    keys = readdirSync(contextsDir);
+  } catch {
+    return undefined;
+  }
+  for (const key of keys) {
+    const dbPath = join(contextsDir, key, "data", "cortexkit", "magic-context", "context.db");
+    if (!existsSync(dbPath)) continue;
+    let db;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      const row = db
+        .prepare(
+          "SELECT cached_m0_project_identity AS identity FROM session_meta WHERE cached_m0_project_identity IS NOT NULL AND cached_m0_project_identity <> '' ORDER BY last_response_time DESC LIMIT 1",
+        )
+        .get();
+      if (typeof row?.identity === "string" && row.identity.length > 0) return row.identity;
+    } catch {
+      // A store without the column (or an unreadable one) is not this helper's problem.
+    } finally {
+      db?.close?.();
+    }
+  }
+  return undefined;
+}
+
 async function runReflectionOnce({ root, continuityId, reportPath, timeoutMs = 600_000 }) {
   const harness = fileURLToPath(new URL("../../run-dreamer-live-task.mjs", import.meta.url));
+  const projectIdentity = projectIdentityFromRunRoot(root);
   const startedAtMs = Date.now();
   const child = spawn(
     process.execPath,
-    [harness, "--root", root, "--continuity", continuityId, "--task", "reflect", "--report", reportPath],
+    [
+      harness,
+      "--root",
+      root,
+      "--continuity",
+      continuityId,
+      // Without this the harness must read the identity from the store it is pointed at, and the reflection
+      // runs before the probe turn - so on a fixture with no filler turns there is no row to read. Passing it
+      // is the difference between measuring the candidate arm and reporting `identity_ambiguous`.
+      ...(projectIdentity === undefined ? [] : ["--project-identity", projectIdentity]),
+      "--task",
+      "reflect",
+      "--report",
+      reportPath,
+    ],
     { stdio: ["ignore", "pipe", "pipe"], env: process.env },
   );
   let stdout = "";
