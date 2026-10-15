@@ -15,6 +15,12 @@
  * (`default-companion-preset.test.ts`) recompiles the card and fails if this
  * file is stale.
  *
+ * The world book's `scanDepth` is the card's own `character_book.scan_depth`,
+ * folded by the converter exactly the way card-import provisioning folds it into
+ * the `worldbook.json` it writes (`new-companion-service.ts`). It is part of
+ * the synchronous book hash, so a fresh root seeds the declared per-turn scan
+ * window rather than the documented default.
+ *
  * The Host installs it on the FIRST creation of a fresh runtime root
  * (`default-companion-seed.ts`), so a fresh root presents as 琥珀 rather than
  * the mechanical placeholder, and a player's later edits are never overwritten.
@@ -91,6 +97,7 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
     worldBookId: "gamebuddy-worldbook-default-companion",
     revision: 1,
     alwaysOnPremise: "琥珀与{{user}}是一同在星露谷开荒经营农场的青梅竹马伙伴，拥有多年相伴的深厚默契与信任。",
+    scanDepth: 2,
     entries: [
       {
         entryId: "wb-entry-01",

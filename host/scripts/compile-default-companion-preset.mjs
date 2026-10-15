@@ -67,7 +67,18 @@ const sourceDescription = fromCommitted
 
 const preview = previewStCard(card, "gamebuddy.companion.default");
 const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
-const book = validateWorldBook(rawBook);
+// The card's own recent-message scan window (`character_book.scan_depth`) must
+// ride the shipped book exactly the way card-import provisioning folds it into
+// the `worldbook.json` it writes (`new-companion-service.ts`): the decoder
+// carries the declared depth as `preview.worldBookScanDepth`, and without this
+// fold a freshly-seeded default companion's per-turn World Info selection
+// silently applies the documented default even though the reviewed card
+// declared one. The depth is part of the canonical book hash, so the binding
+// and its re-verification both carry the declared value.
+const book = validateWorldBook({
+  ...rawBook,
+  ...(preview.worldBookScanDepth === undefined ? {} : { scanDepth: preview.worldBookScanDepth }),
+});
 const candidate = preview.profileCandidate;
 // The card's `scenario` is deliberately NOT profile text (the decoder keeps it
 // candidate-only: `st-card-import.ts`), so the profile half of the preset cannot
@@ -88,6 +99,7 @@ if (typeof candidate.firstGreeting === "string" && candidate.firstGreeting.trim(
 });
 
 const json = (value) => JSON.stringify(value, null, 2);
+const worldBookScanDepth = book.scanDepth;
 const source = `/**
  * COMPILED from \`assets/tavern/presets/default-companion/{card.json,worldbook.json}\`
  * through the product's OWN card converter — \`previewStCard\` + \`candidateToIdentityProfile\`
@@ -104,6 +116,12 @@ const source = `/**
  * \`node host/scripts/compile-default-companion-preset.mjs\`; the drift test
  * (\`default-companion-preset.test.ts\`) recompiles the card and fails if this
  * file is stale.
+ *
+ * The world book's \`scanDepth\` is the card's own \`character_book.scan_depth\`,
+ * folded by the converter exactly the way card-import provisioning folds it into
+ * the \`worldbook.json\` it writes (\`new-companion-service.ts\`). It is part of
+ * the synchronous book hash, so a fresh root seeds the declared per-turn scan
+ * window rather than the documented default.
  *
  * The Host installs it on the FIRST creation of a fresh runtime root
  * (\`default-companion-seed.ts\`), so a fresh root presents as 琥珀 rather than
@@ -137,5 +155,5 @@ ${scenario === undefined ? "" : `  scenario: ${json(scenario)},\n`}  greetings: 
 `;
 await writeFile(join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts"), source, "utf8");
 console.log(
-  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"} scenario=${scenario === undefined ? "none" : `present(${scenario.length})`}`,
+  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} worldBookScanDepth=${worldBookScanDepth === undefined ? "none" : worldBookScanDepth} characterVoice=${profile.characterVoice === undefined ? "none" : "present"} scenario=${scenario === undefined ? "none" : `present(${scenario.length})`}`,
 );

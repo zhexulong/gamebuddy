@@ -8,6 +8,7 @@ import { validateIdentityProfile } from "../identity-profile.js";
 import { candidateToIdentityProfile, previewStCard } from "../st-card-import.js";
 import { validateWorldBook } from "../worldbook.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
+import { boundedVisibleTail, DEFAULT_WORLDBOOK_SCAN_DEPTH } from "./chat-thread-store.js";
 
 /**
  * The reviewed preset card is a dev seed OUTSIDE every generation, and the raw
@@ -75,6 +76,14 @@ function convertedPreset(card: unknown, rawBook: unknown) {
   const preview = previewStCard(card, "gamebuddy.companion.default");
   const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
   const candidate = preview.profileCandidate;
+  // The generator folds the card's declared scan window into the shipped book
+  // exactly the way card-import provisioning writes `worldbook.json`
+  // (`new-companion-service.ts`). This must be the SAME fold or the gate
+  // compares a generator that carried it against a reference that never did.
+  const worldBook = validateWorldBook({
+    ...(rawBook as Record<string, unknown>),
+    ...(preview.worldBookScanDepth === undefined ? {} : { scanDepth: preview.worldBookScanDepth }),
+  });
   const scenario =
     typeof preview.scenario === "string" && preview.scenario.trim() !== "" ? preview.scenario : undefined;
   const greetings: Array<Readonly<{ label: string; text: string }>> = [];
@@ -84,7 +93,7 @@ function convertedPreset(card: unknown, rawBook: unknown) {
     if (typeof text === "string" && text.trim() !== "")
       greetings.push(Object.freeze({ label: `Alternate ${index + 1}`, text }));
   });
-  return { profile, worldBook: validateWorldBook(rawBook), scenario, greetings };
+  return { profile, worldBook, scenario, greetings };
 }
 
 function assertPresetMatches(expected: ReturnType<typeof convertedPreset>): void {
@@ -137,4 +146,35 @@ test("the committed card's system_prompt is carried into the shipped profile as 
 
 test("the shipped compiled preset also matches the WORKING-TREE card and world book (editing-time check, not committed parity)", async () => {
   assertPresetMatches(convertedPreset(await workingTreeAsset("card.json"), await workingTreeAsset("worldbook.json")));
+});
+
+test("the card's declared scan_depth rides the compiled preset into its worldBook.scanDepth", () => {
+  const card = committedAsset("card.json") as { data: { character_book?: { scan_depth?: unknown } } };
+  const declared = (card.data.character_book as { scan_depth?: unknown } | undefined)?.scan_depth;
+  const decoder = previewStCard(card, "gamebuddy.companion.default");
+  // The import chain: card `character_book.scan_depth` → decoder
+  // `preview.worldBookScanDepth` → the compiled preset's book. The declared
+  // value must reach the shipped artifact, not stay a decoder-private datum.
+  assert.equal(decoder.worldBookScanDepth, 2);
+  assert.equal(DEFAULT_COMPANION_PRESET.worldBook.scanDepth, decoder.worldBookScanDepth);
+  assert.equal(DEFAULT_COMPANION_PRESET.worldBook.scanDepth, declared);
+});
+
+test("a book without a declared scan depth still falls back to the documented default, never the whole transcript", () => {
+  const messages: ReadonlyArray<Readonly<{ text: string }>> = [{ text: "一" }, { text: "两" }, { text: "三" }];
+  // A book that declares nothing carries no fallback value in its artifact,
+  // and the documented default is exactly the tail the selector scans.
+  const bookWithoutDepth = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "wb-without-depth",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: [],
+  });
+  assert.equal(bookWithoutDepth.scanDepth, undefined);
+  assert.equal(DEFAULT_WORLDBOOK_SCAN_DEPTH, 2);
+  assert.equal(boundedVisibleTail(messages, DEFAULT_WORLDBOOK_SCAN_DEPTH), "两\n三");
+  // A declared depth of 1 narrows the window to exactly the newest message;
+  // a book declaring 2 widens it by exactly its declared amount.
+  assert.equal(boundedVisibleTail(messages, 1), "三");
 });
