@@ -202,9 +202,9 @@ const IN_PLAY_EN =
 const IN_PLAY_ZH =
   "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
 const IMPORT_DETAIL_EN =
-  "She joins your library; the companion in play is fixed at start-up, so she becomes the one in play only when GameBuddy later starts with her.";
+  "She is archived safely in your local companion library; the companion in play is chosen by the start-up configuration, so she becomes the one in play only when GameBuddy later starts with her.";
 const IMPORT_DETAIL_ZH =
-  "她已加入伙伴库；在玩的伙伴在启动时确定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
+  "她已安全归档到本地伙伴库；在玩的伙伴由启动配置选定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
 
 test("a companion an import created is not the one in play, and the surface states when she can be", async ({
   page,
