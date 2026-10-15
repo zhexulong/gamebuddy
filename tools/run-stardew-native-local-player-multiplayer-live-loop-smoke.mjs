@@ -217,6 +217,22 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   let lastObservationFailureMs = null;
   let lastSuccessfulObservationMs = null;
 
+  // Connection state is a SEPARATE channel from the facts (`local-stardew-bridge.ts:571` vs `:575`). Without this
+  // subscription the trace cannot say why a session ended: measured, snapshots were healthy at 382049 ms and the
+  // next observation at 384054 ms failed `bridge_not_authenticated` for the rest of the run with nothing recorded
+  // to explain it, because the disconnect notice went to a listener nobody had registered.
+  const unsubscribeConnection =
+    typeof client.onConnectionFact === "function"
+      ? client.onConnectionFact((fact) => {
+          timeline({
+            atMs: now() - startedAtMs,
+            type: "bridge_connection",
+            revision: client.state?.snapshot?.revision ?? null,
+            payload: fact,
+          });
+        })
+      : () => {};
+
   // Every fact the Mod emits, not only receipts: the point of the trace is that a reviewer can see what the
   // companion was reacting to, not only what it did.
   const unsubscribe = client.onFact((fact) => {
@@ -323,6 +339,7 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
     }
   } finally {
     unsubscribe();
+    unsubscribeConnection();
   }
 
   const agentTurns = readAgentTurnsFromSession(agentSessionJsonl);
