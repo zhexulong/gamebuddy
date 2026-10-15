@@ -78,6 +78,12 @@
     "dynamicExternalImports": [
       {
         "package": "@cortexkit/pi-magic-context",
+        "module": "composition/companion-session-reflection.js",
+        "expression": "\"@cortexkit/pi-magic-context/dreamer\"",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
         "module": "runtime-core.internal.js",
         "expression": "\"@cortexkit/pi-magic-context/tavern\"",
         "occurrence": 0

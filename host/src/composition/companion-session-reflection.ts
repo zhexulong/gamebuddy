@@ -19,10 +19,11 @@ import { resolveRuntimePaths } from "../runtime-identity.js";
 /**
  * The shape this module relies on from the vendored package's `./dreamer` entry.
  *
- * Stated here rather than imported, and imported through a non-literal specifier for the same reason: the package
- * publishes that subpath at runtime but emits no declarations for it, and its declaration build cannot be widened
- * to include the entry without dragging in optional Pi peers that exist only at runtime. Stating the consumed
- * surface keeps this module typed without a second source of truth for the parts it does not use.
+ * Stated here rather than imported for the same reason the import below spells the specifier at the call site: the
+ * package publishes that subpath at runtime but emits no declarations for it (`src/magic-context-dreamer-subpath.d.ts`
+ * says why), and its declaration build cannot be widened to include the entry without dragging in optional Pi peers
+ * that exist only at runtime. Stating the consumed surface keeps this module typed without a second source of truth
+ * for the parts it does not use.
  */
 interface DreamerSubpath {
   openRuntimeDatabase: () => {
@@ -34,8 +35,6 @@ interface DreamerSubpath {
   runPiDreamForProject: (projectIdentity: string, task: string, registrationOwner: object) => Promise<unknown>;
   unregisterPiDreamerProject: (options: Readonly<{ projectIdentity: string; registrationOwner: object }>) => void;
 }
-
-const DREAMER_ENTRY = "@cortexkit/pi-magic-context/dreamer";
 
 /** The bounded outcome one session-end reflection reports. */
 export type CompanionSessionReflectionOutcome = "completed" | "not_applicable" | "failed";
@@ -99,7 +98,11 @@ export async function reflectCompanionSessionOnce(
 }
 
 async function runOnce(dataRoot: string): Promise<CompanionSessionReflectionOutcome> {
-  const dreamer = (await import(DREAMER_ENTRY)) as unknown as DreamerSubpath;
+  // The specifier is spelled here, as a literal, because the production artifact's external-closure gate declares a
+  // dynamic import by its emitted argument text and accepts only a canonical JSON string literal or the frozen
+  // magicContext bridge expression. A specifier bound to a constant is emitted as an identifier, so it can never be
+  // declared and the artifact could not be published at all. Same package, same subpath, same runtime resolution.
+  const dreamer = (await import("@cortexkit/pi-magic-context/dreamer")) as unknown as DreamerSubpath;
   const db = dreamer.openRuntimeDatabase();
   if (db === null) return "not_applicable";
 
