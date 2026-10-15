@@ -132,7 +132,21 @@ const report = {
   failure: failure ?? null,
   run: result ?? null,
   memories: { before: before.length, after: after.length, added: added.length },
-  addedRows: added.map((row) => ({ handle: row.handle, origin: row.origin ?? null, title: row.title ?? null })),
+  addedRows: added.map((row) => ({
+    handle: row.handle,
+    origin: row.origin ?? null,
+    title: row.title ?? null,
+    content: row.content ?? null,
+  })),
+  // Outcome metric 4 of reflect-outcome-plan.md: no written row may assert an inferred trait, mood, preference
+  // or relationship interpretation as something the player said. The plan puts that check on the rows, so the
+  // rows travel with the report and this flags the phrasing that would break it.
+  metricInferenceAttribution: added
+    .map((row) => ({ handle: row.handle, content: String(row.content ?? "") }))
+    .filter((row) =>
+      /\b(you (said|told|mentioned|shared|explained)|player (said|stated|reported))\b/iu.test(row.content),
+    )
+    .map((row) => row.handle),
 };
 if (reportPath !== undefined) writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 process.stdout.write(
