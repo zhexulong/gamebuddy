@@ -293,7 +293,7 @@ public sealed partial class ModEntry : Mod
             return;
         }
         if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or
- "native_world_object_v1" or "native_build_farm_building_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_clear_fish_pond_v1" or "native_accept_daily_quest_v1" or "native_color_placed_object_v1" or "native_name_entity_v1" or "native_prize_ticket_v1" or "native_tailoring_v1" or "native_farmhand_chat_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_talk_to_npc_v1" or "native_talk_to_npc_multi_page_v1" or "native_equip_wearable_v1" or "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1" or "native_dismount_transport_v1" or "native_building_chest_v1" or "native_building_chest_multistack_v1" or "native_use_warp_item_v1" or "native_pan_ore_v1" or "native_claim_mail_attachment_v1" or "native_accept_special_order_v1" or "native_claim_museum_reward_v1" or "native_farmhand_talk_to_npc_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+ "native_world_object_v1" or "native_build_farm_building_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_clear_fish_pond_v1" or "native_accept_daily_quest_v1" or "native_color_placed_object_v1" or "native_name_entity_v1" or "native_prize_ticket_v1" or "native_tailoring_v1" or "native_farmhand_chat_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_talk_to_npc_v1" or "native_talk_to_npc_multi_page_v1" or "native_equip_wearable_v1" or "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1" or "native_dismount_transport_v1" or "native_building_chest_v1" or "native_building_chest_multistack_v1" or "native_use_warp_item_v1" or "native_pan_ore_v1" or "native_claim_mail_attachment_v1" or "native_accept_special_order_v1" or "native_claim_museum_reward_v1" or "native_farmhand_talk_to_npc_v1" or "native_move_ladder_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -335,6 +335,17 @@ public sealed partial class ModEntry : Mod
                 // fixture establishes the blocker and the standing tile, then
                 // steps away; production alone plans, walks, and collides.
                 InitializeNativeLocalMoveStallProbeFixture(player, farm, useHorseBlock: fixture.FixtureScenario == "native_move_stall_probe_npc_v1");
+                return;
+            }
+            if (fixture.FixtureScenario == "native_move_ladder_v1")
+            {
+                // The ladder measures the Farm's OWN walkability and
+                // reachability for the scope-bound actor. The only originated
+                // state is a STARTING TILE: the actor is warped to a
+                // plainly-open Farm tile so every later target is a same-map
+                // Farm->Farm move. No blocker, object or other world fact is
+                // created; production alone plans, walks and emits the receipt.
+                InitializeNativeLocalMoveLadderFixture(player, farm);
                 return;
             }
             if (fixture.FixtureScenario == "native_pass_out_v1")
@@ -3650,6 +3661,26 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)anchorA.X, (int)anchorA.Y, false));
         this.nativeLocalMoveStallProbePending = new NativeLocalMoveStallProbePending(farm.NameOrUniqueName, anchorA, useHorseBlock);
         this.Monitor.Log($"GameBuddy native-local-player queued move-stall probe precondition: planned_anchor={anchorA.X},{anchorA.Y}; blocker_kind={(useHorseBlock ? "horse" : "pet")}; final arrangement is completed after the warp settles.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// The move-ladder probe's only originated state is a STARTING TILE: the actor
+    /// is warped to a plainly-open Farm tile so a short ladder of move_to_tile
+    /// targets measures same-map Farm->Farm routing without any other fixture fact.
+    /// The warp completes through the native lifecycle; production alone plans,
+    /// walks and emits receipts from whatever arrives there.
+    /// </summary>
+    private void InitializeNativeLocalMoveLadderFixture(Farmer player, Farm farm)
+    {
+        // The ladder's absolute landmarks (the Farm's last in-map column, the
+        // Farmhouse footprint) are only meaningful relative to a start tile the
+        // planner can actually walk from, so the anchor is verified with the same
+        // predicates the move path uses rather than assumed.
+        Vector2? anchor = FindNativeLocalFarmFixtureTile(farm, new Vector2(52f, 16f), 24, requireEmptyObjectTile: false)
+            ?? throw new InvalidOperationException("fixture_native_move_ladder_anchor_missing");
+        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)anchor.Value.X, (int)anchor.Value.Y, false));
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized move-ladder precondition before bridge attachment: anchor={anchor.Value.X},{anchor.Value.Y}; production alone plans, walks and emits the receipt.", LogLevel.Info);
     }
 
     private static bool IsCrabPotFixtureInventoryUnchanged(Farmer player, NativeLocalPlaceCrabPotFixturePending pending)

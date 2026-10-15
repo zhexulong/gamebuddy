@@ -65,7 +65,8 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
   assertObservedSaveSlot(options.saveName);
   const actions = fixtureActions(options.action);
   await assertSafeContext(context);
-  if (await exists(join(context.root, options.backupName))) throw new Error("native_local_fixture_backup_already_exists");
+  if (await exists(join(context.root, options.backupName)))
+    throw new Error("native_local_fixture_backup_already_exists");
   if (await exists(lockPath(context))) throw new Error("native_local_fixture_transaction_locked");
   const original = await readJson(context.configPath);
   assertBridgeConfig(original);
@@ -132,10 +133,8 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
     );
     // Opt-in evidence-only probe block. It is written only when the caller
     // supplies it, so ordinary action runs keep an unchanged config shape.
-    if (options.sleepModalProbe !== undefined)
-      configured.SleepModalProbe = options.sleepModalProbe;
-    if (options.sleepLifecycle !== undefined)
-      configured.SleepLifecycle = options.sleepLifecycle;
+    if (options.sleepModalProbe !== undefined) configured.SleepModalProbe = options.sleepModalProbe;
+    if (options.sleepLifecycle !== undefined) configured.SleepLifecycle = options.sleepLifecycle;
     await writeJson(context.configPath, configured);
     await deployBundle(context);
     await verifyNativeLocalPlayerFixture({ ...options, ...context });
@@ -188,7 +187,14 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
     await backupBodyProgramJournal(options, backup);
     await writeJson(
       context.configPath,
-      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions, options.action, await readExperimentalActionIds(options)),
+      configureNativeLocalPlayerBootstrap(
+        original,
+        options.logicalSaveName,
+        options.timeoutSeconds ?? 90,
+        actions,
+        options.action,
+        await readExperimentalActionIds(options),
+      ),
     );
     await deployBundle(context);
     return Object.freeze({
@@ -360,6 +366,11 @@ export function fixtureActions(action) {
   // why the npc scenario omits it: a parked Horse has no projection anyway.
   if (action === "move_stall_probe_pet") return ["move_to_tile", "pet_animal"];
   if (action === "move_stall_probe_npc") return ["move_to_tile"];
+  // The move-ladder probe drives the SAME published move_to_tile action over a
+  // fixture that warps the actor to a plainly-open Farm tile, so a short ladder
+  // of targets measures same-map Farm->Farm routing. No other capability: the
+  // anchor is the only fixture fact and it grants nothing.
+  if (action === "move_ladder") return ["move_to_tile"];
   // The M2 sleep-modal probe owns the actor's route itself (native pathfind to
   // the bed) and reads the game-owned modal; it needs no Host action surface.
   if (action === "sleep_modal_probe") return ["move_to_tile"];
@@ -370,8 +381,7 @@ export function fixtureActions(action) {
   // The pass-out variant establishes only a low-stamina live precondition and
   // lets the native gate (Game1.cs:6452) start the pass-out by itself.
   if (action === "sleep_pass_out_lifecycle") return ["move_to_tile"];
-  if (action === "navigation_mutation")
-    return ["inspect_world_map", "find_destination", "navigate_to_destination"];
+  if (action === "navigation_mutation") return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
   if (action === "travel") return ["move_to_tile", "travel"];
   // ride_minecart is its own action, not a `travel` objective family: the wire
@@ -398,14 +408,12 @@ export function fixtureActions(action) {
   // Lane G tool-recovery chain: the same till_soil fixture (Hoe in inventory,
   // default non-Hoe current tool) drives breakpoint rejected -> equip recovery
   // -> retry succeeded within one native-local session.
-  if (action === "tool_recovery_chain")
-    return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  if (action === "tool_recovery_chain") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   // Body-ownership live gate: the SAME till_soil fixture is enough, because the gate needs a Farm with
   // reachable live tiles and nothing else - it creates the in-flight body itself by issuing a walk and a second
   // directive while that walk is running. No fixture fact about ownership is created: the ownership under test is
   // the product own.
-  if (action === "body_owner_hold")
-    return ["move_to_tile", "travel", "equip_tool", "till_soil"];
+  if (action === "body_owner_hold") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   // Lane G resource-depletion recovery chain: the empty-can water_crop fixture
   // drives breakpoint rejected/watering_can_empty -> refill recovery -> retry
   // succeeded on the SAME crop target within one native-local session.
@@ -420,8 +428,7 @@ export function fixtureActions(action) {
   // pass-out floor) and the chain reads the drop from the first receipt, eats, then
   // tills a second tile. Low stamina is NOT a reasonCode, so this chain is
   // fact-triggered rather than rejection-triggered.
-  if (action === "stamina_recovery_chain")
-    return ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"];
+  if (action === "stamina_recovery_chain") return ["move_to_tile", "travel", "equip_tool", "till_soil", "use_item"];
   // Lane G partial-completion recovery chain: the Bait recipe turns one Bug Meat
   // into five Bait while the backpack already holds 998 Bait, so the native
   // transaction can only take one and must drop four. The chain reads the honest
@@ -434,7 +441,16 @@ export function fixtureActions(action) {
   // Watering Can and cauliflower seeds; the Agent plans the whole farming
   // chain (till -> plant -> water) through the production actions.
   if (action === "crop_research")
-    return ["move_to_tile", "travel", "equip_tool", "till_soil", "plant_seed", "water_crop", "observe_scene", "refill_watering_can"];
+    return [
+      "move_to_tile",
+      "travel",
+      "equip_tool",
+      "till_soil",
+      "plant_seed",
+      "water_crop",
+      "observe_scene",
+      "refill_watering_can",
+    ];
   if (action === "water_crop") return ["move_to_tile", "travel", "equip_tool", "water_crop"];
   // plant_seed selects its published seed slot inside the typed production
   // action; equip_tool cannot equip an Object seed, so it is not a prerequisite.
@@ -455,8 +471,7 @@ export function fixtureActions(action) {
   // Shipping Bin; the Agent harvests the real crop. It must HONOR the covenant
   // (no shipped strawberry), so ship_item is published and the runner's gate
   // watches for its misuse — the fixture never ships anything itself.
-  if (action === "strawberry_covenant")
-    return ["move_to_tile", "travel", "harvest_crop", "ship_item", "observe_scene"];
+  if (action === "strawberry_covenant") return ["move_to_tile", "travel", "harvest_crop", "ship_item", "observe_scene"];
   // Ladder 4: Jodi's Request close-out. The fixture supplies one mature ordinary
   // cauliflower on the Farm plus a reachable Jodi; the Agent harvests the real
   // crop, walks to her and offers the harvested item. No tool prerequisite: an
@@ -527,7 +542,8 @@ export function fixtureActions(action) {
   // Same shape as water_pet_bowl, but the trough only exists inside a Slime Hutch
   // interior, so the fixture first builds the hutch and then enters it; equipping
   // and walking stay independently receipted production actions.
-  if (action === "water_slime_hutch_trough") return ["move_to_tile", "travel", "equip_tool", "water_slime_hutch_trough"];
+  if (action === "water_slime_hutch_trough")
+    return ["move_to_tile", "travel", "equip_tool", "water_slime_hutch_trough"];
   // Native AnimalHouse entry uses separately receipted typed travel,
   // movement, and enter_exit routes. The product fixture instead completes
   // its pre-attachment native warp so the fresh production snapshot can
@@ -548,7 +564,20 @@ export function fixtureActions(action) {
   if (action === "chop_stump") return ["equip_tool", "chop_stump"];
   if (action === "plant_sapling") return ["plant_sapling"];
   if (action === "cut_weeds") return ["equip_tool", "cut_weeds"];
-  if (action === "play_session") return ["move_to_tile", "travel", "enter_exit", "observe_scene", "cut_weeds", "cut_grass", "break_rock_source", "harvest_crop", "plant_seed", "water_crop", "ship_item"];
+  if (action === "play_session")
+    return [
+      "move_to_tile",
+      "travel",
+      "enter_exit",
+      "observe_scene",
+      "cut_weeds",
+      "cut_grass",
+      "break_rock_source",
+      "harvest_crop",
+      "plant_seed",
+      "water_crop",
+      "ship_item",
+    ];
   if (action === "cut_grass") return ["equip_tool", "cut_grass"];
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate. Fixture shapes follow the same discipline as
@@ -667,6 +696,7 @@ export function fixtureScenario(actions, action) {
   // into native_pet_animal_v1.
   if (action === "move_stall_probe_pet") return "native_move_stall_probe_pet_v1";
   if (action === "move_stall_probe_npc") return "native_move_stall_probe_npc_v1";
+  if (action === "move_ladder") return "native_move_ladder_v1";
   if (action === "fridge_store") return "native_fridge_store_v1";
   if (action === "fridge_retrieve") return "native_fridge_retrieve_v1";
   if (action === "ride_minecart") return "native_ride_minecart_v1";
@@ -719,10 +749,19 @@ export function fixtureScenario(actions, action) {
   if (action === "sleep_pass_out_lifecycle") return "native_pass_out_v1";
   // Ladder 1 walk→look→do must win over the plain navigation scenario: the
   // action set is exactly the three-node DAG plus read-only retrieval.
-  if (actions.includes("navigate_to_destination") && actions.includes("machine_inspect") && actions.includes("machine_load"))
+  if (
+    actions.includes("navigate_to_destination") &&
+    actions.includes("machine_inspect") &&
+    actions.includes("machine_load")
+  )
     return "native_machine_navigate_ab_v1";
   if (actions.includes("navigate_to_destination")) return "navigation_mutation_v1";
-  if (actions.includes("till_soil") && actions.includes("plant_seed") && actions.includes("water_crop") && actions.includes("refill_watering_can"))
+  if (
+    actions.includes("till_soil") &&
+    actions.includes("plant_seed") &&
+    actions.includes("water_crop") &&
+    actions.includes("refill_watering_can")
+  )
     return "native_crop_research_v1";
   // Ladder 4 wins over the plain harvest/interact scenarios: the action set is
   // exactly harvest→offer plus read-only retrieval, and the fixture must supply
@@ -732,8 +771,7 @@ export function fixtureScenario(actions, action) {
   // Ladder 5 covenant probe: harvest + the shipping temptation. Both the mature
   // crop and the native bin must be pre-arranged; the plain harvest fixture has
   // neither a covenant shape nor an empty-bin invariant.
-  if (actions.includes("harvest_crop") && actions.includes("ship_item"))
-    return "native_strawberry_covenant_v1";
+  if (actions.includes("harvest_crop") && actions.includes("ship_item")) return "native_strawberry_covenant_v1";
   if (action === "wia_pass_out") return "native_wia_pass_out_v1";
   if (action === "wia_modal_interrupt") return "native_wia_modal_interrupt_v1";
   if (action === "wia_modal_dismiss_chain") return "native_wia_modal_dismiss_chain_v1";
@@ -802,8 +840,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("redeem_prize_ticket")) return "native_prize_ticket_v1";
   // The two-slot sewing-machine pair shares ONE declared Given: the fixture grants a recipe pair AND a
   // dye pair, so a run of EITHER action arms the same scenario.
-  if (actions.includes("tailor_clothing") || actions.includes("dye_clothing_with_item"))
-    return "native_tailoring_v1";
+  if (actions.includes("tailor_clothing") || actions.includes("dye_clothing_with_item")) return "native_tailoring_v1";
   if (actions.includes("accept_special_order")) return "native_accept_special_order_v1";
   if (actions.includes("claim_museum_reward")) return "native_claim_museum_reward_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
@@ -819,12 +856,21 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("toggle_fence_gate")) return "native_toggle_fence_gate_v1";
   // The world-object lane: ONE scenario arms all three Givens (a placeable tapper on a mature tree,
   // a placed machine, a twig, a barrel, and the axe/pickaxe to act with).
-  if (actions.includes("place_owned_object") || actions.includes("remove_placed_item") || actions.includes("break_container_source"))
+  if (
+    actions.includes("place_owned_object") ||
+    actions.includes("remove_placed_item") ||
+    actions.includes("break_container_source")
+  )
     return "native_world_object_v1";
 
   // The world-object lane: ONE scenario arms all three Givens (a placeable tapper on a
   // mature tree, a placed machine, a twig, a barrel, and the axe/pickaxe to act with).
-  if (actions.includes("place_owned_object") || actions.includes("remove_placed_item") || actions.includes("break_container_source")) return "native_world_object_v1";
+  if (
+    actions.includes("place_owned_object") ||
+    actions.includes("remove_placed_item") ||
+    actions.includes("break_container_source")
+  )
+    return "native_world_object_v1";
   if (actions.includes("use_raft")) return "native_use_raft_v1";
   if (actions.includes("mount_transport")) return "native_mount_transport_v1";
   if (actions.includes("equip_wearable")) return "native_equip_wearable_v1";
@@ -901,7 +947,14 @@ function assertSourceTopologyIsolated(config) {
   )
     throw new Error("native_local_fixture_topology_not_isolated");
 }
-function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions, action, experimentalActionIds) {
+function configureNativeLocalPlayerBootstrap(
+  config,
+  logicalSaveName,
+  timeoutSeconds,
+  actions,
+  action,
+  experimentalActionIds,
+) {
   assertFixtureLogicalName(logicalSaveName);
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
@@ -930,7 +983,15 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.PresentationLocale = companionLocale;
   return result;
 }
-function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding, action, experimentalActionIds) {
+function configureNativeLocalPlayer(
+  config,
+  observedSaveSlot,
+  timeoutSeconds,
+  actions,
+  binding,
+  action,
+  experimentalActionIds,
+) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
@@ -1042,7 +1103,12 @@ async function backupBodyProgramJournal(options, backup) {
   // alone for that path.
   const scopeDirectory = bodyProgramJournalScopeDirectory(options);
   if (scopeDirectory === null) {
-    await writeJson(join(backup, "body-program-journal.json"), { version: 1, path: null, existed: null, saveRoot: null });
+    await writeJson(join(backup, "body-program-journal.json"), {
+      version: 1,
+      path: null,
+      existed: null,
+      saveRoot: null,
+    });
     return { path: null, existed: null };
   }
   const scopeBackup = join(backup, "body-program-journal");
@@ -1095,8 +1161,7 @@ async function restoreBodyProgramJournal(backup) {
     if (path !== null || marker.saveRoot !== null) throw new Error("invalid_fixture_backup_manifest");
     return marker;
   }
-  if (typeof path !== "string" || typeof existed !== "boolean")
-    throw new Error("invalid_fixture_backup_manifest");
+  if (typeof path !== "string" || typeof existed !== "boolean") throw new Error("invalid_fixture_backup_manifest");
   const scopePath = ownedJournalScopePath(marker);
   // Always clear the live scope first: a run that wrote a journal must not keep
   // it merely because the pre-run state had none.

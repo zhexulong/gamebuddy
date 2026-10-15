@@ -27,10 +27,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import {
-  fixtureActions,
-  fixtureScenario,
-} from "./lib/stardew-native-local-player-fixture.mjs";
+import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import { readExperimentalStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
@@ -135,6 +132,9 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-chop-tree-approach-smoke.mjs": "chop_tree_source",
   "run-stardew-native-local-player-cut-grass-smoke.mjs": "cut_grass",
   "run-stardew-native-local-player-move-stall-probe-smoke.mjs": "move_stall_probe_pet",
+  // The ladder probe keys its scenario on its own harness label ("move_ladder"),
+  // because the SAME published move_to_tile action is what it drives.
+  "run-stardew-native-local-player-move-ladder-smoke.mjs": "move_ladder",
   "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs": "wia_modal_dismiss_chain",
   "run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs": "wia_modal_interrupt",
   "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs": "wia_eat_interrupt",
@@ -186,9 +186,7 @@ function fixturePolicyFor(actions) {
 // one published action, so neither the gate table nor CONFIG_DRIVER_ACTION can describe it - and its filename matches
 // this test's runner pattern, which is why the completeness check swept it in. Declared by name for the same reason
 // FIXTURE_UNOWNED_RUNNERS is: any OTHER runner missing from all of these still fails.
-const SESSION_DRIVER_RUNNERS = new Set([
-  "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
-]);
+const SESSION_DRIVER_RUNNERS = new Set(["run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs"]);
 
 function runnerCases() {
   const onDisk = new Set(
@@ -220,8 +218,12 @@ function stubClient(actions) {
     state: { snapshot, latestReceipt: null },
     onFact: () => () => {},
     observe: async () => snapshot,
-    execute: async () => { throw new Error("fixture_contract_stub_no_execute"); },
-    navigationRead: async () => { throw new Error("fixture_contract_stub_no_navigation"); },
+    execute: async () => {
+      throw new Error("fixture_contract_stub_no_execute");
+    },
+    navigationRead: async () => {
+      throw new Error("fixture_contract_stub_no_navigation");
+    },
   };
 }
 
@@ -276,9 +278,10 @@ async function configRejectionFor(name, actionId) {
   const client = stubClient(actions);
   const receipts = { subscribe: () => () => {}, [Symbol.iterator]: function* () {} };
   const config = configFor(actions, scenario);
-  const args = fn.length >= 3
-    ? [client, receipts, config, { terminalTimeoutMs: 1, postconditionTimeoutMs: 1 }]
-    : [client, config, { postconditionTimeoutMs: 1 }];
+  const args =
+    fn.length >= 3
+      ? [client, receipts, config, { terminalTimeoutMs: 1, postconditionTimeoutMs: 1 }]
+      : [client, config, { postconditionTimeoutMs: 1 }];
 
   try {
     const result = await fn(...args);
@@ -304,9 +307,9 @@ test("the gate table and the declared non-gate runners cover every runner on dis
 
 test("the gate table names only runners that exist", () => {
   const { onDisk } = runnerCases();
-  const missing = STARDEW_PUBLISHED_ACTION_GATES
-    .filter((gate) => !onDisk.has(gate.runner))
-    .map((gate) => `${gate.actionId}: ${gate.runner}`);
+  const missing = STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => !onDisk.has(gate.runner)).map(
+    (gate) => `${gate.actionId}: ${gate.runner}`,
+  );
   assert.deepEqual(missing, [], "gate table entries without a runner file");
 });
 
@@ -319,7 +322,10 @@ test("every native-local runner accepts the policy block the fixture writes", as
   for (const [name, actionId] of [...cases].sort(([a], [b]) => a.localeCompare(b))) {
     const outcome = await configRejectionFor(name, actionId);
     const short = name.replace("run-stardew-native-local-player-", "").replace("-smoke.mjs", "");
-    if (outcome.skipped) { skipped.push(`${short}: ${outcome.skipped}`); continue; }
+    if (outcome.skipped) {
+      skipped.push(`${short}: ${outcome.skipped}`);
+      continue;
+    }
     evaluated += 1;
     if (outcome.code) rejections.push(`${short}: ${outcome.code}`);
   }
@@ -328,8 +334,7 @@ test("every native-local runner accepts the policy block the fixture writes", as
   assert.deepEqual(
     rejections,
     [],
-    "these runners refuse the config the fixture writes, so their live gate can never open:\n" +
-      rejections.join("\n"),
+    "these runners refuse the config the fixture writes, so their live gate can never open:\n" + rejections.join("\n"),
   );
   // The chat deed runs on the FARMHAND lane, not a native-local fixture, so `fixtureActions`
   // cannot describe it - and it must be a DECLARED, named exemption rather than a silently
@@ -338,17 +343,13 @@ test("every native-local runner accepts the policy block the fixture writes", as
   assert.deepEqual(
     skipped.filter((entry) => !FIXTURE_UNOWNED_RUNNERS.has(entry.split(":")[0].trim())),
     [],
-    `runners the fixture could not describe which are not the declared farmhand-lane exemption:\n` +
-      skipped.join("\n"),
+    `runners the fixture could not describe which are not the declared farmhand-lane exemption:\n` + skipped.join("\n"),
   );
 });
 
 test("the fixture's own policy block carries no retired field", () => {
   // The authority this test trusts must itself be on the current contract.
   const policy = fixturePolicyFor(fixtureActions("move_to_tile"));
-  assert.deepEqual(
-    Object.keys(policy).sort(),
-    ["DeniedActionFamilies", "DeniedActions", "ExperimentalActions"],
-  );
+  assert.deepEqual(Object.keys(policy).sort(), ["DeniedActionFamilies", "DeniedActions", "ExperimentalActions"]);
   for (const key of Object.keys(policy)) assert.ok(Array.isArray(policy[key]), key);
 });

@@ -77,7 +77,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // Promoted 2026-10-12 after its native-local live gate passed on all five checks: the pond emptied
   // (occupants 1 -> 0, fish type -> none), the receipt agreed with the world, the published target DISAPPEARED
   // from discovery, the ejected fish were OBSERVED as ground itemTargets, and a stale target was refused by name.
-  gate("clear_fish_pond", 1, "run-stardew-native-local-player-clear-fish-pond-smoke.mjs", "fish_pond_cleared", "native_clear_fish_pond_v1"),
+  gate(
+    "clear_fish_pond",
+    1,
+    "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
+    "fish_pond_cleared",
+    "native_clear_fish_pond_v1",
+  ),
   gate(
     "harvest_crop",
     1,
@@ -146,7 +152,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // both share one runner and one fixture scenario. They are live_verified rather
   // than published (see design/10 section 3.1.1): the live run exists, the
   // independent publication review does not yet.
-  gate("express_emote", 1, "run-stardew-native-local-player-expression-smoke.mjs", "emote_started", "native_express_emote_v1"),
+  gate(
+    "express_emote",
+    1,
+    "run-stardew-native-local-player-expression-smoke.mjs",
+    "emote_started",
+    "native_express_emote_v1",
+  ),
   gate(
     "face_direction",
     1,
@@ -162,7 +174,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // single per-pet `grantedFriendshipForPet` flag, so a second farmer's pet in the
   // same day grants 0. Verified in the real Host-LAN + AI-Farmhand topology
   // (pet_completed, friendship 0->12, day_recorded, friendship_callback).
-  gate("pet_animal", 1, "run-stardew-native-local-player-pet-animal-smoke.mjs", "pet_completed", "native_pet_animal_v1"),
+  gate(
+    "pet_animal",
+    1,
+    "run-stardew-native-local-player-pet-animal-smoke.mjs",
+    "pet_completed",
+    "native_pet_animal_v1",
+  ),
   // Two native branches, so the descriptor names the one the live run proved:
   // the quest-delivery branch is checked first and short-circuits the gift path.
   gate(
@@ -182,9 +200,27 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // target-version live run terminal: these runners produced a native receipt
   // and an action-specific postcondition, without an independent publication
   // review yet (design/10 3.1.1).
-  gate("clear_debris", 1, "run-stardew-native-local-player-clear-debris-smoke.mjs", "debris_cleared", "native_clear_debris_resource_clump_v1"),
-  gate("npc_relationship", 1, "run-stardew-native-local-player-npc-relationship-smoke.mjs", "npc_relationship_inspected", "native_npc_relationship_v1"),
-  gate("water_pet_bowl", 1, "run-stardew-native-local-player-water-pet-bowl-smoke.mjs", "pet_bowl_watered", "native_water_pet_bowl_v1"),
+  gate(
+    "clear_debris",
+    1,
+    "run-stardew-native-local-player-clear-debris-smoke.mjs",
+    "debris_cleared",
+    "native_clear_debris_resource_clump_v1",
+  ),
+  gate(
+    "npc_relationship",
+    1,
+    "run-stardew-native-local-player-npc-relationship-smoke.mjs",
+    "npc_relationship_inspected",
+    "native_npc_relationship_v1",
+  ),
+  gate(
+    "water_pet_bowl",
+    1,
+    "run-stardew-native-local-player-water-pet-bowl-smoke.mjs",
+    "pet_bowl_watered",
+    "native_water_pet_bowl_v1",
+  ),
   gate(
     "water_slime_hutch_trough",
     1,
@@ -192,14 +228,56 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "slime_hutch_trough_watered",
     "native_water_slime_hutch_trough_v1",
   ),
-  gate("chest_store", 1, "run-stardew-native-local-player-chest-store-smoke.mjs", "chest_stored", "native_chest_store_v1"),
-  gate("chest_retrieve", 1, "run-stardew-native-local-player-chest-retrieve-smoke.mjs", "chest_retrieved", "native_chest_retrieve_v1"),
-  gate("chop_stump", 1, "run-stardew-native-local-player-chop-stump-smoke.mjs", "stump_cleared", "native_chop_stump_v1"),
-  gate("plant_sapling", 1, "run-stardew-native-local-player-plant-sapling-smoke.mjs", "sapling_planted", "native_plant_sapling_v1"),
+  gate(
+    "chest_store",
+    1,
+    "run-stardew-native-local-player-chest-store-smoke.mjs",
+    "chest_stored",
+    "native_chest_store_v1",
+  ),
+  gate(
+    "chest_retrieve",
+    1,
+    "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
+    "chest_retrieved",
+    "native_chest_retrieve_v1",
+  ),
+  gate(
+    "chop_stump",
+    1,
+    "run-stardew-native-local-player-chop-stump-smoke.mjs",
+    "stump_cleared",
+    "native_chop_stump_v1",
+  ),
+  gate(
+    "plant_sapling",
+    1,
+    "run-stardew-native-local-player-plant-sapling-smoke.mjs",
+    "sapling_planted",
+    "native_plant_sapling_v1",
+  ),
   gate("cut_weeds", 1, "run-stardew-native-local-player-cut-weeds-smoke.mjs", "weeds_cut", "native_cut_weeds_v1"),
-  gate("scythe_crop", 1, "run-stardew-native-local-player-scythe-crop-smoke.mjs", "scythe_crops_harvested", "native_scythe_crop_v1"),
-  gate("craft_item", 1, "run-stardew-native-local-player-craft-item-smoke.mjs", "crafted_item_created", "native_craft_item_v1"),
-  gate("cook_recipe", 1, "run-stardew-native-local-player-cook-recipe-smoke.mjs", "dish_cooked", "native_cook_recipe_v1"),
+  gate(
+    "scythe_crop",
+    1,
+    "run-stardew-native-local-player-scythe-crop-smoke.mjs",
+    "scythe_crops_harvested",
+    "native_scythe_crop_v1",
+  ),
+  gate(
+    "craft_item",
+    1,
+    "run-stardew-native-local-player-craft-item-smoke.mjs",
+    "crafted_item_created",
+    "native_craft_item_v1",
+  ),
+  gate(
+    "cook_recipe",
+    1,
+    "run-stardew-native-local-player-cook-recipe-smoke.mjs",
+    "dish_cooked",
+    "native_cook_recipe_v1",
+  ),
   gate(
     "collect_crab_pot_output",
     1,
@@ -213,49 +291,139 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // (station Farm (2,9), network Default, destination Town). The run settles
   // the 700ms freezePause window rather than sampling once; publication review
   // is still owed (design/10 3.1.1).
-  gate("ride_minecart", 1, "run-stardew-native-local-player-ride-minecart-smoke.mjs", "minecart_ride_completed", "native_ride_minecart_v1"),
+  gate(
+    "ride_minecart",
+    1,
+    "run-stardew-native-local-player-ride-minecart-smoke.mjs",
+    "minecart_ride_completed",
+    "native_ride_minecart_v1",
+  ),
   // The bus is a typed transport action over the game's own ticket interaction,
   // not a fixture-authored warp: the runner proves the native terminal
   // (bus_arrived), the fare actually deducted, and the world moving the actor to
   // the desert. Live evidence: fixtures/stardew/RUNBOOK.md §35.
   gate("ride_bus", 1, "run-stardew-native-local-player-ride-bus-smoke.mjs", "bus_arrived", "native_ride_bus_v1"),
   // Promoted 2026-10-06 after their native-local live gates passed on a rebuilt fixture environment.
-  gate("withdraw_silo_hay", 1, "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs", "silo_hay_taken", "native_withdraw_silo_hay_v1"),
-  gate("use_obelisk", 1, "run-stardew-native-local-player-use-obelisk-smoke.mjs", "obelisk_arrived", "native_use_obelisk_v1"),
+  gate(
+    "withdraw_silo_hay",
+    1,
+    "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
+    "silo_hay_taken",
+    "native_withdraw_silo_hay_v1",
+  ),
+  gate(
+    "use_obelisk",
+    1,
+    "run-stardew-native-local-player-use-obelisk-smoke.mjs",
+    "obelisk_arrived",
+    "native_use_obelisk_v1",
+  ),
 
   // Buying is the transaction only; the action refuses if the owner is out of reach so a
   // walk failure can never be reported as a trade failure. The runner also proves the two
   // world facts a receipt cannot: the purse really paid, and the goods really arrived.
   // Live evidence: fixtures/stardew/RUNBOOK.md 37.
-  gate("shop_purchase", 1, "run-stardew-native-local-player-shop-purchase-smoke.mjs", "item_purchased", "native_shop_purchase_v1"),
+  gate(
+    "shop_purchase",
+    1,
+    "run-stardew-native-local-player-shop-purchase-smoke.mjs",
+    "item_purchased",
+    "native_shop_purchase_v1",
+  ),
 
   // The elevator's floor selection only exists inside MineElevatorMenu's click
   // handler, so it is its own action rather than an `enter_mine` argument (Lane L3
   // card 3.7: a level-taking enter_mine would bypass lowestLevelReached). The
   // runner proves the terminal, the world arriving on the requested LEVEL, and the
   // floor-set projection following. Live evidence: fixtures/stardew/RUNBOOK.md 36.
-  gate("toggle_animal_door", 1, "run-stardew-native-local-player-toggle-animal-door-smoke.mjs", "animal_door_toggled", "native_toggle_animal_door_v1"),
-  gate("select_mine_elevator_floor", 1, "run-stardew-native-local-player-mine-elevator-smoke.mjs", "mine_elevator_floor_selected", "native_mine_elevator_v1"),
+  gate(
+    "toggle_animal_door",
+    1,
+    "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
+    "animal_door_toggled",
+    "native_toggle_animal_door_v1",
+  ),
+  gate(
+    "select_mine_elevator_floor",
+    1,
+    "run-stardew-native-local-player-mine-elevator-smoke.mjs",
+    "mine_elevator_floor_selected",
+    "native_mine_elevator_v1",
+  ),
   // Promoted to live_verified (2026-10-04): each of these produced a real
   // target-version native-local run with its own receipt and fresh postcondition
   // in the loop-closure wave. Publication review is a separate, optional marker
   // (architecture/game-action-model.md 'lifecycle 与发布终点'), so live_verified is
   // the release endpoint and these are now part of the published set.
   gate("cut_grass", 1, "run-stardew-native-local-player-cut-grass-smoke.mjs", "grass_cut", "native_cut_grass_v1"),
-  gate("harvest_bush", 1, "run-stardew-native-local-player-harvest-bush-smoke.mjs", "bush_harvested", "native_harvest_bush_v1"),
-  gate("harvest_fruit_tree", 1, "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs", "fruit_tree_harvested", "native_harvest_fruit_tree_v1"),
+  gate(
+    "harvest_bush",
+    1,
+    "run-stardew-native-local-player-harvest-bush-smoke.mjs",
+    "bush_harvested",
+    "native_harvest_bush_v1",
+  ),
+  gate(
+    "harvest_fruit_tree",
+    1,
+    "run-stardew-native-local-player-harvest-fruit-tree-smoke.mjs",
+    "fruit_tree_harvested",
+    "native_harvest_fruit_tree_v1",
+  ),
   gate("shake_tree", 1, "run-stardew-native-local-player-shake-tree-smoke.mjs", "tree_shaken", "native_shake_tree_v1"),
-  gate("take_pedestal_item", 1, "run-stardew-native-local-player-take-pedestal-item-smoke.mjs", "pedestal_item_taken", "native_take_pedestal_item_v1"),
-  gate("toggle_fence_gate", 1, "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs", "fence_gate_toggled", "native_toggle_fence_gate_v1"),
+  gate(
+    "take_pedestal_item",
+    1,
+    "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+    "pedestal_item_taken",
+    "native_take_pedestal_item_v1",
+  ),
+  gate(
+    "toggle_fence_gate",
+    1,
+    "run-stardew-native-local-player-toggle-fence-gate-smoke.mjs",
+    "fence_gate_toggled",
+    "native_toggle_fence_gate_v1",
+  ),
 
   // World-object lane (2026-10-08): three actions on objects occupying world tiles.
   gate("clear_cask", 1, "run-stardew-native-local-player-clear-cask-smoke.mjs", "cask_cleared", "native_clear_cask_v1"),
-  gate("dress_mannequin", 1, "run-stardew-native-local-player-dress-mannequin-smoke.mjs", "mannequin_dressed", "native_dress_mannequin_v1"),
-  gate("set_sign_display", 1, "run-stardew-native-local-player-set-sign-display-smoke.mjs", "sign_display_set", "native_set_sign_display_v1"),
-  gate("deposit_silo_hay", 1, "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs", "silo_hay_deposited", "native_deposit_silo_hay_v1"),
-  gate("toggle_tool_light", 1, "run-stardew-native-local-player-toggle-tool-light-smoke.mjs", "tool_light_toggled", "native_toggle_tool_light_v1"),
+  gate(
+    "dress_mannequin",
+    1,
+    "run-stardew-native-local-player-dress-mannequin-smoke.mjs",
+    "mannequin_dressed",
+    "native_dress_mannequin_v1",
+  ),
+  gate(
+    "set_sign_display",
+    1,
+    "run-stardew-native-local-player-set-sign-display-smoke.mjs",
+    "sign_display_set",
+    "native_set_sign_display_v1",
+  ),
+  gate(
+    "deposit_silo_hay",
+    1,
+    "run-stardew-native-local-player-deposit-silo-hay-smoke.mjs",
+    "silo_hay_deposited",
+    "native_deposit_silo_hay_v1",
+  ),
+  gate(
+    "toggle_tool_light",
+    1,
+    "run-stardew-native-local-player-toggle-tool-light-smoke.mjs",
+    "tool_light_toggled",
+    "native_toggle_tool_light_v1",
+  ),
   gate("use_raft", 1, "run-stardew-native-local-player-use-raft-smoke.mjs", "raft_launched", "native_use_raft_v1"),
-  gate("mount_transport", 1, "run-stardew-native-local-player-mount-transport-smoke.mjs", "horse_mounted", "native_mount_transport_v1"),
+  gate(
+    "mount_transport",
+    1,
+    "run-stardew-native-local-player-mount-transport-smoke.mjs",
+    "horse_mounted",
+    "native_mount_transport_v1",
+  ),
   gate("enter_mine", 1, "run-stardew-native-local-player-enter-mine-smoke.mjs", "mine_entered", "native_enter_mine_v1"),
   // WIA §4.2: the two modal-handling primitives. Promoted to live_verified on owner ruling
   // (2026-10-06) after both crossed the live gate: a real native-local run each, with its own
@@ -266,40 +434,172 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // three-phase chain (interrupt, handle, resume), and the terminal below is the ACTION's
   // receipt, which is what the harness joins to the dispatch; the chain's own completion code
   // is the runner's verdict, not the action's terminal.
-  gate("dismiss_modal", 1, "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs", "modal_dismissed", "native_wia_modal_dismiss_chain_v1"),
-  gate("answer_dialogue", 1, "run-stardew-native-local-player-wia-answer-question-smoke.mjs", "answer_dialogue_answered", "native_wia_answer_question_v1"),
+  gate(
+    "dismiss_modal",
+    1,
+    "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
+    "modal_dismissed",
+    "native_wia_modal_dismiss_chain_v1",
+  ),
+  gate(
+    "answer_dialogue",
+    1,
+    "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
+    "answer_dialogue_answered",
+    "native_wia_answer_question_v1",
+  ),
   // Promoted to live-verified on 2026-10-08 after their native-local gates passed.
-  gate("place_owned_object", 1, "run-stardew-native-local-player-place-owned-object-smoke.mjs", "owned_object_placed", "native_world_object_v1"),
-  gate("remove_placed_item", 1, "run-stardew-native-local-player-remove-placed-item-smoke.mjs", "placed_item_removed", "native_world_object_v1"),
-  gate("break_container_source", 1, "run-stardew-native-local-player-break-container-source-smoke.mjs", "container_source_broken", "native_world_object_v1"),
-  gate("equip_wearable", 1, "run-stardew-native-local-player-equip-wearable-smoke.mjs", "wearable_equipped", "native_equip_wearable_v1"),
-  gate("unequip_wearable", 1, "run-stardew-native-local-player-unequip-wearable-smoke.mjs", "wearable_unequipped", "native_unequip_wearable_v1"),
-  gate("dismount_transport", 1, "run-stardew-native-local-player-dismount-transport-smoke.mjs", "transport_dismounted", "native_dismount_transport_v1"),
-  gate("use_warp_item", 1, "run-stardew-native-local-player-use-warp-item-smoke.mjs", "warp_item_arrived", "native_use_warp_item_v1"),
+  gate(
+    "place_owned_object",
+    1,
+    "run-stardew-native-local-player-place-owned-object-smoke.mjs",
+    "owned_object_placed",
+    "native_world_object_v1",
+  ),
+  gate(
+    "remove_placed_item",
+    1,
+    "run-stardew-native-local-player-remove-placed-item-smoke.mjs",
+    "placed_item_removed",
+    "native_world_object_v1",
+  ),
+  gate(
+    "break_container_source",
+    1,
+    "run-stardew-native-local-player-break-container-source-smoke.mjs",
+    "container_source_broken",
+    "native_world_object_v1",
+  ),
+  gate(
+    "equip_wearable",
+    1,
+    "run-stardew-native-local-player-equip-wearable-smoke.mjs",
+    "wearable_equipped",
+    "native_equip_wearable_v1",
+  ),
+  gate(
+    "unequip_wearable",
+    1,
+    "run-stardew-native-local-player-unequip-wearable-smoke.mjs",
+    "wearable_unequipped",
+    "native_unequip_wearable_v1",
+  ),
+  gate(
+    "dismount_transport",
+    1,
+    "run-stardew-native-local-player-dismount-transport-smoke.mjs",
+    "transport_dismounted",
+    "native_dismount_transport_v1",
+  ),
+  gate(
+    "use_warp_item",
+    1,
+    "run-stardew-native-local-player-use-warp-item-smoke.mjs",
+    "warp_item_arrived",
+    "native_use_warp_item_v1",
+  ),
   gate("pan_ore", 1, "run-stardew-native-local-player-pan-ore-smoke.mjs", "ore_panned", "native_pan_ore_v1"),
-  gate("claim_mail_attachment", 1, "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs", "mail_claimed", "native_claim_mail_attachment_v1"),
+  gate(
+    "claim_mail_attachment",
+    1,
+    "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
+    "mail_claimed",
+    "native_claim_mail_attachment_v1",
+  ),
   // Promoted to live-verified after their native-local gates passed.
-  gate("build_farm_building", 1, "run-stardew-native-local-player-build-farm-building-smoke.mjs", "farm_building_built", "native_build_farm_building_v1"),
-  gate("name_entity", 1, "run-stardew-native-local-player-name-entity-smoke.mjs", "entity_named", "native_name_entity_v1"),
-  gate("accept_daily_quest", 1, "run-stardew-native-local-player-accept-daily-quest-smoke.mjs", "daily_quest_accepted", "native_accept_daily_quest_v1"),
+  gate(
+    "build_farm_building",
+    1,
+    "run-stardew-native-local-player-build-farm-building-smoke.mjs",
+    "farm_building_built",
+    "native_build_farm_building_v1",
+  ),
+  gate(
+    "name_entity",
+    1,
+    "run-stardew-native-local-player-name-entity-smoke.mjs",
+    "entity_named",
+    "native_name_entity_v1",
+  ),
+  gate(
+    "accept_daily_quest",
+    1,
+    "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
+    "daily_quest_accepted",
+    "native_accept_daily_quest_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("accept_special_order", 1, "run-stardew-native-local-player-accept-special-order-smoke.mjs", "special_order_accepted", "native_accept_special_order_v1"),
+  gate(
+    "accept_special_order",
+    1,
+    "run-stardew-native-local-player-accept-special-order-smoke.mjs",
+    "special_order_accepted",
+    "native_accept_special_order_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("claim_museum_reward", 1, "run-stardew-native-local-player-claim-museum-reward-smoke.mjs", "museum_rewards_collected", "native_claim_museum_reward_v1"),
+  gate(
+    "claim_museum_reward",
+    1,
+    "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
+    "museum_rewards_collected",
+    "native_claim_museum_reward_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("redeem_prize_ticket", 1, "run-stardew-native-local-player-prize-ticket-smoke.mjs", "prize_ticket_redeemed", "native_prize_ticket_v1"),
+  gate(
+    "redeem_prize_ticket",
+    1,
+    "run-stardew-native-local-player-prize-ticket-smoke.mjs",
+    "prize_ticket_redeemed",
+    "native_prize_ticket_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("tailor_clothing", 1, "run-stardew-native-local-player-tailor-clothing-smoke.mjs", "clothing_tailored", "native_tailoring_v1"),
+  gate(
+    "tailor_clothing",
+    1,
+    "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
+    "clothing_tailored",
+    "native_tailoring_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("dye_clothing_with_item", 1, "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs", "clothing_dyed", "native_tailoring_v1"),
+  gate(
+    "dye_clothing_with_item",
+    1,
+    "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
+    "clothing_dyed",
+    "native_tailoring_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("color_placed_object", 1, "run-stardew-native-local-player-color-placed-object-smoke.mjs", "placed_object_recolored", "native_color_placed_object_v1"),
+  gate(
+    "color_placed_object",
+    1,
+    "run-stardew-native-local-player-color-placed-object-smoke.mjs",
+    "placed_object_recolored",
+    "native_color_placed_object_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("load_building_chest", 1, "run-stardew-native-local-player-load-building-chest-smoke.mjs", "building_chest_loaded", "native_building_chest_v1"),
+  gate(
+    "load_building_chest",
+    1,
+    "run-stardew-native-local-player-load-building-chest-smoke.mjs",
+    "building_chest_loaded",
+    "native_building_chest_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("collect_building_chest_output", 1, "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs", "building_chest_output_collected", "native_building_chest_v1"),
+  gate(
+    "collect_building_chest_output",
+    1,
+    "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
+    "building_chest_output_collected",
+    "native_building_chest_v1",
+  ),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
-  gate("send_multiplayer_chat", 1, "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs", "chat_message_sent", "native_farmhand_chat_v1"),
+  gate(
+    "send_multiplayer_chat",
+    1,
+    "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
+    "chat_message_sent",
+    "native_farmhand_chat_v1",
+  ),
   gate(
     "talk_to_npc",
     1,
@@ -353,8 +653,7 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // rejected/watering_can_empty -> refill_watering_can recovery -> water_crop
   // retry succeeded on the same target within one native-local session over the
   // empty-can fixture. Not a new action; it grants no capability.
-  water_crop_resource_recovery_chain:
-    "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
+  water_crop_resource_recovery_chain: "run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
   // Lane G container-full recovery-chain harness: drives breakpoint
   // rejected/inventory_full -> chest_store recovery -> harvest_crop retry
   // succeeded on the same target within one native-local session over the
@@ -404,6 +703,13 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // no capability. Two harness labels select the blocker kind.
   move_stall_probe_pet: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
   move_stall_probe_npc: "run-stardew-native-local-player-move-stall-probe-smoke.mjs",
+  // Move-ladder probe: drives the SAME published move_to_tile action over a
+  // fixture that warps the actor to a plainly-open Farm tile, sends a short
+  // ladder of same-map Farm->Farm targets, and records each receipt WITH the
+  // Mod's own target_walkable/target_standable/blocked_by/approaches facts, so
+  // the Farm's walkability/reachability boundary is measured rather than
+  // assumed. Not a new action; it grants no capability.
+  move_ladder: "run-stardew-native-local-player-move-ladder-smoke.mjs",
   // WIA world-interruption live proofs (world-interruption-arbitration.md
   // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
   // that stage a world-change mid-move, measuring that the running body loop
@@ -440,7 +746,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
-
 });
 
 /**
