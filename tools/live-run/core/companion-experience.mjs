@@ -45,6 +45,18 @@
  *     `system_prompt` rule 5 forbids `搭档` / `您` / `主人`, and the archived
  *     audit names `玩家` as an observed wall-break.
  *
+ *  4. `opening_legibility` — a SEPARATE ruler, for AUTHORED openings only. The
+ *     pacing ladder answers a conversational question ("when the player says
+ *     你好, do not answer with an essay") and is measured from committed REPLIES.
+ *     An opening is not a reply: it is author text shown verbatim once, before
+ *     the player has spoken, so the reply ladder is the wrong question for it and
+ *     firing that ladder on a legitimate opening is the cry-wolf failure this
+ *     repo keeps hitting. What actually constrains an opening is whether the
+ *     player can read it on the FIRST SCREEN — a layout property, measured at
+ *     400x800 in `OPENING_LEGIBILITY_MEASUREMENTS`. `evaluateCompanionReply`
+ *     never runs it: it judges authored text, and `chat/check-card-voice.mjs` is
+ *     its caller.
+ *
  * Every verdict is `pass` | `fail` | `skipped`, and a `skipped` gate always
  * carries the reason it could not be evaluated: absence is never a pass.
  */
@@ -76,17 +88,19 @@ export const PACING_MEASUREMENTS = Object.freeze({
   liveGreetingSentences: Object.freeze([1, 2, 3, 3]),
   authoredCompanionTurns: Object.freeze([238, 280, 304]),
   authoredCompanionSentences: Object.freeze([8, 11, 14]),
-  authoredOpenings: Object.freeze([341, 432, 482]),
   captureEntryBound: LIVE_RUN_TEXT_MAX_CHARS,
 });
 
 /**
- * The ladder. `greetingChars` is 3x the longest observed live greeting (33 -> 99,
- * rounded up to 100, which is still 0.42x the shortest authored scene turn, so no
- * scene-length reply can pass as a greeting); `greetingSentences` is the observed
- * maximum (3) plus one. `taskChars` is the capture policy's own bound (600), 1.97x
- * the longest authored companion turn (304) — the exact failure the owner named,
- * a 500-word screenplay dump, is an order of magnitude past it.
+ * The REPLY ladder. `greetingChars` is 3x the longest observed live greeting
+ * (33 -> 99, rounded up to 100, which is still 0.42x the shortest authored scene
+ * turn, so no scene-length reply can pass as a greeting); `greetingSentences` is
+ * the observed maximum (3) plus one. `taskChars` is the capture policy's own bound
+ * (600), 1.97x the longest authored companion turn (304) — the exact failure the
+ * owner named, a 500-word screenplay dump, is an order of magnitude past it.
+ *
+ * This is a ruler for REPLIES. An authored opening is not a reply and is never
+ * judged by it; see `OPENING_LEGIBILITY_MEASUREMENTS`.
  */
 export const PACING_LADDER = Object.freeze({
   greeting: Object.freeze({ maxChars: 100, maxSentences: 4 }),
@@ -295,15 +309,124 @@ export function evaluatePacing({ text, scenario }) {
     });
   return Object.freeze({
     verdict: matched.length === 0 ? "pass" : "fail",
-    rule: `pacing_ladder_${scenario}`,
+    rule: `reply_pacing_ladder_${scenario}`,
     scenario,
     bound: Object.freeze({ ...ladder }),
     measured: Object.freeze({ chars, sentences }),
     detail:
       matched.length === 0
-        ? `${scenario} reply measured ${chars} chars / ${sentences} sentences, within the ${ladder.maxChars} / ${ladder.maxSentences} bound`
-        : `${scenario} reply measured ${chars} chars / ${sentences} sentences, past the ${ladder.maxChars} / ${ladder.maxSentences} bound`,
+        ? `reply pacing: ${scenario} reply measured ${chars} chars / ${sentences} sentences, within the ${ladder.maxChars} / ${ladder.maxSentences} bound`
+        : `reply pacing: ${scenario} reply measured ${chars} chars / ${sentences} sentences, past the ${ladder.maxChars} / ${ladder.maxSentences} bound`,
     matched: Object.freeze(matched),
+  });
+}
+
+const OPENING_LIST_TOP_PX = 138;
+const OPENING_BUBBLE_TOP_PX = 188;
+const OPENING_COMPOSER_TOP_PX = 714;
+
+/**
+ * The measured geometry an authored OPENING has to fit, so an opening is judged by
+ * legibility instead of by the reply ladder above.
+ *
+ * Source (2026-10-15): `D:\gb-modcheck\shots-final10` — a pinned generation's real
+ * product surface at 400x800, the smallest supported viewport (the surface is
+ * 368px wide there) — plus the bubble metrics in `dialogue-web/src/style.css`:
+ *
+ *  - the message list starts at y=138 and the composer at y=714, so the transcript
+ *    first screen is 576px tall;
+ *  - the shipped opening's bubble sits at y=188..433 (246px) and the list is NOT
+ *    scrollable there (`scrollHeight` 295 = `clientHeight` 295), so the tail is
+ *    281px above the composer and the bubble may grow to 714-188 = 526px;
+ *  - the bubble is `padding: 10px 14px`, `font-size: 14px`, `line-height: 1.72`
+ *    (24.08px), and its blocks are a flex column with an 8px gap;
+ *  - the bubble is 301px wide, so 301-28 = 273px of 14px type is 19 characters to
+ *    a rendered line.
+ *
+ * The model reproduces the measurement it comes from: the shipped 155-char,
+ * 2-block opening typesets to 20 + 8 + 9x24.08 = 245px against the measured 246px.
+ */
+export const OPENING_LEGIBILITY_MEASUREMENTS = Object.freeze({
+  viewportWidthPx: 400,
+  viewportHeightPx: 800,
+  listTopPx: OPENING_LIST_TOP_PX,
+  bubbleTopPx: OPENING_BUBBLE_TOP_PX,
+  composerTopPx: OPENING_COMPOSER_TOP_PX,
+  firstScreenPx: OPENING_COMPOSER_TOP_PX - OPENING_BUBBLE_TOP_PX,
+  bubbleWidthPx: 301,
+  bubblePaddingYPx: 10,
+  bubblePaddingXPx: 14,
+  fontSizePx: 14,
+  lineHeight: 1.72,
+  blockGapPx: 8,
+  shippedOpeningChars: 155,
+  shippedOpeningBlocks: 2,
+  shippedOpeningBubbleHeightPx: 246,
+});
+
+/** The opening's blocks, as the companion bubble renders them (`white-space: normal`). */
+function openingBlocks(text) {
+  return String(typeof text === "string" ? text : "")
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
+}
+
+/**
+ * The height the measured 400x800 layout would give this opening: bubble padding,
+ * one 8px gap between blocks, and one 24.08px line per 19 characters of each block.
+ */
+export function openingTypesetHeightPx(text, measurements = OPENING_LEGIBILITY_MEASUREMENTS) {
+  const blocks = openingBlocks(text);
+  if (blocks.length === 0) return 0;
+  const charsPerLine = Math.max(
+    1,
+    Math.floor((measurements.bubbleWidthPx - 2 * measurements.bubblePaddingXPx) / measurements.fontSizePx),
+  );
+  const lines = blocks.reduce((total, block) => total + Math.ceil(codePointLength(block) / charsPerLine), 0);
+  return (
+    measurements.bubblePaddingYPx * 2 +
+    measurements.blockGapPx * (blocks.length - 1) +
+    lines * measurements.fontSizePx * measurements.lineHeight
+  );
+}
+
+/**
+ * Legibility of one AUTHORED opening against the measured first screen. This is
+ * not the reply ladder: it asks only "can the player read this before scrolling",
+ * which is what an opening actually has to satisfy. Always computable, so it never
+ * skips, and its verdict names the question it answered.
+ */
+export function evaluateOpeningLegibility({ text, measurements = OPENING_LEGIBILITY_MEASUREMENTS }) {
+  const source = typeof text === "string" ? text : "";
+  const blocks = openingBlocks(source).length;
+  const heightPx = openingTypesetHeightPx(source, measurements);
+  const firstScreenPx = measurements.firstScreenPx;
+  const over = heightPx > firstScreenPx;
+  const matched = over
+    ? [
+        {
+          rule: "opening_taller_than_the_first_screen",
+          heightPx: Math.round(heightPx),
+          firstScreenPx,
+          text: redactLiveRunSecrets(source, { maxChars: 200 }),
+        },
+      ]
+    : [];
+  return Object.freeze({
+    verdict: over ? "fail" : "pass",
+    rule: "opening_legibility_first_screen_400x800",
+    bound: Object.freeze({
+      firstScreenPx,
+      viewportWidthPx: measurements.viewportWidthPx,
+      viewportHeightPx: measurements.viewportHeightPx,
+    }),
+    measured: Object.freeze({ heightPx: Math.round(heightPx), chars: codePointLength(source), blocks }),
+    detail:
+      matched.length === 0
+        ? `opening legibility: ${Math.round(heightPx)}px of the ${firstScreenPx}px first screen at 400x800, so the tail is visible above the composer with no scrolling`
+        : `opening legibility: ${Math.round(heightPx)}px past the ${firstScreenPx}px first screen at 400x800, so the player cannot read the opening before scrolling`,
+    matched: Object.freeze(matched.map((entry) => Object.freeze(entry))),
   });
 }
 

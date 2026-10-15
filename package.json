@@ -191,6 +191,7 @@
     "audit:chat-live-run": "node tools/audit-chat-live-run.mjs",
     "run:chat-live-audit": "node tools/live-run/chat/run-chat-live-audit.mjs",
     "run:chat-live-content": "node tools/live-run/chat/run-chat-live-content.mjs",
+    "check:chat-card-voice": "node tools/live-run/chat/check-card-voice.mjs",
     "test:chat-live-audit": "node --test tools/live-run/chat/run-chat-live-audit.test.mjs tools/live-run/core/companion-experience.test.mjs tools/live-run/core/browser-evidence.test.mjs tools/live-run/core/capture-text.test.mjs",
     "compare:chat-live-runs": "node tools/compare-chat-live-runs.mjs",
     "test:compare-chat-live-runs": "node --test tools/compare-chat-live-runs.test.mjs",

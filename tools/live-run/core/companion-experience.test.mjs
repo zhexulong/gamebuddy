@@ -1,18 +1,23 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  COMPANION_EXPERIENCE_SCHEMA,
-  PACING_LADDER,
-  PACING_MEASUREMENTS,
-  REGISTER_TERMS,
   buildCompanionExperience,
+  COMPANION_EXPERIENCE_SCHEMA,
   classifyPlayerTurn,
   evaluateCompanionReply,
   evaluateFirstPersonAnchoring,
   evaluateHygiene,
+  evaluateOpeningLegibility,
   evaluatePacing,
+  OPENING_LEGIBILITY_MEASUREMENTS,
+  openingTypesetHeightPx,
+  PACING_LADDER,
+  PACING_MEASUREMENTS,
+  REGISTER_TERMS,
 } from "./companion-experience.mjs";
+import { liveRunPersonaPaths } from "./persona.mjs";
 
 const COMPANION = "琥珀";
 
@@ -191,6 +196,65 @@ test("pacing fails an essay greeting and passes the observed and authored envelo
   }
   // The named failure mode: a 500-word screenplay dump.
   assert.equal(evaluatePacing({ text: "字".repeat(900), scenario: "task" }).verdict, "fail");
+});
+
+/**
+ * The other half of the split: the reply ladder must name itself a REPLY ruler, so
+ * a reader can never conflate "this reply is an essay" with "this opening is
+ * illegible". Splitting the two may not loosen the reply leg.
+ */
+test("reply pacing still fails an over-long reply and names the question it asked", () => {
+  const verdict = evaluatePacing({ text: "字".repeat(900), scenario: "task" });
+  assert.equal(verdict.verdict, "fail");
+  assert.equal(verdict.rule, "reply_pacing_ladder_task");
+  assert.match(verdict.detail, /^reply pacing:/);
+  assert.equal(evaluatePacing({ text: "字".repeat(900), scenario: "greeting" }).verdict, "fail");
+});
+
+/**
+ * The opening ruler's bound is the measured 400x800 first screen, and the model is
+ * the measurement it comes from: the shipped 155-char, 2-block opening typesets to
+ * the 246px bubble that was measured on the real surface.
+ */
+test("opening legibility follows from the measured 400x800 first screen", () => {
+  const measurements = OPENING_LEGIBILITY_MEASUREMENTS;
+  assert.equal(measurements.firstScreenPx, measurements.composerTopPx - measurements.bubbleTopPx);
+  assert.equal(measurements.firstScreenPx, 526);
+  assert.equal(
+    Math.floor((measurements.bubbleWidthPx - 2 * measurements.bubblePaddingXPx) / measurements.fontSizePx),
+    19,
+  );
+  const reconstructed = `${"字".repeat(measurements.shippedOpeningChars - 4)}\n\n${"字".repeat(4)}`;
+  assert.equal([...reconstructed.replace(/\n/g, "")].length, measurements.shippedOpeningChars);
+  const typeset = openingTypesetHeightPx(reconstructed);
+  assert.ok(
+    Math.abs(typeset - measurements.shippedOpeningBubbleHeightPx) <= 2,
+    `model ${typeset}px vs measured ${measurements.shippedOpeningBubbleHeightPx}px`,
+  );
+});
+
+/**
+ * Both directions on AUTHORED text: the shipped card's own three openings pass the
+ * opening ruler (read-only — the card is its owner's), and an absurd opening built
+ * here fails it. The shipped card must never be edited to make a gate pass.
+ */
+test("opening legibility passes the shipped card's openings and fails an absurd one", () => {
+  const { cardPath } = liveRunPersonaPaths();
+  const data = JSON.parse(readFileSync(cardPath, "utf8")).data ?? {};
+  const openings = [String(data.first_mes ?? ""), ...(data.alternate_greetings ?? []).map((entry) => String(entry))];
+  assert.equal(openings.length, 3);
+  for (const text of openings) {
+    const verdict = evaluateOpeningLegibility({ text });
+    assert.equal(
+      verdict.verdict,
+      "pass",
+      `${text.slice(0, 24)}… measured ${verdict.measured.heightPx}px of the ${verdict.bound.firstScreenPx}px first screen`,
+    );
+  }
+  const absurd = evaluateOpeningLegibility({ text: "字".repeat(900) });
+  assert.equal(absurd.verdict, "fail");
+  assert.equal(absurd.matched[0].rule, "opening_taller_than_the_first_screen");
+  assert.match(absurd.detail, /^opening legibility:/);
 });
 
 test("hygiene fails macro residue and the card-forbidden register terms, and passes clean prose", () => {

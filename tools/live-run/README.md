@@ -192,13 +192,20 @@ capture policy (`core/capture-text.mjs`). No prompt internals, no system prompt,
 M0/M1 text. Macros are deliberately NOT redacted here — `{{user}}` residue IS the
 finding the hygiene gate reports.
 
-### The three gates, and where their thresholds come from
+### The gates, and where their thresholds come from
 
 | gate | fires on | bound / vocabulary |
 | --- | --- | --- |
 | `first_person_anchoring` | a narration beat that names the companion without a first-person marker; a third-person pronoun beat coreferent with a preceding companion-naming beat in the same unbroken beat run | companion display name from the mounted identity; quoted speech is removed first, so her name inside her own dialogue never fires, and a beat about another character carries neither her name nor a bound pronoun |
-| `pacing` | a reply past its rung | greeting **100 chars / 4 sentences**; task **600 chars / 20 sentences** — see below |
+| `pacing` | a **reply** past its rung | greeting **100 chars / 4 sentences**; task **600 chars / 20 sentences** — see below |
 | `hygiene` | template or transport residue, wall-breaking register | `{{…}}`, `<thinking>`, `<|…|>`, `[DEBUG-…]`, `<gamebuddy-…>`, code fences; plus the reviewed card's own forbidden forms (`搭档`, `您`, `主人`) and the audit's observed wall-break (`玩家`) |
+
+`pacing` is a ruler for REPLIES. An authored **opening** — the card's `first_mes` and
+its `alternate_greetings` — is not a reply (it is shown verbatim once, before the
+player has spoken), so it is judged by `opening_legibility` instead: whether the
+player can read it on the first screen. The live-run sidecar never runs
+`opening_legibility` (it judges landed replies); `chat/check-card-voice.mjs` is its
+caller, and it spends no provider turn.
 
 **Measured, not invented.** `PACING_MEASUREMENTS` in
 `core/companion-experience.mjs` carries the numbers and a test asserts the ladder
@@ -212,6 +219,16 @@ still follows from them:
   and 8 / 11 / 14 sentences. The task rung is the capture policy's own per-entry
   bound (600 chars, 1.97x the longest authored turn) and 14+6 sentences. The named
   failure — a 500-word screenplay dump — is an order of magnitude past it.
+
+The opening ruler is measured the same way. `OPENING_LEGIBILITY_MEASUREMENTS`
+records the real 400x800 surface (`D:\gb-modcheck\shots-final10`: the message list
+starts at y=138 and the composer at y=714, so the first screen is 576px; the shipped
+opening's bubble is 246px at y=188..433 and the list is NOT scrollable there, so the
+bubble may grow to 714-188 = 526px), and `openingTypesetHeightPx` typesets an opening
+against the bubble's own metrics (padding 10/14, 14px type at line-height 1.72, an
+8px gap between blocks, 19 characters to a rendered line). The model reproduces its
+own measurement: the shipped 155-char, 2-block opening typesets to 245px against the
+measured 246px.
 
 A gate that cannot be evaluated reports `skipped` with a named reason (for
 example `companion_identity_name_unavailable`). Absence is never a pass.
