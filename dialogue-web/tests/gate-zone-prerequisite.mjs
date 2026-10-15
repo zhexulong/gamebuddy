@@ -25,8 +25,10 @@
  * added to a command and skip its probe, and the port the fast zones must leave
  * alone is read out of `playwright.config.ts`.
  */
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -114,6 +116,99 @@ const assertInstalled = (zone, relativePath, reason, detail) => {
   if (!existsSync(resolve(packageRoot, relativePath))) refuse(zone, reason, detail);
 };
 
+/* ==========================================================================
+   The mounted zone's port lock
+
+   Two mounted zones at once share no code; they collide only on the one port
+   their journeys bake in (4173). `playwright.config.ts` pins that port with
+   `--strictPort`, so the loser cannot just pick another: vite dies on "Port
+   4173 is already in use" and every journey reddens for a reason that has
+   nothing to do with the product. The lock below is the structural fix: a
+   departure lock on the port itself, so the second invocation waits for the
+   first instead of colliding. `--run -- <command...>` is how `test:mounted`
+   drives the whole run through the probe after the probe passes; the plain
+   probe (which the conformance gate calls first, before its own playwright
+   run) is unchanged.
+   ========================================================================== */
+
+const MOUNT_LOCK_TIMEOUT_MS = 300_000;
+
+/** Parses `--run -- <command...>` off the invocation tail, or returns undefined. */
+function runCommandOf(argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (!argv[index].startsWith("--")) continue;
+    if (argv[index] !== "--run" || argv[index + 1] !== "--") continue;
+    const command = argv.slice(index + 2);
+    if (command.length === 0)
+      refuse("mounted", "mounted_run_requires_command", "`--run -- <command...>` needs a command after the `--`");
+    return command;
+  }
+  return undefined;
+}
+
+const runArgv = runCommandOf(process.argv.slice(2));
+
+const MOUNT_LOCK_DIR = join(packageRoot, ".tmp", `mount-${mountedPort}.lock`);
+const MOUNT_LOCK_OWNER = join(MOUNT_LOCK_DIR, "owner.json");
+
+function mountLockOwner() {
+  try {
+    const owner = JSON.parse(readFileSync(MOUNT_LOCK_OWNER, "utf8"));
+    return typeof owner?.pid === "number" && typeof owner?.startedAtMs === "number" ? owner : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMountLockOwner() {
+  writeFileSync(MOUNT_LOCK_OWNER, `${JSON.stringify({ pid: process.pid, startedAtMs: Date.now() })}\n`, "utf8");
+}
+
+function releaseMountedLock() {
+  try {
+    rmSync(MOUNT_LOCK_DIR, { recursive: true, force: true });
+  } catch {
+    /* nothing to release */
+  }
+}
+
+async function holdMountedLock() {
+  const deadline = Date.now() + MOUNT_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      mkdirSync(MOUNT_LOCK_DIR, { recursive: false });
+      writeMountLockOwner();
+      process.once("exit", releaseMountedLock);
+      return;
+    } catch {
+      const owner = mountLockOwner();
+      if (owner === null) {
+        // The directory exists but holds no readable owner: a stale lock whose
+        // holder died without cleanup. Removal is safe here - we have not bound
+        // the port ourselves, so we cannot be racing a live holder - and the
+        // next loop iteration retries the acquire.
+        try {
+          rmSync(MOUNT_LOCK_DIR, { recursive: true, force: true });
+        } catch {
+          /* another holder is removing it; the loop retries */
+        }
+        continue;
+      }
+      const waited = Math.round((Date.now() - owner.startedAtMs) / 1000);
+      process.stderr.write(
+        `[zone:mounted] port ${mountedPort} is held by pid ${owner.pid} (${waited} s); waiting for the running mounted zone to release it\n`,
+      );
+      if (Date.now() > deadline)
+        refuse(
+          "mounted",
+          "mounted_port_lock_timeout",
+          `port ${mountedPort} stayed held by pid ${owner.pid} for ${MOUNT_LOCK_TIMEOUT_MS} ms; kill it or wait for it to finish`,
+        );
+      await sleep(250);
+    }
+  }
+}
+
 const probes = {
   static() {
     const suites = declaredSuites("static");
@@ -181,16 +276,43 @@ const probes = {
         "playwright_browser_missing",
         `run \`pnpm exec playwright install --with-deps chromium\`: no Chromium at ${chromium.executablePath()}`,
       );
+    // The journeys own one port (4173, `--strictPort`), so two mounted zones at
+    // once is one failure that looks like the product's: the losing server
+    // cannot bind and every journey reddens. The probe therefore acquires a
+    // named lock on that port before the zone runs and holds it across the
+    // whole run, so the second invocation waits instead of colliding. It is a
+    // departure lock, not a port check (`assertPortUnclaimed` still guards the
+    // fast zones against *sharing* the port in the first place): it is held
+    // for the lifetime of the child, and `process.once("exit")` releases it
+    // even when the child dies. `--run -- <command...>` is how `test:mounted`
+    // drives the run through this holding probe; the plain probe (which the
+    // conformance gate calls first, before its own playwright run) stays what
+    // it was.
+    if (runArgv !== undefined) {
+      await holdMountedLock();
+      const code = spawnSync(runArgv[0], runArgv.slice(1), {
+        stdio: "inherit",
+        cwd: packageRoot,
+        shell: process.platform === "win32",
+      }).status;
+      releaseMountedLock();
+      process.exit(code ?? 1);
+    }
     return `${journeys.length} journey file(s), Chromium installed, dev server port ${mountedPort}`;
   },
 };
 
-const zone = process.argv[2];
+/**
+ * The `--run -- ...` mode is a zone invocation of its own, parsed before the
+ * zone dispatch so the mounted probe can decide whether to hold the lock.
+ * It must not be mistaken for the zone name.
+ */
+const zone = runArgv !== undefined ? "mounted" : process.argv[2];
 if (zone === undefined || !Object.hasOwn(probes, zone))
   refuse(
     zone ?? "(none)",
     "unknown_zone",
-    `usage: node tests/gate-zone-prerequisite.mjs ${Object.keys(probes).join("|")}`,
+    `usage: node tests/gate-zone-prerequisite.mjs ${Object.keys(probes).join("|")} [--run -- <command...>]`,
   );
 
 const detail = await probes[zone]();

@@ -9,7 +9,7 @@
     "test": "pnpm run test:static",
     "test:static": "node tests/gate-zone-prerequisite.mjs static && pnpm run check:css && node --test --import tsx tests/i18n.test.mjs tests/style-tokens-gate.test.mjs tests/component-hygiene-gate.test.mjs tests/i18n-parity-gate.test.mjs tests/no-raw-user-text-gate.test.mjs tests/memory-notebook-promise-gate.test.mjs tests/a11y-name-gate.test.mjs tests/icon-family-gate.test.mjs tests/reduced-motion-gate.test.mjs tests/focus-visibility-gate.test.mjs tests/enum-leak-gate.test.mjs tests/problem-code-gate.test.mjs tests/contract-producer-gate.test.mjs tests/gate-pinning-gate.test.mjs tests/game-presentation.test.mjs tests/pi-settings-model.test.mjs tests/reference-pipeline-api.test.mjs tests/reference-pipeline-session.test.mjs tests/management-pipeline-api.test.mjs tests/management-connection-api.test.mjs tests/reference-pipeline-composed-browser.test.mjs tests/composed-reference-game-browser-api.test.mjs tests/game-lifecycle-launch-gate.test.mjs tests/prompt-tool-name-gate.test.mjs tests/contract-mirror-keys-gate.test.mjs",
     "test:artifact": "node tests/gate-zone-prerequisite.mjs artifact && node --test tests/manifest-boundary.test.mjs tests/game-manifest-boundary.test.mjs",
-    "test:mounted": "node tests/gate-zone-prerequisite.mjs mounted && playwright test --project=chromium --workers=1",
+    "test:mounted": "node tests/gate-zone-prerequisite.mjs mounted --run -- playwright test --project=chromium --workers=1",
     "check:css": "stylelint src/style.css",
     "typecheck": "tsc --project tsconfig.json",
     "clean": "node -e \"const{rmSync}=require('node:fs');['.build-staging','test-results','playwright-report'].forEach(p=>rmSync(p,{recursive:true,force:true}))\""
