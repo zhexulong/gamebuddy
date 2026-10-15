@@ -124,11 +124,13 @@
   --composer-min-height: 48px;
   --composer-max-height: 176px;
   --timeline-reading-measure: 800px;
-  /* The measure a Settings field group is laid out on. A `width: 100%` field on
-     the management surface otherwise stretches to the whole panel (1408 px at
-     1440x900), where a label and its own control read as two unrelated lines.
-     The form measure is narrow enough to keep one label/control column while the
-     read-back lists and prose beside it keep the room the surface gives them. */
+  /* The measure the management surface lays its own content column out on. A row
+     that stretches to the whole panel (1408 px at 1440x900) reads as two
+     unrelated ends - a field's label and its control, or a Chat's title and the
+     action icons at its tail. The measure is narrow enough to keep one
+     label/control column and one title/actions row; the prose and the character
+     grid beside them keep the room the surface gives them, and the conversation
+     keeps its own reading measure (`--timeline-reading-measure`). */
   --management-form-measure: 640px;
   /* The action beat's own typographic voice. A Latin beat is set apart from the
      speech by the italic `<em>` gives it; CJK type has no true italic, so the
@@ -3000,10 +3002,9 @@
     min-height: var(--touch-target-min);
   }
 
-  /* The settings field stacks are forms, not reading columns: they take the form
-   measure instead of the whole surface, so a label and the control it names stay
-   one column. The read-back lists, prose and character grid beside them are not
-   field stacks and keep the width the surface gives them. */
+  /* The settings field stacks are forms, not reading columns: they take the
+   surface's own measure instead of the whole panel, so a label and the control
+   it names stay one column. */
   .connection-form,
   [data-connection-list],
   .voice-device-selector {
@@ -4452,5 +4453,16 @@
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
+  }
+  /* The Chats list is a column of conversation rows, and a row is a title with the
+     row's own action icons at its tail. The surface lays its content out at the
+     whole panel width, which put the title's text and its first action icon
+     1152 px apart at 1440x900 (the audit's `~1300 px` reads the same geometry on
+     a shorter title): one row read as two unrelated ends. The list takes the
+     management surface's own measure here; the transcript keeps its reading
+     measure (`.surface-conversation`), which is the conversation's and not this
+     list's. */
+  .chat-list {
+    max-width: var(--management-form-measure);
   }
 } /* end @layer theme.polish */

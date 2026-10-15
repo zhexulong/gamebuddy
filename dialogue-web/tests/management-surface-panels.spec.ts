@@ -1105,3 +1105,89 @@ test("the Settings field groups keep a form measure and the app's own select tre
     expect(control!.backgroundImage, `${name} draws the app's own arrow`).toContain("linear-gradient");
   }
 });
+
+/**
+ * The Chats list rows take the management surface's own measure, not the whole
+ * panel.
+ *
+ * The measured defect (`shots-final10`, 10-聊天-1440x900): at 1440x900 the
+ * surface's content column is 1408 px wide, and a Chats row is a title with its
+ * own action icons at the tail (`.chat-item-main` is `justify-content:
+ * space-between`), so one row read as two unrelated ends. The list was the one
+ * thing on the surface with no measure of its own.
+ *
+ * The assertions quote geometry, and the failing one is the row's own width:
+ *  - a row is no wider than the surface's content measure: catches the row
+ *    spanning the panel again;
+ *  - the title's text and its icons are not further apart than half the surface:
+ *    catches `space-between` pushing the two ends of one row apart (the number
+ *    the audit quoted as "~1300 px apart");
+ *  - the title and the icons still share one line: catches a measure that fixes
+ *    the width by wrapping the row instead of constraining it.
+ */
+test("the Chats list rows take the surface's own measure instead of the whole panel", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(json200(composedRoot)),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true },
+          { handle: `${"E".repeat(42)}A`, title: "An older chat", status: "active", managementRevision: 2, isSelected: false },
+        ],
+      }),
+    ),
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  const rows = surface.getByTestId("chat-item");
+  await expect(rows).toHaveCount(2);
+
+  const measured = await surface.evaluate((root) => {
+    const content = root.querySelector<HTMLElement>(".surface-content")!;
+    const list = root.querySelector<HTMLElement>(".chat-list")!;
+    const row = root.querySelector<HTMLElement>(".chat-item-card")!;
+    const title = root.querySelector<HTMLElement>(".chat-select-btn")!;
+    const actions = root.querySelector<HTMLElement>(".chat-item-actions")!;
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    const text = range.getBoundingClientRect();
+    const icons = actions.getBoundingClientRect();
+    const style = getComputedStyle(list);
+    return {
+      surfaceContent: Math.round(content.getBoundingClientRect().width),
+      list: Math.round(list.getBoundingClientRect().width),
+      listMaxWidth: style.maxWidth,
+      row: Math.round(row.getBoundingClientRect().width),
+      textRight: Math.round(text.right),
+      iconsLeft: Math.round(icons.left),
+      textToIcons: Math.round(icons.left - text.right),
+      titleCentre: Math.round(text.top + text.height / 2),
+      iconsCentre: Math.round(icons.top + icons.height / 2),
+    };
+  });
+  console.log(`[chats-measure] measured: ${JSON.stringify(measured)}`);
+
+  // The surface keeps the desktop width; the list does not.
+  expect(measured.surfaceContent, "the desktop panel is the wide surface").toBeGreaterThan(1200);
+  expect(measured.row, "a Chats row keeps the content measure, not the panel width").toBeLessThanOrEqual(640);
+  expect(measured.row, "and it is not the whole content column").toBeLessThan(measured.surfaceContent);
+  expect(measured.listMaxWidth, "the list carries the measure as a max-width, not a fixed width").toBe("640px");
+  expect(measured.list, "the list is the measure").toBe(measured.row);
+  // The two ends of one row belong to one row.
+  expect(
+    measured.textToIcons,
+    `the title's text and its action icons are ${measured.textToIcons} px apart, in a ${measured.surfaceContent} px column`,
+  ).toBeLessThan(measured.surfaceContent / 2);
+  // Constrained, not wrapped: the icons stay on the title's own line.
+  expect(
+    Math.abs(measured.iconsCentre - measured.titleCentre),
+    "the row's controls stay on the title's line",
+  ).toBeLessThanOrEqual(8);
+});

@@ -15,7 +15,11 @@ import { settleMountedAuthoredContext } from "../continuity-semantic-production-
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
-import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
+import {
+  PlayerPreferenceStore,
+  playerPreferencePath,
+  resolveCompanionLocale,
+} from "../settings/player-preference-store.js";
 import {
   type ComposedTavernProfile,
   composeReferenceTavernProfile,
@@ -29,6 +33,7 @@ import {
   TAVERN_BROWSER_API_VERSION,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
+import { macroTable } from "../tavern/macro-engine.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
@@ -37,7 +42,10 @@ import { createGreetingManagementService } from "../tavern/greeting-management/g
 import { createTavernLibraryService, isTavernArtifactUnreadable } from "../tavern/library-service.js";
 import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/new-companion-service.js";
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
-import { createScenarioManagementService } from "../tavern/scenario-management/scenario-management.js";
+import {
+  createScenarioManagementService,
+  withScenarioSurfaceMacros,
+} from "../tavern/scenario-management/scenario-management.js";
 import { StCardImportService } from "../tavern/st-card-import-service.js";
 import { createStCardImportHistoryService } from "../tavern/st-card-import-history.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
@@ -258,8 +266,26 @@ function createTavernManagementDomains(
   const runtimePaths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId);
   const tavernPaths = resolveTavernPaths(runtimePaths, manifest.principal);
   const artifactStore = new TavernArtifactStore(manifest.runtimeRoot);
+  // The identity profile the runtime provisioned at mount is the mounted
+  // companion's authoritative display name. It is read once here and reused by
+  // the companion detail projection, the library list, and the macro table every
+  // authored-text surface renders through.
+  const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
+    .then((identityProfile) => identityProfile.identity.name)
+    .catch(() => undefined);
   const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
-  const scenarioService = createScenarioManagementService(artifactStore, tavernPaths.companionRoot);
+  // The scenario projection is the one surface a card's raw `{{user}}`/`{{char}}`
+  // macros used to leak through: the durable record keeps them (they are the
+  // authored content), so the browser read renders them through the run's macro
+  // table with the companion's real name and the player's locale reference.
+  const scenarioService = withScenarioSurfaceMacros(
+    createScenarioManagementService(artifactStore, tavernPaths.companionRoot),
+    async () =>
+      macroTable({
+        char: (await mountedNamePromise) ?? "",
+        locale: await resolveCompanionLocale(manifest.runtimeRoot),
+      }),
+  );
   const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
   // The library service owns one lazily opened thread connection; it is opened
   // only if a Chat-creating route ever runs and is closed with this owner's drain.
@@ -277,13 +303,9 @@ function createTavernManagementDomains(
   const currentCompanionId = manifest.principal.companionId;
   const companionHandleFor = (companionId: string): string =>
     lease.browserProjection.projectCompanionHandle(companionId);
-  // The mounted companion is ALWAYS the current library entry: the identity
-  // profile the runtime provisioned at mount is its authoritative display name,
-  // and its projected handle is the only handle the detail route will ever
-  // resolve. Created companions join the library durably below.
-  const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
-    .then((identityProfile) => identityProfile.identity.name)
-    .catch(() => undefined);
+  // The mounted companion is ALWAYS the current library entry: its projected
+  // handle is the only handle the detail route will ever resolve. Created
+  // companions join the library durably below.
   const libraryService = Object.freeze({
     async listCompanions() {
       const [mountedName, companions] = await Promise.all([mountedNamePromise, libraryBase.listCompanions()]);

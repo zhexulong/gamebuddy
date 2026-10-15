@@ -6,8 +6,9 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.js";
+import { macroTable } from "../macro-engine.js";
 import { TavernArtifactStore } from "../artifact-store.js";
-import { createScenarioManagementService } from "./scenario-management.js";
+import { createScenarioManagementService, withScenarioSurfaceMacros } from "./scenario-management.js";
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -125,6 +126,54 @@ test("scenario management accepts only safe player name and description fields",
     });
     assert.equal(createdWithMarkers.description, "Welcome <User> to <<Scene>> with <Char>!");
     await assert.rejects(service.create({ name: "Other", description: "Also safe" }), /scenario_already_exists/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("the browser scenario projection renders the run's macros while the durable record keeps them", async () => {
+  const root = await canonicalTestRoot("scenario-management-macros-");
+  try {
+    const store = new TavernArtifactStore(root);
+    const durable = createScenarioManagementService(store, root);
+    const surface = withScenarioSurfaceMacros(durable, async () => macroTable({ char: "琥珀", locale: "zh-CN" }));
+
+    const created = await surface.create({
+      name: "{{char}}的清晨",
+      description: "{{user}}与青梅竹马{{char}}一起收菜。",
+    });
+    assert.equal(created.name, "琥珀的清晨");
+    assert.equal(created.description, "玩家与青梅竹马琥珀一起收菜。");
+    assert.equal(created.description.includes("{{"), false);
+    assert.equal(created.preview.includes("{{"), false);
+
+    const updated = await surface.update({
+      expectedRevision: 1,
+      name: "黄昏",
+      description: "{{char}}把{{user}}的锄头靠回木栏。",
+    });
+    assert.equal(updated.description, "琥珀把玩家的锄头靠回木栏。");
+
+    const read = await surface.read();
+    assert.ok(read !== null);
+    assert.equal(read.description, "琥珀把玩家的锄头靠回木栏。");
+    assert.doesNotMatch(read.preview, /\{\{/u);
+
+    // A macro that straddles the preview bound must resolve whole: a naive
+    // truncate-then-render leaves a stray `{{` in the preview the surface paints.
+    const long = await surface.update({
+      expectedRevision: 2,
+      name: "长",
+      description: `${"a".repeat(235)}{{user}}`,
+    });
+    assert.equal(long.preview.includes("{{"), false);
+    assert.equal(long.preview.length, 237);
+
+    // The durable record keeps the card's own macros verbatim; the assertions
+    // above pass only because the surface projection rendered them.
+    const stored = await durable.read();
+    assert.ok(stored !== null);
+    assert.equal(stored.description, `${"a".repeat(235)}{{user}}`);
+    assert.ok(stored.description.includes("{{user}}"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

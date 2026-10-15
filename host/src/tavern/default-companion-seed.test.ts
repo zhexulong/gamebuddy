@@ -18,8 +18,12 @@ import { createChatThreadStore } from "./chat-thread-store.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { seedDefaultCompanionIntoFreshRuntimeRoot } from "./default-companion-seed.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { macroTable } from "./macro-engine.js";
 import { createTavernLibraryService, resolveCompanionOwnScenario } from "./library-service.js";
-import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
+import {
+  createScenarioManagementService,
+  withScenarioSurfaceMacros,
+} from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
 const identity: CompanionIdentity = Object.freeze({
@@ -192,6 +196,34 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
       prompt.indexOf("动率先于言") > prompt.indexOf(voiceMarker),
       "the directive must sit inside its own labelled section",
     );
+  } finally {
+    await release(root);
+  }
+});
+test("the seeded companion's scenario reaches the browser with its macros rendered", async () => {
+  const root = await canonicalTestRoot("default-companion-surface-");
+  try {
+    await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root);
+    const paths = resolveRuntimePaths(identity, root);
+    const tavernPaths = resolveTavernPaths(paths, identity);
+    const store = new TavernArtifactStore(paths.root);
+    const durable = createScenarioManagementService(store, tavernPaths.companionRoot);
+    const profile = await readIdentityProfile(paths.identityProfilePath);
+    const surface = withScenarioSurfaceMacros(durable, async () =>
+      macroTable({ char: profile.identity.name, locale: "zh-CN" }),
+    );
+
+    const projection = await surface.read();
+    assert.ok(projection !== null, "the seeded companion must carry a durable scenario record");
+    assert.equal(projection.description.includes("{{"), false, "the surface must never paint a raw macro");
+    assert.ok(projection.description.includes(profile.identity.name), "the companion's real name is resolved");
+    assert.ok(projection.description.includes("玩家"), "the player reference is resolved");
+
+    // The durable record still carries `{{user}}`, so the absence above is the
+    // rendering and not a scenario that happened to contain no macro.
+    const stored = await durable.read();
+    assert.ok(stored !== null);
+    assert.ok(stored.description.includes("{{user}}"));
   } finally {
     await release(root);
   }
