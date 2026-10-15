@@ -66,6 +66,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 import { openLiveRunCapture } from "../core/capture.mjs";
 import { buildCompanionExperience, evaluateCompanionReply } from "../core/companion-experience.mjs";
+import {
+  assertRenderedTranscript,
+  findBrowserExecutable,
+  openBrowserEvidenceSession,
+  reserveFreePort,
+} from "../core/browser-evidence.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
 // The audited generation root. Production consumes the canonical `host/dist`
@@ -1274,6 +1280,114 @@ function emitNewPresentationMarkers({ stderr, recorder, seen }) {
   return markers.length > 0;
 }
 
+/**
+ * The browser half of the session handshake.
+ *
+ * The `boot=<token>` fragment is a ONE-TIME exchange. The loop used to spend it with
+ * its own `fetch`, which is exactly why a browser opened afterwards got 401 and why
+ * every UI verdict so far had to come from a manual desktop run. So the browser
+ * redeems it first and the loop attaches to the session the browser created: the
+ * cookie is read over CDP (the launch URL is delivered by `Page.navigate`, so it is
+ * not even in the browser's command line), and the CSRF token comes from the
+ * authenticated `/state` body, which is a read and therefore needs no CSRF header.
+ * `dialogue-web/src/main.tsx` documents the same path from the product side: a
+ * reload re-selects the app through the session cookie.
+ *
+ * Failing here is never fatal: the caller falls back to exchanging the token
+ * itself, and a browser that cannot run is recorded as a named skip.
+ */
+async function openBrowserHalf({ launchUrl, origin, environment }) {
+  const skip = (reason) => {
+    environment.skippedPhases.push({ phase: "browser", reason });
+    environment.browserEvidence = { state: "skipped", reason };
+    return Object.freeze({ ok: false, reason });
+  };
+  if (process.env.GAMEBUDDY_CHAT_BROWSER === "0") return skip("browser_phase_disabled_by_configuration");
+  const executable = await findBrowserExecutable({ env: process.env });
+  if (executable === undefined) return skip("no_browser_executable_found");
+  const port = await reserveFreePort().catch(() => undefined);
+  if (port === undefined) return skip("free_cdp_port_unavailable");
+  const profileDir = join(tmpdir(), `gamebuddy-chat-live-browser-${randomBytes(6).toString("hex")}`);
+  const session = await openBrowserEvidenceSession({
+    executable,
+    origin,
+    launchUrl,
+    profileDir,
+    port,
+    headless: process.env.GAMEBUDDY_LIVE_RUN_BROWSER_HEADLESS !== "0",
+  });
+  if (!session.ok) return skip(`browser_launch_failed:${session.reason}`);
+  environment.browserSession = session;
+  const cookie = await session.waitForSessionCookie();
+  if (!cookie.ok) return skip(cookie.reason);
+  let body;
+  try {
+    const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+      headers: { Cookie: cookie.cookie, Origin: origin },
+    });
+    body = await response.json().catch(() => undefined);
+    if (!response.ok) return skip(`browser_session_state_read_failed:${response.status}`);
+  } catch (error) {
+    return skip(`browser_session_state_unreachable:${safeReasonCode(error)}`);
+  }
+  const csrf = body?.csrfToken ?? body?.chat?.csrfToken;
+  if (typeof csrf !== "string" || csrf.length === 0) return skip("browser_session_csrf_absent");
+  environment.browserEvidence = { state: "session_established", port, profileDir };
+  return Object.freeze({ ok: true, client: Object.freeze({ cookie: cookie.cookie, csrf }), session });
+}
+
+/**
+ * Screenshots and DOM assertions, into the run's own `shots/` directory, so one
+ * directory answers protocol + content + rendering. The DOM is compared against the
+ * SAME authenticated `/state` read the trace's durable facts come from, which is
+ * the only way "the reply the API reports is the reply the DOM shows" stops being
+ * an inference.
+ */
+async function captureBrowserEvidence({ session, origin, client, environment }) {
+  if (session?.ok !== true) return;
+  const shotsDir = join(environment.captureDir, "shots");
+  let transcript = [];
+  try {
+    const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+      headers: { Cookie: client.cookie, Origin: origin },
+    });
+    const body = await response.json().catch(() => undefined);
+    if (response.ok && Array.isArray(body?.chat?.transcript)) transcript = body.chat.transcript;
+  } catch {
+    /* an unreadable transcript leaves the DOM comparison to report the gap */
+  }
+  // The browser applies the same SSE events the harness observed; give it a bounded
+  // window to reach the same row count before calling a difference a defect.
+  let dom;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    dom = await session.domSnapshot().catch(() => undefined);
+    if (dom !== undefined && Array.isArray(dom.handles) && dom.handles.length >= transcript.length) break;
+    await delay(500);
+  }
+  const assertions = assertRenderedTranscript(dom, transcript, {
+    expectedPlayerTexts: environment.experienceReplies.map((reply) => reply.playerText),
+  });
+  const shots = [];
+  for (const [name, label, fullPage] of [
+    ["chat-transcript.png", "transcript", false],
+    ["chat-transcript-fullpage.png", "fullpage", true],
+  ]) {
+    const shot = await session
+      .screenshot(join(shotsDir, name), { fullPage })
+      .catch((error) => ({ ok: false, reason: safeReasonCode(error) }));
+    if (shot.ok === true) shots.push({ label, path: shot.path, fullPage });
+  }
+  environment.browserEvidence = Object.freeze({
+    state: "captured",
+    port: environment.browserEvidence?.port,
+    profileDir: environment.browserEvidence?.profileDir,
+    transcriptMessages: transcript.length,
+    renderedHandles: Array.isArray(dom?.handles) ? dom.handles.length : null,
+    assertions,
+    shots: Object.freeze(shots),
+  });
+}
+
 async function collectRun({ root, recorder, nonceSha256, environment, attachChild, probeManifest }) {
   const artifact = await productionArtifactIdentity();
   environment.artifact = artifact;
@@ -1389,7 +1503,13 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   const origin = `${url.protocol}//${url.host}`;
   const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
   if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
-  const client = await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
+  // The browser redeems the one-time token when it can; only then does the harness
+  // attach. Falling back keeps a machine with no browser able to run the audit.
+  const browserHalf = await openBrowserHalf({ launchUrl: ready, origin, environment });
+  const client = browserHalf.ok
+    ? browserHalf.client
+    : await bootstrap(origin, bootstrapToken, launch.ack?.sessionEntry);
+  environment.sessionOrigin = origin;
   environment.started = true;
   recorder.record("lifecycle", "harness", "run.started", { status: "ready" });
 
@@ -1634,6 +1754,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     environment.unsettledProviderTurns =
       providerMarkerTurn === undefined || !unsettledTurnIndexes.includes(providerMarkerTurn) ? 0 : 1;
   }
+
+  // Rendering: the same authenticated session, observed through the product's own
+  // browser surface, into the run's `shots/` directory.
+  await captureBrowserEvidence({ session: browserHalf.session, origin, client, environment });
 }
 
 function finishRun({ recorder, environment }) {
@@ -1776,6 +1900,9 @@ export async function main(argv = process.argv.slice(2)) {
   } finally {
     await stop(child).catch(() => undefined);
     launch?.dispose();
+    // The browser is a child of this harness; leaving it behind would leave a
+    // profile directory and a CDP port in use for the next run.
+    await environment.browserSession?.close().catch(() => undefined);
   }
 
   try {
