@@ -196,7 +196,7 @@ test("pending creation rejects an unavailable or busy submit operation and nonav
         KEY,
         makeSnapshot({
           operations: [
-            { operationId: "draft.save", labelKey: "tavern.operation.draft.save", availability: "available", routeId: "draft" },
+            { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" },
           ],
         }),
       ),

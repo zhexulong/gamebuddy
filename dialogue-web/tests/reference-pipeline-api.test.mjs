@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   REFERENCE_PIPELINE_PROFILE_ID,
+  REFERENCE_PIPELINE_OPERATION_IDS,
   TavernProblemError,
   TavernProtocolError,
   browserMessageLanguageTag,
@@ -24,6 +25,7 @@ import {
   validateSubmissionStatus,
   validateSubmitResult,
 } from "../src/reference-pipeline-api.ts";
+import { composeReferenceTavernProfile } from "../../host/src/tavern/browser-contract/index.ts";
 
 const PROFILE = REFERENCE_PIPELINE_PROFILE_ID;
 // Canonical unpadded base64url handle: 43 chars, 43 % 4 === 3, last alphabet
@@ -624,4 +626,41 @@ test("browserMessageLanguageTag paints a projected language and omits the Host's
   assert.equal(browserMessageLanguageTag("und"), undefined);
   assert.equal(browserMessageLanguageTag("en"), "en");
   assert.equal(browserMessageLanguageTag("zh-CN"), "zh-CN");
+});
+
+// --- Profile vocabulary: the reference client mirrors one profile, exactly. ---
+
+test("the reference client's operation vocabulary equals the reference profile's own set", () => {
+  // This module mirrors ONE profile, and `composeReferenceTavernProfile` is the
+  // authority for what a reference snapshot can carry. A client-only operation
+  // advertises a capability no request can produce (the draft controls are the
+  // management profile's, served on the client by `management-pipeline-api.ts`);
+  // a profile-only one would turn a legal snapshot into a protocol error. Reading
+  // the profile here means a drift on either side fails this test, not a player's
+  // action at runtime.
+  const profile = composeReferenceTavernProfile();
+  assert.deepEqual([...REFERENCE_PIPELINE_OPERATION_IDS], [...profile.operationIds]);
+  assert.deepEqual([...REFERENCE_PIPELINE_OPERATION_IDS], ["chat.submit", "chat.cancel"]);
+});
+
+test("validateSnapshot refuses a draft operation or label the reference profile never declares", () => {
+  assert.doesNotThrow(() =>
+    validateSnapshot(
+      snapshot({
+        operations: [
+          { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+          { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "available", routeId: "chat.cancel" },
+        ],
+      }),
+    ),
+  );
+  const neverDeclared = [
+    { operationId: "draft.save", labelKey: "tavern.operation.submit", availability: "available", routeId: "draft" },
+    { operationId: "draft.discard", labelKey: "tavern.operation.submit", availability: "available", routeId: "draft" },
+    { operationId: "chat.submit", labelKey: "tavern.operation.draft.save", availability: "available", routeId: "chat.submit" },
+    { operationId: "chat.submit", labelKey: "tavern.operation.draft.discard", availability: "available", routeId: "chat.submit" },
+  ];
+  for (const operation of neverDeclared) {
+    assert.throws(() => validateSnapshot(snapshot({ operations: [operation] })), TavernProtocolError);
+  }
 });

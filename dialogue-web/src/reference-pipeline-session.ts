@@ -36,7 +36,7 @@ export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 // client owns the complete validated DTO authority.
 
 export type TavernBrowserOperationV1 = Readonly<{
-  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard";
+  operationId: "chat.submit" | "chat.cancel";
   labelKey: string;
   availability: "available" | "busy" | "unavailable";
   routeId: string;
@@ -77,7 +77,12 @@ export type BrowserEventV1 = Readonly<{
   epoch: string;
   sequence: number;
   selectionGeneration: number;
-  eventType: "companion.delta" | "message.committed" | "draft.changed" | "turn.state_changed" | "stream.resync_required";
+  eventType:
+    | "companion.delta"
+    | "message.committed"
+    | "draft.changed"
+    | "turn.state_changed"
+    | "stream.resync_required";
   payload: unknown;
 }>;
 

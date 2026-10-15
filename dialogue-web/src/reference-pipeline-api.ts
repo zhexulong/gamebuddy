@@ -33,6 +33,17 @@ const TAVERN_BROWSER_API_VERSION = 1 as const;
 const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 export const REFERENCE_PIPELINE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline" as const;
 
+/**
+ * The operation vocabulary this client declares. This module mirrors exactly ONE
+ * profile (`gamebuddy.chat-core.reference-pipeline`), whose operation set is
+ * `chat.submit`/`chat.cancel`: draft mutation belongs to the management profile
+ * and is served on the client by `management-pipeline-api.ts`. Declaring here an
+ * operation the reference profile can never project would advertise a capability
+ * no request can produce, so the set is exported and a test holds it against the
+ * profile's own declaration.
+ */
+export const REFERENCE_PIPELINE_OPERATION_IDS = ["chat.submit", "chat.cancel"] as const;
+
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
 type BrowserSwipeInfoV1 = Readonly<{
@@ -141,14 +152,8 @@ export type BrowserEventV1 =
     }>;
 
 type TavernBrowserOperationV1 = Readonly<{
-  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard";
-  labelKey:
-    | "tavern.nav.chat"
-    | "tavern.nav.memory"
-    | "tavern.operation.submit"
-    | "tavern.operation.cancel"
-    | "tavern.operation.draft.save"
-    | "tavern.operation.draft.discard";
+  operationId: (typeof REFERENCE_PIPELINE_OPERATION_IDS)[number];
+  labelKey: "tavern.nav.chat" | "tavern.nav.memory" | "tavern.operation.submit" | "tavern.operation.cancel";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
 }>;
@@ -277,16 +282,13 @@ const TURN_PROBLEM_CODES = [
 const SUBMIT_DISPOSITIONS = ["accepted", "duplicate"] as const;
 const CANCEL_DISPOSITIONS = ["cancelled", "completion_won", "already_terminal"] as const;
 const STATUS_DISPOSITIONS = ["unknown", "pending", "accepted", "terminal", "expired"] as const;
-const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard"] as const;
+const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
   "tavern.nav.memory",
   "tavern.operation.submit",
   "tavern.operation.cancel",
-  "tavern.operation.draft.save",
-  "tavern.operation.draft.discard",
 ] as const;
-const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
@@ -551,7 +553,7 @@ function isTavernBrowserOperation(value: unknown): value is TavernBrowserOperati
   return (
     isRecord(value) &&
     hasExactKeys(value, OPERATION_KEYS) &&
-    isOneOf(value.operationId, OPERATION_IDS) &&
+    isOneOf(value.operationId, REFERENCE_PIPELINE_OPERATION_IDS) &&
     isOneOf(value.labelKey, LABEL_KEYS) &&
     isOneOf(value.availability, OPERATION_AVAILABILITY) &&
     isLengthBoundedString(value.routeId, 1, 128) &&
