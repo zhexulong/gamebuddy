@@ -14,6 +14,7 @@ import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { DEFAULT_COMPANION_PRESET, type DefaultCompanionPreset } from "./default-companion-preset.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
@@ -31,7 +32,8 @@ import { resolveTavernPaths } from "./tavern-paths.js";
  * installs the SAME compiled artifacts (a card compiled by the product's own
  * `previewStCard` + `candidateToIdentityProfile`, never a second converter —
  * see `default-companion-preset.ts`) through the product's OWN write paths,
- * `writeIdentityProfile` and the greeting management service.
+ * `writeIdentityProfile`, the greeting management service and the scenario
+ * management service.
  *
  * First-creation-only by construction: if `<runtimeCwd>/identity-profile.json`
  * already exists the function returns without touching anything, so a player's
@@ -81,6 +83,16 @@ export async function seedDefaultCompanionIntoFreshRuntimeRoot(
   // Chat draws its opening from (`initial-chat-exact-content-port.ts`).
   if ((await greetings.readExact()) === null && preset.greetings.length > 0)
     await greetings.create({ label: "Initial Greeting", variants: preset.greetings });
+  // The reviewed card's scenario is a durable player-scenario record, the same
+  // one `new-companion-service.ts` writes at card-import provisioning. It is
+  // what BOTH readers resolve by `companionScenarioId`: a new Chat's own scenario
+  // (`resolveCompanionOwnScenario`) and the character surface's Scenario panel
+  // (`scenario.read`). Without it a fresh player met 「还没有保存场景。」 for a card
+  // that carries a scenario, and a new Chat opened unbound. Written through the
+  // product's own management service so it stays the one writer of the record.
+  const scenarios = createScenarioManagementService(artifacts, tavernPaths.companionRoot);
+  if ((await scenarios.read()) === null && preset.scenario !== undefined && preset.scenario.trim() !== "")
+    await scenarios.create({ name: "Default Scenario", description: preset.scenario });
   // A seeded companion must be exactly a companion the library created. The
   // library's chat selector reads `companion.json`, and this is the only place a
   // fresh root's companion comes from, so the record is installed through the

@@ -18,7 +18,8 @@ import { createChatThreadStore } from "./chat-thread-store.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { seedDefaultCompanionIntoFreshRuntimeRoot } from "./default-companion-seed.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
-import { createTavernLibraryService } from "./library-service.js";
+import { createTavernLibraryService, resolveCompanionOwnScenario } from "./library-service.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
 const identity: CompanionIdentity = Object.freeze({
@@ -60,12 +61,34 @@ test("a fresh runtime root presents as 琥珀 with the preset's opening and worl
     };
     assert.equal(book.worldBookId, DEFAULT_COMPANION_PRESET.worldBook.worldBookId);
 
+    const tavernPaths = resolveTavernPaths(paths, identity);
     const record = await createGreetingManagementService(
       new TavernArtifactStore(paths.root),
-      resolveTavernPaths(paths, identity).companionRoot,
+      tavernPaths.companionRoot,
     ).readExact();
     assert.ok(record !== null);
     assert.equal(record.variants[0]?.text, DEFAULT_COMPANION_PRESET.greetings[0]?.text);
+
+    // The card's scenario is a durable scenario record, not profile text, so the
+    // seed must install it: a fresh root's companion otherwise reaches the player
+    // with no world premise. Both readers resolve the SAME record by
+    // `companionScenarioId` — the character surface's Scenario panel
+    // (`scenario.read`, which otherwise shows 「还没有保存场景。」) and a new Chat's
+    // own scenario (`resolveCompanionOwnScenario`).
+    const scenario = await createScenarioManagementService(
+      new TavernArtifactStore(paths.root),
+      tavernPaths.companionRoot,
+    ).read();
+    assert.ok(scenario !== null, "the seeded companion must carry a durable scenario record");
+    assert.equal(scenario.description, DEFAULT_COMPANION_PRESET.scenario);
+    assert.ok(scenario.description.includes("星露谷"));
+
+    const ownScenario = await resolveCompanionOwnScenario(
+      new TavernArtifactStore(paths.root),
+      tavernPaths.companionRoot,
+    );
+    assert.ok(ownScenario !== undefined, "a new Chat must resolve the seeded companion's own scenario");
+    assert.equal(ownScenario.artifact.description, DEFAULT_COMPANION_PRESET.scenario);
   } finally {
     await release(root);
   }
