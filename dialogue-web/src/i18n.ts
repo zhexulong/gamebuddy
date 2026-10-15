@@ -185,6 +185,10 @@ const en = {
   voiceConsentAccepted: "Accepted",
   voiceConsentRevoked: "Revoked",
   voiceDisclosureVersion: "Disclosure version",
+  // The disclosure version is null until a consent decision is made, and a bare
+  // dash there reads as a value the surface failed to load. The row says the
+  // honest state instead: nothing has been disclosed, because nobody decided yet.
+  voiceDisclosureUndisclosed: "Not disclosed — no consent decision yet",
   voiceAccept: "Accept",
   voiceRevoke: "Revoke",
   voiceOutputDevice: "Output device",
@@ -712,6 +716,7 @@ const zh: Messages = {
   voiceConsentAccepted: "已接受",
   voiceConsentRevoked: "已撤销",
   voiceDisclosureVersion: "披露版本",
+  voiceDisclosureUndisclosed: "尚未披露——尚未做出授权决定",
   voiceAccept: "接受",
   voiceRevoke: "撤销",
   voiceOutputDevice: "输出设备",

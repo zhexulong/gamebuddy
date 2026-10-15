@@ -27,7 +27,16 @@ import {
  * mutation, so an unpublished route renders as unavailable instead of as a
  * control the Host cannot serve.
  */
-export type VoiceView = Readonly<{ kind: "loading" }> | Readonly<{ kind: "unavailable" }> | Readonly<{ kind: "error" }> | Readonly<{ kind: "ready"; preference: TavernVoicePreferenceV1; devices: TavernVoiceDevicesV1 | null; pending: boolean }>;
+export type VoiceView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{
+      kind: "ready";
+      preference: TavernVoicePreferenceV1;
+      devices: TavernVoiceDevicesV1 | null;
+      pending: boolean;
+    }>;
 
 /**
  * Companion language state. The Host preference is the authority: the panel
@@ -64,7 +73,12 @@ export function companionLocaleForUiLocale(locale: Locale): string {
 export type ConnectionView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "unavailable" }>
-  | Readonly<{ kind: "ready"; state: TavernConnectionStateV1; pending: boolean; notice: "activation" | "busy" | "conflict" | null }>;
+  | Readonly<{
+      kind: "ready";
+      state: TavernConnectionStateV1;
+      pending: boolean;
+      notice: "activation" | "busy" | "conflict" | null;
+    }>;
 
 /**
  * Model profiles state (design/28 §2.3). `pending` names the one surface whose
@@ -119,7 +133,15 @@ export type ConnectionForm = Readonly<{
  * forwards whatever the player typed to the embedded runtime, which clamps a
  * level the chosen model does not advertise (design/28 §2.3.5).
  */
-export const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 
 export function modelProfileProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
   if (error instanceof TavernProblemError) {
@@ -228,7 +250,12 @@ export function ModelProfileEditor({
        * save on the management surface, which is ambiguous for a screen reader and
        * for anything that addresses the control by name.
        */}
-      <button type="submit" className="small-button" aria-label={`${labels.modelProfilesApply} ${surfaceLabel}`} disabled={!canSave}>
+      <button
+        type="submit"
+        className="small-button"
+        aria-label={`${labels.modelProfilesApply} ${surfaceLabel}`}
+        disabled={!canSave}
+      >
         {labels.modelProfilesApply}
       </button>
     </form>
@@ -362,205 +389,203 @@ export function ConnectionSettingsPanel({
     <section className="management-settings-section" aria-label={labels.connectionSettings} data-connection-settings>
       <h2>{labels.connectionSettings}</h2>
       <>
-          <dl className="management-settings-details" data-connection-active>
-            <div>
-              <dt>{labels.connectionActiveLabel}</dt>
-              <dd data-connection-active-value>
-                {connectionView.state.active === null ? labels.connectionNoneActive : connectionView.state.active.label}
-              </dd>
-            </div>
-          </dl>
-          {connectionView.state.active === null && (
-            <p className="warning-banner" data-connection-no-selection>
-              {labels.connectionNoSelectionNotice}
-            </p>
-          )}
-          {connectionView.notice === "activation" && (
-            <p className="success-banner" data-connection-activated>
-              {labels.connectionActivationNotice}
-            </p>
-          )}
-          {connectionView.notice === "busy" && (
-            <p className="warning-banner" data-connection-busy>
-              {labels.connectionBusy}
-            </p>
-          )}
-          {connectionView.notice === "conflict" && (
-            <p className="warning-banner" data-connection-conflict>
-              {labels.connectionRevisionConflict}
-            </p>
-          )}
+        <dl className="management-settings-details" data-connection-active>
+          <div>
+            <dt>{labels.connectionActiveLabel}</dt>
+            <dd data-connection-active-value>
+              {connectionView.state.active === null ? labels.connectionNoneActive : connectionView.state.active.label}
+            </dd>
+          </div>
+        </dl>
+        {connectionView.state.active === null && (
+          <p className="warning-banner" data-connection-no-selection>
+            {labels.connectionNoSelectionNotice}
+          </p>
+        )}
+        {connectionView.notice === "activation" && (
+          <p className="success-banner" data-connection-activated>
+            {labels.connectionActivationNotice}
+          </p>
+        )}
+        {connectionView.notice === "busy" && (
+          <p className="warning-banner" data-connection-busy>
+            {labels.connectionBusy}
+          </p>
+        )}
+        {connectionView.notice === "conflict" && (
+          <p className="warning-banner" data-connection-conflict>
+            {labels.connectionRevisionConflict}
+          </p>
+        )}
 
-          <form
-            className="connection-form"
-            data-connection-form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (selected === undefined) return;
-              void onCreate({
-                providerId: selected.providerId,
-                apiKey,
-                baseUrl,
-                apiShape,
-                modelId,
-                catalogModelId: chosenModel?.modelId ?? catalogModelId,
-                thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
-              }).then((saved) => {
-                // The credential is write-only: a saved connection is never
-                // readable back, so once it is stored the field must not keep
-                // the secret in the document (the test's outerHTML scan finds
-                // it there). Only a durable save clears it; a rejected save
-                // keeps the typed value so the player can retry.
-                if (saved) setApiKey("");
-              });
+        <form
+          className="connection-form"
+          data-connection-form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (selected === undefined) return;
+            void onCreate({
+              providerId: selected.providerId,
+              apiKey,
+              baseUrl,
+              apiShape,
+              modelId,
+              catalogModelId: chosenModel?.modelId ?? catalogModelId,
+              thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
+            }).then((saved) => {
+              // The credential is write-only: a saved connection is never
+              // readable back, so once it is stored the field must not keep
+              // the secret in the document (the test's outerHTML scan finds
+              // it there). Only a durable save clears it; a rejected save
+              // keeps the typed value so the player can retry.
+              if (saved) setApiKey("");
+            });
+          }}
+        >
+          <label htmlFor="connection-provider">{labels.connectionProvider}</label>
+          <select
+            id="connection-provider"
+            className="form-select"
+            disabled={connectionView.pending}
+            value={selected?.providerId ?? ""}
+            onChange={(event) => {
+              setProviderId(event.target.value);
+              setCatalogModelId("");
             }}
           >
-            <label htmlFor="connection-provider">{labels.connectionProvider}</label>
-            <select
-              id="connection-provider"
-              className="form-select"
-              disabled={connectionView.pending}
-              value={selected?.providerId ?? ""}
-              onChange={(event) => {
-                setProviderId(event.target.value);
-                setCatalogModelId("");
-              }}
-            >
-              {providers.map((provider) => (
-                <option key={provider.providerId} value={provider.providerId}>
-                  {provider.escapeHatch ? labels.connectionEscapeHatch : provider.label}
-                  {provider.environmentManaged ? ` — ${labels.connectionEnvironmentManaged}` : ""}
-                </option>
-              ))}
-            </select>
-            {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionEscapeHatchHint}</p>}
+            {providers.map((provider) => (
+              <option key={provider.providerId} value={provider.providerId}>
+                {provider.escapeHatch ? labels.connectionEscapeHatch : provider.label}
+                {provider.environmentManaged ? ` — ${labels.connectionEnvironmentManaged}` : ""}
+              </option>
+            ))}
+          </select>
+          {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionEscapeHatchHint}</p>}
 
-            {selected?.setupFields.includes("baseUrl") === true && (
-              <>
-                <label htmlFor="connection-base-url">{labels.connectionBaseUrl}</label>
-                <input
-                  id="connection-base-url"
-                  className="form-input"
-                  type="url"
-                  inputMode="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={connectionView.pending}
-                  placeholder={labels.connectionBaseUrlHint}
-                  value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.target.value)}
-                />
-              </>
-            )}
-
-            {selected?.setupFields.includes("apiShape") === true && (
-              <>
-                <label htmlFor="connection-api-shape">{labels.connectionApiShape}</label>
-                <select
-                  id="connection-api-shape"
-                  className="form-select"
-                  disabled={connectionView.pending}
-                  value={apiShape}
-                  onChange={(event) => setApiShape(event.target.value as TavernConnectionApiShapeV1)}
-                >
-                  {CONNECTION_API_SHAPES.map((shape) => (
-                    <option key={shape} value={shape}>
-                      {shape}
-                    </option>
-                  ))}
-                </select>
-                <p className="field-hint">{labels.connectionApiShapeHint}</p>
-              </>
-            )}
-
-            {selected?.setupFields.includes("apiKey") === true && (
-              <>
-                <label htmlFor="connection-api-key">{labels.connectionApiKey}</label>
-                <input
-                  id="connection-api-key"
-                  className="form-input"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={connectionView.pending}
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                />
-                <p className="field-hint">{labels.connectionApiKeyWriteOnly}</p>
-      </>
-    )}
-
-    {/*
-     * A local server that needs no credential still needs a value here, because the runtime
-     * rejects a provider with no key at all. pi's own documentation answers this with a
-     * placeholder ("the dummy key makes the model available to Pi; Ollama ignores it"), so the
-     * panel says that instead of leaving the player to guess.
-     */}
-    {selected?.escapeHatch === true && (
-      <p className="field-hint">{labels.connectionApiKeyLocalHint}</p>
-    )}
-
-            {selected?.escapeHatch === true ? (
-              <>
-                <label htmlFor="connection-model-id">{labels.connectionModelId}</label>
-                <input
-                  id="connection-model-id"
-                  className="form-input"
-                  type="text"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={connectionView.pending}
-                  placeholder={labels.connectionModelIdHint}
-                  value={modelId}
-                  onChange={(event) => setModelId(event.target.value)}
-                />
-              </>
-            ) : (
-              <>
-                <label htmlFor="connection-model">{labels.connectionModel}</label>
-                <select
-                  id="connection-model"
-                  className="form-select"
-                  disabled={connectionView.pending || models.length === 0}
-                  value={chosenModel?.modelId ?? ""}
-                  onChange={(event) => setCatalogModelId(event.target.value)}
-                >
-                  {models.map((model) => (
-                    <option key={model.modelId} value={model.modelId}>
-                      {model.modelLabel}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-
-            <div className="composer-actions">
-              <button type="submit" className="small-button" disabled={connectionView.pending}>
-                {labels.connectionSave}
-              </button>
-            </div>
-          </form>
-
-          {connectionView.state.connections.length > 0 && (
-            <div data-connection-list>
-              <h3>{labels.connectionListTitle}</h3>
-              <ul className="connection-rows">
-                {connectionView.state.connections.map((connection) => (
-                  <ConnectionRow
-                    key={connection.connectionId}
-                    connection={connection}
-                    pending={connectionView.pending}
-                    labels={labels}
-                    onTest={onTest}
-                    onActivate={onActivate}
-                    onSelectModel={onSelectModel}
-                    onRemove={onRemove}
-                  />
-                ))}
-              </ul>
-            </div>
+          {selected?.setupFields.includes("baseUrl") === true && (
+            <>
+              <label htmlFor="connection-base-url">{labels.connectionBaseUrl}</label>
+              <input
+                id="connection-base-url"
+                className="form-input"
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={connectionView.pending}
+                placeholder={labels.connectionBaseUrlHint}
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+              />
+            </>
           )}
-        </>
+
+          {selected?.setupFields.includes("apiShape") === true && (
+            <>
+              <label htmlFor="connection-api-shape">{labels.connectionApiShape}</label>
+              <select
+                id="connection-api-shape"
+                className="form-select"
+                disabled={connectionView.pending}
+                value={apiShape}
+                onChange={(event) => setApiShape(event.target.value as TavernConnectionApiShapeV1)}
+              >
+                {CONNECTION_API_SHAPES.map((shape) => (
+                  <option key={shape} value={shape}>
+                    {shape}
+                  </option>
+                ))}
+              </select>
+              <p className="field-hint">{labels.connectionApiShapeHint}</p>
+            </>
+          )}
+
+          {selected?.setupFields.includes("apiKey") === true && (
+            <>
+              <label htmlFor="connection-api-key">{labels.connectionApiKey}</label>
+              <input
+                id="connection-api-key"
+                className="form-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={connectionView.pending}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+              <p className="field-hint">{labels.connectionApiKeyWriteOnly}</p>
+            </>
+          )}
+
+          {/*
+           * A local server that needs no credential still needs a value here, because the runtime
+           * rejects a provider with no key at all. pi's own documentation answers this with a
+           * placeholder ("the dummy key makes the model available to Pi; Ollama ignores it"), so the
+           * panel says that instead of leaving the player to guess.
+           */}
+          {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionApiKeyLocalHint}</p>}
+
+          {selected?.escapeHatch === true ? (
+            <>
+              <label htmlFor="connection-model-id">{labels.connectionModelId}</label>
+              <input
+                id="connection-model-id"
+                className="form-input"
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={connectionView.pending}
+                placeholder={labels.connectionModelIdHint}
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+              />
+            </>
+          ) : (
+            <>
+              <label htmlFor="connection-model">{labels.connectionModel}</label>
+              <select
+                id="connection-model"
+                className="form-select"
+                disabled={connectionView.pending || models.length === 0}
+                value={chosenModel?.modelId ?? ""}
+                onChange={(event) => setCatalogModelId(event.target.value)}
+              >
+                {models.map((model) => (
+                  <option key={model.modelId} value={model.modelId}>
+                    {model.modelLabel}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
+          <div className="composer-actions">
+            <button type="submit" className="small-button" disabled={connectionView.pending}>
+              {labels.connectionSave}
+            </button>
+          </div>
+        </form>
+
+        {connectionView.state.connections.length > 0 && (
+          <div data-connection-list>
+            <h3>{labels.connectionListTitle}</h3>
+            <ul className="connection-rows">
+              {connectionView.state.connections.map((connection) => (
+                <ConnectionRow
+                  key={connection.connectionId}
+                  connection={connection}
+                  pending={connectionView.pending}
+                  labels={labels}
+                  onTest={onTest}
+                  onActivate={onActivate}
+                  onSelectModel={onSelectModel}
+                  onRemove={onRemove}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
+      </>
     </section>
   );
 }
@@ -596,13 +621,30 @@ export function ConnectionRow({
   return (
     <li className="connection-row" data-connection-row data-readiness={connection.readiness}>
       <dl className="management-settings-details">
-        <div><dt>{labels.connectionProvider}</dt><dd>{connection.providerLabel}</dd></div>
-        <div><dt>{labels.connectionModel}</dt><dd>{connection.modelLabel}</dd></div>
+        <div>
+          <dt>{labels.connectionProvider}</dt>
+          <dd>{connection.providerLabel}</dd>
+        </div>
+        <div>
+          <dt>{labels.connectionModel}</dt>
+          <dd>{connection.modelLabel}</dd>
+        </div>
         {connection.baseUrl !== null && (
-          <div><dt>{labels.connectionBaseUrl}</dt><dd data-connection-base-url>{connection.baseUrl}</dd></div>
+          <div>
+            <dt>{labels.connectionBaseUrl}</dt>
+            <dd data-connection-base-url>{connection.baseUrl}</dd>
+          </div>
         )}
-        <div><dt>{labels.connectionReadiness}</dt><dd>{connectionReadinessText(connection.readiness, labels)}</dd></div>
-        {failure !== null && <div><dt>—</dt><dd data-connection-failure>{failure}</dd></div>}
+        <div>
+          <dt>{labels.connectionReadiness}</dt>
+          <dd>{connectionReadinessText(connection.readiness, labels)}</dd>
+        </div>
+        {failure !== null && (
+          <div>
+            <dt>—</dt>
+            <dd data-connection-failure>{failure}</dd>
+          </div>
+        )}
       </dl>
       <div className="composer-actions">
         <label className="visually-hidden-input-label" htmlFor={`connection-level-${connection.connectionId}`}>
@@ -701,11 +743,7 @@ export function LanguageSettingsPanel({
     if (next !== undefined && next.length > 0 && next !== companionTag) onSelectLanguage(next);
   };
   return (
-    <section
-      className="management-settings-section"
-      aria-label={labels.languageSettings}
-      data-language-settings
-    >
+    <section className="management-settings-section" aria-label={labels.languageSettings} data-language-settings>
       <h2>{labels.languageSettings}</h2>
       <p>{labels.languageHint}</p>
       {languageView.kind === "loading" && <p>{labels.loading}</p>}
@@ -790,12 +828,41 @@ export function VoiceSettingsPanel({
       {voiceView.kind === "ready" && (
         <>
           <dl className="management-settings-details">
-            <div><dt>{labels.voiceConsent}</dt><dd>{labels[`voiceConsent${voiceView.preference.consent[0].toUpperCase()}${voiceView.preference.consent.slice(1)}` as "voiceConsentUndecided" | "voiceConsentAccepted" | "voiceConsentRevoked"]}</dd></div>
-            <div><dt>{labels.voiceDisclosureVersion}</dt><dd>{voiceView.preference.disclosureVersion ?? "—"}</dd></div>
+            <div>
+              <dt>{labels.voiceConsent}</dt>
+              <dd>
+                {
+                  labels[
+                    `voiceConsent${voiceView.preference.consent[0].toUpperCase()}${voiceView.preference.consent.slice(1)}` as
+                      | "voiceConsentUndecided"
+                      | "voiceConsentAccepted"
+                      | "voiceConsentRevoked"
+                  ]
+                }
+              </dd>
+            </div>
+            <div>
+              <dt>{labels.voiceDisclosureVersion}</dt>
+              <dd>{voiceView.preference.disclosureVersion ?? labels.voiceDisclosureUndisclosed}</dd>
+            </div>
           </dl>
           <div className="composer-actions">
-            <button type="button" className="small-button" onClick={onAccept} disabled={voiceView.pending || voiceView.preference.consent === "accepted"}>{labels.voiceAccept}</button>
-            <button type="button" className="small-button" onClick={onRevoke} disabled={voiceView.pending || voiceView.preference.consent === "revoked"}>{labels.voiceRevoke}</button>
+            <button
+              type="button"
+              className="small-button"
+              onClick={onAccept}
+              disabled={voiceView.pending || voiceView.preference.consent === "accepted"}
+            >
+              {labels.voiceAccept}
+            </button>
+            <button
+              type="button"
+              className="small-button"
+              onClick={onRevoke}
+              disabled={voiceView.pending || voiceView.preference.consent === "revoked"}
+            >
+              {labels.voiceRevoke}
+            </button>
           </div>
           <div className="voice-device-selector">
             <label htmlFor="voice-output-device">{labels.voiceOutputDevice}</label>
@@ -812,10 +879,14 @@ export function VoiceSettingsPanel({
                   currently returns nothing. */}
               <option value="">{labels.voiceDefaultOutput}</option>
               {(voiceView.devices?.devices ?? []).map((device) => (
-                <option key={device.id} value={device.id}>{device.name}</option>
+                <option key={device.id} value={device.id}>
+                  {device.name}
+                </option>
               ))}
               {voiceView.preference.outputDevice !== null &&
-                !(voiceView.devices?.devices ?? []).some((device) => device.id === voiceView.preference.outputDevice) && (
+                !(voiceView.devices?.devices ?? []).some(
+                  (device) => device.id === voiceView.preference.outputDevice,
+                ) && (
                   // The persisted pin outlives one enumeration (endpoint
                   // unplugged or the gateway is temporarily unavailable). The
                   // effective selection must stay visible instead of silently
@@ -981,7 +1052,9 @@ export function MemoryPanel({
   return (
     <section className="tavern-memory-section" aria-label={notebook.title} data-memory-panel>
       <div className="tavern-memory-header">
-        <h2 className="tavern-memory-title" id={MEMORY_TITLE_ID}>{notebook.title}</h2>
+        <h2 className="tavern-memory-title" id={MEMORY_TITLE_ID}>
+          {notebook.title}
+        </h2>
         <button type="button" className="small-button" onClick={onRefresh} title={labels.refreshMemory}>
           {labels.refreshMemory}
         </button>
@@ -1044,11 +1117,7 @@ export function MemoryPanel({
                         >
                           {labels.memoryChapterSave}
                         </button>
-                        <button
-                          type="button"
-                          className="small-button"
-                          onClick={() => setCorrectingHandle(null)}
-                        >
+                        <button type="button" className="small-button" onClick={() => setCorrectingHandle(null)}>
                           {labels.memoryChapterCancel}
                         </button>
                       </div>
@@ -1150,19 +1219,43 @@ export function MemoryPanel({
           >
             {authoringOpen ? notebook.authoringClose : notebook.authoringOpen}
           </button>
-          {authoringOpen && <MemoryCreateForm label={labels.create} contentLabel={labels.memoryContent} onCreate={(content) => onMutate({ operation: "create", content })} />}
+          {authoringOpen && (
+            <MemoryCreateForm
+              label={labels.create}
+              contentLabel={labels.memoryContent}
+              onCreate={(content) => onMutate({ operation: "create", content })}
+            />
+          )}
         </div>
       )}
     </section>
   );
 }
 
-export function MemoryCreateForm({ label, contentLabel, onCreate }: Readonly<{ label: string; contentLabel: string; onCreate: (content: string) => void }>): ReactElement {
+export function MemoryCreateForm({
+  label,
+  contentLabel,
+  onCreate,
+}: Readonly<{ label: string; contentLabel: string; onCreate: (content: string) => void }>): ReactElement {
   const [content, setContent] = useState("");
   return (
     <div className="composer-actions">
-      <textarea aria-label={contentLabel} className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} />
-      <button type="button" className="small-button" disabled={content.trim().length === 0} onClick={() => { onCreate(content.trim()); setContent(""); }}>
+      <textarea
+        aria-label={contentLabel}
+        className="form-textarea"
+        value={content}
+        onChange={(event) => setContent(event.target.value)}
+        rows={2}
+      />
+      <button
+        type="button"
+        className="small-button"
+        disabled={content.trim().length === 0}
+        onClick={() => {
+          onCreate(content.trim());
+          setContent("");
+        }}
+      >
         {label}
       </button>
     </div>
@@ -1208,17 +1301,39 @@ export function MemoryRow({
         </span>
         <span className="memory-item-meta">{statusText}</span>
       </div>
-      {editing ? <textarea aria-label={`${labels.memoryContent}: ${item.title}`} className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} /> : <p>{item.content}</p>}
+      {editing ? (
+        <textarea
+          aria-label={`${labels.memoryContent}: ${item.title}`}
+          className="form-textarea"
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          rows={2}
+        />
+      ) : (
+        <p>{item.content}</p>
+      )}
       {mutationAvailable && item.status !== "archived" && (
         <div className="composer-actions">
           {editing ? (
-            <button type="button" className="small-button" disabled={content.trim().length === 0} onClick={() => { onUpdate(content.trim()); setEditing(false); }}>
+            <button
+              type="button"
+              className="small-button"
+              disabled={content.trim().length === 0}
+              onClick={() => {
+                onUpdate(content.trim());
+                setEditing(false);
+              }}
+            >
               {labels.save}
             </button>
           ) : (
-            <button type="button" className="small-button" onClick={beginEditing}>{labels.editMemory}</button>
+            <button type="button" className="small-button" onClick={beginEditing}>
+              {labels.editMemory}
+            </button>
           )}
-          <button type="button" className="small-button" onClick={onArchive}>{labels.archiveMemory}</button>
+          <button type="button" className="small-button" onClick={onArchive}>
+            {labels.archiveMemory}
+          </button>
         </div>
       )}
     </div>

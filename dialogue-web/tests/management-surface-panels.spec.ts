@@ -299,6 +299,11 @@ test("the product Settings surface shows the real settings panels and moves both
   expect(languageWrites[0]).toEqual({ expectedRevision: 0, locale: "en-US" });
   await expect(surface.locator("[data-voice-settings]")).toContainText("Cloud TTS consent");
   await expect(surface.locator("[data-voice-settings]")).toContainText("Not decided");
+  // An undecided consent leaves the disclosure version null: the row names that
+  // honest state instead of printing a bare dash that reads as a missing value.
+  await expect(surface.locator("[data-voice-settings] .management-settings-details")).toContainText(
+    "Not disclosed — no consent decision yet",
+  );
   // A profile whose connection and model-profile routes are absent shows no
   // editor it could not serve.
   await expect(surface.locator("[data-connection-settings]")).toHaveCount(0);
